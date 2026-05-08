@@ -162,17 +162,18 @@ jobs:
         run: |
           curl -fsSL https://rclone.org/install.sh | sudo bash -s -- --no-superuser 2>/dev/null || sudo apt-get install -y rclone
           RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
-          cp install.sh /tmp/opskit.sh
-          cp install.ps1 /tmp/opskit.ps1 2>/dev/null || true
-          rclone copy /tmp/ \
-            --webdav-url "${ALIST_URL}/dav" \
-            --webdav-vendor alist \
-            --webdav-user "${ALIST_USER}" \
-            --webdav-pass "${RCLONE_OBSCURE}" \
-            --include "opskit.sh" --include "opskit.ps1" \
-            :webdav:install/ \
-            --transfers 2 --progress
-          echo "[rclone] install scripts upload done"
+          for pair in "install.sh:opskit.sh" "install.ps1:opskit.ps1"; do
+            src="${pair%%:*}"
+            dst="${pair##*:}"
+            [ -f "$src" ] || continue
+            rclone copyto "$src" \
+              --webdav-url "${ALIST_URL}/dav" \
+              --webdav-vendor alist \
+              --webdav-user "${ALIST_USER}" \
+              --webdav-pass "${RCLONE_OBSCURE}" \
+              ":webdav:install/${dst}" --progress
+            echo "[rclone] $src → install/${dst} done"
+          done
 
   release:
     needs: [build, upload-scripts]
