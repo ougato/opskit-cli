@@ -3,10 +3,8 @@
 # 用法：curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
 set -euo pipefail
 
-REPO="ougato/opskit-cli"
 BIN_NAME="opskit"
-GITHUB_API="https://api.github.com/repos/${REPO}/releases/latest"
-GITHUB_DOWNLOAD="https://github.com/${REPO}/releases/download"
+DOWNLOAD_BASE="https://file.icerror.top/d/mirror/soft"
 
 # ── 颜色输出 ──────────────────────────────────────────────────────────────────
 _green()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -42,25 +40,6 @@ detect_platform() {
     esac
 
     echo "${os}-${arch}"
-}
-
-# ── 获取最新版本 ───────────────────────────────────────────────────────────────
-get_latest_tag() {
-    local tag
-    if command -v curl >/dev/null 2>&1; then
-        tag="$(curl -fsSL "$GITHUB_API" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-    elif command -v wget >/dev/null 2>&1; then
-        tag="$(wget -qO- "$GITHUB_API" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-    else
-        _err "需要 curl 或 wget，请先安装其中之一"
-        exit 1
-    fi
-
-    if [ -z "$tag" ]; then
-        _err "获取最新版本失败，请检查网络或手动下载：https://github.com/${REPO}/releases/latest"
-        exit 1
-    fi
-    echo "$tag"
 }
 
 # ── 下载文件 ──────────────────────────────────────────────────────────────────
@@ -142,15 +121,18 @@ main() {
     _green "=== OpsKit 安装程序 ==="
     echo ""
 
-    local platform tag filename download_url sha256_url tmp_dir
+    local platform os_dir filename download_url sha256_url tmp_dir
     platform="$(detect_platform)"
     _info "检测到平台：$platform"
 
-    tag="$(get_latest_tag)"
-    _info "最新版本：$tag"
+    case "$platform" in
+        linux-*)  os_dir="linux" ;;
+        darwin-*) os_dir="macos" ;;
+        *) _err "不支持的平台：$platform"; exit 1 ;;
+    esac
 
     filename="${BIN_NAME}-${platform}"
-    download_url="${GITHUB_DOWNLOAD}/${tag}/${filename}"
+    download_url="${DOWNLOAD_BASE}/${os_dir}/${filename}"
     sha256_url="${download_url}.sha256"
 
     _info "下载地址：$download_url"

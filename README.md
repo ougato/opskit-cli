@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/ougato/opskit-cli)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/ougato/opskit-cli)](https://github.com/ougato/opskit-cli/releases/latest)
+[![Download](https://img.shields.io/badge/download-file.icerror.top-blue)](https://file.icerror.top/d/mirror/soft/)
 
 **OpsKit** is a lightweight, single-file server operations panel with a beautiful TUI (Terminal UI).
 No web UI, no agent, no daemon. Just run it and go.
@@ -73,22 +73,31 @@ python main.py
 
 ### 方式三：下载预编译单文件
 
-从 [GitHub Releases](https://github.com/ougato/opskit-cli/releases/latest) 下载对应平台的可执行文件：
+从 [file.icerror.top](https://file.icerror.top/d/mirror/soft/) 下载对应平台的可执行文件：
 
-| 平台 | 架构 | 文件名 |
+| 平台 | 架构 | 直链 |
 |---|---|---|
-| Linux | x64 | `opskit-linux-x64` |
-| Linux | arm64 | `opskit-linux-arm64` |
-| Windows | x64 | `opskit-windows-x64.exe` |
-| macOS | arm64 (Apple Silicon) | `opskit-darwin-arm64` |
+| Linux x64 | x86_64 | `https://file.icerror.top/d/mirror/soft/linux/opskit-linux-x64` |
+| Linux arm64 | aarch64 | `https://file.icerror.top/d/mirror/soft/linux/opskit-linux-arm64` |
+| Windows x64 | x86_64 | `https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe` |
+| macOS arm64 | Apple Silicon | `https://file.icerror.top/d/mirror/soft/macos/opskit-darwin-arm64` |
 
 ```bash
-# Linux / macOS
-chmod +x opskit-linux-x64
-./opskit-linux-x64
+# Linux x64
+curl -fsSL https://file.icerror.top/d/mirror/soft/linux/opskit-linux-x64 -o opskit
+chmod +x opskit && ./opskit
 
-# Windows
-opskit-windows-x64.exe
+# Linux arm64
+curl -fsSL https://file.icerror.top/d/mirror/soft/linux/opskit-linux-arm64 -o opskit
+chmod +x opskit && ./opskit
+
+# macOS
+curl -fsSL https://file.icerror.top/d/mirror/soft/macos/opskit-darwin-arm64 -o opskit
+chmod +x opskit && ./opskit
+
+# Windows PowerShell
+Invoke-WebRequest https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -OutFile opskit.exe
+.\opskit.exe
 ```
 
 ---
@@ -237,8 +246,7 @@ opskit-cli/
 ├── main.py                   # 主入口 + 主菜单
 ├── build.py                  # 构建脚本（子命令：test/build/clean/all/info）
 ├── Makefile                  # 标准化入口
-├── .gitlab-ci.yml            # GitLab CI：创建 Release（链接指向 GitHub）
-├── .github/workflows/release.yml  # GitHub Actions：4 平台构建 + GitHub Release
+├── .github/workflows/release.yml  # GitHub Actions：4 平台构建 + 自动上传 FileBrowser
 ├── requirements.txt
 ├── pyproject.toml
 ├── core/                     # 框架核心层（不可作为插件模块）
