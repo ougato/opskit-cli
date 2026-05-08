@@ -39,8 +39,10 @@ irm https://file.icerror.top/d/install/opskit.ps1 | iex
 
 ```cmd
 curl -fsSL https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -o opskit.exe
-opskit
+opskit.exe
 ```
+
+> **注意**：CMD 方式仅下载到当前目录，不配置 PATH，不支持热更新。完整安装请使用 PowerShell 命令。
 
 安装路径：
 
