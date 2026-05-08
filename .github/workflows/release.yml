@@ -91,78 +91,62 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/
 
-      - name: upload to FileBrowser (linux)
+      - name: upload to Alist (linux)
         if: runner.os == 'Linux'
         shell: bash
         env:
-          FB_URL: ${{ secrets.FB_URL }}
-          FB_USER: ${{ secrets.FB_USER }}
-          FB_PASS: ${{ secrets.FB_PASS }}
+          ALIST_URL: ${{ secrets.ALIST_URL }}
+          ALIST_USER: ${{ secrets.ALIST_USER }}
+          ALIST_PASS: ${{ secrets.ALIST_PASS }}
         run: |
-          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
-          echo "[fb] token_len=${#TOKEN}"
-          for f in dist/opskit-*; do
-            [ -f "$f" ] || continue
-            name=$(basename "$f")
-            echo "[upload] $name"
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-              "${FB_URL}/api/resources/mirror/soft/linux/${name}?override=true&auth=${TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f")
-            echo "[fb] $name → HTTP $HTTP"
-            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $name"; exit 1; }
-          done
+          curl -fsSL https://rclone.org/install.sh | sudo bash -s -- --no-superuser 2>/dev/null || sudo apt-get install -y rclone
+          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
+          rclone copy dist/ \
+            --webdav-url "${ALIST_URL}/dav" \
+            --webdav-vendor alist \
+            --webdav-user "${ALIST_USER}" \
+            --webdav-pass "${RCLONE_OBSCURE}" \
+            :webdav:mirror/soft/linux/ \
+            --transfers 4 --progress
+          echo "[rclone] linux upload done"
 
-      - name: upload to FileBrowser (windows)
+      - name: upload to Alist (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          FB_URL: ${{ secrets.FB_URL }}
-          FB_USER: ${{ secrets.FB_USER }}
-          FB_PASS: ${{ secrets.FB_PASS }}
+          ALIST_URL: ${{ secrets.ALIST_URL }}
+          ALIST_USER: ${{ secrets.ALIST_USER }}
+          ALIST_PASS: ${{ secrets.ALIST_PASS }}
         run: |
-          $loginBody = '{"username":"' + $env:FB_USER + '","password":"' + $env:FB_PASS + '"}'
-          $resp = Invoke-WebRequest -Method POST -Uri "$env:FB_URL/api/login" `
-            -ContentType "application/json" -Body $loginBody
-          $token = $resp.Content.Trim('"')
-          Write-Host "[fb] token_len=$($token.Length)"
-          Get-ChildItem dist\opskit-* | ForEach-Object {
-            $name = $_.Name
-            Write-Host "[upload] $name"
-            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
-            $up = Invoke-WebRequest -Method PUT `
-              -Uri "$env:FB_URL/api/resources/mirror/soft/windows/$($name)?override=true&auth=$token" `
-              -ContentType "application/octet-stream" `
-              -Body $bytes
-            Write-Host "[fb] $name → HTTP $($up.StatusCode)"
-            if ($up.StatusCode -ne 200) { Write-Error "upload failed: $name"; exit 1 }
-          }
+          choco install rclone -y --no-progress
+          $obscure = rclone obscure "$env:ALIST_PASS"
+          rclone copy dist/ `
+            --webdav-url "$env:ALIST_URL/dav" `
+            --webdav-vendor alist `
+            --webdav-user "$env:ALIST_USER" `
+            --webdav-pass "$obscure" `
+            ":webdav:mirror/soft/windows/" `
+            --transfers 4 --progress
+          Write-Host "[rclone] windows upload done"
 
-      - name: upload to FileBrowser (macos)
+      - name: upload to Alist (macos)
         if: runner.os == 'macOS'
         shell: bash
         env:
-          FB_URL: ${{ secrets.FB_URL }}
-          FB_USER: ${{ secrets.FB_USER }}
-          FB_PASS: ${{ secrets.FB_PASS }}
+          ALIST_URL: ${{ secrets.ALIST_URL }}
+          ALIST_USER: ${{ secrets.ALIST_USER }}
+          ALIST_PASS: ${{ secrets.ALIST_PASS }}
         run: |
-          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
-          echo "[fb] token_len=${#TOKEN}"
-          for f in dist/opskit-*; do
-            [ -f "$f" ] || continue
-            name=$(basename "$f")
-            echo "[upload] $name"
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-              "${FB_URL}/api/resources/mirror/soft/macos/${name}?override=true&auth=${TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f")
-            echo "[fb] $name → HTTP $HTTP"
-            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $name"; exit 1; }
-          done
+          brew install rclone
+          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
+          rclone copy dist/ \
+            --webdav-url "${ALIST_URL}/dav" \
+            --webdav-vendor alist \
+            --webdav-user "${ALIST_USER}" \
+            --webdav-pass "${RCLONE_OBSCURE}" \
+            :webdav:mirror/soft/macos/ \
+            --transfers 4 --progress
+          echo "[rclone] macos upload done"
 
   release:
     needs: build
@@ -175,27 +159,25 @@ jobs:
         with:
           path: artifacts/
 
-      - name: upload install scripts to FileBrowser
+      - name: upload install scripts to Alist
         env:
-          FB_URL: ${{ secrets.FB_URL }}
-          FB_USER: ${{ secrets.FB_USER }}
-          FB_PASS: ${{ secrets.FB_PASS }}
+          ALIST_URL: ${{ secrets.ALIST_URL }}
+          ALIST_USER: ${{ secrets.ALIST_USER }}
+          ALIST_PASS: ${{ secrets.ALIST_PASS }}
         run: |
-          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
-          echo "[fb] token_len=${#TOKEN}"
-          for pair in "install.sh:opskit.sh" "install.ps1:opskit.ps1"; do
-            src="${pair%%:*}"
-            dst="${pair##*:}"
-            [ -f "$src" ] || continue
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-              "${FB_URL}/api/resources/install/${dst}?override=true&auth=${TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$src")
-            echo "[fb] $src → install/${dst} HTTP $HTTP"
-            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $src"; exit 1; }
-          done
+          curl -fsSL https://rclone.org/install.sh | sudo bash -s -- --no-superuser 2>/dev/null || sudo apt-get install -y rclone
+          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
+          cp install.sh /tmp/opskit.sh
+          cp install.ps1 /tmp/opskit.ps1 2>/dev/null || true
+          rclone copy /tmp/ \
+            --webdav-url "${ALIST_URL}/dav" \
+            --webdav-vendor alist \
+            --webdav-user "${ALIST_USER}" \
+            --webdav-pass "${RCLONE_OBSCURE}" \
+            --include "opskit.sh" --include "opskit.ps1" \
+            :webdav:install/ \
+            --transfers 2 --progress
+          echo "[rclone] install scripts upload done"
 
       - name: generate SHA256 checksums
         run: |
