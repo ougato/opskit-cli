@@ -91,6 +91,70 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/
 
+      - name: upload to FileBrowser (linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          FB_URL: ${{ secrets.FB_URL }}
+          FB_USER: ${{ secrets.FB_USER }}
+          FB_PASS: ${{ secrets.FB_PASS }}
+        run: |
+          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}")
+          for f in dist/opskit-*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "[upload] $name"
+            curl -s -X PUT "${FB_URL}/api/resources/mirror/soft/linux/${name}?override=true" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f"
+          done
+
+      - name: upload to FileBrowser (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          FB_URL: ${{ secrets.FB_URL }}
+          FB_USER: ${{ secrets.FB_USER }}
+          FB_PASS: ${{ secrets.FB_PASS }}
+        run: |
+          $body = '{"username":"' + $env:FB_USER + '","password":"' + $env:FB_PASS + '"}'
+          $token = Invoke-RestMethod -Method POST -Uri "$env:FB_URL/api/login" `
+            -ContentType "application/json" -Body $body
+          Get-ChildItem dist\opskit-* | ForEach-Object {
+            $name = $_.Name
+            Write-Host "[upload] $name"
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            Invoke-RestMethod -Method PUT `
+              -Uri "$env:FB_URL/api/resources/mirror/soft/windows/$name?override=true" `
+              -Headers @{ Authorization = "Bearer $token" } `
+              -ContentType "application/octet-stream" `
+              -Body $bytes
+          }
+
+      - name: upload to FileBrowser (macos)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          FB_URL: ${{ secrets.FB_URL }}
+          FB_USER: ${{ secrets.FB_USER }}
+          FB_PASS: ${{ secrets.FB_PASS }}
+        run: |
+          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}")
+          for f in dist/opskit-*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "[upload] $name"
+            curl -s -X PUT "${FB_URL}/api/resources/mirror/soft/macos/${name}?override=true" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f"
+          done
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -100,24 +164,10 @@ jobs:
         with:
           path: artifacts/
 
-      - name: generate SHA256 body
-        id: sha256_body
+      - name: generate SHA256 checksums
         run: |
-          body="## SHA256 Checksums"$'\n'
           for f in artifacts/*/opskit-*; do
             [ -f "$f" ] || continue
             [[ "$f" == *.sha256 ]] && continue
-            name="$(basename "$f")"
-            hash="$(sha256sum "$f" | awk '{print $1}')"
-            body="${body}"$'\n'"${hash}  ${name}"
+            sha256sum "$f" | awk '{print $1, $2}'
           done
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$body" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*/opskit-*
-          generate_release_notes: true
-          body: ${{ steps.sha256_body.outputs.body }}
