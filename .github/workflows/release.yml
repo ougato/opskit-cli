@@ -148,16 +148,11 @@ jobs:
             --transfers 4 --progress
           echo "[rclone] macos upload done"
 
-  release:
-    needs: build
+  upload-scripts:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: download all artifacts
-        uses: actions/download-artifact@v6
-        with:
-          path: artifacts/
 
       - name: upload install scripts to Alist
         env:
@@ -178,6 +173,17 @@ jobs:
             :webdav:install/ \
             --transfers 2 --progress
           echo "[rclone] install scripts upload done"
+
+  release:
+    needs: [build, upload-scripts]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts/
 
       - name: generate SHA256 checksums
         run: |
