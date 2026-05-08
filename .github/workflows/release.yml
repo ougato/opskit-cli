@@ -168,10 +168,34 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       - name: download all artifacts
         uses: actions/download-artifact@v6
         with:
           path: artifacts/
+
+      - name: upload install scripts to FileBrowser
+        env:
+          FB_URL: ${{ secrets.FB_URL }}
+          FB_USER: ${{ secrets.FB_USER }}
+          FB_PASS: ${{ secrets.FB_PASS }}
+        run: |
+          TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
+          echo "[fb] token_len=${#TOKEN}"
+          for pair in "install.sh:opskit.sh" "install.ps1:opskit.ps1"; do
+            src="${pair%%:*}"
+            dst="${pair##*:}"
+            [ -f "$src" ] || continue
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+              "${FB_URL}/api/resources/install/${dst}?override=true&auth=${TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$src")
+            echo "[fb] $src → install/${dst} HTTP $HTTP"
+            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $src"; exit 1; }
+          done
 
       - name: generate SHA256 checksums
         run: |

