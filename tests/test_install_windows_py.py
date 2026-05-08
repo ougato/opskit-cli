@@ -62,10 +62,10 @@ class TestInstallPs1Exists:
         ps1 = REPO_ROOT / "install.ps1"
         assert ps1.stat().st_size > 500, "install.ps1 内容过短"
 
-    def test_contains_repo(self):
+    def test_contains_download_base(self):
         ps1 = REPO_ROOT / "install.ps1"
         content = ps1.read_text(encoding="utf-8")
-        assert "ougato/opskit-cli" in content
+        assert "file.icerror.top" in content
 
     def test_contains_localappdata(self):
         ps1 = REPO_ROOT / "install.ps1"
