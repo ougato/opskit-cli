@@ -170,8 +170,8 @@ main() {
     echo ""
     _green "=== 安装完成 ==="
     echo ""
-    _info "运行 'opskit' 启动程序"
     _info "如命令未找到，请执行：export PATH=\"${install_dir}:\$PATH\""
+    exec "${install_dir}/${BIN_NAME}"
 }
 
 main "$@"

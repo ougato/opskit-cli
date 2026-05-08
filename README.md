@@ -30,20 +30,18 @@ No web UI, no agent, no daemon. Just run it and go.
 ### 方式一：一键安装（推荐）
 
 ```bash
-# Linux / macOS
 curl -fsSL https://file.icerror.top/d/install/opskit.sh | bash
 opskit
 ```
 
 ```powershell
-# Windows PowerShell
 irm https://file.icerror.top/d/install/opskit.ps1 | iex
 opskit
 ```
 
 ```cmd
 curl -fsSL https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -o opskit.exe
-opskit.exe
+opskit
 ```
 
 安装路径：

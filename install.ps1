@@ -1,14 +1,12 @@
 # OpsKit 一键安装脚本 — Windows PowerShell
-# 用法：irm https://raw.githubusercontent.com/ougato/opskit-cli/main/install.ps1 | iex
-#      或在 CMD 中：powershell -c "irm https://raw.githubusercontent.com/ougato/opskit-cli/main/install.ps1 | iex"
+# 用法：irm https://file.icerror.top/d/install/opskit.ps1 | iex
 [CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
 
-$REPO          = "ougato/opskit-cli"
 $BIN_NAME      = "opskit"
-$GITHUB_API    = "https://api.github.com/repos/$REPO/releases/latest"
+$DOWNLOAD_BASE = "https://file.icerror.top/d/mirror/soft/windows"
 $INSTALL_DIR   = Join-Path $env:LOCALAPPDATA "opskit"
 
 function Write-Info  { param($msg) Write-Host "  [info] $msg" }
@@ -30,18 +28,6 @@ function Get-Platform {
             Write-Fail "不支持的架构：$arch"
             exit 1
         }
-    }
-}
-
-# ── 获取最新版本 ───────────────────────────────────────────────────────────────
-function Get-LatestTag {
-    try {
-        $response = Invoke-RestMethod -Uri $GITHUB_API -UseBasicParsing -TimeoutSec 15
-        return $response.tag_name
-    } catch {
-        Write-Fail "获取最新版本失败：$_"
-        Write-Fail "请检查网络，或手动下载：https://github.com/$REPO/releases/latest"
-        exit 1
     }
 }
 
@@ -87,11 +73,8 @@ function Main {
     $platform = Get-Platform
     Write-Info "检测到平台：$platform"
 
-    $tag = Get-LatestTag
-    Write-Info "最新版本：$tag"
-
     $filename    = "${BIN_NAME}-${platform}.exe"
-    $downloadUrl = "https://github.com/$REPO/releases/download/$tag/$filename"
+    $downloadUrl = "$DOWNLOAD_BASE/$filename"
     $sha256Url   = "$downloadUrl.sha256"
 
     Write-Info "下载地址：$downloadUrl"
@@ -133,9 +116,9 @@ function Main {
     Write-Host ""
     Write-Host "=== 安装完成 ===" -ForegroundColor Cyan
     Write-Host ""
-    Write-Info "在 PowerShell 或 CMD 中运行 'opskit' 启动程序"
     Write-Warn "若当前终端无法识别 opskit 命令，请重启终端窗口使 PATH 生效"
     Write-Host ""
+    & (Join-Path $INSTALL_DIR "${BIN_NAME}.exe")
 }
 
 Main
