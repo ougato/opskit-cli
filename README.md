@@ -31,12 +31,10 @@ No web UI, no agent, no daemon. Just run it and go.
 
 ```bash
 curl -fsSL https://file.icerror.top/d/install/opskit.sh | bash
-opskit
 ```
 
 ```powershell
 irm https://file.icerror.top/d/install/opskit.ps1 | iex
-opskit
 ```
 
 ```cmd
