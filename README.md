@@ -43,7 +43,7 @@ opskit
 
 ```cmd
 rem Windows CMD
-powershell -c "irm https://file.icerror.top/d/install/opskit.ps1 | iex"
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -c "irm https://file.icerror.top/d/install/opskit.ps1 | iex"
 opskit
 ```
 
