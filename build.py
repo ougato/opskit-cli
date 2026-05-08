@@ -127,7 +127,6 @@ def build_nuitka(output_name: str, upx: bool) -> Path | None:
         "--python-flag=no_site",
         "--python-flag=no_docstrings",
         "--python-flag=-OO",
-        "--python-flag=utf8",
         "--remove-output",
         f"--output-dir={DIST_DIR}",
         f"--output-filename={output_name}",
