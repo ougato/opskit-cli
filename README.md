@@ -42,7 +42,6 @@ opskit
 ```
 
 ```cmd
-rem Windows CMD（curl 内置于 Win10 1803+）
 curl -fsSL https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -o opskit.exe
 opskit.exe
 ```
