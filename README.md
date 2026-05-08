@@ -42,9 +42,9 @@ opskit
 ```
 
 ```cmd
-rem Windows CMD
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -c "irm https://file.icerror.top/d/install/opskit.ps1 | iex"
-opskit
+rem Windows CMD（curl 内置于 Win10 1803+）
+curl -fsSL https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -o opskit.exe
+opskit.exe
 ```
 
 安装路径：
