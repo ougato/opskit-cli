@@ -30,6 +30,23 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+else:
+    import io as _io
+    import os as _os
+    if not _os.environ.get("PYTHONIOENCODING"):
+        _os.environ["PYTHONIOENCODING"] = "utf-8"
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    if getattr(sys.stdout, "encoding", "ascii").lower().replace("-", "") != "utf8":
+        sys.stdout = _io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True,
+        )
+        sys.stderr = _io.TextIOWrapper(
+            sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True,
+        )
 
 # ── venv 自举：必须在所有第三方 import 之前，确保后续 import 使用 venv 内的包 ──
 # 打包模式（Nuitka __compiled__ / PyInstaller sys.frozen）跳过 venv bootstrap
@@ -277,4 +294,14 @@ def run(
 
 
 if __name__ == "__main__":
-    app()
+    try:
+        app()
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as _fatal:
+        try:
+            import core.telemetry as _tel_fallback
+            _tel_fallback.capture_error(_fatal, action="top_level_crash")
+        except Exception:
+            pass
+        raise

@@ -27,10 +27,12 @@ class SentryProvider(TelemetryProvider):
     def init(self) -> None:
         try:
             import sentry_sdk
+            from sentry_sdk.integrations.excepthook import ExcepthookIntegration
             sentry_sdk.init(
                 dsn=self._dsn,
                 release=self._app_version,
                 default_integrations=False,
+                integrations=[ExcepthookIntegration(always_run=True)],
                 send_default_pii=False,
                 traces_sample_rate=0.0,
                 server_name="",
