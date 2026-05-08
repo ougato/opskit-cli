@@ -250,7 +250,7 @@ class TestCmdCompatibility:
     def test_readme_has_cmd_install_command(self):
         readme = REPO_ROOT / "README.md"
         content = readme.read_text(encoding="utf-8")
-        assert "powershell -c" in content, "README 应包含 CMD 兼容的安装命令"
+        assert "curl -fsSL" in content and "opskit-windows-x64.exe" in content, "README 应包含 CMD 兼容的安装命令"
 
     def test_readme_has_opskit_cmd_usage(self):
         readme = REPO_ROOT / "README.md"
