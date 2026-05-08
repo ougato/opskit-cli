@@ -1,0 +1,59 @@
+docker:
+  timestamp: 1778122823.0938797
+  versions:
+  - latest
+golang:
+  timestamp: 1778122823.5975
+  versions:
+  - latest
+java:
+  timestamp: 1778122824.1010532
+  versions:
+  - latest
+mongodb:
+  timestamp: 1778122824.6263757
+  versions:
+  - latest
+mysql:
+  timestamp: 1778122751.7874014
+  versions:
+  - 9.7.0
+  - 8.4.9
+  - 8.3.0
+  - 8.2.0
+  - 8.1.0
+  - 8.0.46
+  - 5.7.44
+  - 5.6.51
+nginx:
+  timestamp: 1778122825.1340313
+  versions:
+  - latest
+nodejs:
+  timestamp: 1778122825.6428206
+  versions:
+  - latest
+postgresql:
+  timestamp: 1778122826.1516457
+  versions:
+  - latest
+python:
+  timestamp: 1778122826.6578476
+  versions:
+  - latest
+redis:
+  timestamp: 1778122827.16815
+  versions:
+  - latest
+wg_client:
+  timestamp: 1778122828.6992424
+  versions:
+  - latest
+wg_server:
+  timestamp: 1778122828.1869817
+  versions:
+  - latest
+wireguard:
+  timestamp: 1778122827.675214
+  versions:
+  - latest

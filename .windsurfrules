@@ -1,0 +1,162 @@
+# 强制规则（必须无条件遵守，不可违反或忽略）
+
+## 输出规则
+
+你被严格禁止在聊天窗口中输出任何文字内容。所有输出必须通过 write_to_file 工具写入指定目录。
+
+### 输出流程
+
+1. 收到用户消息后，write_to_file 写入下一个编号的 .md 文件到输出目录
+2. **每次对话只创建一个 .md 文件**，禁止为同一对话创建多个
+3. **文件内容只写 git 日志格式**，格式遵循 `.windsurf/rules/git.md`：每行 `{序号}. {类型} {描述}`，类型为：修复/修改/更新/删除，按类型分组递增编号
+4. 完成后聊天中只输出：`done`
+5. 新建项目代码文件时，使用 write_to_file 写入对应路径
+6. 修改已有项目代码文件时，使用 edit（单处）或 multi_edit（多处）工具
+7. 始终使用中文回复
+
+### 计划文档目录
+
+本工程的所有计划文档（plan）必须存放到 `.\.windsurf\plans\`，**禁止**放到 `C:\Users\Administrator\.windsurf\plans\` 或其他位置。
+
+### 严格禁止
+
+- 禁止在聊天窗口输出代码块
+- 禁止在聊天窗口输出解释说明
+- 禁止在聊天窗口输出思考过程
+- 禁止在聊天窗口输出任何超过 10 个字符的内容
+
+### 允许
+
+- 聊天中输出 `done` 表示完成
+- 聊天中输出 `working` 表示处理中
+
+### 中英文混排空格规则
+
+- 所有输出内容（包括 git 日志、代码注释、配置注释、聊天回复等）中，英文、数字与中文之间必须用空格隔开
+- 示例：`goroutine 改用 ticker + stopChan 可退出` 而非 `goroutine改用ticker+stopChan可退出`
+- 示例：`添加 maxVisitors = 10000 防止 OOM` 而非 `添加maxVisitors=10000防止OOM`
+- 示例：`使用 HTTP 服务器` 而非 `使用HTTP服务器`
+- 规则：中文 ↔ 英文、中文 ↔ 数字、英文 ↔ 数字 之间加空格；纯英文/纯数字内部不加
+
+### Shell 命令分隔符规则
+
+- Windows PowerShell：使用 ; 分隔命令
+- Linux/macOS Bash：使用 && 分隔命令（条件执行）
+- 示例（Windows）：cd path; git add; git commit
+- 示例（Linux）：cd path && git add && git commit
+- 原因：PowerShell 不支持 && 作为命令分隔符，必须用 ;。Bash 中 && 表示前一条命令成功才执行后一条，更安全。
+
+## 架构文档同步维护
+
+`.windsurf/plans/001.md` 是本项目的**唯一架构真相源（Single Source of Truth）**，长期维护，任何变动必须同步更新。
+
+### 触发条件
+
+以下操作**必须**同步更新 `plans/001.md` 对应章节：
+
+- 新增 / 删除 / 重命名 core/ 下的模块文件
+- 新增 / 删除 / 重命名插件模块（software / monitor / service 等）
+- 修改 ModuleInfo / Recipe / 任何 core/ 数据类的字段定义
+- 修改目录结构（新增目录、移动文件）
+- 修改配置文件格式（config/common.yaml 字段增减）
+- 修改主题文件格式（themes/*.yaml 结构变化）
+- 修改 locale 文案 key 结构（新增 / 删除 / 重命名 key）
+- 修改打包参数（Nuitka / PyInstaller 参数变化）
+- 修改更新机制、版本管理策略
+- 修改跨平台兼容策略（新增平台支持、API 变化）
+- 新增 Phase 或调整开发阶段任务
+
+### 更新规则
+
+1. **先改文档，后写代码**：设计变更先在 `plans/001.md` 中修改对应章节，再实施代码
+2. **代码与文档一致**：如果代码实现偏离了文档设计，必须同步修正文档或代码，不允许两者不一致
+3. **变更日志同步**：每次更新 `plans/001.md` 后，必须在 `.windsurf/workflows/` 的当次对话日志中记录变更内容
+4. **禁止静默修改**：不允许修改架构设计但不更新文档
+
+### 文档章节与代码的对应关系
+
+| plans/001.md 章节 | 对应代码 / 配置 |
+|---|---|
+| 项目定位 / 技术栈 | requirements.txt / pyproject.toml |
+| 主题系统架构 | core/theme.py + core/themes/*.yaml |
+| 插件式模块架构 | core/module.py + core/loader.py + 各模块 __init__.py |
+| 目录结构 | 项目实际目录 |
+| 菜单架构 | main.py + 各模块 menu.py |
+| 核心设计原则 | core/*.py 全部 |
+| 国际化 | core/i18n.py + core/locale/*.yaml |
+| 智能源管理 | core/mirror.py + core/mirrors/ |
+| 自动更新机制 | core/updater.py + core/version.py |
+| 版本管理 | core/version.py + core/config.py |
+| 用户数据安全 | core/config.py + core/updater.py |
+| 单文件打包 | build.py + CI 配置 |
+| 开发阶段 | 整体进度追踪 |
+
+---
+
+## 编码规范（零硬编码）
+
+以下规则适用于本项目所有 .py 文件，必须严格遵守。
+
+### 常量管理
+
+- 所有常量（数值、字符串、路径、超时时间、重试次数、URL、版本号等）**必须**定义在 `core/constants.py` 或对应模块的常量文件中，禁止在逻辑代码中直接写死
+- 常量命名使用 `UPPER_SNAKE_CASE`
+- 示例（正确）：`MAX_RETRY = 3`，代码中 `for i in range(MAX_RETRY)`
+- 示例（禁止）：代码中直接写 `for i in range(3)`
+- 路径常量统一放 `core/constants.py`，如 `DATA_DIR`、`CACHE_DIR`、`LOG_DIR`
+- 网络相关常量（超时、重试、URL）统一放 `core/constants.py`
+
+### 主题样式
+
+- 所有颜色、样式字符串**禁止**硬编码在 .py 文件中
+- 必须通过 `core/theme.py` 提供的 `get_color(token)` 获取
+- 所有图标 emoji **禁止**硬编码在 .py 文件中
+- 必须通过 `core/theme.py` 提供的 `get_icon(token)` 获取
+- 示例（禁止）：`console.print('[bold green]✅ 成功[/bold green]')`
+- 示例（正确）：`print_success(msg)` 或 `console.print(f'[{get_color("success")}]{get_icon("success")} {msg}[/{get_color("success")}]')`
+
+### 多语言本地化
+
+- 所有用户可见的文字（菜单项、提示、错误信息、确认对话框等）**禁止**直接写中文或英文字符串
+- 必须通过 `core/i18n.py` 提供的 `t(key)` 函数获取
+- 文案定义在 `core/locale/zh.yaml` 和 `core/locale/en.yaml` 中
+- 示例（禁止）：`print('安装完成')` 或 `label = '安装软件'`
+- 示例（正确）：`print(t('install.success'))` 或 `label = t('menu.software.install')`
+- 代码注释和日志消息（开发者可见、用户不可见的）不受此限制
+
+### 违反检测
+
+- CI / pre-commit 应配置 lint 规则扫描以下违规：
+  - .py 文件中出现 Rich 颜色标记硬编码（如 `[bold green]`、`[#ff5f5f]`）
+  - .py 文件中出现未通过 `t()` 的用户可见中文字符串
+  - .py 文件中出现魔法数字（未定义为常量的数值字面量，0 和 1 除外）
+
+### UI 提示精简规则
+
+- CLI 界面寸土寸金，文字越短越好，用符号 + 颜色 + 布局代替大段文字
+- 菜单项 / 进度描述控制在 **15 个中文字符以内**
+- 状态用 emoji / 符号表达（✅ ❌ ⚠️ ⏳ 🚫 ✓ ✗ ↑），不用文字"成功""失败"
+- 错误提示格式：`{图标} {主语} {动作}{结果}（{短因}）` + 换行 `↳ {建议}`
+- **一行一事**：每条提示只说一件事，不堆砌多个信息
+- **不解释原理**：只告诉用户"是什么 + 怎么办"，不解释"为什么"
+- **详情折叠**：完整错误堆栈写入 logs/，界面只显示摘要
+- 禁止在界面输出超过 2 行的连续文字块
+
+---
+
+## 文档维护规则
+
+### README.md 编写规则
+
+- `README.md` 存放在**项目根目录**，所有 Phase 全部完成（CLI 功能实施完毕）后统一编写
+- 内容必须包含：项目简介 + 安装方式 + 快速开始 + 全功能使用说明 + 配置说明 + 主题 / 语言切换 + 自动更新 + 构建说明 + License
+- 语言：中英双语（中文优先，英文跟随）
+- **禁止**在功能未完成时提前占位写 README，等全部实施完毕后一次性写完
+
+### 功能实现流程文档规则
+
+- 路径：`.windsurf/workflows/{功能英文标识}.md`
+- **触发时机**：每个业务功能模块完成后**立即**编写，不得拖延到下一个模块
+- 命名规则：`{功能英文标识}.md`，如 `software.md` / `monitor.md` / `core.md`
+- 内容必须包含：功能概述 + 涉及文件列表 + 核心实现流程 + 跨平台处理说明 + 已知限制 + 测试验证方法
+- 此类文档与变更日志（001.md / 002.md ...）**互不冲突、独立维护**，数字编号日志记录每次对话变更，功能文档记录模块实现细节

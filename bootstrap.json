@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "latest": {
+    "stable": {
+      "build": 1,
+      "display": "1.0.0",
+      "min_build": 1
+    }
+  },
+  "update_mirrors": [
+    "https://mirror.ghproxy.com/github.com/ougato/opskit/releases/download",
+    "https://ghproxy.net/github.com/ougato/opskit/releases/download",
+    "https://github.com/ougato/opskit/releases/download"
+  ],
+  "force_update_below": 0,
+  "announcement": ""
+}

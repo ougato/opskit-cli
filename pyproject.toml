@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "opskit"
+version = "1.0.0"
+description = "OpsKit — 极简运维面板"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ougato" }]
+keywords = ["devops", "sysadmin", "tui", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "rich>=13.7",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+opskit = "main:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-anyio>=0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "core*",
+    "monitor*",
+    "software*",
+    "service*",
+    "firewall*",
+    "network*",
+    "security*",
+    "loganalysis*",
+]
+
+[tool.setuptools.package-data]
+"core" = ["themes/*.yaml", "locale/*.yaml", "mirrors/*.yaml"]

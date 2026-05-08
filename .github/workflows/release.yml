@@ -1,0 +1,123 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: install deps
+        run: pip install -r requirements.txt pytest-timeout
+
+      - name: run tests
+        run: python -m pytest tests/ -v --tb=short --timeout=30
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: opskit-linux-x64
+          - os: ubuntu-22.04-arm
+            artifact: opskit-linux-arm64
+          - os: windows-latest
+            artifact: opskit-windows-x64
+          - os: macos-latest
+            artifact: opskit-darwin-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: install UPX (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y upx-ucl
+
+      - name: install UPX (macos)
+        if: runner.os == 'macOS'
+        run: brew install upx
+
+      - name: install UPX (windows)
+        if: runner.os == 'Windows'
+        run: choco install upx -y
+
+      - name: install deps
+        run: pip install -r requirements.txt nuitka zstandard
+
+      - name: build
+        run: python build.py build --backend nuitka --upx
+
+      - name: smoke test (unix)
+        if: runner.os != 'Windows'
+        run: |
+          bin=$(ls dist/opskit-* | grep -v '\.sha256' | head -1)
+          chmod +x "$bin"
+          "$bin" --version
+
+      - name: smoke test (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = Get-ChildItem dist\opskit-*.exe | Select-Object -First 1
+          & $bin.FullName --version
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts/
+
+      - name: generate SHA256 body
+        id: sha256_body
+        run: |
+          body="## SHA256 Checksums"$'\n'
+          for f in artifacts/*/opskit-*; do
+            [ -f "$f" ] || continue
+            [[ "$f" == *.sha256 ]] && continue
+            name="$(basename "$f")"
+            hash="$(sha256sum "$f" | awk '{print $1}')"
+            body="${body}"$'\n'"${hash}  ${name}"
+          done
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/opskit-*
+          generate_release_notes: true
+          body: ${{ steps.sha256_body.outputs.body }}

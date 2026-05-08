@@ -1,0 +1,164 @@
+meta:
+  name: Catppuccin Mocha
+  author: OpsKit
+
+# ─── 颜色 Token ───
+colors:
+  success: "bold #a6e3a1"
+  error: "bold #f38ba8"
+  warning: "bold #f9e2af"
+  info: "bold #89b4fa"
+  muted: "dim #6c7086"
+  accent: "bold #cba6f7"
+
+  modules:
+    root:
+      title: "bold #f9e2af"
+      border: "#f9e2af"
+      breadcrumb_bg: "#f9e2af"
+      breadcrumb_fg: "#1e1e2e"
+    software:
+      title: "bold #89b4fa"
+      border: "#89b4fa"
+      breadcrumb_bg: "#89b4fa"
+      breadcrumb_fg: "#1e1e2e"
+    monitor:
+      title: "bold #a6e3a1"
+      border: "#a6e3a1"
+      breadcrumb_bg: "#a6e3a1"
+      breadcrumb_fg: "#1e1e2e"
+    network:
+      title: "bold #94e2d5"
+      border: "#94e2d5"
+      breadcrumb_bg: "#94e2d5"
+      breadcrumb_fg: "#1e1e2e"
+    toolkit:
+      title: "bold #eba0ac"
+      border: "#eba0ac"
+      breadcrumb_bg: "#eba0ac"
+      breadcrumb_fg: "#1e1e2e"
+
+  progress:
+    bar_active: "#cdd6f4"
+    bar_complete: "#a6e3a1"
+    bar_remaining: "#45475a"
+    speed: "#89b4fa"
+    percentage: "bold #cdd6f4"
+
+  table:
+    header: "bold #cba6f7"
+    row_even: "#cdd6f4"
+    row_odd: "#bac2de"
+    border: "#585b70"
+
+# ─── 图标 Token ───
+# 所有值使用 Unicode 编码，注释标注图标样式
+# 注意：部分 emoji 占 2 列宽，菜单对齐依赖等宽图标
+icons:
+  # 导航
+  back: "\U0001F519"          # 🔙
+  exit: "\u274C"              # ❌
+
+  # 模块
+  software: "\U0001F4E6"      # 📦
+  monitor: "\U0001F4CA"       # 📊
+  network: "\U0001F310"       # 🌐
+  toolkit: "\U0001F527"       # 🔧
+  language: "\U0001F310"      # 🌐
+  theme: "\U0001F3A8"         # 🎨
+  preferences: "\U0001F527"   # 🔧
+
+  # 状态
+  success: "\u2705"           # ✅
+  error: "\u274C"             # ❌
+  warning: "\U0001F6A8"       # 🚨
+  info: "\U0001F4AC"          # 💬
+  loading: "\U0001F504"       # 🔄
+  update: "\U0001F504"        # 🔄
+
+  # 操作 — 通用
+  install: "\U0001F4E5"       # 📥
+  uninstall: "\U0001F4E4"     # 📤
+  upgrade: "\U0001F53C"       # 🔼
+  switch: "\U0001F500"        # 🔀
+  start: "\U0001F7E2"         # 🟢
+  stop: "\U0001F534"          # 🔴
+  restart: "\U0001F504"       # 🔄
+  enable: "\U0001F50C"        # 🔌
+  disable: "\U0001F507"       # 🔇
+
+  # 软件分类
+  devtools: "\U0001F528"      # 🔨
+  devops: "\U0001F4BB"        # 💻
+
+  # 软件 recipe 专用
+  docker: "\U0001F433"        # 🐳
+  nginx: "\U0001F310"         # 🌐
+  python: "\U0001F40D"        # 🐍
+  golang: "\U0001F439"        # 🐹
+  nodejs: "\U0001F7E2"        # 🟢
+  java: "\U0001F7E8"          # 🟨
+  mysql: "\U0001F42C"         # 🐬
+  postgresql: "\U0001F418"    # 🐘
+  mongodb: "\U0001F343"       # 🍃
+  redis: "\U0001F534"         # 🔴
+
+  # WireGuard
+  wireguard: "\U0001F510"     # 🔐
+  wg_server: "\U0001F30D"     # 🌍
+  wg_client: "\U0001F3E0"     # 🏠
+  diagnose: "\U0001F527"      # 🔧
+  manage: "\U0001F310"        # 🌐
+
+  # 操作 — 菜单专用
+  list: "\U0001F4CB"          # 📋
+  installed: "\U0001F4E6"     # 📦
+  add: "\u2795"               # ➕
+  delete: "\u2796"            # ➖
+  edit: "\U0001F504"          # 🔄
+  update_token: "\U0001F511"  # 🔑
+  search: "\U0001F50D"        # 🔍
+  save: "\U0001F4BE"          # 💾
+  trash: "\U0001F6AE"         # 🗮
+  toggle_on: "\U0001F51B"     # 🔛
+  toggle_off: "\U0001F515"    # 🔕
+
+  # 监控子项
+  cpu: "\U0001F4BB"           # 💻
+  memory: "\U0001F9E0"        # 🧠
+  disk: "\U0001F4BF"          # 💿
+  processes: "\U0001F4CB"     # 📋
+
+  # 网络工具
+  ping: "\U0001F4E1"          # 📡
+  traceroute: "\U0001F52D"    # 🔭
+  dns: "\U0001F310"           # 🌐
+  port_scan: "\U0001F50D"     # 🔍
+  speed_test: "\U0001F4F6"    # 📶
+  public_ip: "\U0001F30D"     # 🌍
+
+  # 备份子项
+  rsync: "\U0001F4E4"         # 📤
+  restore: "\U0001F4E5"       # 📥
+
+# ─── Banner 渐变色序列 ───
+banner:
+  gradient:
+    - "#f38ba8"
+    - "#fab387"
+    - "#f9e2af"
+    - "#a6e3a1"
+    - "#94e2d5"
+    - "#89b4fa"
+    - "#cba6f7"
+    - "#f5c2e7"
+  border: "bright_magenta"
+  width: 52
+
+# ─── 面板样式 ───
+panel:
+  box: "ROUNDED"
+  width: 52
+  padding:
+    - 0
+    - 1

@@ -1,0 +1,64 @@
+"""WireGuard 部署常量"""
+from __future__ import annotations
+
+# ─── 默认端口 ─────────────────────────────────────────────────────────────────
+XRAY_REALITY_PORT = 443
+WG_UDP_PORT = 3002
+CLIENT_XRAY_LOCAL_PORT = 4000
+
+# ─── VPN 子网 ─────────────────────────────────────────────────────────────────
+VPN_SUBNET = "10.10.10.0/24"
+VPN_SERVER_IP = "10.10.10.1"
+VPN_CLIENT_IP_START = 2
+VPN_CLIENT_IP_MAX = 254
+
+# ─── WireGuard 客户端默认值 ──────────────────────────────────────────────────
+WG_CLIENT_MTU = 1280
+WG_KEEPALIVE = 25
+
+# ─── 客户端默认值 ─────────────────────────────────────────────────────────────
+DEFAULT_ROUTER_IP = "192.168.88.1"
+
+# ─── 文件路径（通过 core/paths.py 获取，禁止直接硬编码）────────────────────
+from core.paths import (
+    wg_config_dir as _wg_config_dir,
+    wg_config_file as _wg_config_file,
+    xray_config_dir as _xray_config_dir,
+    xray_config_file as _xray_config_file,
+    xray_binary as _xray_binary,
+    nginx_conf_dir as _nginx_conf_dir,
+    nginx_ssl_dir as _nginx_ssl_dir,
+)
+
+WG_CONFIG_DIR = str(_wg_config_dir())
+WG_CONFIG_FILE = str(_wg_config_file())
+WG_STATE_FILE = str(_wg_config_dir() / ".opskit-state.json")
+WG_CLIENT_STATE_FILE = str(_wg_config_dir() / ".opskit-client-state.json")
+XRAY_CONFIG_DIR = str(_xray_config_dir())
+XRAY_CONFIG_FILE = str(_xray_config_file())
+XRAY_BINARY = str(_xray_binary())
+NGINX_STREAM_CONF = str(_nginx_conf_dir() / "stream-sni.conf")
+NGINX_STEAL_CONF = str(_nginx_conf_dir() / "steal-oneself.conf")
+NGINX_VLESS_WS_CONF = str(_nginx_conf_dir() / "vless-ws.conf")
+XRAY_WS_PATH = "/vless-ws"
+XRAY_WS_PORT = 2443
+ACME_CERT_DIR = str(_nginx_ssl_dir())
+ACME_DEFAULT_EMAIL = "acme@opskit.local"
+
+# ─── 服务名 ───────────────────────────────────────────────────────────────────
+WG_SERVICE = "wg-quick@wg0"
+XRAY_SERVICE = "xray"
+
+# ─── Xray-core 下载源 ────────────────────────────────────────────────────────
+XRAY_REPO              = "XTLS/Xray-core"
+XRAY_DOC_URL           = "https://github.com/xtls"
+XRAY_DOWNLOAD_ZIP      = "Xray-linux-64.zip"
+XRAY_API_LATEST        = "https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+XRAY_API_LATEST_GHPROXY = "https://mirror.ghproxy.com/https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+
+# ─── acme.sh 安装源（按优先级排列） ─────────────────────────────────────────
+ACME_INSTALL_MIRRORS = [
+    "https://gitee.com/neilpang/acme.sh/raw/master/acme.sh",
+    "https://get.acme.sh",
+    "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh",
+]

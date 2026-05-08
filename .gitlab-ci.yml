@@ -1,0 +1,40 @@
+stages:
+  - release
+
+# ─── release: 创建 GitLab Release，所有平台链接指向 GitHub Releases ─────────
+release_job:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+  script:
+    - echo "Creating GitLab Release ${CI_COMMIT_TAG}"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "OpsKit ${CI_COMMIT_TAG}"
+    description: |
+      ## OpsKit ${CI_COMMIT_TAG}
+
+      全平台产物由 GitHub Actions 构建，下载链接指向 GitHub Releases。
+
+      | 平台 | 架构 | 文件 |
+      |---|---|---|
+      | Linux | x64 | opskit-linux-x64 |
+      | Linux | arm64 | opskit-linux-arm64 |
+      | Windows | x64 | opskit-windows-x64.exe |
+      | macOS | arm64 (M 系列) | opskit-darwin-arm64 |
+    assets:
+      links:
+        - name: "opskit-linux-x64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-linux-x64"
+          link_type: other
+        - name: "opskit-linux-arm64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-linux-arm64"
+          link_type: other
+        - name: "opskit-windows-x64.exe"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-windows-x64.exe"
+          link_type: other
+        - name: "opskit-darwin-arm64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-darwin-arm64"
+          link_type: other
+
