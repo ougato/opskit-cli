@@ -101,15 +101,18 @@ jobs:
         run: |
           TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}")
+            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
+          echo "[fb] token_len=${#TOKEN}"
           for f in dist/opskit-*; do
             [ -f "$f" ] || continue
             name=$(basename "$f")
             echo "[upload] $name"
-            curl -s -X PUT "${FB_URL}/api/resources/mirror/soft/linux/${name}?override=true" \
-              -H "Authorization: Bearer ${TOKEN}" \
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+              "${FB_URL}/api/resources/mirror/soft/linux/${name}?override=true&auth=${TOKEN}" \
               -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f"
+              --data-binary @"$f")
+            echo "[fb] $name → HTTP $HTTP"
+            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $name"; exit 1; }
           done
 
       - name: upload to FileBrowser (windows)
@@ -120,18 +123,21 @@ jobs:
           FB_USER: ${{ secrets.FB_USER }}
           FB_PASS: ${{ secrets.FB_PASS }}
         run: |
-          $body = '{"username":"' + $env:FB_USER + '","password":"' + $env:FB_PASS + '"}'
-          $token = Invoke-RestMethod -Method POST -Uri "$env:FB_URL/api/login" `
-            -ContentType "application/json" -Body $body
+          $loginBody = '{"username":"' + $env:FB_USER + '","password":"' + $env:FB_PASS + '"}'
+          $resp = Invoke-WebRequest -Method POST -Uri "$env:FB_URL/api/login" `
+            -ContentType "application/json" -Body $loginBody
+          $token = $resp.Content.Trim('"')
+          Write-Host "[fb] token_len=$($token.Length)"
           Get-ChildItem dist\opskit-* | ForEach-Object {
             $name = $_.Name
             Write-Host "[upload] $name"
             $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
-            Invoke-RestMethod -Method PUT `
-              -Uri "$env:FB_URL/api/resources/mirror/soft/windows/$name?override=true" `
-              -Headers @{ Authorization = "Bearer $token" } `
+            $up = Invoke-WebRequest -Method PUT `
+              -Uri "$env:FB_URL/api/resources/mirror/soft/windows/$($name)?override=true&auth=$token" `
               -ContentType "application/octet-stream" `
               -Body $bytes
+            Write-Host "[fb] $name → HTTP $($up.StatusCode)"
+            if ($up.StatusCode -ne 200) { Write-Error "upload failed: $name"; exit 1 }
           }
 
       - name: upload to FileBrowser (macos)
@@ -144,15 +150,18 @@ jobs:
         run: |
           TOKEN=$(curl -s -X POST "${FB_URL}/api/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}")
+            -d "{\"username\":\"${FB_USER}\",\"password\":\"${FB_PASS}\"}" | tr -d '\n\r "')
+          echo "[fb] token_len=${#TOKEN}"
           for f in dist/opskit-*; do
             [ -f "$f" ] || continue
             name=$(basename "$f")
             echo "[upload] $name"
-            curl -s -X PUT "${FB_URL}/api/resources/mirror/soft/macos/${name}?override=true" \
-              -H "Authorization: Bearer ${TOKEN}" \
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+              "${FB_URL}/api/resources/mirror/soft/macos/${name}?override=true&auth=${TOKEN}" \
               -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f"
+              --data-binary @"$f")
+            echo "[fb] $name → HTTP $HTTP"
+            [ "$HTTP" = "200" ] || { echo "[error] upload failed: $name"; exit 1; }
           done
 
   release:
