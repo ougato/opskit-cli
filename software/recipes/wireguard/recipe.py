@@ -133,14 +133,17 @@ class WgClientRecipe(Recipe):
     hidden: ClassVar[bool] = True
 
     def detect(self) -> str | None:
-        from core.sysconfig import _load as _sc_load
-        entry = _sc_load().get("wg_client", {})
-        if entry.get("status") != "installed":
-            return None
-        from pathlib import Path
-        from wireguard.constants import WG_CONFIG_FILE, XRAY_BINARY
-        if not Path(WG_CONFIG_FILE).exists() or not Path(XRAY_BINARY).exists():
-            return None
+        from wireguard.client import _load_client_state
+        tunnels = _load_client_state().get("tunnels", [])
+        if not tunnels:
+            from core.sysconfig import _load as _sc_load
+            sc = _sc_load()
+            has_any = any(
+                k.startswith("wg_client_") and v.get("status") == "installed"
+                for k, v in sc.items() if isinstance(v, dict)
+            )
+            if not has_any:
+                return None
         from core.runner import which, run
         if not which("wg"):
             return None

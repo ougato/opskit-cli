@@ -61,8 +61,11 @@ def _generate_client_token(
     client_ip: str,
     wg_client_priv: str,
     wg_psk: str,
+    vpn_subnet: str = "10.10.10.0/24",
+    vpn_gateway: str = "10.10.10.1",
+    label: str = "default",
 ) -> str:
-    """生成客户端连接令牌"""
+    """生成客户端连接令牌（v2 格式，含子网/网关/标签）"""
     from wireguard.token import encode_token
     return encode_token({
         "server_ip": server_ip,
@@ -75,6 +78,9 @@ def _generate_client_token(
         "uuid": uuid,
         "short_id": short_id,
         "sni": sni,
+        "vpn_subnet": vpn_subnet,
+        "vpn_gateway": vpn_gateway,
+        "label": label,
     })
 
 
@@ -86,11 +92,12 @@ def install_server() -> None:
     from core.prompt import pause, clear_screen, text_input, UserCancel
     from wireguard.constants import (
         XRAY_REALITY_PORT,
-        WG_UDP_PORT, VPN_SERVER_IP, VPN_SUBNET,
+        WG_UDP_PORT,
         WG_CONFIG_FILE, XRAY_CONFIG_FILE, WG_SERVICE, XRAY_SERVICE,
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
         XRAY_WS_PORT, XRAY_WS_PATH, ACME_CERT_DIR,
         ACME_DEFAULT_EMAIL, VPN_CLIENT_IP_START,
+        VPN_SUBNET_TPL, VPN_GW_TPL, VPN_DEFAULT_OCTET3,
     )
     from wireguard.utils import (
         gen_wg_keypair, gen_wg_psk, gen_xray_keypair, gen_uuid, gen_short_id,
@@ -103,11 +110,14 @@ def install_server() -> None:
         nginx_vless_ws_config, nginx_http_only_config,
     )
 
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard", t("software.install")]
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.install")]
 
     from core.config import load_config, set_config_value
     _cfg = load_config()
-    _saved_domain = (_cfg.get("wireguard") or {}).get("domain") or ""
+    _wg_cfg = _cfg.get("wireguard") or {}
+    _saved_domain = _wg_cfg.get("domain") or ""
+    _saved_octet3 = _wg_cfg.get("octet3")
+    _saved_label  = _wg_cfg.get("tunnel_label") or ""
 
     # ── 收集输入 ─────────────────────────────────────────────────────────────
     try:
@@ -145,6 +155,54 @@ def install_server() -> None:
             pause()
             return
         public_ip = public_ip.strip()
+
+    # ── 输入 VPN 子网第三段（1~254）────────────────────────────────────────
+    _default_octet3 = _saved_octet3 if _saved_octet3 is not None else VPN_DEFAULT_OCTET3
+    _octet3 = _default_octet3
+    while True:
+        try:
+            _octet3_raw = text_input(
+                breadcrumb=breadcrumb,
+                prompt=t("wireguard.input_vpn_octet3"),
+                default=str(_default_octet3),
+                theme_key="software",
+            )
+        except UserCancel:
+            return
+        _raw = (_octet3_raw or "").strip() or str(_default_octet3)
+        try:
+            _val = int(_raw)
+            if 1 <= _val <= 254:
+                _octet3 = _val
+                break
+        except ValueError:
+            pass
+        from core.theme import print_error as _pe
+        _pe(t("wireguard.input_vpn_octet3_invalid"))
+
+    if _octet3 != _saved_octet3:
+        _cfg = set_config_value(_cfg, "wireguard.octet3", _octet3)
+
+    vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
+    vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
+
+    # ── 输入隧道名称 ──────────────────────────────────────────────────────
+    _default_label = _saved_label or "server"
+    try:
+        _label_raw = text_input(
+            breadcrumb=breadcrumb,
+            prompt=t("wireguard.input_tunnel_label"),
+            default=_default_label,
+            theme_key="software",
+        )
+    except UserCancel:
+        return
+    tunnel_label = (_label_raw or "").strip() or _default_label
+    import re as _re
+    tunnel_label = _re.sub(r"[^a-zA-Z0-9_-]", "-", tunnel_label)[:24].strip("-") or _default_label
+
+    if tunnel_label != _saved_label:
+        _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
 
     iface = detect_default_iface()
     wg_port = WG_UDP_PORT
@@ -256,9 +314,10 @@ def install_server() -> None:
         sp.step(t("wireguard.step.write_wg_config"))
         wg_cfg = wg_server_config(
             server_private_key=wg_server_priv,
-            server_ip=VPN_SERVER_IP,
+            server_ip=vpn_gateway,
             wg_port=wg_port,
             iface=iface,
+            vpn_subnet=vpn_subnet,
         )
         write_file(WG_CONFIG_FILE, wg_cfg)
 
@@ -266,7 +325,7 @@ def install_server() -> None:
         sp.step(t("wireguard.step.gen_client"))
         client_priv, client_pub = gen_wg_keypair()
         client_psk = gen_wg_psk()
-        client_ip = f"10.10.10.{VPN_CLIENT_IP_START}"
+        client_ip = f"10.10.{_octet3}.{VPN_CLIENT_IP_START}"
 
         # 追加 peer 到 wg0.conf
         peer_section = wg_peer_section(
@@ -290,6 +349,9 @@ def install_server() -> None:
             client_ip=client_ip,
             wg_client_priv=client_priv,
             wg_psk=client_psk,
+            vpn_subnet=vpn_subnet,
+            vpn_gateway=vpn_gateway,
+            label=tunnel_label,
         )
 
         # 保存状态（令牌生成后写入，确保 client-1 含 token 字段）
@@ -302,6 +364,9 @@ def install_server() -> None:
             "short_id": short_id,
             "xray_pub": xray_pub,
             "wg_server_pub": wg_server_pub,
+            "vpn_subnet": vpn_subnet,
+            "vpn_gateway": vpn_gateway,
+            "tunnel_label": tunnel_label,
             "clients": [
                 {
                     "name": "client-1",
@@ -363,7 +428,7 @@ def install_server() -> None:
         (t("wireguard.info.public_ip"),   public_ip),
         (t("wireguard.info.mode"),        t("wireguard.mode_443")),
         (t("wireguard.info.xray_port"),   str(server_port)),
-        (t("wireguard.info.vpn_gateway"), VPN_SERVER_IP),
+        (t("wireguard.info.vpn_gateway"), vpn_gateway),
     ]
     info_rows.insert(1, (t("wireguard.info.domain"), sni))
     for label, value in info_rows:
@@ -434,7 +499,7 @@ def uninstall_server() -> None:
     ]
     descs = [t(k) for k in step_keys]
 
-    print_action_title(["OpsKit", t("menu.software"), "WireGuard", t("software.uninstall")])
+    print_action_title(["OpsKit", t("menu.software"), t("software.wireguard"), t("software.uninstall")])
     with MultiStepProgress(descs) as sp:
         # ── 1. 停止 WireGuard ────────────────────────────────────────────────
         sp.step(descs[0])
@@ -486,7 +551,6 @@ def uninstall_server() -> None:
         _SCM.remove("wg_server")
         Path("/root/wg_server_info.txt").unlink(missing_ok=True)
 
-    console.print()
     print_success(t('wireguard.diagnose.uninstall_success'))
 
 
@@ -495,7 +559,7 @@ def diagnose_server() -> None:
     from core.i18n import t as _t
     from core.theme import print_action_title
     from core.prompt import pause
-    print_action_title(["OpsKit", _t("menu.software"), "WireGuard", _t("software.diagnose")])
+    print_action_title(["OpsKit", _t("menu.software"), _t("software.wireguard"), _t("software.diagnose")])
     import json
     import subprocess
     from pathlib import Path
@@ -507,7 +571,6 @@ def diagnose_server() -> None:
     from wireguard.constants import (
         WG_SERVICE, XRAY_SERVICE,
         WG_CONFIG_FILE, XRAY_CONFIG_FILE,
-        VPN_SERVER_IP,
     )
     from wireguard.utils import is_service_active, is_port_listening
 
@@ -600,7 +663,10 @@ def diagnose_server() -> None:
     tbl.add_row(_lbl(t(f"{dk}.wg_pub")), _val(wg_pub))
     tbl.add_row(_lbl(t(f"{dk}.wg_port")), _port_status(wg_port, "udp"))
     tbl.add_row(_lbl(t(f"{dk}.xray_port")), _port_status(xray_port, "tcp"))
-    tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(VPN_SERVER_IP))
+    from core.sysconfig import _load as _sc_load
+    _srv_state = _sc_load().get("wg_server", {})
+    _vpn_gw = _srv_state.get("vpn_gateway", "—")
+    tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
     tbl.add_row(Text(""), Text(""))
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────
@@ -712,14 +778,15 @@ def _get_peers() -> list[dict]:
     return peers
 
 
-def _next_peer_ip(peers: list[dict]) -> str:
-    """根据已有 peer 的 allowed-ips 推算下一个可用 10.10.10.x/32"""
+def _next_peer_ip(peers: list[dict], octet3: int = 10) -> str:
+    """根据已有 peer 的 allowed-ips 推算下一个可用 10.10.{octet3}.x/32"""
     from wireguard.constants import VPN_PEER_IP_START
+    prefix = f"10.10.{octet3}."
     used: set[int] = set()
     for p in peers:
         for cidr in p["allowed"].split(","):
             cidr = cidr.strip()
-            if cidr.startswith("10.10.10."):
+            if cidr.startswith(prefix):
                 try:
                     host = int(cidr.split("/")[0].split(".")[-1])
                     used.add(host)
@@ -728,7 +795,7 @@ def _next_peer_ip(peers: list[dict]) -> str:
     candidate = VPN_PEER_IP_START
     while candidate in used:
         candidate += 1
-    return f"10.10.10.{candidate}/32"
+    return f"{prefix}{candidate}/32"
 
 
 def _fmt_bytes(n: int) -> str:
@@ -812,7 +879,7 @@ def manage_peers() -> None:
     from core.theme import get_icon, get_color, print_action_title, print_warning
 
     mk = "wireguard.manage"
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard",
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"),
                   t("software.wg_server"), t(f"{mk}.title")]
     muted = get_color("muted")
 
@@ -910,7 +977,11 @@ def add_peer(breadcrumb: list[str]) -> None:
         return
     client_name = raw.strip() if raw and raw.strip() else default_name
 
-    client_ip = f"10.10.10.{next_ip_num}"
+    _vpn_subnet  = state.get("vpn_subnet",  "10.10.10.0/24")
+    _vpn_gateway = state.get("vpn_gateway", "10.10.10.1")
+    _tunnel_label = state.get("tunnel_label", "default")
+    _octet3 = int(_vpn_gateway.split(".")[2]) if _vpn_gateway else 10
+    client_ip = f"10.10.{_octet3}.{next_ip_num}"
     client_priv, client_pub = gen_wg_keypair()
     client_psk = gen_wg_psk()
 
@@ -939,6 +1010,9 @@ def add_peer(breadcrumb: list[str]) -> None:
         client_ip=client_ip,
         wg_client_priv=client_priv,
         wg_psk=client_psk,
+        vpn_subnet=_vpn_subnet,
+        vpn_gateway=_vpn_gateway,
+        label=_tunnel_label,
     )
 
     # 更新状态（含令牌）

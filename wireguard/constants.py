@@ -6,11 +6,15 @@ XRAY_REALITY_PORT = 443
 WG_UDP_PORT = 3002
 CLIENT_XRAY_LOCAL_PORT = 4000
 
-# ─── VPN 子网 ─────────────────────────────────────────────────────────────────
-VPN_SUBNET = "10.10.10.0/24"
-VPN_SERVER_IP = "10.10.10.1"
+# ─── VPN 子网（默认值，服务端安装时可按第三段独立配置）────────────────────────
+VPN_SUBNET_TPL   = "10.10.{octet3}.0/24"
+VPN_GW_TPL       = "10.10.{octet3}.1"
+VPN_SUBNET       = "10.10.10.0/24"
+VPN_SERVER_IP    = "10.10.10.1"
 VPN_CLIENT_IP_START = 2
-VPN_CLIENT_IP_MAX = 254
+VPN_PEER_IP_START   = 2
+VPN_CLIENT_IP_MAX   = 254
+VPN_DEFAULT_OCTET3  = 10
 
 # ─── WireGuard 客户端默认值 ──────────────────────────────────────────────────
 WG_CLIENT_MTU = 1280
@@ -44,6 +48,25 @@ XRAY_WS_PATH = "/vless-ws"
 XRAY_WS_PORT = 2443
 ACME_CERT_DIR = str(_nginx_ssl_dir())
 ACME_DEFAULT_EMAIL = "acme@opskit.local"
+
+# ─── SNI 伪装域名白名单（VLESS+WS+TLS 用，从中随机选取 tlsSettings.serverName）──
+SNI_WHITELIST = [
+    "www.microsoft.com",
+    "www.apple.com",
+    "update.microsoft.com",
+    "www.amazon.com",
+    "www.samsung.com",
+    "www.nvidia.com",
+    "www.intel.com",
+    "addons.mozilla.org",
+    "www.mozilla.org",
+    "www.hp.com",
+    "www.dell.com",
+]
+
+# ─── 多隧道客户端端口分配范围 ────────────────────────────────────────────────
+CLIENT_XRAY_LOCAL_PORT_MIN = 4000
+CLIENT_XRAY_LOCAL_PORT_MAX = 4099
 
 # ─── 服务名 ───────────────────────────────────────────────────────────────────
 WG_SERVICE = "wg-quick@wg0"

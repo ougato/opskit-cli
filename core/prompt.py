@@ -13,6 +13,22 @@ from rich.text import Text
 console = Console()
 
 
+# ─── 非交互模式全局标志 ─────────────────────────────────────────────────────
+# --yes / -y / OPSKIT_YES=1 时启用，跳过所有确认弹窗和 pause
+_auto_yes: bool = False
+
+
+def set_auto_yes(value: bool = True) -> None:
+    """设置全局非交互模式（--yes / OPSKIT_YES=1）"""
+    global _auto_yes
+    _auto_yes = value
+
+
+def is_auto_yes() -> bool:
+    """查询当前是否处于非交互模式"""
+    return _auto_yes
+
+
 # ─── 取消/返回热键（只改这一行即可全局切换）────────────────────────────────────
 # '\x1b' = ESC   '\x03' = Ctrl+C   '0' = 数字 0
 CANCEL_KEY: str = '\x1b'
@@ -347,7 +363,12 @@ def confirm(
     prompt: str,
     theme_key: str = 'root',
 ) -> bool:
-    """Powerline 风格确认（y/N 单键）"""
+    """Powerline 风格确认（y/N 单键）。
+
+    非交互模式（--yes）下直接返回 True。
+    """
+    if _auto_yes:
+        return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
     from core.i18n import t as _t
@@ -473,7 +494,12 @@ def text_input(
 
 
 def pause(msg: str = '') -> None:
-    """操作完成后等待用户按任意键（屏蔽 SIGINT 防止二次中断）"""
+    """操作完成后等待用户按任意键（屏蔽 SIGINT 防止二次中断）。
+
+    非交互模式（--yes）下直接返回，不等待按键。
+    """
+    if _auto_yes:
+        return
     import signal
     if not msg:
         from core.i18n import t as _t

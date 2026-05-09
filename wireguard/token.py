@@ -8,7 +8,13 @@ import json
 from core.i18n import t
 
 TOKEN_PREFIX = "opskit://"
-TOKEN_VERSION = 1
+TOKEN_VERSION = 2
+
+TOKEN_V1_DEFAULTS = {
+    "vpn_subnet": "10.10.10.0/24",
+    "vpn_gateway": "10.10.10.1",
+    "label": "default",
+}
 
 
 def encode_token(data: dict) -> str:
@@ -51,5 +57,9 @@ def decode_token(token: str) -> dict:
     missing = [k for k in required_keys if k not in data]
     if missing:
         raise ValueError(t("wireguard.error.token_missing_fields", fields=', '.join(missing)))
+
+    for key, default in TOKEN_V1_DEFAULTS.items():
+        if key not in data:
+            data[key] = default
 
     return data

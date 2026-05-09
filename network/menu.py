@@ -120,17 +120,18 @@ def entry() -> None:
             pass
 
 
-def show_ping() -> None:
+def show_ping(host: str | None = None) -> None:
     from network.commands import ping
 
-    try:
-        host = text_input(
-            breadcrumb=["OpsKit", t("menu.network"), t("network.ping")],
-            prompt=t("network.enter_host"),
-            default="8.8.8.8",
-        )
-    except UserCancel:
-        return
+    if not host:
+        try:
+            host = text_input(
+                breadcrumb=["OpsKit", t("menu.network"), t("network.ping")],
+                prompt=t("network.enter_host"),
+                default="8.8.8.8",
+            )
+        except UserCancel:
+            return
     if not host:
         return
 
@@ -164,17 +165,18 @@ def show_ping() -> None:
     pause()
 
 
-def show_traceroute() -> None:
+def show_traceroute(host: str | None = None) -> None:
     from network.commands import traceroute
 
-    try:
-        host = text_input(
-            breadcrumb=["OpsKit", t("menu.network"), t("network.traceroute")],
-            prompt=t("network.enter_host"),
-            default="8.8.8.8",
-        )
-    except UserCancel:
-        return
+    if not host:
+        try:
+            host = text_input(
+                breadcrumb=["OpsKit", t("menu.network"), t("network.traceroute")],
+                prompt=t("network.enter_host"),
+                default="8.8.8.8",
+            )
+        except UserCancel:
+            return
     if not host:
         return
 
@@ -194,9 +196,40 @@ def show_traceroute() -> None:
     pause()
 
 
-def show_dns() -> None:
+def show_dns(host: str | None = None) -> None:
     from network.commands import dns_lookup, dns_reverse
 
+    title_color = get_color(f"modules.{_THEME_KEY}.title")
+    success = get_color("success")
+    error_c = get_color("error")
+    muted = get_color("muted")
+
+    # 非交互模式：host 已传入，自动判断正查 / 反查
+    if host:
+        import re as _re
+        _is_ip = bool(_re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host))
+        clear_screen()
+        from core.progress import spinner
+        if _is_ip:
+            with spinner(f"PTR: {host}"):
+                hostname = dns_reverse(host)
+            if hostname:
+                console.print(f"\n[{success}]{host}[/{success}] → [{title_color}]{hostname}[/{title_color}]")
+            else:
+                print_error(t("network.dns_not_found"))
+        else:
+            with spinner(f"{t('network.dns')}: {host}"):
+                result = dns_lookup(host)
+            if result.addresses:
+                console.print(f"\n[{title_color}]{host}[/{title_color}]")
+                for addr in result.addresses:
+                    console.print(f"  [{success}]{addr}[/{success}]")
+            else:
+                print_error(t("network.dns_not_found"))
+        pause()
+        return
+
+    # 交互模式：选择正查 / 反查
     choices = [
         {"key": "1", "label": t("network.dns_forward")},
         {"key": "2", "label": t("network.dns_reverse")},
@@ -213,11 +246,6 @@ def show_dns() -> None:
         return
     if not key:
         return
-
-    title_color = get_color(f"modules.{_THEME_KEY}.title")
-    success = get_color("success")
-    error_c = get_color("error")
-    muted = get_color("muted")
 
     if key == "1":
         try:
@@ -260,17 +288,18 @@ def show_dns() -> None:
     pause()
 
 
-def show_port_scan() -> None:
+def show_port_scan(host: str | None = None) -> None:
     from network.commands import scan_ports
 
-    try:
-        host = text_input(
-            breadcrumb=["OpsKit", t("menu.network"), t("network.port_scan")],
-            prompt=t("network.enter_host"),
-            default="127.0.0.1",
-        )
-    except UserCancel:
-        return
+    if not host:
+        try:
+            host = text_input(
+                breadcrumb=["OpsKit", t("menu.network"), t("network.port_scan")],
+                prompt=t("network.enter_host"),
+                default="127.0.0.1",
+            )
+        except UserCancel:
+            return
     if not host:
         return
 
