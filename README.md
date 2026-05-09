@@ -99,7 +99,81 @@ Invoke-WebRequest https://file.icerror.top/d/mirror/soft/windows/opskit-windows-
 
 ---
 
-## 📦 安装依赖 / Dependencies
+## �️ CLI 命令行用法 / CLI Usage
+
+除交互式菜单外，所有功能均可通过命令行参数直达：
+
+```bash
+# 启动交互式菜单（默认）
+opskit run
+python main.py run
+
+# 全局选项
+opskit run --version          # 查看版本
+opskit run --theme catppuccin # 指定主题
+opskit run --lang zh          # 指定语言 (zh/en)
+```
+
+### 📦 软件管理 (software)
+
+```bash
+opskit software list                  # 显示所有可用软件及安装状态
+opskit software search                # 搜索软件（交互式输入关键词）
+opskit software installed             # 已安装软件列表
+
+opskit software install               # 交互式选择安装
+opskit software install docker        # 直接安装指定软件
+opskit software install nginx
+opskit software install mysql
+opskit software install redis
+opskit software install postgresql
+opskit software install mongodb
+opskit software install golang
+opskit software install python
+opskit software install java
+opskit software install nodejs
+opskit software install wireguard     # 进入 WireGuard 子菜单（服务端/客户端）
+
+opskit software uninstall             # 交互式选择卸载
+opskit software uninstall docker      # 直接卸载指定软件
+
+opskit software upgrade               # 交互式选择升级
+opskit software upgrade redis         # 直接升级指定软件
+
+opskit software diagnose wg_server    # WireGuard 服务端诊断
+opskit software diagnose wg_client    # WireGuard 客户端诊断
+
+opskit software manage wg_server      # WireGuard 服务端管理（添加/列出/删除客户端）
+opskit software manage wg_client      # WireGuard 客户端管理（查看/更新令牌/移除隧道）
+```
+
+### 📊 系统监控 (monitor)
+
+```bash
+opskit monitor dashboard              # 实时概览仪表盘
+opskit monitor cpu                    # CPU 详情（每核使用率）
+opskit monitor memory                 # 内存 + Swap 详情
+opskit monitor disk                   # 磁盘分区使用情况
+opskit monitor network                # 网络接口实时流量
+opskit monitor processes              # 进程列表（Top 15）
+```
+
+### 🌐 网络工具 (network)
+
+```bash
+opskit network ping                   # Ping 测试
+opskit network traceroute             # 路由追踪
+opskit network dns                    # DNS 查询（正向/反向）
+opskit network port-scan              # 端口扫描
+opskit network speed-test             # 下载测速
+opskit network public-ip              # 公网 IP 查询
+```
+
+> **开发模式**：将 `opskit` 替换为 `python main.py`，例如 `python main.py software install docker`
+
+---
+
+## �📦 安装依赖 / Dependencies
 
 ```
 Python >= 3.10

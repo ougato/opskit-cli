@@ -271,13 +271,245 @@ def _on_exit(cfg: dict) -> None:
         pass
 
 
+# ─── 子命令组 ─────────────────────────────────────────────────────────────────
+
+sw_app = typer.Typer(help="软件管理 / Software management")
+mon_app = typer.Typer(help="系统监控 / System monitor")
+net_app = typer.Typer(help="网络工具 / Network tools")
+app.add_typer(sw_app, name="software")
+app.add_typer(mon_app, name="monitor")
+app.add_typer(net_app, name="network")
+
+
+# ─── software 子命令 ──────────────────────────────────────────────────────────
+
+@sw_app.command("list")
+def sw_list() -> None:
+    """显示所有可用软件及安装状态"""
+    _boot()
+    from software.menu import show_list
+    show_list()
+
+
+@sw_app.command("search")
+def sw_search() -> None:
+    """搜索软件"""
+    _boot()
+    from software.menu import show_search
+    show_search()
+
+
+@sw_app.command("installed")
+def sw_installed() -> None:
+    """已安装软件列表"""
+    _boot()
+    from software.menu import show_installed
+    show_installed()
+
+
+@sw_app.command("install")
+def sw_install(
+    name: str = typer.Argument(None, help="软件名 (docker/nginx/mysql/redis/...)"),
+) -> None:
+    """安装软件（交互式或指定名称）"""
+    _boot()
+    if name:
+        _sw_action_by_name(name, "install")
+    else:
+        from software.menu import show_install
+        show_install()
+
+
+@sw_app.command("uninstall")
+def sw_uninstall(
+    name: str = typer.Argument(None, help="软件名"),
+) -> None:
+    """卸载软件（交互式或指定名称）"""
+    _boot()
+    if name:
+        _sw_action_by_name(name, "uninstall")
+    else:
+        from software.menu import show_uninstall
+        show_uninstall()
+
+
+@sw_app.command("upgrade")
+def sw_upgrade(
+    name: str = typer.Argument(None, help="软件名"),
+) -> None:
+    """升级软件（交互式或指定名称）"""
+    _boot()
+    if name:
+        _sw_action_by_name(name, "upgrade")
+    else:
+        from software.menu import show_upgrade
+        show_upgrade()
+
+
+@sw_app.command("diagnose")
+def sw_diagnose(
+    name: str = typer.Argument(..., help="软件名 (wg_server/wg_client)"),
+) -> None:
+    """运行软件诊断"""
+    _boot()
+    _sw_action_by_name(name, "diagnose")
+
+
+@sw_app.command("manage")
+def sw_manage(
+    name: str = typer.Argument(..., help="软件名 (wg_server/wg_client)"),
+) -> None:
+    """进入软件管理界面"""
+    _boot()
+    _sw_action_by_name(name, "manage")
+
+
+def _sw_action_by_name(name: str, action: str) -> None:
+    """按软件名执行指定操作"""
+    from software.registry import get as get_recipe
+    from software.menu import (
+        _do_install, _do_uninstall, _do_upgrade,
+        _do_diagnose, _do_manage, _show_submenu, show_actions,
+    )
+    cls = get_recipe(name)
+    if cls is None:
+        from core.theme import print_error
+        print_error(f"未找到软件: {name}")
+        raise typer.Exit(1)
+    instance = cls()
+    breadcrumb = ["OpsKit", t("menu.software")]
+    if action == "install":
+        if getattr(cls, "has_submenu", False):
+            _show_submenu(breadcrumb=breadcrumb, cls=cls)
+        else:
+            _do_install(breadcrumb, cls, instance)
+    elif action == "uninstall":
+        _do_uninstall(breadcrumb, cls, instance)
+    elif action == "upgrade":
+        _do_upgrade(breadcrumb, cls, instance)
+    elif action == "diagnose":
+        if getattr(cls, "has_diagnose", False):
+            _do_diagnose(breadcrumb, cls, instance)
+        else:
+            from core.theme import print_warning
+            print_warning(t("software.not_supported"))
+    elif action == "manage":
+        if getattr(cls, "has_manage", False):
+            _do_manage(breadcrumb, cls, instance)
+        else:
+            from core.theme import print_warning
+            print_warning(t("software.not_supported"))
+
+
+# ─── monitor 子命令 ───────────────────────────────────────────────────────────
+
+@mon_app.command("dashboard")
+def mon_dashboard() -> None:
+    """实时概览仪表盘"""
+    _boot()
+    from monitor.menu import show_dashboard
+    show_dashboard()
+
+
+@mon_app.command("cpu")
+def mon_cpu() -> None:
+    """CPU 详情"""
+    _boot()
+    from monitor.menu import show_cpu_detail
+    show_cpu_detail()
+
+
+@mon_app.command("memory")
+def mon_memory() -> None:
+    """内存详情"""
+    _boot()
+    from monitor.menu import show_memory_detail
+    show_memory_detail()
+
+
+@mon_app.command("disk")
+def mon_disk() -> None:
+    """磁盘详情"""
+    _boot()
+    from monitor.menu import show_disk_detail
+    show_disk_detail()
+
+
+@mon_app.command("network")
+def mon_network() -> None:
+    """网络流量"""
+    _boot()
+    from monitor.menu import show_network_detail
+    show_network_detail()
+
+
+@mon_app.command("processes")
+def mon_processes() -> None:
+    """进程列表"""
+    _boot()
+    from monitor.menu import show_processes
+    show_processes()
+
+
+# ─── network 子命令 ───────────────────────────────────────────────────────────
+
+@net_app.command("ping")
+def net_ping() -> None:
+    """Ping 测试"""
+    _boot()
+    from network.menu import show_ping
+    show_ping()
+
+
+@net_app.command("traceroute")
+def net_traceroute() -> None:
+    """路由追踪"""
+    _boot()
+    from network.menu import show_traceroute
+    show_traceroute()
+
+
+@net_app.command("dns")
+def net_dns() -> None:
+    """DNS 查询"""
+    _boot()
+    from network.menu import show_dns
+    show_dns()
+
+
+@net_app.command("port-scan")
+def net_port_scan() -> None:
+    """端口扫描"""
+    _boot()
+    from network.menu import show_port_scan
+    show_port_scan()
+
+
+@net_app.command("speed-test")
+def net_speed_test() -> None:
+    """下载测速"""
+    _boot()
+    from network.menu import show_speed_test
+    show_speed_test()
+
+
+@net_app.command("public-ip")
+def net_public_ip() -> None:
+    """公网 IP 查询"""
+    _boot()
+    from network.menu import show_public_ip
+    show_public_ip()
+
+
+# ─── 主命令 ───────────────────────────────────────────────────────────────────
+
 @app.command()
 def run(
     version: bool = typer.Option(False, "--version", "-v", help="Show version"),
     theme: str = typer.Option("", "--theme", help="Override theme"),
     lang: str = typer.Option("", "--lang", help="Override language (zh/en)"),
 ) -> None:
-    """OpsKit — 跨平台运维面板"""
+    """OpsKit — 跨平台运维面板（交互式菜单）"""
     if version:
         from core.constants import APP_VERSION
         console.print(f"v{APP_VERSION}")
