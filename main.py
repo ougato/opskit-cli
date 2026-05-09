@@ -57,6 +57,7 @@ if sys.platform != "win32" and not _is_packed:
     _ensure_venv(_Path(__file__).parent.resolve())
 
 import typer
+import click
 
 from core.config import ensure_config
 from core.i18n import init as i18n_init, t, switch as i18n_switch
@@ -64,7 +65,130 @@ from core.theme import init as theme_init, get_icon, switch_theme, list_themes, 
 from core.loader import discover_modules
 from core.prompt import select, console, UserCancel, set_auto_yes
 
-app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+# ── 预启动 locale 加载器（typer 帮助文本在 import 时求值，早于 _boot）────────
+def _preboot_locale() -> dict[str, str]:
+    """轻量级加载 cli.* 本地化文案，不依赖 _boot()"""
+    from pathlib import Path as _P
+    import yaml as _yaml
+
+    from core.config import get_config_path, get_resource_dir
+    from core.constants import DIR_LOCALE
+
+    lang = "auto"
+    cfg_path = get_config_path()
+    if cfg_path.exists():
+        try:
+            with cfg_path.open("r", encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+            lang = _cfg.get("language", "auto")
+        except Exception:
+            pass
+    if lang not in ("zh", "en"):
+        from core.i18n import _detect_system_lang
+        lang = _detect_system_lang()
+
+    locale_path = get_resource_dir(DIR_LOCALE) / f"{lang}.yaml"
+    if not locale_path.exists():
+        locale_path = get_resource_dir(DIR_LOCALE) / "en.yaml"
+    with locale_path.open("r", encoding="utf-8") as _f:
+        data = _yaml.safe_load(_f) or {}
+    cli_section = data.get("cli", {})
+    return {k: str(v) for k, v in cli_section.items()}
+
+
+_CLI = _preboot_locale()
+
+
+def _ct(key: str) -> str:
+    """读取 cli.* 本地化文案"""
+    return _CLI.get(key, key)
+
+
+# ── 覆盖 typer/click 内置 --help 文本 ────────────────────────────────────────
+_HELP_TEXT = _ct("help_text")
+
+_CONTEXT_SETTINGS = {
+    "help_option_names": ["--help"],
+}
+
+app = typer.Typer(
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    context_settings=_CONTEXT_SETTINGS,
+    help=_ct("desc"),
+)
+
+# 猴子补丁：覆盖 click 内置 --help 的 "Show this message and exit." 文本
+import click.decorators as _click_dec
+_click_orig_gettext = getattr(_click_dec, "_", str)
+
+def _click_i18n_gettext(msg: str) -> str:
+    if msg == "Show this message and exit.":
+        return _HELP_TEXT
+    return _click_orig_gettext(msg)
+
+_click_dec._ = _click_i18n_gettext
+
+# 同时覆盖 click.core 中的内置标签
+import click.core as _click_core
+_click_core_orig_gettext = getattr(_click_core, "_", str)
+
+_CLICK_LABEL_MAP = {
+    "Show this message and exit.": _HELP_TEXT,
+    "required": _ct("label_required"),
+    "default": _ct("label_default"),
+    "Options": _ct("label_options"),
+    "Commands": _ct("label_commands"),
+    "Arguments": _ct("label_arguments"),
+    "Usage": _ct("label_usage").rstrip(":"),
+    "Usage:": _ct("label_usage"),
+}
+
+def _click_core_i18n_gettext(msg: str) -> str:
+    return _CLICK_LABEL_MAP.get(msg, _click_core_orig_gettext(msg))
+
+_click_core._ = _click_core_i18n_gettext
+
+# 覆盖 typer rich 渲染中的英文标签
+import typer.rich_utils as _typer_ru
+_typer_ru.REQUIRED_LONG_STRING = f"[{_ct('label_required')}]"
+_typer_ru.OPTIONS_PANEL_TITLE = _ct("label_options")
+_typer_ru.COMMANDS_PANEL_TITLE = _ct("label_commands")
+_typer_ru.ARGUMENTS_PANEL_TITLE = _ct("label_arguments")
+_typer_ru.STYLE_USAGE_COMMAND = "bold"
+_typer_ru_orig_gettext = getattr(_typer_ru, "_", str)
+
+_TYPER_LABEL_MAP = {
+    "[required]": f"[{_ct('label_required')}]",
+    "[default: {default}]": f"[{_ct('label_default')}: {{default}}]",
+    "Usage": _ct("label_usage").rstrip(":"),
+    "Arguments": _ct("label_arguments"),
+    "Options": _ct("label_options"),
+    "Commands": _ct("label_commands"),
+    "Show this message and exit.": _HELP_TEXT,
+}
+
+def _typer_ru_i18n_gettext(msg: str) -> str:
+    return _TYPER_LABEL_MAP.get(msg, _typer_ru_orig_gettext(msg))
+
+_typer_ru._ = _typer_ru_i18n_gettext
+
+# 覆盖 click HelpFormatter.write_usage 的 "Usage:" 前缀
+_orig_write_usage = click.HelpFormatter.write_usage
+
+def _patched_write_usage(self, prog, args="", prefix=None):
+    if prefix is None:
+        prefix = _CLICK_LABEL_MAP.get("Usage:", "Usage:") + " "
+    return _orig_write_usage(self, prog, args, prefix=prefix)
+
+click.HelpFormatter.write_usage = _patched_write_usage
+
+# 修改 typer rich highlighter regex 使其匹配本地化的 "用法:"
+_new_highlights = []
+for _h in _typer_ru.OptionHighlighter.highlights:
+    _new_highlights.append(_h.replace("Usage: ", _CLICK_LABEL_MAP.get("Usage:", "Usage:") + " "))
+_typer_ru.OptionHighlighter.highlights = _new_highlights
 
 
 @app.callback(invoke_without_command=True)
@@ -72,13 +196,12 @@ def _app_callback(
     ctx: typer.Context,
     yes: bool = typer.Option(
         False, "--yes", "-y",
-        help="Non-interactive mode: skip all confirmation prompts (like apt -y)",
+        help=_ct("yes_help"),
     ),
-    version: bool = typer.Option(False, "--version", "-V", help="Show version"),
-    theme: str = typer.Option("", "--theme", help="Override theme"),
-    lang: str = typer.Option("", "--lang", help="Override language (zh/en)"),
+    version: bool = typer.Option(False, "--version", "-V", help=_ct("version_help")),
+    theme: str = typer.Option("", "--theme", help=_ct("theme_help")),
+    lang: str = typer.Option("", "--lang", help=_ct("lang_help")),
 ) -> None:
-    """OpsKit — 跨平台运维工具箱"""
     import os
     if yes or os.environ.get("OPSKIT_YES", "").strip() in ("1", "true", "yes"):
         set_auto_yes(True)
@@ -301,9 +424,9 @@ def _on_exit(cfg: dict) -> None:
 
 # ─── 子命令组 ─────────────────────────────────────────────────────────────────
 
-sw_app = typer.Typer(help="软件管理 / Software management")
-mon_app = typer.Typer(help="系统监控 / System monitor")
-net_app = typer.Typer(help="网络工具 / Network tools")
+sw_app = typer.Typer(help=_ct("software"))
+mon_app = typer.Typer(help=_ct("monitor"))
+net_app = typer.Typer(help=_ct("network"))
 app.add_typer(sw_app, name="software")
 app.add_typer(mon_app, name="monitor")
 app.add_typer(net_app, name="network")
@@ -311,37 +434,33 @@ app.add_typer(net_app, name="network")
 
 # ─── software 子命令 ──────────────────────────────────────────────────────────
 
-@sw_app.command("list")
+@sw_app.command("list", help=_ct("sw_list"))
 def sw_list() -> None:
-    """显示所有可用软件及安装状态"""
     _boot()
     from software.menu import show_list
     show_list()
 
 
-@sw_app.command("search")
+@sw_app.command("search", help=_ct("sw_search"))
 def sw_search() -> None:
-    """搜索软件"""
     _boot()
     from software.menu import show_search
     show_search()
 
 
-@sw_app.command("installed")
+@sw_app.command("installed", help=_ct("sw_installed"))
 def sw_installed() -> None:
-    """已安装软件列表"""
     _boot()
     from software.menu import show_installed
     show_installed()
 
 
-@sw_app.command("install")
+@sw_app.command("install", help=_ct("sw_install"))
 def sw_install(
-    name: str = typer.Argument(None, help="软件名 (docker/nginx/mysql/redis/wireguard/wg_client/wg_server/...)"),
-    token: str = typer.Option("", "--token", "-t", help="WireGuard 客户端连接令牌（跳过交互输入）"),
-    version: str = typer.Option("", "--version", help="指定安装版本（跳过版本选择器）"),
+    name: str = typer.Argument(None, help=_ct("sw_name_install")),
+    token: str = typer.Option("", "--token", "-t", help=_ct("sw_token")),
+    version: str = typer.Option("", "--version", help=_ct("sw_version")),
 ) -> None:
-    """安装软件（交互式或指定名称）"""
     _boot()
     if name:
         _sw_action_by_name(name, "install", token=token or None, version=version or None)
@@ -350,11 +469,10 @@ def sw_install(
         show_install()
 
 
-@sw_app.command("uninstall")
+@sw_app.command("uninstall", help=_ct("sw_uninstall"))
 def sw_uninstall(
-    name: str = typer.Argument(None, help="软件名"),
+    name: str = typer.Argument(None, help=_ct("sw_name")),
 ) -> None:
-    """卸载软件（交互式或指定名称）"""
     _boot()
     if name:
         _sw_action_by_name(name, "uninstall")
@@ -363,11 +481,10 @@ def sw_uninstall(
         show_uninstall()
 
 
-@sw_app.command("upgrade")
+@sw_app.command("upgrade", help=_ct("sw_upgrade"))
 def sw_upgrade(
-    name: str = typer.Argument(None, help="软件名"),
+    name: str = typer.Argument(None, help=_ct("sw_name")),
 ) -> None:
-    """升级软件（交互式或指定名称）"""
     _boot()
     if name:
         _sw_action_by_name(name, "upgrade")
@@ -376,20 +493,18 @@ def sw_upgrade(
         show_upgrade()
 
 
-@sw_app.command("diagnose")
+@sw_app.command("diagnose", help=_ct("sw_diagnose"))
 def sw_diagnose(
-    name: str = typer.Argument(..., help="软件名 (wg_server/wg_client)"),
+    name: str = typer.Argument(..., help=_ct("sw_name_diagnose")),
 ) -> None:
-    """运行软件诊断"""
     _boot()
     _sw_action_by_name(name, "diagnose")
 
 
-@sw_app.command("manage")
+@sw_app.command("manage", help=_ct("sw_manage"))
 def sw_manage(
-    name: str = typer.Argument(..., help="软件名 (wg_server/wg_client)"),
+    name: str = typer.Argument(..., help=_ct("sw_name_diagnose")),
 ) -> None:
-    """进入软件管理界面"""
     _boot()
     _sw_action_by_name(name, "manage")
 
@@ -492,49 +607,43 @@ def _do_install_direct(
 
 # ─── monitor 子命令 ───────────────────────────────────────────────────────────
 
-@mon_app.command("dashboard")
+@mon_app.command("dashboard", help=_ct("mon_dashboard"))
 def mon_dashboard() -> None:
-    """实时概览仪表盘"""
     _boot()
     from monitor.menu import show_dashboard
     show_dashboard()
 
 
-@mon_app.command("cpu")
+@mon_app.command("cpu", help=_ct("mon_cpu"))
 def mon_cpu() -> None:
-    """CPU 详情"""
     _boot()
     from monitor.menu import show_cpu_detail
     show_cpu_detail()
 
 
-@mon_app.command("memory")
+@mon_app.command("memory", help=_ct("mon_memory"))
 def mon_memory() -> None:
-    """内存详情"""
     _boot()
     from monitor.menu import show_memory_detail
     show_memory_detail()
 
 
-@mon_app.command("disk")
+@mon_app.command("disk", help=_ct("mon_disk"))
 def mon_disk() -> None:
-    """磁盘详情"""
     _boot()
     from monitor.menu import show_disk_detail
     show_disk_detail()
 
 
-@mon_app.command("network")
+@mon_app.command("network", help=_ct("mon_network"))
 def mon_network() -> None:
-    """网络流量"""
     _boot()
     from monitor.menu import show_network_detail
     show_network_detail()
 
 
-@mon_app.command("processes")
+@mon_app.command("processes", help=_ct("mon_processes"))
 def mon_processes() -> None:
-    """进程列表"""
     _boot()
     from monitor.menu import show_processes
     show_processes()
@@ -542,57 +651,51 @@ def mon_processes() -> None:
 
 # ─── network 子命令 ───────────────────────────────────────────────────────────
 
-@net_app.command("ping")
+@net_app.command("ping", help=_ct("net_ping"))
 def net_ping(
-    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+    host: str = typer.Argument(None, help=_ct("net_host")),
 ) -> None:
-    """Ping 测试"""
     _boot()
     from network.menu import show_ping
     show_ping(host=host)
 
 
-@net_app.command("traceroute")
+@net_app.command("traceroute", help=_ct("net_traceroute"))
 def net_traceroute(
-    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+    host: str = typer.Argument(None, help=_ct("net_host")),
 ) -> None:
-    """路由追踪"""
     _boot()
     from network.menu import show_traceroute
     show_traceroute(host=host)
 
 
-@net_app.command("dns")
+@net_app.command("dns", help=_ct("net_dns"))
 def net_dns(
-    host: str = typer.Argument(None, help="域名或 IP（不填则交互输入）"),
+    host: str = typer.Argument(None, help=_ct("net_dns_host")),
 ) -> None:
-    """DNS 查询"""
     _boot()
     from network.menu import show_dns
     show_dns(host=host)
 
 
-@net_app.command("port-scan")
+@net_app.command("port-scan", help=_ct("net_port_scan"))
 def net_port_scan(
-    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+    host: str = typer.Argument(None, help=_ct("net_host")),
 ) -> None:
-    """端口扫描"""
     _boot()
     from network.menu import show_port_scan
     show_port_scan(host=host)
 
 
-@net_app.command("speed-test")
+@net_app.command("speed-test", help=_ct("net_speed_test"))
 def net_speed_test() -> None:
-    """下载测速"""
     _boot()
     from network.menu import show_speed_test
     show_speed_test()
 
 
-@net_app.command("public-ip")
+@net_app.command("public-ip", help=_ct("net_public_ip"))
 def net_public_ip() -> None:
-    """公网 IP 查询"""
     _boot()
     from network.menu import show_public_ip
     show_public_ip()
