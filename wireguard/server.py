@@ -419,7 +419,7 @@ def install_server() -> None:
         (t("wireguard.info.public_ip"),   public_ip),
         (t("wireguard.info.mode"),        t("wireguard.mode_443")),
         (t("wireguard.info.xray_port"),   str(server_port)),
-        (t("wireguard.info.vpn_gateway"), VPN_SERVER_IP),
+        (t("wireguard.info.vpn_gateway"), vpn_gateway),
     ]
     info_rows.insert(1, (t("wireguard.info.domain"), sni))
     for label, value in info_rows:
@@ -563,7 +563,6 @@ def diagnose_server() -> None:
     from wireguard.constants import (
         WG_SERVICE, XRAY_SERVICE,
         WG_CONFIG_FILE, XRAY_CONFIG_FILE,
-        VPN_SERVER_IP,
     )
     from wireguard.utils import is_service_active, is_port_listening
 
@@ -656,7 +655,10 @@ def diagnose_server() -> None:
     tbl.add_row(_lbl(t(f"{dk}.wg_pub")), _val(wg_pub))
     tbl.add_row(_lbl(t(f"{dk}.wg_port")), _port_status(wg_port, "udp"))
     tbl.add_row(_lbl(t(f"{dk}.xray_port")), _port_status(xray_port, "tcp"))
-    tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(VPN_SERVER_IP))
+    from core.sysconfig import _load as _sc_load
+    _srv_state = _sc_load().get("wg_server", {})
+    _vpn_gw = _srv_state.get("vpn_gateway", "10.10.10.1")
+    tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
     tbl.add_row(Text(""), Text(""))
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────
