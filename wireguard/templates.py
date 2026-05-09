@@ -9,11 +9,15 @@ def xray_client_config(
     local_port: int,
     wg_port: int,
     ws_path: str = "/vless-ws",
+    fake_sni: str | None = None,
 ) -> str:
     """生成 xray 客户端 config.json（VLESS + WebSocket + TLS 模式）"""
     import json
+    import random
     from core.paths import xray_log_dir
+    from wireguard.constants import SNI_WHITELIST
     _log = xray_log_dir()
+    _fake_sni = fake_sni or random.choice(SNI_WHITELIST)
     config = {
         "log": {
             "loglevel": "warning",
@@ -55,7 +59,7 @@ def xray_client_config(
                     "network": "ws",
                     "security": "tls",
                     "tlsSettings": {
-                        "serverName": "www.microsoft.com",
+                        "serverName": _fake_sni,
                         "allowInsecure": True,
                         "fingerprint": "chrome",
                     },
@@ -80,14 +84,15 @@ def wg_server_config(
     server_ip: str,
     wg_port: int,
     iface: str,
+    vpn_subnet: str = "10.10.10.0/24",
 ) -> str:
     """生成 WireGuard 服务端 wg0.conf（不含 peer，peer 由 wg set 动态添加）"""
     return f"""[Interface]
 PrivateKey = {server_private_key}
 Address = {server_ip}/24
 ListenPort = {wg_port}
-PostUp = iptables -I FORWARD 1 -i wg0 -j ACCEPT; iptables -I FORWARD 1 -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -o {iface} -j MASQUERADE; iptables -t raw -I PREROUTING 1 ! -i wg0 -d 10.10.10.0/24 -j DROP
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -o {iface} -j MASQUERADE; iptables -t raw -D PREROUTING ! -i wg0 -d 10.10.10.0/24 -j DROP
+PostUp = iptables -I FORWARD 1 -i wg0 -j ACCEPT; iptables -I FORWARD 1 -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -s {vpn_subnet} -o {iface} -j MASQUERADE; iptables -t raw -I PREROUTING 1 ! -i wg0 -d {vpn_subnet} -j DROP
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -s {vpn_subnet} -o {iface} -j MASQUERADE; iptables -t raw -D PREROUTING ! -i wg0 -d {vpn_subnet} -j DROP
 """
 
 
