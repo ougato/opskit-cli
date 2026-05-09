@@ -284,7 +284,7 @@ wireguard:
   input_public_ip: "无法自动检测公网 IP，请手动输入"
   input_token: "令牌（公网生成客户端的加密字符串）"
   input_sni: "域名（需已解析到本机 IP，用于 TLS 证书申请）"
-  input_vpn_octet3: "VPN 子网第三段 1~254（如 10→10.10.10.0/24，20→10.10.20.0/24，默认 {default}）"
+  input_vpn_octet3: "子网第三段 1~254（10→10.10.10.0/24，20→10.10.20.0/24）"
   input_vpn_octet3_invalid: "输入无效，请输入 1~254 之间的整数"
   input_tunnel_label: "隧道标签名（字母/数字/下划线/连字符，默认 {default}）"
   cert_issue_fail: "TLS 证书申请失败，请检查域名解析是否正确，或手动运行 acme.sh 申请证书"

@@ -284,7 +284,7 @@ wireguard:
   input_public_ip: "Cannot auto-detect public IP, please enter manually"
   input_token: "Token (encrypted string generated on public server)"
   input_sni: "Domain (must resolve to this server IP, used for TLS cert)"
-  input_vpn_octet3: "VPN subnet 3rd octet 1~254 (e.g. 10→10.10.10.0/24, 20→10.10.20.0/24, default {default})"
+  input_vpn_octet3: "Subnet 3rd octet 1~254 (10→10.10.10.0/24, 20→10.10.20.0/24)"
   input_vpn_octet3_invalid: "Invalid input, please enter an integer between 1 and 254"
   input_tunnel_label: "Tunnel label (letters/digits/underscore/hyphen, default {default})"
   cert_issue_fail: "TLS certificate issuance failed. Check domain DNS or run acme.sh manually"
