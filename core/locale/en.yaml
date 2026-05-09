@@ -450,6 +450,7 @@ wireguard:
     server_ip: "Public Server IP"
     xray_port: "Xray Port"
     wg_port: "WG UDP Port"
+    xray_local_port: "Xray Local Port"
     ping_gateway: "ping gateway"
     ping_ok: "reachable"
     ping_fail: "unreachable"

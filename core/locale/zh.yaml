@@ -450,6 +450,7 @@ wireguard:
     server_ip: "公网服务端 IP"
     xray_port: "Xray 端口"
     wg_port: "WG UDP 端口"
+    xray_local_port: "Xray 本地端口"
     ping_gateway: "ping 网关"
     ping_ok: "通"
     ping_fail: "不通"

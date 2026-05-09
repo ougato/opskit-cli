@@ -300,7 +300,7 @@ opskit-cli/
 │   └── menu.py               # 网络工具菜单
 ├── wireguard/                # WireGuard 核心实现（被 software/recipes/wireguard 调用）
 │   ├── server.py             # 公网服务端安装 / 卸载 / 诊断 / 管理
-│   ├── client.py             # 私网客户端安装 / 卸载 / 诊断
+│   ├── client.py             # 私网客户端安装 / 卸载 / 诊断 / 管理
 │   ├── templates.py          # 配置模板
 │   ├── utils.py              # 工具函数
 │   ├── constants.py          # WireGuard 常量

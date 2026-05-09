@@ -110,7 +110,7 @@ def install_server() -> None:
         nginx_vless_ws_config, nginx_http_only_config,
     )
 
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard", t("software.install")]
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.install")]
 
     from core.config import load_config, set_config_value
     _cfg = load_config()
@@ -499,7 +499,7 @@ def uninstall_server() -> None:
     ]
     descs = [t(k) for k in step_keys]
 
-    print_action_title(["OpsKit", t("menu.software"), "WireGuard", t("software.uninstall")])
+    print_action_title(["OpsKit", t("menu.software"), t("software.wireguard"), t("software.uninstall")])
     with MultiStepProgress(descs) as sp:
         # ── 1. 停止 WireGuard ────────────────────────────────────────────────
         sp.step(descs[0])
@@ -559,7 +559,7 @@ def diagnose_server() -> None:
     from core.i18n import t as _t
     from core.theme import print_action_title
     from core.prompt import pause
-    print_action_title(["OpsKit", _t("menu.software"), "WireGuard", _t("software.diagnose")])
+    print_action_title(["OpsKit", _t("menu.software"), _t("software.wireguard"), _t("software.diagnose")])
     import json
     import subprocess
     from pathlib import Path
@@ -879,7 +879,7 @@ def manage_peers() -> None:
     from core.theme import get_icon, get_color, print_action_title, print_warning
 
     mk = "wireguard.manage"
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard",
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"),
                   t("software.wg_server"), t(f"{mk}.title")]
     muted = get_color("muted")
 

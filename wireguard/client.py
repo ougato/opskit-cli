@@ -100,7 +100,7 @@ def install_client() -> None:
     """私网客户端安装向导"""
     from core.i18n import t
 
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard", t("software.wg_client")]
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.wg_client")]
     _install_client_token(breadcrumb)
 
 
@@ -169,7 +169,7 @@ def _install_client_token(breadcrumb: list[str]) -> None:
     _dup = next((t_ for t_ in _tunnels if t_.get("label") == label), None)
     if _dup:
         from core.theme import print_warning
-        print_warning(t("wireguard.tunnel_label_dup").format(label=label))
+        print_warning(t("wireguard.tunnel_label_dup", label=label))
         pause()
         return
 
@@ -346,7 +346,7 @@ def uninstall_client() -> None:
     from wireguard.constants import WG_CONFIG_DIR, XRAY_CONFIG_DIR, XRAY_BINARY
     from wireguard.utils import stop_and_disable
 
-    print_action_title(["OpsKit", t("menu.software"), "WireGuard", t("software.wg_client_uninstall")])
+    print_action_title(["OpsKit", t("menu.software"), t("software.wireguard"), t("software.wg_client_uninstall")])
 
     state = _load_client_state()
     tunnels: list[dict] = state.get("tunnels", [])
@@ -413,7 +413,7 @@ def diagnose_client() -> None:
     from core.prompt import pause
     from wireguard.utils import is_service_active
 
-    print_action_title(["OpsKit", t("menu.software"), "WireGuard", t("software.diagnose")])
+    print_action_title(["OpsKit", t("menu.software"), t("software.wireguard"), t("software.diagnose")])
 
     dk = "wireguard.client_diagnose"
     _LABEL = "#7f849c"
@@ -469,7 +469,7 @@ def diagnose_client() -> None:
         tbl.add_row(_lbl(t(f"{dk}.client_ip")),  _val(client_ip))
         tbl.add_row(_lbl(t(f"{dk}.server_ip")),  _val(server_ip))
         tbl.add_row(_lbl(t("wireguard.info.domain")), _val(sni_val))
-        tbl.add_row(_lbl("Xray local port"),     _val(local_port))
+        tbl.add_row(_lbl(t(f"{dk}.xray_local_port")), _val(local_port))
         ping_text = Text(
             vpn_gw,
             style="#a6e3a1" if _ping_ok else "#f38ba8",
@@ -493,7 +493,7 @@ def manage_client() -> None:
     from core.theme import get_icon, get_color, print_action_title, print_warning
 
     mk = "wireguard.client_manage"
-    breadcrumb = ["OpsKit", t("menu.software"), "WireGuard",
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"),
                   t("software.wg_client"), t(f"{mk}.title")]
     muted = get_color("muted")
 
