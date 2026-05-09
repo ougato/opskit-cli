@@ -55,8 +55,8 @@ def xray_client_config(
                     "network": "ws",
                     "security": "tls",
                     "tlsSettings": {
-                        "serverName": sni,
-                        "allowInsecure": False,
+                        "serverName": "www.microsoft.com",
+                        "allowInsecure": True,
                         "fingerprint": "chrome",
                     },
                     "wsSettings": {
