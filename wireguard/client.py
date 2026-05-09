@@ -96,16 +96,21 @@ def _ensure_xray_template_service(xray_path: str) -> None:
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 
-def install_client() -> None:
+def install_client(token: str | None = None) -> None:
     """私网客户端安装向导"""
     from core.i18n import t
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.wg_client")]
-    _install_client_token(breadcrumb)
+    _install_client_token(breadcrumb, token=token)
 
 
-def _install_client_token(breadcrumb: list[str]) -> None:
-    """令牌模式安装客户端（支持多隧道）"""
+def _install_client_token(breadcrumb: list[str], token: str | None = None) -> None:
+    """令牌模式安装客户端（支持多隧道）
+
+    Args:
+        breadcrumb: 面包屑路径
+        token: 连接令牌（传入时跳过交互输入，用于 CLI 非交互模式）
+    """
     from core.i18n import t
     from core.prompt import text_input, pause, clear_screen, UserCancel
     from core.theme import print_error, print_action_title
@@ -122,15 +127,18 @@ def _install_client_token(breadcrumb: list[str]) -> None:
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
 
-    # ── 粘贴令牌 ─────────────────────────────────────────────────────
-    try:
-        raw_token = text_input(
-            breadcrumb=breadcrumb,
-            prompt=t("wireguard.input_token"),
-            theme_key="software",
-        )
-    except UserCancel:
-        return
+    # ── 获取令牌（CLI 传入或交互输入）───────────────────────────────
+    if token:
+        raw_token = token.strip()
+    else:
+        try:
+            raw_token = text_input(
+                breadcrumb=breadcrumb,
+                prompt=t("wireguard.input_token"),
+                theme_key="software",
+            )
+        except UserCancel:
+            return
     if not raw_token or not raw_token.strip():
         print_error(t("wireguard.token_required"))
         pause()

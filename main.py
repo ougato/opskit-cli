@@ -62,9 +62,37 @@ from core.config import ensure_config
 from core.i18n import init as i18n_init, t, switch as i18n_switch
 from core.theme import init as theme_init, get_icon, switch_theme, list_themes, print_info
 from core.loader import discover_modules
-from core.prompt import select, console, UserCancel
+from core.prompt import select, console, UserCancel, set_auto_yes
 
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@app.callback(invoke_without_command=True)
+def _app_callback(
+    ctx: typer.Context,
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Non-interactive mode: skip all confirmation prompts (like apt -y)",
+    ),
+    version: bool = typer.Option(False, "--version", "-V", help="Show version"),
+    theme: str = typer.Option("", "--theme", help="Override theme"),
+    lang: str = typer.Option("", "--lang", help="Override language (zh/en)"),
+) -> None:
+    """OpsKit — 跨平台运维工具箱"""
+    import os
+    if yes or os.environ.get("OPSKIT_YES", "").strip() in ("1", "true", "yes"):
+        set_auto_yes(True)
+    if version:
+        from core.constants import APP_VERSION
+        console.print(f"v{APP_VERSION}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        cfg = _boot()
+        if theme:
+            switch_theme(theme)
+        if lang:
+            i18n_switch(lang)
+        _main_menu(cfg)
 
 
 def _boot() -> dict:
@@ -309,12 +337,14 @@ def sw_installed() -> None:
 
 @sw_app.command("install")
 def sw_install(
-    name: str = typer.Argument(None, help="软件名 (docker/nginx/mysql/redis/...)"),
+    name: str = typer.Argument(None, help="软件名 (docker/nginx/mysql/redis/wireguard/wg_client/wg_server/...)"),
+    token: str = typer.Option("", "--token", "-t", help="WireGuard 客户端连接令牌（跳过交互输入）"),
+    version: str = typer.Option("", "--version", help="指定安装版本（跳过版本选择器）"),
 ) -> None:
     """安装软件（交互式或指定名称）"""
     _boot()
     if name:
-        _sw_action_by_name(name, "install")
+        _sw_action_by_name(name, "install", token=token or None, version=version or None)
     else:
         from software.menu import show_install
         show_install()
@@ -364,8 +394,20 @@ def sw_manage(
     _sw_action_by_name(name, "manage")
 
 
-def _sw_action_by_name(name: str, action: str) -> None:
-    """按软件名执行指定操作"""
+def _sw_action_by_name(
+    name: str,
+    action: str,
+    token: str | None = None,
+    version: str | None = None,
+) -> None:
+    """按软件名执行指定操作
+
+    Args:
+        name: 软件 key
+        action: 操作类型 (install/uninstall/upgrade/diagnose/manage)
+        token: WireGuard 客户端令牌（非交互模式）
+        version: 指定安装版本（非交互模式）
+    """
     from software.registry import get as get_recipe
     from software.menu import (
         _do_install, _do_uninstall, _do_upgrade,
@@ -379,6 +421,15 @@ def _sw_action_by_name(name: str, action: str) -> None:
     instance = cls()
     breadcrumb = ["OpsKit", t("menu.software")]
     if action == "install":
+        # WireGuard 客户端：--token 直达安装
+        if name == "wg_client" and token:
+            from wireguard.client import install_client
+            install_client(token=token)
+            return
+        # 多版本软件：--version 直达安装
+        if version and not getattr(cls, "has_wizard", False):
+            _do_install_direct(breadcrumb, cls, instance, version)
+            return
         if getattr(cls, "has_submenu", False):
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
@@ -399,6 +450,44 @@ def _sw_action_by_name(name: str, action: str) -> None:
         else:
             from core.theme import print_warning
             print_warning(t("software.not_supported"))
+
+
+def _do_install_direct(
+    breadcrumb: list[str], cls: type, instance, version: str,
+) -> None:
+    """非交互式直接安装指定版本（跳过版本选择器和确认弹窗）"""
+    from software.base import InstallError
+    from software.resolver import resolve_deps
+    from core.platform import check_disk_space
+    from core.constants import MIN_DISK_FREE_BYTES
+    from core.theme import print_error, print_success, print_header
+    from core.prompt import clear_screen
+    from rich.console import Console as _Con
+
+    _name = t(f"software.{cls.key}") if f"software.{cls.key}" else cls.description
+
+    try:
+        resolve_deps(instance, breadcrumb)
+    except (InstallError, Exception) as e:
+        print_error(str(e))
+        return
+
+    if not check_disk_space(MIN_DISK_FREE_BYTES):
+        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
+        return
+
+    clear_screen()
+    print_header([*breadcrumb, t("software.install")])
+    _Con().print()
+    import time as _time
+    _t0 = _time.monotonic()
+    try:
+        instance.install(version)
+        print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
+    except InstallError as e:
+        print_error(t("install.failed", name=_name, error=str(e)))
+    except Exception as e:
+        print_error(t("error.unknown", error=str(e)))
 
 
 # ─── monitor 子命令 ───────────────────────────────────────────────────────────
@@ -454,35 +543,43 @@ def mon_processes() -> None:
 # ─── network 子命令 ───────────────────────────────────────────────────────────
 
 @net_app.command("ping")
-def net_ping() -> None:
+def net_ping(
+    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+) -> None:
     """Ping 测试"""
     _boot()
     from network.menu import show_ping
-    show_ping()
+    show_ping(host=host)
 
 
 @net_app.command("traceroute")
-def net_traceroute() -> None:
+def net_traceroute(
+    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+) -> None:
     """路由追踪"""
     _boot()
     from network.menu import show_traceroute
-    show_traceroute()
+    show_traceroute(host=host)
 
 
 @net_app.command("dns")
-def net_dns() -> None:
+def net_dns(
+    host: str = typer.Argument(None, help="域名或 IP（不填则交互输入）"),
+) -> None:
     """DNS 查询"""
     _boot()
     from network.menu import show_dns
-    show_dns()
+    show_dns(host=host)
 
 
 @net_app.command("port-scan")
-def net_port_scan() -> None:
+def net_port_scan(
+    host: str = typer.Argument(None, help="目标主机名或 IP（不填则交互输入）"),
+) -> None:
     """端口扫描"""
     _boot()
     from network.menu import show_port_scan
-    show_port_scan()
+    show_port_scan(host=host)
 
 
 @net_app.command("speed-test")
@@ -499,30 +596,6 @@ def net_public_ip() -> None:
     _boot()
     from network.menu import show_public_ip
     show_public_ip()
-
-
-# ─── 主命令 ───────────────────────────────────────────────────────────────────
-
-@app.command()
-def run(
-    version: bool = typer.Option(False, "--version", "-v", help="Show version"),
-    theme: str = typer.Option("", "--theme", help="Override theme"),
-    lang: str = typer.Option("", "--lang", help="Override language (zh/en)"),
-) -> None:
-    """OpsKit — 跨平台运维面板（交互式菜单）"""
-    if version:
-        from core.constants import APP_VERSION
-        console.print(f"v{APP_VERSION}")
-        raise typer.Exit()
-
-    cfg = _boot()
-
-    if theme:
-        switch_theme(theme)
-    if lang:
-        i18n_switch(lang)
-
-    _main_menu(cfg)
 
 
 if __name__ == "__main__":
