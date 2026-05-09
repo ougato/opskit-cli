@@ -91,92 +91,8 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/
 
-      - name: upload to Alist (linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          ALIST_URL: ${{ secrets.ALIST_URL }}
-          ALIST_USER: ${{ secrets.ALIST_USER }}
-          ALIST_PASS: ${{ secrets.ALIST_PASS }}
-        run: |
-          curl -fsSL https://rclone.org/install.sh | sudo bash -s -- --no-superuser 2>/dev/null || sudo apt-get install -y rclone
-          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
-          rclone copy dist/ \
-            --webdav-url "${ALIST_URL}/dav" \
-            --webdav-vendor alist \
-            --webdav-user "${ALIST_USER}" \
-            --webdav-pass "${RCLONE_OBSCURE}" \
-            :webdav:mirror/soft/linux/ \
-            --transfers 4 --progress
-          echo "[rclone] linux upload done"
-
-      - name: upload to Alist (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          ALIST_URL: ${{ secrets.ALIST_URL }}
-          ALIST_USER: ${{ secrets.ALIST_USER }}
-          ALIST_PASS: ${{ secrets.ALIST_PASS }}
-        run: |
-          choco install rclone -y --no-progress
-          $obscure = rclone obscure "$env:ALIST_PASS"
-          rclone copy dist/ `
-            --webdav-url "$env:ALIST_URL/dav" `
-            --webdav-vendor alist `
-            --webdav-user "$env:ALIST_USER" `
-            --webdav-pass "$obscure" `
-            ":webdav:mirror/soft/windows/" `
-            --transfers 4 --progress
-          Write-Host "[rclone] windows upload done"
-
-      - name: upload to Alist (macos)
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          ALIST_URL: ${{ secrets.ALIST_URL }}
-          ALIST_USER: ${{ secrets.ALIST_USER }}
-          ALIST_PASS: ${{ secrets.ALIST_PASS }}
-        run: |
-          brew install rclone
-          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
-          rclone copy dist/ \
-            --webdav-url "${ALIST_URL}/dav" \
-            --webdav-vendor alist \
-            --webdav-user "${ALIST_USER}" \
-            --webdav-pass "${RCLONE_OBSCURE}" \
-            :webdav:mirror/soft/macos/ \
-            --transfers 4 --progress
-          echo "[rclone] macos upload done"
-
-  upload-scripts:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: upload install scripts to Alist
-        env:
-          ALIST_URL: ${{ secrets.ALIST_URL }}
-          ALIST_USER: ${{ secrets.ALIST_USER }}
-          ALIST_PASS: ${{ secrets.ALIST_PASS }}
-        run: |
-          curl -fsSL https://rclone.org/install.sh | sudo bash -s -- --no-superuser 2>/dev/null || sudo apt-get install -y rclone
-          RCLONE_OBSCURE=$(rclone obscure "${ALIST_PASS}")
-          for pair in "install.sh:opskit.sh" "install.ps1:opskit.ps1"; do
-            src="${pair%%:*}"
-            dst="${pair##*:}"
-            [ -f "$src" ] || continue
-            rclone copyto "$src" \
-              --webdav-url "${ALIST_URL}/dav" \
-              --webdav-vendor alist \
-              --webdav-user "${ALIST_USER}" \
-              --webdav-pass "${RCLONE_OBSCURE}" \
-              ":webdav:install/${dst}" --progress
-            echo "[rclone] $src → install/${dst} done"
-          done
-
   release:
-    needs: [build, upload-scripts]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -186,6 +102,23 @@ jobs:
         with:
           path: artifacts/
 
+      - name: create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "${TAG}" --title "${TAG}" --notes "" 2>/dev/null || true
+          for f in artifacts/*/opskit-*; do
+            [ -f "$f" ] || continue
+            echo "[gh] uploading $(basename $f)"
+            gh release upload "${TAG}" "$f" --clobber
+          done
+          for script in install.sh install.ps1; do
+            [ -f "$script" ] || continue
+            echo "[gh] uploading $script"
+            gh release upload "${TAG}" "$script" --clobber
+          done
+
       - name: generate SHA256 checksums
         run: |
           for f in artifacts/*/opskit-*; do
@@ -193,3 +126,14 @@ jobs:
             [[ "$f" == *.sha256 ]] && continue
             sha256sum "$f" | awk '{print $1, $2}'
           done
+
+      - name: trigger syncer hook
+        env:
+          HOOK_URL: ${{ secrets.HOOK_URL }}
+          HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
+        run: |
+          curl -fsSL -X POST "${HOOK_URL}/webhook" \
+            -H "X-Hook-Secret: ${HOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{"event":"release_sync"}'
+          echo "[hook] sync triggered"
