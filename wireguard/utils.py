@@ -145,6 +145,10 @@ def get_os_version() -> int:
 
 def install_wireguard_pkg(os_id: str) -> None:
     """根据发行版安装 WireGuard 包（幂等）"""
+    import shutil
+    if shutil.which("wg"):
+        return
+
     from software.base import InstallError
     from core.pkg_runner import get_runner
 
