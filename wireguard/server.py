@@ -551,7 +551,6 @@ def uninstall_server() -> None:
         _SCM.remove("wg_server")
         Path("/root/wg_server_info.txt").unlink(missing_ok=True)
 
-    console.print()
     print_success(t('wireguard.diagnose.uninstall_success'))
 
 

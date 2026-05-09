@@ -399,7 +399,6 @@ def uninstall_client() -> None:
         sp.step(descs[3])
         _save_client_state({})
 
-    console.print()
     print_success(t("wireguard.client_diagnose.uninstall_success"))
 
 
