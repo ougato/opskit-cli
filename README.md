@@ -99,81 +99,224 @@ Invoke-WebRequest https://file.icerror.top/d/mirror/soft/windows/opskit-windows-
 
 ---
 
-## �️ CLI 命令行用法 / CLI Usage
+## 🖥️ CLI 命令行用法 / CLI Usage
 
-除交互式菜单外，所有功能均可通过命令行参数直达：
+OpsKit 支持两种使用方式：**交互式菜单**（默认）和 **CLI 命令行直达**。
+
+> **开发模式**：将以下所有 `opskit` 替换为 `python main.py`，例如 `python main.py software install docker`
+
+### 启动与全局选项
 
 ```bash
-# 启动交互式菜单（默认）
-opskit run
-python main.py run
-
-# 全局选项
-opskit run --version          # 查看版本
-opskit run --theme catppuccin # 指定主题
-opskit run --lang zh          # 指定语言 (zh/en)
+opskit run                            # 启动交互式菜单（默认入口）
+opskit run --version                  # 显示版本号
+opskit run -v                         # 同上（短参数）
+opskit run --theme catppuccin         # 启动时指定主题
+opskit run --lang zh                  # 启动时指定语言（zh / en）
+opskit run --theme catppuccin --lang en  # 同时指定主题和语言
 ```
 
-### 📦 软件管理 (software)
+### 📦 软件管理 `opskit software <command>`
+
+#### 查看类
+
+| 命令 | 说明 |
+|---|---|
+| `opskit software list` | 显示所有可用软件及安装状态（表格形式，含版本、平台） |
+| `opskit software search` | 搜索软件（交互式输入关键词，按名称匹配） |
+| `opskit software installed` | 仅显示已安装的软件列表（支持翻页） |
+
+#### 安装 `opskit software install [NAME]`
+
+不带参数时进入交互式选择；带参数时直接安装指定软件。
 
 ```bash
-opskit software list                  # 显示所有可用软件及安装状态
-opskit software search                # 搜索软件（交互式输入关键词）
-opskit software installed             # 已安装软件列表
+# 交互式安装（弹出分类列表选择）
+opskit software install
 
-opskit software install               # 交互式选择安装
-opskit software install docker        # 直接安装指定软件
-opskit software install nginx
-opskit software install mysql
-opskit software install redis
-opskit software install postgresql
-opskit software install mongodb
-opskit software install golang
-opskit software install python
-opskit software install java
-opskit software install nodejs
-opskit software install wireguard     # 进入 WireGuard 子菜单（服务端/客户端）
+# ── 运维工具（DevOps）──────────────────────────────────────────────
+opskit software install docker        # Docker 容器引擎（Linux）
+opskit software install nginx         # Nginx Web 服务器（Linux）
+opskit software install mysql         # MySQL 关系型数据库（Linux / macOS / Windows）
+opskit software install redis         # Redis 内存数据库（Linux / macOS / Windows）
+opskit software install postgresql    # PostgreSQL 关系型数据库（Linux / macOS / Windows）
+opskit software install mongodb       # MongoDB 文档型数据库（Linux / macOS / Windows）
+opskit software install wireguard     # WireGuard VPN（Linux）→ 进入子菜单选择服务端 / 客户端
 
-opskit software uninstall             # 交互式选择卸载
-opskit software uninstall docker      # 直接卸载指定软件
+# ── 开发工具（DevTools）────────────────────────────────────────────
+opskit software install golang        # Go 编程语言（Linux / macOS / Windows）
+opskit software install python        # Python 解释器（Linux / macOS / Windows）
+opskit software install java          # Java JDK（Linux / macOS / Windows）
+opskit software install nodejs        # Node.js 运行时（Linux / macOS / Windows）
+```
 
-opskit software upgrade               # 交互式选择升级
-opskit software upgrade redis         # 直接升级指定软件
+> **多版本软件**（mysql / redis / postgresql / mongodb / golang / python / java / nodejs）安装时会弹出版本选择器，支持翻页浏览。
 
+#### 卸载 `opskit software uninstall [NAME]`
+
+不带参数时进入交互式选择；带参数时直接卸载指定软件。
+
+```bash
+# 交互式卸载（仅列出已安装的软件）
+opskit software uninstall
+
+# 直接卸载指定软件
+opskit software uninstall docker      # 卸载 Docker
+opskit software uninstall nginx       # 卸载 Nginx
+opskit software uninstall mysql       # 卸载 MySQL（多版本时弹出版本选择 / 全部卸载）
+opskit software uninstall redis       # 卸载 Redis（同上）
+opskit software uninstall postgresql  # 卸载 PostgreSQL（同上）
+opskit software uninstall mongodb     # 卸载 MongoDB（同上）
+opskit software uninstall golang      # 卸载 Go（同上）
+opskit software uninstall python      # 卸载 Python（同上）
+opskit software uninstall java        # 卸载 Java（同上）
+opskit software uninstall nodejs      # 卸载 Node.js（同上）
+opskit software uninstall wireguard   # 卸载 WireGuard（进入子菜单选择服务端 / 客户端）
+opskit software uninstall wg_server   # 直接卸载 WireGuard 服务端
+opskit software uninstall wg_client   # 直接卸载 WireGuard 客户端（所有隧道）
+```
+
+#### 升级 `opskit software upgrade [NAME]`
+
+不带参数时进入交互式选择；带参数时直接升级指定软件。
+
+```bash
+# 交互式升级（仅列出已安装且有新版本的软件）
+opskit software upgrade
+
+# 直接升级指定软件（自动检测当前版本，仅显示更新版本）
+opskit software upgrade docker        # 升级 Docker
+opskit software upgrade nginx         # 升级 Nginx
+opskit software upgrade mysql         # 升级 MySQL
+opskit software upgrade redis         # 升级 Redis
+opskit software upgrade postgresql    # 升级 PostgreSQL
+opskit software upgrade mongodb       # 升级 MongoDB
+opskit software upgrade golang        # 升级 Go
+opskit software upgrade python        # 升级 Python
+opskit software upgrade java          # 升级 Java
+opskit software upgrade nodejs        # 升级 Node.js
+```
+
+> **注意**：WireGuard 不支持升级（`has_upgrade=False`），升级菜单中会置灰显示。
+
+#### 版本切换 `opskit software install <NAME>`
+
+多版本软件安装后，可通过操作菜单中的「切换」选项切换活跃版本（仅限本地已安装版本）：
+
+> 支持版本切换的软件：mysql / redis / postgresql / mongodb / golang / python / java / nodejs
+
+#### 诊断 `opskit software diagnose <NAME>`
+
+对指定软件运行诊断检查（服务状态、连接信息、连通性等）。
+
+```bash
 opskit software diagnose wg_server    # WireGuard 服务端诊断
+                                      #   → 检查 wg-quick@wg0 / Xray 服务状态
+                                      #   → 显示 WG 公钥 / UDP 端口 / Xray 端口 / VPN 网关
+                                      #   → 列出所有客户端 Peer 及握手状态
+                                      #   → 显示客户端凭证（Xray 公钥 / UUID / shortId）
+
 opskit software diagnose wg_client    # WireGuard 客户端诊断
-
-opskit software manage wg_server      # WireGuard 服务端管理（添加/列出/删除客户端）
-opskit software manage wg_client      # WireGuard 客户端管理（查看/更新令牌/移除隧道）
+                                      #   → 遍历所有已安装隧道
+                                      #   → 检查每条隧道的 wg-quick / xray 服务状态
+                                      #   → 显示客户端 IP / 服务端 IP / 域名 / Xray 本地端口
+                                      #   → ping 网关连通性测试
 ```
 
-### 📊 系统监控 (monitor)
+> **仅 WireGuard 支持诊断**，其他软件的诊断菜单项不可用。
+
+#### 管理 `opskit software manage <NAME>`
+
+对指定软件进入管理界面。
 
 ```bash
-opskit monitor dashboard              # 实时概览仪表盘
-opskit monitor cpu                    # CPU 详情（每核使用率）
-opskit monitor memory                 # 内存 + Swap 详情
-opskit monitor disk                   # 磁盘分区使用情况
-opskit monitor network                # 网络接口实时流量
-opskit monitor processes              # 进程列表（Top 15）
+opskit software manage wg_server      # WireGuard 服务端管理
+                                      #   → 添加客户端（自动分配 IP + 生成连接令牌）
+                                      #   → 客户端列表（查看所有已注册客户端及握手信息）
+                                      #   → 修改客户端名称
+                                      #   → 删除客户端（移除 WG Peer + 清理状态）
+
+opskit software manage wg_client      # WireGuard 客户端管理
+                                      #   → 查看信息（所有隧道的连接参数详情）
+                                      #   → 更新令牌（重新解析令牌并重启服务）
+                                      #   → 移除隧道（选择并删除单条隧道）
 ```
 
-### 🌐 网络工具 (network)
+> **仅 WireGuard 支持管理**，其他软件的管理菜单项不可用。
+
+#### 软件能力矩阵
+
+| 软件 key | 分类 | 平台 | 安装 | 卸载 | 升级 | 多版本切换 | 诊断 | 管理 |
+|---|---|---|---|---|---|---|---|---|
+| `docker` | DevOps | Linux | ✅ | ✅ | ✅ | — | — | — |
+| `nginx` | DevOps | Linux | ✅ | ✅ | ✅ | — | — | — |
+| `mysql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `redis` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `postgresql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `mongodb` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `wireguard` | DevOps | Linux | ✅ 子菜单 | ✅ | — | — | — | — |
+| `wg_server` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
+| `wg_client` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
+| `golang` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `python` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `java` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `nodejs` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+
+### 📊 系统监控 `opskit monitor <command>`
+
+| 命令 | 说明 |
+|---|---|
+| `opskit monitor dashboard` | 实时概览仪表盘（CPU / 内存 / 磁盘 / 网络 / 负载，自动刷新） |
+| `opskit monitor cpu` | CPU 详情（总使用率 + 每核使用率，实时刷新） |
+| `opskit monitor memory` | 内存详情（物理内存 + Swap 使用率，实时刷新） |
+| `opskit monitor disk` | 磁盘详情（所有分区挂载点、总量、已用、可用、使用率） |
+| `opskit monitor network` | 网络详情（所有网卡实时上传 / 下载速率 + 总流量，实时刷新） |
+| `opskit monitor processes` | 进程列表（按 CPU 使用率排序，Top 15，实时刷新） |
 
 ```bash
-opskit network ping                   # Ping 测试
-opskit network traceroute             # 路由追踪
-opskit network dns                    # DNS 查询（正向/反向）
-opskit network port-scan              # 端口扫描
+# 示例
+opskit monitor dashboard              # 启动实时概览仪表盘
+opskit monitor cpu                    # 查看 CPU 每核使用率
+opskit monitor memory                 # 查看内存 + Swap 使用情况
+opskit monitor disk                   # 查看磁盘分区使用情况
+opskit monitor network                # 查看网络接口实时流量
+opskit monitor processes              # 查看进程列表（Top 15）
+```
+
+### 🌐 网络工具 `opskit network <command>`
+
+| 命令 | 说明 |
+|---|---|
+| `opskit network ping` | Ping 测试（交互式输入目标主机，显示延迟 / 丢包率） |
+| `opskit network traceroute` | 路由追踪（交互式输入目标主机，逐跳显示路径） |
+| `opskit network dns` | DNS 查询（交互式输入域名 / IP，支持正向解析 + 反向解析） |
+| `opskit network port-scan` | 端口扫描（交互式输入目标主机，扫描常用端口状态） |
+| `opskit network speed-test` | 下载测速（测试到公共节点的下载带宽） |
+| `opskit network public-ip` | 公网 IP 查询（检测本机出口 IP + 内网 IP） |
+
+```bash
+# 示例
+opskit network ping                   # 交互式 Ping 测试
+opskit network traceroute             # 交互式路由追踪
+opskit network dns                    # 交互式 DNS 正向 / 反向查询
+opskit network port-scan              # 交互式端口扫描
 opskit network speed-test             # 下载测速
-opskit network public-ip              # 公网 IP 查询
+opskit network public-ip              # 查询公网 IP
 ```
 
-> **开发模式**：将 `opskit` 替换为 `python main.py`，例如 `python main.py software install docker`
+### 查看帮助
+
+```bash
+opskit --help                         # 查看所有可用命令
+opskit software --help                # 查看软件管理所有子命令
+opskit monitor --help                 # 查看系统监控所有子命令
+opskit network --help                 # 查看网络工具所有子命令
+opskit software install --help        # 查看 install 命令参数说明
+```
 
 ---
 
-## �📦 安装依赖 / Dependencies
+## �� 安装依赖 / Dependencies
 
 ```
 Python >= 3.10
