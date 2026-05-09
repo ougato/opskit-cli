@@ -30,13 +30,40 @@ def _load_client_state() -> dict:
 def _alloc_local_port(tunnels: list[dict]) -> int:
     """从已安装隧道列表中自动分配下一个可用本地端口。
     在 CLIENT_XRAY_LOCAL_PORT_MIN~MAX 范围内找最小未占用端口。
+    同时扫描系统实际监听端口，避免与旧隧道或其他进程冲突。
     """
     from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX
-    used = {t.get("local_port") for t in tunnels if t.get("local_port")}
+    used: set[int] = {t.get("local_port") for t in tunnels if t.get("local_port")}
+    used |= _scan_listening_ports(CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX)
     for p in range(CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX + 1):
         if p not in used:
             return p
     return CLIENT_XRAY_LOCAL_PORT_MIN
+
+
+def _scan_listening_ports(port_min: int, port_max: int) -> set[int]:
+    """扫描系统 TCP/UDP 实际监听的端口（指定范围内）"""
+    used: set[int] = set()
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["ss", "-tulnH"],
+            capture_output=True, text=True, check=False,
+        )
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5:
+                local = parts[4]
+                port_str = local.rsplit(":", 1)[-1] if ":" in local else ""
+                try:
+                    port = int(port_str)
+                    if port_min <= port <= port_max:
+                        used.add(port)
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return used
 
 
 def _ensure_xray_template_service(xray_path: str) -> None:
