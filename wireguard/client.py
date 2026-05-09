@@ -621,7 +621,7 @@ def remove_tunnel(breadcrumb: list[str]) -> None:
         pause()
         return
 
-    choices = [{"key": str(i), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
+    choices = [{"key": str(i + 1), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
     try:
         key = select(
             breadcrumb=sub,
@@ -635,7 +635,7 @@ def remove_tunnel(breadcrumb: list[str]) -> None:
     if key is None:
         return
 
-    idx = int(key)
+    idx = int(key) - 1
     tn = tunnels[idx]
     wg_iface = tn.get("wg_iface", "")
     xray_svc = tn.get("xray_svc", "")
@@ -684,7 +684,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
         pause()
         return
 
-    choices = [{"key": str(i), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
+    choices = [{"key": str(i + 1), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
     try:
         key = select(
             breadcrumb=sub,
@@ -698,7 +698,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
     if key is None:
         return
 
-    idx = int(key)
+    idx = int(key) - 1
     tn  = tunnels[idx]
 
     try:
