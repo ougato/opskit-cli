@@ -114,7 +114,10 @@ def install_server() -> None:
 
     from core.config import load_config, set_config_value
     _cfg = load_config()
-    _saved_domain = (_cfg.get("wireguard") or {}).get("domain") or ""
+    _wg_cfg = _cfg.get("wireguard") or {}
+    _saved_domain = _wg_cfg.get("domain") or ""
+    _saved_octet3 = _wg_cfg.get("octet3")
+    _saved_label  = _wg_cfg.get("tunnel_label") or ""
 
     # ── 收集输入 ─────────────────────────────────────────────────────────────
     try:
@@ -154,19 +157,19 @@ def install_server() -> None:
         public_ip = public_ip.strip()
 
     # ── 输入 VPN 子网第三段（1~254）────────────────────────────────────────
-    _octet3_raw = ""
-    _octet3 = VPN_DEFAULT_OCTET3
+    _default_octet3 = _saved_octet3 if _saved_octet3 is not None else VPN_DEFAULT_OCTET3
+    _octet3 = _default_octet3
     while True:
         try:
             _octet3_raw = text_input(
                 breadcrumb=breadcrumb,
-                prompt=t("wireguard.input_vpn_octet3").format(default=VPN_DEFAULT_OCTET3),
-                default=str(VPN_DEFAULT_OCTET3),
+                prompt=t("wireguard.input_vpn_octet3"),
+                default=str(_default_octet3),
                 theme_key="software",
             )
         except UserCancel:
             return
-        _raw = (_octet3_raw or "").strip() or str(VPN_DEFAULT_OCTET3)
+        _raw = (_octet3_raw or "").strip() or str(_default_octet3)
         try:
             _val = int(_raw)
             if 1 <= _val <= 254:
@@ -177,15 +180,18 @@ def install_server() -> None:
         from core.theme import print_error as _pe
         _pe(t("wireguard.input_vpn_octet3_invalid"))
 
+    if _octet3 != _saved_octet3:
+        _cfg = set_config_value(_cfg, "wireguard.octet3", _octet3)
+
     vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
     vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
 
-    # ── 输入隧道标签名 ─────────────────────────────────────────────────────
-    _default_label = "server"
+    # ── 输入隧道名称 ──────────────────────────────────────────────────────
+    _default_label = _saved_label or "server"
     try:
         _label_raw = text_input(
             breadcrumb=breadcrumb,
-            prompt=t("wireguard.input_tunnel_label").format(default=_default_label),
+            prompt=t("wireguard.input_tunnel_label"),
             default=_default_label,
             theme_key="software",
         )
@@ -194,6 +200,9 @@ def install_server() -> None:
     tunnel_label = (_label_raw or "").strip() or _default_label
     import re as _re
     tunnel_label = _re.sub(r"[^a-zA-Z0-9_-]", "-", tunnel_label)[:24].strip("-") or _default_label
+
+    if tunnel_label != _saved_label:
+        _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
 
     iface = detect_default_iface()
     wg_port = WG_UDP_PORT
