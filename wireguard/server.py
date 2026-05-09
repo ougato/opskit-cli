@@ -657,7 +657,7 @@ def diagnose_server() -> None:
     tbl.add_row(_lbl(t(f"{dk}.xray_port")), _port_status(xray_port, "tcp"))
     from core.sysconfig import _load as _sc_load
     _srv_state = _sc_load().get("wg_server", {})
-    _vpn_gw = _srv_state.get("vpn_gateway", "10.10.10.1")
+    _vpn_gw = _srv_state.get("vpn_gateway", "—")
     tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
     tbl.add_row(Text(""), Text(""))
 
