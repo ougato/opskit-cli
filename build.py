@@ -111,7 +111,7 @@ def _available_backends() -> list[str]:
 
 # ─── 构建函数 ─────────────────────────────────────────────────────────────────
 
-def build_nuitka(output_name: str, upx: bool) -> Path | None:
+def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None) -> Path | None:
     """使用 Nuitka 编译单文件可执行程序"""
     nuitka = _find_tool("nuitka") or _find_tool("nuitka3")
     if not nuitka:
@@ -135,9 +135,10 @@ def build_nuitka(output_name: str, upx: bool) -> Path | None:
         "--include-data-dir=core/mirrors=core/mirrors",
         "--include-package=rich._unicode_data",
         "--include-module=_registry",
-        "--include-package=software",
-        "--include-package=monitor",
-        "--include-package=network",
+    ]
+    for pkg in (packages or []):
+        cmd.append(f"--include-package={pkg}")
+    cmd += [
         "--noinclude-pytest-mode=nofollow",
         "--noinclude-unittest-mode=nofollow",
         "--assume-yes-for-downloads",
@@ -315,8 +316,8 @@ _SKIP_PKG = frozenset({
 _REGISTRY_FILE = ROOT / "_registry.py"
 
 
-def write_registry() -> None:
-    """扫描插件包并生成 _registry.py（打包模式静态注册表）"""
+def write_registry() -> list[str]:
+    """扫描插件包并生成 _registry.py（打包模式静态注册表），返回包名列表"""
     entries: list[tuple[str, str]] = []
     for path in sorted(ROOT.iterdir()):
         if not path.is_dir():
@@ -332,7 +333,9 @@ def write_registry() -> None:
         lines.append(f"    ({key!r}, {pkg!r}),")
     lines.append("]")
     _REGISTRY_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[build] _registry.py → {[e[0] for e in entries]}")
+    pkg_list = [e[0] for e in entries]
+    print(f"[build] _registry.py → {pkg_list}")
+    return pkg_list
 
 
 def cmd_build(args: argparse.Namespace) -> int:
@@ -344,7 +347,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"[build] OpsKit v{version}  →  {output_name}")
     print(f"[build] 平台: {os_name}-{arch}  后端: {args.backend}  UPX: {args.upx}")
 
-    write_registry()
+    packages = write_registry()
 
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR, ignore_errors=True)
@@ -354,7 +357,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     used_backend = args.backend
 
     if args.backend in ("nuitka", "auto"):
-        bin_path = build_nuitka(output_name, args.upx)
+        bin_path = build_nuitka(output_name, args.upx, packages)
         if bin_path:
             used_backend = "nuitka"
 
