@@ -100,6 +100,7 @@ jobs:
             quay.io/pypa/manylinux2014_x86_64 \
             bash -c "
               set -e
+              cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && cd /work
               yum install -y upx
               /opt/python/cp312-cp312/bin/pip install -r requirements.txt nuitka zstandard
               /opt/python/cp312-cp312/bin/python build.py build --backend nuitka --upx
