@@ -12,7 +12,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  notify-start:
+    name: notify build start
+    runs-on: ubuntu-latest
+    steps:
+      - name: send build-notify
+        env:
+          HOOK_URL: ${{ secrets.HOOK_URL }}
+          HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
+        run: |
+          curl -fsSL -X POST "${HOOK_URL}/build-notify" \
+            -H "X-Hook-Secret: ${HOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{"event":"build_start"}'
+          echo "[hook] build-notify sent"
+
   test:
+    needs: [notify-start]
     name: test
     runs-on: ubuntu-latest
     steps:
@@ -127,13 +143,13 @@ jobs:
             sha256sum "$f" | awk '{print $1, $2}'
           done
 
-      - name: trigger syncer hook
+      - name: trigger artifact pull
         env:
           HOOK_URL: ${{ secrets.HOOK_URL }}
           HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
         run: |
-          curl -fsSL -X POST "${HOOK_URL}/webhook" \
+          curl -fsSL -X POST "${HOOK_URL}/artifact-pull" \
             -H "X-Hook-Secret: ${HOOK_SECRET}" \
             -H "Content-Type: application/json" \
             -d '{"event":"release_sync"}'
-          echo "[hook] sync triggered"
+          echo "[hook] artifact-pull triggered"
