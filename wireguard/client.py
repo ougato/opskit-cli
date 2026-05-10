@@ -162,6 +162,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     vpn_subnet    = data.get("vpn_subnet",  "10.10.10.0/24")
     vpn_gateway   = data.get("vpn_gateway", "10.10.10.1")
     label         = data.get("label",       "default")
+    dns           = data.get("dns")
 
     import re as _re
     label = _re.sub(r"[^a-zA-Z0-9_-]", "-", label)[:24].strip("-") or "default"
@@ -257,6 +258,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             mtu=WG_CLIENT_MTU,
             keepalive=WG_KEEPALIVE,
             vpn_subnet=vpn_subnet,
+            dns=dns,
         )
         write_file(wg_cfg_path, wg_cfg)
 
