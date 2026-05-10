@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: send build-notify
+        continue-on-error: true
         env:
           HOOK_URL: ${{ secrets.HOOK_URL }}
           HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
@@ -144,6 +145,7 @@ jobs:
           done
 
       - name: trigger artifact pull
+        continue-on-error: true
         env:
           HOOK_URL: ${{ secrets.HOOK_URL }}
           HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
