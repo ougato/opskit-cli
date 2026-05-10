@@ -59,8 +59,8 @@
 
 1. 所有修复和修改在 `develop` 分支上完成
 2. 确认无误后合并到 `release` 分支：`git merge develop --no-edit`
-3. 在 `release` 分支上打 tag 触发 CI/CD：`git tag vX.Y.Z`
-4. 同步推送 tag 到 GitHub 和 GitLab：`git push github vX.Y.Z && git push origin vX.Y.Z`
+3. 在 `release` 分支上打 tag 触发 CI/CD：`git tag vN`（N 为单整数，如 `v1`、`v2`）
+4. 同步推送 tag 到 GitHub 和 GitLab：`git push github vN && git push origin vN`
 5. CI 验证通过后，将 `release` 合并到 `master`：`git checkout master && git merge release --no-edit`
 6. 推送 `master` 到 GitHub：`git push github master`
 
@@ -98,3 +98,40 @@
 - **GitHub Actions**（`release.yml`）：`v*` tag push → test → build（4 目标）→ GitHub Release
 - **GitLab CI**（`.gitlab-ci.yml`）：`v*` tag push → release_job → GitLab Release（挂 GitHub 链接）
 - tag 必须从 `release` 分支打出，双端同时推送
+
+---
+
+## 版本号规范
+
+### 格式
+
+本项目**只使用单整数版本号**，格式为：
+
+```
+v{N}
+```
+
+示例：`v1`、`v2`、`v3`
+
+### 严格禁止
+
+- 禁止语义化版本：`v1.0.0`、`v1.2.3`、`v0.1`
+- 禁止带修订号：`v1.1`、`v2.0`
+- 禁止带前缀或后缀：`v1-beta`、`v1.0-rc1`
+
+### 递增规则
+
+- 每次发布递增 1：`v1` → `v2` → `v3`
+- 无 patch、无 minor，只有 major
+- 当前最新 tag 用 `git tag --sort=-v:refname | head -1` 查看
+
+### 打 tag 命令
+
+```bash
+# 查看当前最新 tag
+git tag --sort=-v:refname | head -1
+
+# 打下一个 tag（在 release 分支执行）
+git tag v1
+git push github v1
+git push origin v1
