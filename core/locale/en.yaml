@@ -307,6 +307,7 @@ wireguard:
   client_ip_required: "Client VPN IP is required"
   token_hint: "Copy the token below and paste it on the client to complete setup:"
   token_security_hint: "Token contains sensitive data, transfer via secure channel (SSH / encrypted chat)"
+  dnsmasq_setup_success: "dnsmasq DNS configured: {domain} → {dns}"
   token_panel_title: "Client Connection Token"
   phone_wg_title: "Phone WireGuard Config"
   phone_wg_hint: "In WireGuard App on your phone, choose 'Import from Clipboard' or scan the QR code below:"
@@ -423,6 +424,7 @@ wireguard:
     pubkey_required: "WG public key is required"
     pubkey_duplicate: "This public key already exists"
     not_installed: "Server not installed, please install it first"
+    setup_dns: "Configure DNS (dnsmasq)"
   client_manage:
     title: "Manage"
     view: "View Info"
