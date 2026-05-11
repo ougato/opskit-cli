@@ -4,7 +4,8 @@
 set -euo pipefail
 
 BIN_NAME="opskit"
-DOWNLOAD_BASE="https://file.icerror.top/d/mirror/soft"
+DOWNLOAD_BASE_CN="https://file.icerror.top/d/mirror/soft"
+DOWNLOAD_BASE_GLOBAL="https://github.com/ougato/opskit-cli/releases/latest/download"
 
 # ── 颜色输出 ──────────────────────────────────────────────────────────────────
 _green()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -13,6 +14,18 @@ _red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 _info()   { printf '  [info] %s\n' "$*"; }
 _ok()     { printf '  [ ok ] %s\n' "$*"; }
 _err()    { printf '  [fail] %s\n' "$*" >&2; }
+
+# ── 地区检测 ──────────────────────────────────────────────────────────────────
+detect_region() {
+    case "${OPSKIT_SOURCE:-auto}" in
+        cn)     echo "cn";     return ;;
+        global) echo "global"; return ;;
+    esac
+    local loc
+    loc="$(curl -fsSL --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
+            | awk -F= '/^loc=/{print $2}' | tr -d '\r')"
+    [ "$loc" = "CN" ] && echo "cn" || echo "global"
+}
 
 # ── 平台检测 ──────────────────────────────────────────────────────────────────
 detect_platform() {
@@ -121,7 +134,7 @@ main() {
     _green "=== OpsKit 安装程序 ==="
     echo ""
 
-    local platform os_dir filename download_url sha256_url tmp_dir
+    local platform os_dir filename download_url sha256_url tmp_dir region
     platform="$(detect_platform)"
     _info "检测到平台：$platform"
 
@@ -131,8 +144,15 @@ main() {
         *) _err "不支持的平台：$platform"; exit 1 ;;
     esac
 
+    region="$(detect_region)"
+    _info "下载源：$region"
+
     filename="${BIN_NAME}-${platform}"
-    download_url="${DOWNLOAD_BASE}/${os_dir}/${filename}"
+    if [ "$region" = "cn" ]; then
+        download_url="${DOWNLOAD_BASE_CN}/${os_dir}/${filename}"
+    else
+        download_url="${DOWNLOAD_BASE_GLOBAL}/${filename}"
+    fi
     sha256_url="${download_url}.sha256"
 
     _info "下载地址：$download_url"
