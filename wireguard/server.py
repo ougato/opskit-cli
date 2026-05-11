@@ -303,6 +303,7 @@ def install_server() -> None:
         os_id = get_os_id()
         if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
             raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
+        _ensure_system_deps(os_id)
 
         from core.sysconfig import SysConfigManager
         SysConfigManager.save(
@@ -1394,6 +1395,36 @@ def rename_peer(breadcrumb: list[str]) -> None:
 
 
 # ─── 内部辅助 ─────────────────────────────────────────────────────────────────
+
+
+def _ensure_system_deps(os_id: str) -> None:
+    """检测并自动安装 WireGuard 服务端所需的前置系统依赖。
+    缺失的包静默安装，已安装则跳过，不影响进度条显示。
+    """
+    import shutil
+    from core.pkg_runner import get_runner
+
+    _check_map: dict[str, str]
+    if os_id in ("debian", "ubuntu"):
+        _check_map = {
+            "iptables":  "iptables",
+            "curl":      "curl",
+            "openssl":   "openssl",
+            "iproute2":  "ip",
+        }
+    else:
+        _check_map = {
+            "iptables": "iptables",
+            "curl":     "curl",
+            "openssl":  "openssl",
+            "iproute":  "ip",
+        }
+
+    missing = [pkg for pkg, cmd in _check_map.items() if not shutil.which(cmd)]
+    if missing:
+        runner = get_runner()
+        runner.update_index()
+        runner.install(missing)
 
 
 def _get_acme_email() -> str:

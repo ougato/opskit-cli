@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from software.base import InstallError
 from .driver import PlatformDriver
-from .constants import NGINX_PACKAGE, NGINX_SERVICE
+from .constants import NGINX_PACKAGE, NGINX_EXTRA_PACKAGES, NGINX_SERVICE
 
 
 class LinuxDriver(PlatformDriver):
@@ -13,7 +13,7 @@ class LinuxDriver(PlatformDriver):
         try:
             runner = get_runner()
             runner.update_index()
-            runner.install([NGINX_PACKAGE])
+            runner.install([NGINX_PACKAGE] + NGINX_EXTRA_PACKAGES)
         except Exception as e:
             raise InstallError(str(e)) from e
 
