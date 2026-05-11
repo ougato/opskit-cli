@@ -23,7 +23,7 @@ detect_region() {
     esac
     local loc
     loc="$(curl -fsSL --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
-            | awk -F= '/^loc=/{print $2}' | tr -d '\r')"
+            | grep '^loc=' | sed 's/^loc=//' | tr -d '\r\n ')"
     [ "$loc" = "CN" ] && echo "cn" || echo "global"
 }
 
