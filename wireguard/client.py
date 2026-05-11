@@ -518,6 +518,16 @@ def diagnose_client() -> None:
         server_ip = tn.get("server_ip",   "—")
         local_port = str(tn.get("local_port", "—"))
         sni_val   = tn.get("sni",         "—")
+        _dns_val  = tn.get("dns", "") or ""
+        if not _dns_val:
+            try:
+                import re as _re
+                from pathlib import Path as _P
+                _wg_conf = _P(f"/etc/wireguard/{wg_iface}.conf").read_text("utf-8")
+                _m = _re.search(r"^DNS\s*=\s*(.+)$", _wg_conf, _re.MULTILINE)
+                _dns_val = _m.group(1).strip() if _m else ""
+            except Exception:
+                pass
 
         wg_ok   = is_service_active(wg_svc)
         xray_ok = is_service_active(xray_svc)
@@ -539,7 +549,7 @@ def diagnose_client() -> None:
         tbl.add_row(_lbl(t(f"{dk}.server_ip")),  _val(server_ip))
         tbl.add_row(_lbl(t("wireguard.info.domain")), _val(sni_val))
         tbl.add_row(_lbl(t(f"{dk}.xray_local_port")), _val(local_port))
-        tbl.add_row(_lbl(t("wireguard.info.dns")), _val(tn.get("dns", "") or "—"))
+        tbl.add_row(_lbl(t("wireguard.info.dns")), _val(_dns_val or "—"))
         ping_text = Text(
             vpn_gw,
             style="#a6e3a1" if _ping_ok else "#f38ba8",
@@ -645,7 +655,18 @@ def view_client_info(breadcrumb: list[str]) -> None:
     tbl.add_column(no_wrap=False)
 
     for tn in tunnels:
-        lbl = tn.get("label", "?")
+        lbl      = tn.get("label", "?")
+        wg_iface = tn.get("wg_iface", f"wg-{lbl}")
+        _vi_dns  = tn.get("dns", "") or ""
+        if not _vi_dns:
+            try:
+                import re as _re2
+                from pathlib import Path as _P2
+                _wg_conf2 = _P2(f"/etc/wireguard/{wg_iface}.conf").read_text("utf-8")
+                _m2 = _re2.search(r"^DNS\s*=\s*(.+)$", _wg_conf2, _re2.MULTILINE)
+                _vi_dns = _m2.group(1).strip() if _m2 else ""
+            except Exception:
+                pass
         tbl.add_row(Text(f"── {lbl} ──", style=_SEC), Text(""))
         rows = [
             (t(f"{mk}.field_ip"),     tn.get("client_ip",   "—")),
@@ -653,7 +674,7 @@ def view_client_info(breadcrumb: list[str]) -> None:
             (t(f"{mk}.field_port"),   str(tn.get("server_port", "—"))),
             (t(f"{mk}.field_sni"),    tn.get("sni",         "—")),
             (t(f"{mk}.field_uuid"),   tn.get("uuid",        "—")),
-            (t(f"{mk}.field_dns"),    tn.get("dns",         "") or "—"),
+            (t(f"{mk}.field_dns"),    _vi_dns or "—"),
         ]
         for _l, _v in rows:
             tbl.add_row(Text(_l, style=_LABEL), Text(_v, style=_VALUE))
