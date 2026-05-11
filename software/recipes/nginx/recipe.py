@@ -1,7 +1,7 @@
 """NginxRecipe 主类：纯调度，零平台 if"""
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from software.base import InstallError, InstallStep, Recipe
 from software.registry import register
@@ -61,29 +61,41 @@ class NginxRecipe(Recipe):
             InstallStep("software.step.verify"),
         ]
 
-    def install(self, version: str) -> None:
+    def _do_install(self, on_progress: Callable[[int], None] | None = None) -> None:
+        """纯安装逻辑，无进度条。on_progress(pct) 上报 0~100 百分比。"""
         from core.platform import get_platform
+        info = get_platform()
+        if info.os_type not in self.platforms:
+            raise InstallError(t('software.nginx_error.platform_not_supported', platform=info.os_type))
+        if on_progress:
+            on_progress(20)
+        driver = get_driver()
+        driver.install_pkg()
+        if on_progress:
+            on_progress(80)
+        driver.enable_service()
+        if on_progress:
+            on_progress(95)
+        if not self.detect():
+            raise InstallError(t('software.nginx_error.verify_failed'))
+        if on_progress:
+            on_progress(100)
+
+    def install(self, version: str) -> None:
         from core.progress import MultiStepProgress
 
-        info = get_platform()
-        driver = get_driver()
-
-        descs = ["check", "download", "install", "enable_service", "verify"]
+        descs = [
+            t('software.step.check'),
+            t('software.step.download'),
+            t('software.step.install'),
+            t('software.step.enable_service'),
+            t('software.step.verify'),
+        ]
         with MultiStepProgress(descs) as sp:
-            sp.step("check")
-            if info.os_type not in self.platforms:
-                raise InstallError(t("software.nginx_error.platform_not_supported", platform=info.os_type))
-
-            sp.step("download")
-            sp.step("install")
-            driver.install_pkg()
-
-            sp.step("enable_service")
-            driver.enable_service()
-
-            sp.step("verify")
-            if not self.detect():
-                raise InstallError(t("software.nginx_error.verify_failed"))
+            sp.step(descs[0])
+            sp.step(descs[1])
+            sp.step(descs[2])
+            self._do_install(on_progress=sp.set_step_pct)
             sp.complete()
 
     def uninstall(self) -> None:

@@ -278,7 +278,10 @@ def install_server() -> None:
         "wireguard.step.check_os",
         "wireguard.step.install_wg",
         "wireguard.step.install_xray",
-        "wireguard.step.install_nginx",
+    ]
+    if nginx_mode == "install":
+        step_keys.append("wireguard.step.install_nginx")
+    step_keys += [
         "wireguard.step.issue_cert",
         "wireguard.step.config_nginx",
         "wireguard.step.gen_keys",
@@ -316,12 +319,14 @@ def install_server() -> None:
         sp.step(t("wireguard.step.install_xray"))
         install_xray()
 
-        # ── 安装 / 配置 nginx（根据場景自动选择 install / append）───────────────────
-        sp.step(t("wireguard.step.install_nginx"))
+        # ── 安装 / 配置 nginx（根据场景自动选择 install / append）───────────────────
+        if nginx_mode == "install":
+            sp.step(t("wireguard.step.install_nginx"))
         _setup_nginx(
             os_id=os_id, nginx_mode=nginx_mode,
             sni=sni, ws_port=XRAY_WS_PORT,
             cert_dir=ACME_CERT_DIR, ws_path=XRAY_WS_PATH,
+            sp=sp,
         )
 
         sp.step(t("wireguard.step.issue_cert"))
@@ -1436,10 +1441,10 @@ def _check_port_443() -> tuple:
     return result
 
 
-def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str) -> None:
+def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str, sp=None) -> None:
     """根据场景初始化 nginx 配置。
     nginx_mode:
-      "install" — 无 nginx，静默安装并删除默认站点
+      "install" — 无 nginx，复用 NginxRecipe._do_install 安装并删除默认站点
       "append"  — 已有 nginx，只追加本程序配置文件
     两种模式都只写 NGINX_VLESS_WS_CONF，不改用户其他文件。
     """
@@ -1452,7 +1457,8 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
     from wireguard.utils import write_file
 
     if nginx_mode == "install":
-        _install_nginx(os_id)
+        from software.recipes.nginx.recipe import NginxRecipe
+        NginxRecipe()._do_install(on_progress=sp.set_step_pct if sp else None)
         from core.paths import nginx_sites_enabled_dir, nginx_conf_dir
         (nginx_sites_enabled_dir() / "default").unlink(missing_ok=True)
         (nginx_conf_dir() / "default.conf").unlink(missing_ok=True)
@@ -1463,28 +1469,6 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
     write_file(NGINX_VLESS_WS_CONF, nginx_http_only_config(sni))
     subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True, text=True)
-
-
-def _install_nginx(os_id: str) -> None:
-    """安装 nginx（含 stream 模块），已安装则跳过"""
-    import subprocess
-    import shutil
-    from core.i18n import t
-    from software.base import InstallError
-    from core.pkg_runner import get_runner
-    if shutil.which("nginx"):
-        return
-    runner = get_runner()
-    runner.update_index()
-    if os_id in ("centos", "rocky", "almalinux", "rhel"):
-        runner.install_extras(["epel-release"])
-    elif os_id not in ("debian", "ubuntu", "fedora", "alpine", "centos"):
-        raise InstallError(t("wireguard.error.unsupported_nginx", os_id=os_id))
-    runner.install(["nginx"])
-    subprocess.run(["systemctl", "enable", "nginx"], check=False,
-                   capture_output=True, text=True)
-    subprocess.run(["systemctl", "start", "nginx"], check=False,
-                   capture_output=True, text=True)
 
 
 def _issue_cert(sni: str, email: str, cert_dir: str) -> None:

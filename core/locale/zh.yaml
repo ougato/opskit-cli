@@ -353,7 +353,7 @@ wireguard:
     check_port: "检测 443 端口占用..."
     install_wg: "安装 WireGuard..."
     install_xray: "安装 Xray..."
-    install_nginx: "配置 Nginx..."
+    install_nginx: "安装 Nginx..."
     config_nginx: "配置 Nginx WS+TLS 反代..."
     issue_cert: "申请 TLS 证书（acme.sh）..."
     gen_keys: "生成密钥对..."
