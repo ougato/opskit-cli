@@ -555,7 +555,8 @@ def diagnose_client() -> None:
             style="#a6e3a1" if _ping_ok else "#f38ba8",
         )
         tbl.add_row(_lbl(t(f"{dk}.ping_gateway")), ping_text)
-        tbl.add_row(Text(""), Text(""))
+        if tn is not tunnels[-1]:
+            tbl.add_row(Text(""), Text(""))
 
     console.print(Panel(
         tbl,
