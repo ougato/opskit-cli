@@ -1399,9 +1399,9 @@ def rename_peer(breadcrumb: list[str]) -> None:
 def _get_acme_email() -> str:
     """获取 ACME 邮箱：优先读 config，否则随机生成 @gmail.com 并持久化"""
     import uuid
-    from core.config import get_config_value, set_config_value, load_config
+    from core.config import set_config_value, load_config
     cfg = load_config()
-    saved = get_config_value(cfg, 'wireguard.acme_email')
+    saved = (cfg.get('wireguard') or {}).get('acme_email', '')
     if saved and '@' in saved and not saved.endswith('.local'):
         return saved
     email = f'opskit.{uuid.uuid4().hex[:12]}@gmail.com'
