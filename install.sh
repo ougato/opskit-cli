@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # OpsKit 一键安装脚本 — Linux / macOS
 # 用法：curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
 set -euo pipefail
