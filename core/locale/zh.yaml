@@ -328,6 +328,7 @@ wireguard:
     public_ip: "公网 IP"
     mode: "安装模式"
     domain: "域名"
+    dns: "DNS"
   firewall_panel_title: "云安全组 / 防火墙配置"
   firewall_hint: "请在云厂商控制台添加以下入站规则："
   firewall_tcp_rule: "TCP {port}   允许所有来源（0.0.0.0/0）"

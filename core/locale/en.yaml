@@ -328,6 +328,7 @@ wireguard:
     public_ip: "Public IP"
     mode: "Install Mode"
     domain: "Domain"
+    dns: "DNS"
   firewall_panel_title: "Cloud Security Group / Firewall"
   firewall_hint: "Add the following inbound rules in your cloud console:"
   firewall_tcp_rule: "TCP {port}   Allow all sources (0.0.0.0/0)"

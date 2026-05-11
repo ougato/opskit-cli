@@ -392,6 +392,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         (t("wireguard.manage.peer_name"),          label),
         (t("wireguard.info.xray_port"),            str(server_port)),
         (t("wireguard.info.domain"),               sni),
+        (t("wireguard.info.dns"),                  _final_dns or "—"),
     ]
     for lbl_, val_ in rows:
         tbl.add_row(_Text(lbl_, style="#7f849c"), _Text(val_, style="bold #cdd6f4"))
