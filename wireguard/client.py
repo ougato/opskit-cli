@@ -5,6 +5,61 @@ from software.base import InstallError, UninstallError
 from core.theme import console
 
 
+def _detect_local_dns(iface: str, vpn_dns: str | None = None) -> str | None:
+    """检测本机首选 DNS（排除 VPN DNS 本身，不受 wg-quick bind-mount 污染影响）。
+    优先 nmcli（读 NetworkManager 连接配置，不受 resolv.conf 覆盖影响），
+    fallback 读 /etc/resolv.conf 第一条 nameserver，若与 vpn_dns 相同则认定已被污染，返回 None。
+    """
+    import subprocess
+    import re
+
+    _vpn = (vpn_dns or "").strip()
+
+    # 1. nmcli 优先（不受 wg-quick bind-mount 影响）
+    try:
+        r = subprocess.run(
+            ["nmcli", "dev", "show", iface],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            m = re.match(r"IP4\.DNS\[1\]:\s+(\S+)", line)
+            if m:
+                ip = m.group(1).strip()
+                if ip and ip != _vpn:
+                    return ip
+    except Exception:
+        pass
+
+    # 2. resolv.conf fallback（排除已被 wg-quick 污染的情况）
+    try:
+        from pathlib import Path
+        for line in Path("/etc/resolv.conf").read_text("utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("nameserver"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    ip = parts[1].strip()
+                    if ip and ip != _vpn:
+                        return ip
+    except Exception:
+        pass
+
+    return None
+
+
+def _merge_dns(vpn_dns: str | None, local_dns: str | None) -> str | None:
+    """合并本机 DNS 与 VPN DNS，确保无重复、本机优先。
+    - vpn_dns=None（旧 token）→ 返回 None，不写 DNS 行（向后兼容）
+    - local_dns 检测失败 → 只用 vpn_dns
+    - 两者均有且不同 → '{local_dns}, {vpn_dns}'
+    """
+    if not vpn_dns:
+        return None
+    if local_dns and local_dns != vpn_dns:
+        return f"{local_dns}, {vpn_dns}"
+    return vpn_dns
+
+
 def _save_client_state(data: dict) -> None:
     """保存客户端 state 文件"""
     import json
@@ -249,6 +304,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         # ── 写入 WireGuard 配置（/etc/wireguard/{wg_iface}.conf）
         sp.step(t("wireguard.step.write_wg_config"))
         wg_cfg_path = f"/etc/wireguard/{wg_iface}.conf"
+        _local_dns = _detect_local_dns(iface, vpn_dns=dns)
+        _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv,
             client_ip=client_ip,
@@ -258,7 +315,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             mtu=WG_CLIENT_MTU,
             keepalive=WG_KEEPALIVE,
             vpn_subnet=vpn_subnet,
-            dns=dns,
+            dns=_final_dns,
         )
         write_file(wg_cfg_path, wg_cfg)
 
@@ -680,7 +737,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
     from core.theme import print_error, print_action_title, print_success
     from core.progress import MultiStepProgress
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
-    from wireguard.utils import enable_and_start, stop_and_disable, write_file
+    from wireguard.utils import enable_and_start, stop_and_disable, write_file, detect_default_iface
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
 
@@ -769,11 +826,16 @@ def update_client_token(breadcrumb: list[str]) -> None:
         write_file(xray_cfg_path, xray_cfg)
 
         sp.step(step_descs[1])
+        _upd_vpn_dns = data.get("dns")
+        _upd_iface   = detect_default_iface()
+        _upd_local   = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
+        _upd_dns     = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv, client_ip=client_ip,
             server_public_key=wg_server_pub, psk=wg_psk,
             server_endpoint=f"127.0.0.1:{local_port}",
             mtu=WG_CLIENT_MTU, keepalive=WG_KEEPALIVE, vpn_subnet=vpn_subnet,
+            dns=_upd_dns,
         )
         write_file(wg_cfg_path, wg_cfg)
 
