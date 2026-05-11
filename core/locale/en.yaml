@@ -440,6 +440,7 @@ wireguard:
     field_port: "Xray Port"
     field_sni: "Domain"
     field_uuid: "UUID"
+    field_dns: "DNS"
     input_token: "New Token"
     token_empty: "Token cannot be empty"
     update_ok: "Token updated, restarting services..."

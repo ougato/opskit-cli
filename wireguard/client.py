@@ -369,6 +369,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         "sni":         sni,
         "uuid":        uuid,
         "wg_server_pub": wg_server_pub,
+        "dns":         _final_dns or "",
         "token":       raw_token.strip(),
     })
     _state["tunnels"] = _tunnels
@@ -538,6 +539,7 @@ def diagnose_client() -> None:
         tbl.add_row(_lbl(t(f"{dk}.server_ip")),  _val(server_ip))
         tbl.add_row(_lbl(t("wireguard.info.domain")), _val(sni_val))
         tbl.add_row(_lbl(t(f"{dk}.xray_local_port")), _val(local_port))
+        tbl.add_row(_lbl(t("wireguard.info.dns")), _val(tn.get("dns", "") or "—"))
         ping_text = Text(
             vpn_gw,
             style="#a6e3a1" if _ping_ok else "#f38ba8",
@@ -651,6 +653,7 @@ def view_client_info(breadcrumb: list[str]) -> None:
             (t(f"{mk}.field_port"),   str(tn.get("server_port", "—"))),
             (t(f"{mk}.field_sni"),    tn.get("sni",         "—")),
             (t(f"{mk}.field_uuid"),   tn.get("uuid",        "—")),
+            (t(f"{mk}.field_dns"),    tn.get("dns",         "") or "—"),
         ]
         for _l, _v in rows:
             tbl.add_row(Text(_l, style=_LABEL), Text(_v, style=_VALUE))

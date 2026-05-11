@@ -483,6 +483,7 @@ def install_server() -> None:
         (t("wireguard.info.mode"),        t("wireguard.mode_443")),
         (t("wireguard.info.xray_port"),   str(server_port)),
         (t("wireguard.info.vpn_gateway"), vpn_gateway),
+        (t("wireguard.info.dns"),         vpn_gateway),
     ]
     info_rows.insert(1, (t("wireguard.info.domain"), sni))
     for label, value in info_rows:
@@ -723,6 +724,7 @@ def diagnose_server() -> None:
     _srv_state = _sc_load().get("wg_server", {})
     _vpn_gw = _srv_state.get("vpn_gateway", "—")
     tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
+    tbl.add_row(_lbl(t("wireguard.info.dns")), _val(_vpn_gw if _vpn_gw != "—" else "—"))
     tbl.add_row(Text(""), Text(""))
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────

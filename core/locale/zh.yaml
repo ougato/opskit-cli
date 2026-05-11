@@ -440,6 +440,7 @@ wireguard:
     field_port: "Xray 端口"
     field_sni: "域名"
     field_uuid: "UUID"
+    field_dns: "DNS"
     input_token: "新令牌"
     token_empty: "令牌不能为空"
     update_ok: "令牌已更新，服务重启中..."
