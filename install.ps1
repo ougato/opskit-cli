@@ -5,14 +5,31 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$BIN_NAME      = "opskit"
-$DOWNLOAD_BASE = "https://file.icerror.top/d/mirror/soft/windows"
-$INSTALL_DIR   = Join-Path $env:LOCALAPPDATA "opskit"
+$BIN_NAME             = "opskit"
+$DOWNLOAD_BASE_CN     = "https://file.icerror.top/d/mirror/soft/windows"
+$DOWNLOAD_BASE_GLOBAL = "https://github.com/ougato/opskit-cli/releases/latest/download"
+$INSTALL_DIR          = Join-Path $env:LOCALAPPDATA "opskit"
 
 function Write-Info  { param($msg) Write-Host "  [info] $msg" }
 function Write-Ok    { param($msg) Write-Host "  [ ok ] $msg" -ForegroundColor Green }
 function Write-Warn  { param($msg) Write-Host "  [warn] $msg" -ForegroundColor Yellow }
 function Write-Fail  { param($msg) Write-Host "  [fail] $msg" -ForegroundColor Red }
+
+# ── 地区检测 ──────────────────────────────────────────────────────────────────
+function Get-Region {
+    switch ($env:OPSKIT_SOURCE) {
+        'cn'     { return 'cn' }
+        'global' { return 'global' }
+    }
+    try {
+        $resp = Invoke-WebRequest -Uri 'https://www.cloudflare.com/cdn-cgi/trace' `
+                                   -UseBasicParsing -TimeoutSec 3
+        if ($resp.Content -match 'loc=CN') { return 'cn' }
+        return 'global'
+    } catch {
+        return 'global'
+    }
+}
 
 # ── 平台检测 ──────────────────────────────────────────────────────────────────
 function Get-Platform {
@@ -73,9 +90,16 @@ function Main {
     $platform = Get-Platform
     Write-Info "检测到平台：$platform"
 
-    $filename    = "${BIN_NAME}-${platform}.exe"
-    $downloadUrl = "$DOWNLOAD_BASE/$filename"
-    $sha256Url   = "$downloadUrl.sha256"
+    $region = Get-Region
+    Write-Info "下载源：$region"
+
+    $filename = "${BIN_NAME}-${platform}.exe"
+    if ($region -eq 'cn') {
+        $downloadUrl = "$DOWNLOAD_BASE_CN/$filename"
+    } else {
+        $downloadUrl = "$DOWNLOAD_BASE_GLOBAL/$filename"
+    }
+    $sha256Url = "$downloadUrl.sha256"
 
     Write-Info "下载地址：$downloadUrl"
 
