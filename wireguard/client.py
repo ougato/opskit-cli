@@ -683,7 +683,8 @@ def view_client_info(breadcrumb: list[str]) -> None:
         tbl.add_row(Text(""), Text(""))
         tbl.add_row(Text(t(f"{mk}.field_token"), style=_LABEL),
                     Text(_trunc(token), style=_TOKEN))
-        tbl.add_row(Text(""), Text(""))
+        if tn is not tunnels[-1]:
+            tbl.add_row(Text(""), Text(""))
 
     console.print(Panel(
         tbl,
