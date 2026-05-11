@@ -139,7 +139,7 @@ def install_server() -> None:
         WG_CONFIG_FILE, XRAY_CONFIG_FILE, WG_SERVICE, XRAY_SERVICE,
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
         XRAY_WS_PORT, XRAY_WS_PATH, ACME_CERT_DIR,
-        ACME_DEFAULT_EMAIL, VPN_CLIENT_IP_START,
+        VPN_CLIENT_IP_START,
         VPN_SUBNET_TPL, VPN_GW_TPL, VPN_DEFAULT_OCTET3,
     )
     from wireguard.utils import (
@@ -180,7 +180,7 @@ def install_server() -> None:
     sni = sni.strip()
     if sni != _saved_domain:
         _cfg = set_config_value(_cfg, "wireguard.domain", sni)
-    cert_email = ACME_DEFAULT_EMAIL
+    cert_email = _get_acme_email()
 
     public_ip = _detect_public_ip()
     if not public_ip:
@@ -1394,6 +1394,19 @@ def rename_peer(breadcrumb: list[str]) -> None:
 
 
 # ─── 内部辅助 ─────────────────────────────────────────────────────────────────
+
+
+def _get_acme_email() -> str:
+    """获取 ACME 邮箱：优先读 config，否则随机生成 @gmail.com 并持久化"""
+    import uuid
+    from core.config import get_config_value, set_config_value, load_config
+    cfg = load_config()
+    saved = get_config_value(cfg, 'wireguard.acme_email')
+    if saved and '@' in saved and not saved.endswith('.local'):
+        return saved
+    email = f'opskit.{uuid.uuid4().hex[:12]}@gmail.com'
+    set_config_value(cfg, 'wireguard.acme_email', email)
+    return email
 
 
 def _check_port_443() -> tuple:

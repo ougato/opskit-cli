@@ -48,22 +48,6 @@ XRAY_WS_PATH = "/vless-ws"
 XRAY_WS_PORT = 2443
 ACME_CERT_DIR = str(_nginx_ssl_dir())
 
-
-def _gen_acme_email() -> str:
-    """生成随机合法邮箱（@gmail.com），持久化到 config 避免每次变动"""
-    from core.config import get_config_value, set_config_value, load_config
-    cfg = load_config()
-    saved = get_config_value(cfg, "wireguard.acme_email")
-    if saved and "@" in saved and not saved.endswith(".local"):
-        return saved
-    import uuid
-    email = f"opskit.{uuid.uuid4().hex[:12]}@gmail.com"
-    set_config_value(cfg, "wireguard.acme_email", email)
-    return email
-
-
-ACME_DEFAULT_EMAIL = _gen_acme_email()
-
 # ─── SNI 伪装域名白名单（VLESS+WS+TLS 用，从中随机选取 tlsSettings.serverName）──
 SNI_WHITELIST = [
     "www.microsoft.com",
