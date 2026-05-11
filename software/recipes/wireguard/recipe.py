@@ -46,7 +46,7 @@ class WgServerRecipe(Recipe):
     category: ClassVar[str] = "devops"
     description: ClassVar[str] = "WireGuard 公网服务端（over Xray REALITY）"
     platforms: ClassVar[list[str]] = ["linux"]
-    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}, "nginx"]
+    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
