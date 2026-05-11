@@ -64,10 +64,11 @@ def _generate_client_token(
     vpn_subnet: str = "10.10.10.0/24",
     vpn_gateway: str = "10.10.10.1",
     label: str = "default",
+    dns: str | None = None,
 ) -> str:
     """生成客户端连接令牌（v2 格式，含子网/网关/标签）"""
     from wireguard.token import encode_token
-    return encode_token({
+    data: dict = {
         "server_ip": server_ip,
         "server_port": server_port,
         "wg_server_pubkey": wg_server_pub,
@@ -81,7 +82,49 @@ def _generate_client_token(
         "vpn_subnet": vpn_subnet,
         "vpn_gateway": vpn_gateway,
         "label": label,
-    })
+    }
+    if dns:
+        data["dns"] = dns
+    return encode_token(data)
+
+
+def _setup_dnsmasq(vpn_gateway: str, base_domain: str, os_id: str) -> None:
+    """安装并配置 dnsmasq — 安全、幂等、不覆盖用户配置"""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from wireguard.constants import DNSMASQ_CONF_PATH, DNSMASQ_UPSTREAM_DNS
+
+    if not shutil.which("dnsmasq"):
+        if os_id in ("debian", "ubuntu"):
+            subprocess.run(["apt-get", "install", "-y", "dnsmasq"],
+                           check=True, capture_output=True, text=True)
+        else:
+            subprocess.run(["yum", "install", "-y", "dnsmasq"],
+                           check=True, capture_output=True, text=True)
+
+    upstream_lines = "\n".join(f"server={s}" for s in DNSMASQ_UPSTREAM_DNS)
+    new_content = (
+        f"# opskit WireGuard DNS 配置 — 由 opskit 自动管理，请勿手动修改\n"
+        f"# 仅监听 WG 接口，不影响服务器自身 DNS\n"
+        f"listen-address={vpn_gateway}\n"
+        f"bind-interfaces\n"
+        f"# 泛域名解析到 WG 网关\n"
+        f"address=/{base_domain}/{vpn_gateway}\n"
+        f"# 上游 DNS\n"
+        f"{upstream_lines}\n"
+    )
+    conf_path = Path(DNSMASQ_CONF_PATH)
+    conf_path.parent.mkdir(parents=True, exist_ok=True)
+    if conf_path.exists() and conf_path.read_text("utf-8") == new_content:
+        pass
+    else:
+        conf_path.write_text(new_content, encoding="utf-8")
+
+    subprocess.run(["systemctl", "enable", "--now", "dnsmasq"],
+                   check=False, capture_output=True, text=True)
+    subprocess.run(["systemctl", "restart", "dnsmasq"],
+                   check=False, capture_output=True, text=True)
 
 
 def install_server() -> None:
@@ -242,6 +285,7 @@ def install_server() -> None:
         "wireguard.step.write_xray_config",
         "wireguard.step.write_wg_config",
         "wireguard.step.gen_client",
+        "wireguard.step.install_dnsmasq",
         "wireguard.step.start_services",
         "wireguard.step.verify",
     ]
@@ -337,7 +381,11 @@ def install_server() -> None:
         with open(WG_CONFIG_FILE, "a") as f:
             f.write(peer_section)
 
-        # 生成令牌
+        # 提取基准域名（如 wg.icerror.top → icerror.top）
+        _sni_parts = sni.strip().split(".")
+        _base_domain = ".".join(_sni_parts[-2:]) if len(_sni_parts) >= 2 else sni
+
+        # 生成令牌（含 dns 字段）
         token = _generate_client_token(
             server_ip=public_ip,
             server_port=server_port,
@@ -352,12 +400,14 @@ def install_server() -> None:
             vpn_subnet=vpn_subnet,
             vpn_gateway=vpn_gateway,
             label=tunnel_label,
+            dns=vpn_gateway,
         )
 
         # 保存状态（令牌生成后写入，确保 client-1 含 token 字段）
         _save_state({
             "mode": "443",
             "sni": sni,
+            "base_domain": _base_domain,
             "server_ip": public_ip,
             "server_port": server_port,
             "uuid": uuid,
@@ -376,6 +426,10 @@ def install_server() -> None:
                 }
             ],
         })
+
+        # ── 安装 dnsmasq ──────────────────────────────────────────────────────
+        sp.step(t("wireguard.step.install_dnsmasq"))
+        _setup_dnsmasq(vpn_gateway=vpn_gateway, base_domain=_base_domain, os_id=os_id)
 
         # ── 启动服务 ─────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.start_services"))
@@ -429,6 +483,7 @@ def install_server() -> None:
         (t("wireguard.info.mode"),        t("wireguard.mode_443")),
         (t("wireguard.info.xray_port"),   str(server_port)),
         (t("wireguard.info.vpn_gateway"), vpn_gateway),
+        (t("wireguard.info.dns"),         vpn_gateway),
     ]
     info_rows.insert(1, (t("wireguard.info.domain"), sni))
     for label, value in info_rows:
@@ -543,9 +598,11 @@ def uninstall_server() -> None:
         for path in (xray_log_dir(), xray_data_dir()):
             shutil.rmtree(str(path), ignore_errors=True)
 
-        # ── 6. 清理系统配置 ───────────────────────────────────────────────────
+        # ── 6. 清理系统配置 ──────────────────────────────────────────────────────
         sp.step(descs[5])
         Path("/etc/sysctl.d/99-wg.conf").unlink(missing_ok=True)
+        from wireguard.constants import DNSMASQ_CONF_PATH as _DNSMASQ_CONF
+        Path(_DNSMASQ_CONF).unlink(missing_ok=True)
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore("wg_server")
         _SCM.remove("wg_server")
@@ -667,6 +724,7 @@ def diagnose_server() -> None:
     _srv_state = _sc_load().get("wg_server", {})
     _vpn_gw = _srv_state.get("vpn_gateway", "—")
     tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
+    tbl.add_row(_lbl(t("wireguard.info.dns")), _val(_vpn_gw if _vpn_gw != "—" else "—"))
     tbl.add_row(Text(""), Text(""))
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────
@@ -892,6 +950,7 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"{get_icon('edit')} {t(f'{mk}.rename_peer')}"},
                 {"key": "4", "label": f"{get_icon('delete')} {t(f'{mk}.remove_peer')}"},
+                {"key": "5", "label": f"{get_icon('network')} {t(f'{mk}.setup_dns')}"},
             ]
         else:
             choices = [
@@ -899,6 +958,7 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"[{muted}]{get_icon('edit')} {t(f'{mk}.rename_peer')}[/{muted}]", "disabled": True},
                 {"key": "4", "label": f"[{muted}]{get_icon('delete')} {t(f'{mk}.remove_peer')}[/{muted}]", "disabled": True},
+                {"key": "5", "label": f"[{muted}]{get_icon('network')} {t(f'{mk}.setup_dns')}[/{muted}]", "disabled": True},
             ]
 
         try:
@@ -934,6 +994,37 @@ def manage_peers() -> None:
                 pause()
             else:
                 remove_peer(breadcrumb)
+        elif key == "5":
+            if not installed:
+                print_warning(t("wireguard.manage.not_installed"))
+                pause()
+            else:
+                _run_setup_dns(breadcrumb)
+
+
+def _run_setup_dns(breadcrumb: list[str]) -> None:
+    """补装/更新 dnsmasq DNS 配置（已安装服务端使用）"""
+    from core.i18n import t
+    from core.prompt import pause, clear_screen
+    from core.theme import print_action_title, print_success
+    from wireguard.utils import get_os_id
+
+    clear_screen()
+    mk = "wireguard.manage"
+    print_action_title([*breadcrumb, t(f"{mk}.setup_dns")])
+
+    state = _load_state()
+    vpn_gateway  = state.get("vpn_gateway", "")
+    base_domain  = state.get("base_domain", "")
+    if not vpn_gateway or not base_domain:
+        sni = state.get("sni", "")
+        _parts = sni.strip().split(".")
+        base_domain = ".".join(_parts[-2:]) if len(_parts) >= 2 else sni
+
+    os_id = get_os_id()
+    _setup_dnsmasq(vpn_gateway=vpn_gateway, base_domain=base_domain, os_id=os_id)
+    print_success(t("wireguard.dnsmasq_setup_success").format(domain=base_domain, dns=vpn_gateway))
+    pause()
 
 
 def add_peer(breadcrumb: list[str]) -> None:
@@ -998,7 +1089,7 @@ def add_peer(breadcrumb: list[str]) -> None:
         check=False, capture_output=True, text=True,
     )
 
-    # 生成令牌
+    # 生成令牌（含 dns 字段）
     token = _generate_client_token(
         server_ip=state.get("server_ip", ""),
         server_port=state.get("server_port", 443),
@@ -1013,6 +1104,7 @@ def add_peer(breadcrumb: list[str]) -> None:
         vpn_subnet=_vpn_subnet,
         vpn_gateway=_vpn_gateway,
         label=_tunnel_label,
+        dns=_vpn_gateway,
     )
 
     # 更新状态（含令牌）
@@ -1056,6 +1148,38 @@ def add_peer(breadcrumb: list[str]) -> None:
         pass
     console.print()
     console.print(f"[#6c7086]{t('wireguard.token_security_hint')}[/#6c7086]")
+    console.print()
+
+    # ── 输出手机专用 WG 配置 + QR 码 ──────────────────────────────────────
+    _server_endpoint = f"{state.get('server_ip', '')}:{state.get('server_port', 443)}"
+    _phone_wg_conf = (
+        f"[Interface]\n"
+        f"PrivateKey = {client_priv}\n"
+        f"Address = {client_ip}/32\n"
+        f"DNS = {_vpn_gateway}\n\n"
+        f"[Peer]\n"
+        f"PublicKey = {state.get('wg_server_pub', '')}\n"
+        f"PresharedKey = {client_psk}\n"
+        f"AllowedIPs = {_vpn_subnet}\n"
+        f"PersistentKeepalive = 25\n"
+        f"Endpoint = {_server_endpoint}\n"
+    )
+    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
+    console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
+    console.print()
+    console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
+    try:
+        import qrcode  # type: ignore
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(_phone_wg_conf)
+        qr.make(fit=True)
+        from io import StringIO
+        _buf = StringIO()
+        qr.print_ascii(out=_buf, invert=True)
+        console.print(f"[bold #89b4fa]{t('wireguard.phone_qr_title')}[/bold #89b4fa]")
+        console.print(_buf.getvalue())
+    except ImportError:
+        console.print(f"[#6c7086]{t('wireguard.phone_qr_missing')}[/#6c7086]")
     console.print()
     pause()
 

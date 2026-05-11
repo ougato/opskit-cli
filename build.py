@@ -134,6 +134,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
         "--include-data-dir=core/locale=core/locale",
         "--include-data-dir=core/mirrors=core/mirrors",
         "--include-package=rich._unicode_data",
+        "--include-package=qrcode",
         "--include-module=_registry",
     ]
     for pkg in (packages or []):
@@ -192,6 +193,9 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         f"--add-data={ROOT / 'core' / 'locale'}{sep}core/locale",
         f"--add-data={ROOT / 'core' / 'mirrors'}{sep}core/mirrors",
         "--hidden-import=_registry",
+        "--hidden-import=qrcode",
+        "--hidden-import=qrcode.image.base",
+        "--hidden-import=qrcode.image.styledpil",
         "--hidden-import=software",
         "--hidden-import=software.menu",
         "--hidden-import=software.commands",

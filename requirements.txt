@@ -6,3 +6,4 @@ psutil>=5.9.8
 pytest>=8.2.0
 platformdirs>=4.0
 sentry-sdk>=2.0,<3
+qrcode>=8.0

@@ -5,6 +5,61 @@ from software.base import InstallError, UninstallError
 from core.theme import console
 
 
+def _detect_local_dns(iface: str, vpn_dns: str | None = None) -> str | None:
+    """检测本机首选 DNS（排除 VPN DNS 本身，不受 wg-quick bind-mount 污染影响）。
+    优先 nmcli（读 NetworkManager 连接配置，不受 resolv.conf 覆盖影响），
+    fallback 读 /etc/resolv.conf 第一条 nameserver，若与 vpn_dns 相同则认定已被污染，返回 None。
+    """
+    import subprocess
+    import re
+
+    _vpn = (vpn_dns or "").strip()
+
+    # 1. nmcli 优先（不受 wg-quick bind-mount 影响）
+    try:
+        r = subprocess.run(
+            ["nmcli", "dev", "show", iface],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            m = re.match(r"IP4\.DNS\[1\]:\s+(\S+)", line)
+            if m:
+                ip = m.group(1).strip()
+                if ip and ip != _vpn:
+                    return ip
+    except Exception:
+        pass
+
+    # 2. resolv.conf fallback（排除已被 wg-quick 污染的情况）
+    try:
+        from pathlib import Path
+        for line in Path("/etc/resolv.conf").read_text("utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("nameserver"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    ip = parts[1].strip()
+                    if ip and ip != _vpn:
+                        return ip
+    except Exception:
+        pass
+
+    return None
+
+
+def _merge_dns(vpn_dns: str | None, local_dns: str | None) -> str | None:
+    """合并本机 DNS 与 VPN DNS，确保无重复、本机优先。
+    - vpn_dns=None（旧 token）→ 返回 None，不写 DNS 行（向后兼容）
+    - local_dns 检测失败 → 只用 vpn_dns
+    - 两者均有且不同 → '{local_dns}, {vpn_dns}'
+    """
+    if not vpn_dns:
+        return None
+    if local_dns and local_dns != vpn_dns:
+        return f"{local_dns}, {vpn_dns}"
+    return vpn_dns
+
+
 def _save_client_state(data: dict) -> None:
     """保存客户端 state 文件"""
     import json
@@ -162,6 +217,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     vpn_subnet    = data.get("vpn_subnet",  "10.10.10.0/24")
     vpn_gateway   = data.get("vpn_gateway", "10.10.10.1")
     label         = data.get("label",       "default")
+    dns           = data.get("dns")
 
     import re as _re
     label = _re.sub(r"[^a-zA-Z0-9_-]", "-", label)[:24].strip("-") or "default"
@@ -248,6 +304,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         # ── 写入 WireGuard 配置（/etc/wireguard/{wg_iface}.conf）
         sp.step(t("wireguard.step.write_wg_config"))
         wg_cfg_path = f"/etc/wireguard/{wg_iface}.conf"
+        _local_dns = _detect_local_dns(iface, vpn_dns=dns)
+        _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv,
             client_ip=client_ip,
@@ -257,6 +315,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             mtu=WG_CLIENT_MTU,
             keepalive=WG_KEEPALIVE,
             vpn_subnet=vpn_subnet,
+            dns=_final_dns,
         )
         write_file(wg_cfg_path, wg_cfg)
 
@@ -310,6 +369,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         "sni":         sni,
         "uuid":        uuid,
         "wg_server_pub": wg_server_pub,
+        "dns":         _final_dns or "",
         "token":       raw_token.strip(),
     })
     _state["tunnels"] = _tunnels
@@ -333,6 +393,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         (t("wireguard.manage.peer_name"),          label),
         (t("wireguard.info.xray_port"),            str(server_port)),
         (t("wireguard.info.domain"),               sni),
+        (t("wireguard.info.dns"),                  _final_dns or "—"),
     ]
     for lbl_, val_ in rows:
         tbl.add_row(_Text(lbl_, style="#7f849c"), _Text(val_, style="bold #cdd6f4"))
@@ -457,6 +518,16 @@ def diagnose_client() -> None:
         server_ip = tn.get("server_ip",   "—")
         local_port = str(tn.get("local_port", "—"))
         sni_val   = tn.get("sni",         "—")
+        _dns_val  = tn.get("dns", "") or ""
+        if not _dns_val:
+            try:
+                import re as _re
+                from pathlib import Path as _P
+                _wg_conf = _P(f"/etc/wireguard/{wg_iface}.conf").read_text("utf-8")
+                _m = _re.search(r"^DNS\s*=\s*(.+)$", _wg_conf, _re.MULTILINE)
+                _dns_val = _m.group(1).strip() if _m else ""
+            except Exception:
+                pass
 
         wg_ok   = is_service_active(wg_svc)
         xray_ok = is_service_active(xray_svc)
@@ -478,12 +549,14 @@ def diagnose_client() -> None:
         tbl.add_row(_lbl(t(f"{dk}.server_ip")),  _val(server_ip))
         tbl.add_row(_lbl(t("wireguard.info.domain")), _val(sni_val))
         tbl.add_row(_lbl(t(f"{dk}.xray_local_port")), _val(local_port))
+        tbl.add_row(_lbl(t("wireguard.info.dns")), _val(_dns_val or "—"))
         ping_text = Text(
             vpn_gw,
             style="#a6e3a1" if _ping_ok else "#f38ba8",
         )
         tbl.add_row(_lbl(t(f"{dk}.ping_gateway")), ping_text)
-        tbl.add_row(Text(""), Text(""))
+        if tn is not tunnels[-1]:
+            tbl.add_row(Text(""), Text(""))
 
     console.print(Panel(
         tbl,
@@ -583,7 +656,18 @@ def view_client_info(breadcrumb: list[str]) -> None:
     tbl.add_column(no_wrap=False)
 
     for tn in tunnels:
-        lbl = tn.get("label", "?")
+        lbl      = tn.get("label", "?")
+        wg_iface = tn.get("wg_iface", f"wg-{lbl}")
+        _vi_dns  = tn.get("dns", "") or ""
+        if not _vi_dns:
+            try:
+                import re as _re2
+                from pathlib import Path as _P2
+                _wg_conf2 = _P2(f"/etc/wireguard/{wg_iface}.conf").read_text("utf-8")
+                _m2 = _re2.search(r"^DNS\s*=\s*(.+)$", _wg_conf2, _re2.MULTILINE)
+                _vi_dns = _m2.group(1).strip() if _m2 else ""
+            except Exception:
+                pass
         tbl.add_row(Text(f"── {lbl} ──", style=_SEC), Text(""))
         rows = [
             (t(f"{mk}.field_ip"),     tn.get("client_ip",   "—")),
@@ -591,6 +675,7 @@ def view_client_info(breadcrumb: list[str]) -> None:
             (t(f"{mk}.field_port"),   str(tn.get("server_port", "—"))),
             (t(f"{mk}.field_sni"),    tn.get("sni",         "—")),
             (t(f"{mk}.field_uuid"),   tn.get("uuid",        "—")),
+            (t(f"{mk}.field_dns"),    _vi_dns or "—"),
         ]
         for _l, _v in rows:
             tbl.add_row(Text(_l, style=_LABEL), Text(_v, style=_VALUE))
@@ -598,7 +683,8 @@ def view_client_info(breadcrumb: list[str]) -> None:
         tbl.add_row(Text(""), Text(""))
         tbl.add_row(Text(t(f"{mk}.field_token"), style=_LABEL),
                     Text(_trunc(token), style=_TOKEN))
-        tbl.add_row(Text(""), Text(""))
+        if tn is not tunnels[-1]:
+            tbl.add_row(Text(""), Text(""))
 
     console.print(Panel(
         tbl,
@@ -678,7 +764,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
     from core.theme import print_error, print_action_title, print_success
     from core.progress import MultiStepProgress
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
-    from wireguard.utils import enable_and_start, stop_and_disable, write_file
+    from wireguard.utils import enable_and_start, stop_and_disable, write_file, detect_default_iface
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
 
@@ -767,11 +853,16 @@ def update_client_token(breadcrumb: list[str]) -> None:
         write_file(xray_cfg_path, xray_cfg)
 
         sp.step(step_descs[1])
+        _upd_vpn_dns = data.get("dns")
+        _upd_iface   = detect_default_iface()
+        _upd_local   = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
+        _upd_dns     = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv, client_ip=client_ip,
             server_public_key=wg_server_pub, psk=wg_psk,
             server_endpoint=f"127.0.0.1:{local_port}",
             mtu=WG_CLIENT_MTU, keepalive=WG_KEEPALIVE, vpn_subnet=vpn_subnet,
+            dns=_upd_dns,
         )
         write_file(wg_cfg_path, wg_cfg)
 

@@ -121,12 +121,14 @@ def wg_client_config(
     mtu: int = 1280,
     keepalive: int = 25,
     vpn_subnet: str = "10.10.10.0/24",
+    dns: str | None = None,
 ) -> str:
     """生成 WireGuard 客户端 wg0.conf"""
+    _dns_line = f"\nDNS = {dns}" if dns else ""
     return f"""[Interface]
 PrivateKey = {client_private_key}
 Address = {client_ip}/24
-MTU = {mtu}
+MTU = {mtu}{_dns_line}
 PostUp = nmcli device set %i managed no 2>/dev/null || true
 
 [Peer]

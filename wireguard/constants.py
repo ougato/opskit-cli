@@ -79,6 +79,10 @@ XRAY_DOWNLOAD_ZIP      = "Xray-linux-64.zip"
 XRAY_API_LATEST        = "https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 XRAY_API_LATEST_GHPROXY = "https://mirror.ghproxy.com/https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 
+# ─── dnsmasq WG DNS 常量 ─────────────────────────────────────────────────────
+DNSMASQ_CONF_PATH    = "/etc/dnsmasq.d/opskit-wg.conf"
+DNSMASQ_UPSTREAM_DNS = ["8.8.8.8", "1.1.1.1"]
+
 # ─── acme.sh 安装源（按优先级排列） ─────────────────────────────────────────
 ACME_INSTALL_MIRRORS = [
     "https://gitee.com/neilpang/acme.sh/raw/master/acme.sh",
