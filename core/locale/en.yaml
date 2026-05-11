@@ -431,6 +431,7 @@ wireguard:
     view: "View Info"
     update_token: "Update Token"
     remove_tunnel: "Remove Tunnel"
+    add_tunnel: "Add Tunnel"
     not_installed: "Client not installed, please install first"
     no_state: "Client state not found, please install client first"
     view_title: "Client Connection Info"

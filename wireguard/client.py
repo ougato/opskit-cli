@@ -588,12 +588,14 @@ def manage_client() -> None:
                 {"key": "1", "label": f"{get_icon('search')} {t(f'{mk}.view')}"},
                 {"key": "2", "label": f"{get_icon('update_token')} {t(f'{mk}.update_token')}"},
                 {"key": "3", "label": f"{get_icon('delete')} {t(f'{mk}.remove_tunnel')}"},
+                {"key": "4", "label": f"{get_icon('add')} {t(f'{mk}.add_tunnel')}"},
             ]
         else:
             choices = [
                 {"key": "1", "label": f"[{muted}]{get_icon('search')} {t(f'{mk}.view')}[/{muted}]", "disabled": True},
                 {"key": "2", "label": f"[{muted}]{get_icon('update_token')} {t(f'{mk}.update_token')}[/{muted}]", "disabled": True},
                 {"key": "3", "label": f"[{muted}]{get_icon('delete')} {t(f'{mk}.remove_tunnel')}[/{muted}]", "disabled": True},
+                {"key": "4", "label": f"{get_icon('add')} {t(f'{mk}.add_tunnel')}"},
             ]
 
         try:
@@ -620,6 +622,8 @@ def manage_client() -> None:
             update_client_token(breadcrumb)
         elif key == "3":
             remove_tunnel(breadcrumb)
+        elif key == "4":
+            _install_client_token(breadcrumb)
 
 
 def view_client_info(breadcrumb: list[str]) -> None:

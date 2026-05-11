@@ -431,6 +431,7 @@ wireguard:
     view: "查看信息"
     update_token: "更新令牌"
     remove_tunnel: "移除隧道"
+    add_tunnel: "添加隧道"
     not_installed: "客户端未安装，请先完成安装后再操作"
     no_state: "未找到客户端状态，请先安装客户端"
     view_title: "客户端连接信息"
