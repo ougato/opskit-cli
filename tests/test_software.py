@@ -79,6 +79,49 @@ def test_python_install_delegates_to_do_install(monkeypatch) -> None:
     assert seen == {"version": "3.12.13", "has_progress": True}
 
 
+def test_python_package_manager_skips_build_only_versions(monkeypatch) -> None:
+    from software.recipes.python.common import VersionEntry
+    from software.recipes.python.recipe import PythonRecipe
+
+    monkeypatch.setattr(
+        PythonRecipe,
+        "_version_entries",
+        lambda self: [VersionEntry(display="3.12.13", need_build=True)],
+    )
+
+    assert PythonRecipe()._install_with_package_manager("3.12.13", "3.12") is None
+
+
+def test_python_activate_install_updates_snapshot(monkeypatch) -> None:
+    from software.recipes.python import recipe as python_recipe
+    from software.recipes.python.recipe import PythonRecipe
+
+    saved: dict[str, object] = {}
+
+    class FakeDriver:
+        def apply_version_link(self, new_bin: str) -> None:
+            saved["linked"] = new_bin
+
+        def install_shim(self, fallback: str) -> None:
+            saved["fallback"] = fallback
+
+    monkeypatch.setattr(PythonRecipe, "detect", lambda self: "3.12.13")
+    monkeypatch.setattr(python_recipe, "save_snapshot", lambda data: saved.update(data))
+
+    PythonRecipe()._activate_install(
+        "3.12.13",
+        "/tmp/python3.12",
+        {"installed_versions": [], "symlink_path": "/usr/bin/python3"},
+        FakeDriver(),
+    )
+
+    assert saved["installed_versions"] == ["3.12.13"]
+    assert saved["active_version"] == "3.12.13"
+    assert saved["uv_python_path"] == "/tmp/python3.12"
+    assert saved["linked"] == "/tmp/python3.12"
+    assert saved["fallback"] == "/usr/bin/python3"
+
+
 def test_nginx_enable_service_reports_failure(monkeypatch) -> None:
     from software.recipes.nginx.linux import LinuxDriver
 

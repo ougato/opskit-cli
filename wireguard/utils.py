@@ -118,6 +118,23 @@ def write_file(path: str, content: str) -> None:
     tmp.replace(p)
 
 
+def write_secret_file(path: str, content: str) -> None:
+    """原子写入敏感文件，并限制为 owner 可读写。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except Exception:
+        pass
+    tmp.replace(p)
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
+
+
 def get_os_id() -> str:
     """读取 /etc/os-release 获取发行版 ID"""
     try:

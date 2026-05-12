@@ -28,8 +28,8 @@ def _save_state(state: dict) -> None:
     """保存服务端状态文件"""
     import json
     from wireguard.constants import WG_STATE_FILE
-    from wireguard.utils import write_file
-    write_file(WG_STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
+    from wireguard.utils import write_secret_file
+    write_secret_file(WG_STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
 
 
 def _load_state() -> dict:
@@ -44,6 +44,32 @@ def _load_state() -> dict:
         except Exception:
             pass
     return {}
+
+
+def _extract_xray_client_creds(cfg: dict, state: dict | None = None) -> tuple[str, str, str, str | None]:
+    """从当前 WS/TLS 配置提取诊断凭证，并兼容旧 REALITY state 字段。"""
+    state = state or {}
+    xray_pub = state.get("xray_pub") or state.get("reality_pubkey") or "—"
+    uuid = state.get("uuid") or "—"
+    short_id = state.get("short_id") or "—"
+    reality_private_key: str | None = None
+
+    try:
+        ib = cfg.get("inbounds", [{}])[0]
+        clients = ib.get("settings", {}).get("clients", [])
+        if clients and clients[0].get("id"):
+            uuid = clients[0]["id"]
+
+        reality = ib.get("streamSettings", {}).get("realitySettings") or {}
+        short_ids = reality.get("shortIds") or []
+        if short_ids:
+            short_id = short_ids[0]
+        if reality.get("privateKey"):
+            reality_private_key = reality["privateKey"]
+    except Exception:
+        pass
+
+    return xray_pub, uuid, short_id, reality_private_key
 
 
 def _generate_client_token(
@@ -140,7 +166,7 @@ def install_server() -> None:
     )
     from wireguard.utils import (
         gen_wg_keypair, gen_wg_psk, gen_xray_keypair, gen_uuid, gen_short_id,
-        detect_default_iface, enable_and_start, write_file,
+        detect_default_iface, enable_and_start, write_file, write_secret_file,
         get_os_id, install_wireguard_pkg, install_xray,
     )
     from wireguard.templates import (
@@ -364,7 +390,7 @@ def install_server() -> None:
             iface=iface,
             vpn_subnet=vpn_subnet,
         )
-        write_file(WG_CONFIG_FILE, wg_cfg)
+        write_secret_file(WG_CONFIG_FILE, wg_cfg)
 
         # ── 自动生成第一个客户端 ─────────────────────────────────────────────
         sp.step(t("wireguard.step.gen_client"))
@@ -527,14 +553,12 @@ def uninstall_server() -> None:
     from core.progress import MultiStepProgress
     from wireguard.constants import (
         WG_SERVICE, XRAY_SERVICE,
-        WG_CONFIG_DIR, XRAY_CONFIG_DIR,
-        XRAY_BINARY,
+        WG_CONFIG_FILE, WG_STATE_FILE, XRAY_CONFIG_FILE,
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
     )
     from wireguard.utils import stop_and_disable
 
     import subprocess
-    import shutil
     from pathlib import Path
 
     step_keys = [
@@ -562,23 +586,13 @@ def uninstall_server() -> None:
 
         # ── 3. 清理 systemd service 文件 ─────────────────────────────────────
         sp.step(descs[2])
-        for svc in (XRAY_SERVICE,):
-            svc_path = Path(f"/etc/systemd/system/{svc}.service")
-            svc_path.unlink(missing_ok=True)
-            override_dir = Path(f"/etc/systemd/system/{svc}.service.d")
-            shutil.rmtree(override_dir, ignore_errors=True)
-        for tpl in ("xray@",):
-            Path(f"/etc/systemd/system/{tpl}.service").unlink(missing_ok=True)
-            shutil.rmtree(f"/etc/systemd/system/{tpl}.service.d", ignore_errors=True)
-        Path("/etc/systemd/system/xray-restart.timer").unlink(missing_ok=True)
-        Path("/etc/systemd/system/xray-restart.service").unlink(missing_ok=True)
+        # xray 二进制与 systemd 单元可能由外部或客户端共用，卸载服务端时只停用不删除。
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        Path(XRAY_BINARY).unlink(missing_ok=True)
 
         # ── 4. 清理配置目录 ───────────────────────────────────────────────────
         sp.step(descs[3])
-        for path in (WG_CONFIG_DIR, XRAY_CONFIG_DIR):
-            shutil.rmtree(path, ignore_errors=True)
+        Path(WG_CONFIG_FILE).unlink(missing_ok=True)
+        Path(XRAY_CONFIG_FILE).unlink(missing_ok=True)
         Path(NGINX_VLESS_WS_CONF).unlink(missing_ok=True)
         Path(NGINX_STREAM_CONF).unlink(missing_ok=True)
         Path(NGINX_STEAL_CONF).unlink(missing_ok=True)
@@ -587,9 +601,7 @@ def uninstall_server() -> None:
 
         # ── 5. 清理日志目录 ───────────────────────────────────────────────────
         sp.step(descs[4])
-        from core.paths import xray_log_dir, xray_data_dir
-        for path in (xray_log_dir(), xray_data_dir()):
-            shutil.rmtree(str(path), ignore_errors=True)
+        # 保留 xray 日志/数据目录，避免影响同机其他 xray 实例。
 
         # ── 6. 清理系统配置 ──────────────────────────────────────────────────────
         sp.step(descs[5])
@@ -599,6 +611,7 @@ def uninstall_server() -> None:
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore("wg_server")
         _SCM.remove("wg_server")
+        Path(WG_STATE_FILE).unlink(missing_ok=True)
         Path("/root/wg_server_info.txt").unlink(missing_ok=True)
 
     print_success(t('wireguard.diagnose.uninstall_success'))
@@ -721,23 +734,21 @@ def diagnose_server() -> None:
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────
     tbl.add_row(_sec(t(f'{dk}.section_client_creds')), Text(""))
-    creds_xray_pub = "—"
-    creds_uuid = "—"
-    creds_short_id = "—"
+    creds_xray_pub = _srv_state.get("xray_pub", "—")
+    creds_uuid = _srv_state.get("uuid", "—")
+    creds_short_id = _srv_state.get("short_id", "—")
     try:
         cfg = json.loads(Path(XRAY_CONFIG_FILE).read_text())
-        ib = cfg["inbounds"][0]
-        priv_key = ib["streamSettings"]["realitySettings"]["privateKey"]
-        r = subprocess.run(
-            ["xray", "x25519", "-i", priv_key],
-            capture_output=True, text=True, check=False
-        )
-        for line in r.stdout.splitlines():
-            if "Public" in line:
-                creds_xray_pub = line.split(":", 1)[-1].strip()
-                break
-        creds_uuid = ib["settings"]["clients"][0]["id"]
-        creds_short_id = ib["streamSettings"]["realitySettings"]["shortIds"][0]
+        creds_xray_pub, creds_uuid, creds_short_id, priv_key = _extract_xray_client_creds(cfg, _srv_state)
+        if priv_key and creds_xray_pub == "—":
+            r = subprocess.run(
+                ["xray", "x25519", "-i", priv_key],
+                capture_output=True, text=True, check=False
+            )
+            for line in r.stdout.splitlines():
+                if "Public" in line:
+                    creds_xray_pub = line.split(":", 1)[-1].strip()
+                    break
     except Exception:
         pass
     tbl.add_row(_lbl(t(f"{dk}.creds_xray_pub")), _val(creds_xray_pub))

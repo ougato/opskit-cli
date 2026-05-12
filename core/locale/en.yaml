@@ -469,6 +469,7 @@ wireguard:
     token_decode_fail: "Token decode failed: {error}"
     token_invalid_json: "Token content is not a valid JSON object"
     token_missing_fields: "Token missing required fields: {fields}"
+    token_invalid_field: "Invalid token field: {field}"
     unsupported_os: "Unsupported OS: {os_id}"
     service_start_fail: "Service start failed \u2014 xray={xray} wg={wg} nginx={nginx}"
     client_service_start_fail: "Client services failed to start \u2014 {xray}={xray_status} {wg}={wg_status}"

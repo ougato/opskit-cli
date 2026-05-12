@@ -469,6 +469,7 @@ wireguard:
     token_decode_fail: "令牌解码失败: {error}"
     token_invalid_json: "令牌内容不是有效的 JSON 对象"
     token_missing_fields: "令牌缺少必要字段: {fields}"
+    token_invalid_field: "令牌字段不合法: {field}"
     unsupported_os: "不支持的操作系统: {os_id}"
     service_start_fail: "服务启动失败 — xray={xray} wg={wg} nginx={nginx}"
     client_service_start_fail: "客户端服务启动失败 — {xray}={xray_status} {wg}={wg_status}"

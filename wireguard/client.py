@@ -87,8 +87,8 @@ def _save_client_state(data: dict) -> None:
     """保存客户端 state 文件"""
     import json
     from wireguard.constants import WG_CLIENT_STATE_FILE
-    from wireguard.utils import write_file
-    write_file(WG_CLIENT_STATE_FILE, json.dumps(data, indent=2, ensure_ascii=False))
+    from wireguard.utils import write_secret_file
+    write_secret_file(WG_CLIENT_STATE_FILE, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 def _load_client_state() -> dict:
@@ -199,7 +199,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         WG_CLIENT_MTU, WG_KEEPALIVE, XRAY_BINARY,
     )
     from wireguard.utils import (
-        detect_default_iface, enable_and_start, stop_and_disable, write_file,
+        detect_default_iface, enable_and_start, stop_and_disable, write_file, write_secret_file,
         get_os_id, install_wireguard_pkg, install_xray,
     )
     from wireguard.templates import xray_client_config, wg_client_config
@@ -357,7 +357,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             vpn_subnet=vpn_subnet,
             dns=_final_dns,
         )
-        write_file(wg_cfg_path, wg_cfg)
+        write_secret_file(wg_cfg_path, wg_cfg)
 
         # ── 启动服务（xray@{label} 先起，再起 wg-quick@{wg_iface}）
         sp.step(t("wireguard.step.start_services"))
@@ -463,7 +463,6 @@ def uninstall_client() -> None:
     from core.i18n import t
     from core.theme import print_success, print_action_title
     from core.progress import MultiStepProgress
-    from wireguard.constants import WG_CONFIG_DIR, XRAY_CONFIG_DIR, XRAY_BINARY
     from wireguard.utils import stop_and_disable
 
     print_action_title(["OpsKit", t("menu.software"), t("software.wireguard"), t("software.wg_client_uninstall")])
@@ -500,21 +499,15 @@ def uninstall_client() -> None:
             lbl = tn.get("label", "")
             if lbl:
                 _Path(f"/usr/local/etc/xray/{lbl}.json").unlink(missing_ok=True)
-        _Path("/etc/systemd/system/xray@.service").unlink(missing_ok=True)
-        _Path("/etc/systemd/system/xray.service").unlink(missing_ok=True)
+        # xray 模板/主服务、二进制和数据目录可能被服务端或外部 xray 复用，客户端卸载只删隧道配置。
 
         sp.step(descs[2])
-        _Path("/etc/sysctl.d/99-wg.conf").unlink(missing_ok=True)
         from core.sysconfig import SysConfigManager as _SCM
         for tn in tunnels:
             lbl = tn.get("label", "")
             _SCM.restore(f"wg_client_{lbl}")
             _SCM.remove(f"wg_client_{lbl}")
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        _Path(XRAY_BINARY).unlink(missing_ok=True)
-        from core.paths import xray_log_dir, xray_data_dir
-        for path in (xray_log_dir(), xray_data_dir()):
-            shutil.rmtree(str(path), ignore_errors=True)
 
         sp.step(descs[3])
         _save_client_state({})
@@ -826,7 +819,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
     from core.theme import print_error, print_action_title, print_success
     from core.progress import MultiStepProgress
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
-    from wireguard.utils import enable_and_start, stop_and_disable, write_file, detect_default_iface
+    from wireguard.utils import enable_and_start, stop_and_disable, write_file, write_secret_file, detect_default_iface
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
 
@@ -929,7 +922,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
             mtu=WG_CLIENT_MTU, keepalive=WG_KEEPALIVE, vpn_subnet=vpn_subnet,
             dns=_upd_dns,
         )
-        write_file(wg_cfg_path, wg_cfg)
+        write_secret_file(wg_cfg_path, wg_cfg)
 
         sp.step(step_descs[2])
         subprocess.run(["wg-quick", "down", wg_iface], check=False, capture_output=True)

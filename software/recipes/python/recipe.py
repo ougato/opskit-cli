@@ -101,7 +101,6 @@ class PythonRecipe(Recipe):
 
     def _do_install(self, version: str, on_progress: Callable[[int], None] | None = None) -> None:
         from core.platform import get_platform
-        from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
 
         def _progress(pct: int) -> None:
             if on_progress:
@@ -119,104 +118,121 @@ class PythonRecipe(Recipe):
             uv_bin = None
 
         _progress(15)
-        pre = driver.snapshot_pre_install()
-        snap = load_snapshot()
-        if not snap:
-            snap = {
-                **pre,
-                "installed_versions": [],
-                "active_version": None,
-            }
+        snap = self._load_or_create_snapshot(driver)
 
         _progress(25)
-        new_bin: str | None = None
         major_minor = ".".join(version.split(".")[:2])
-
-        if uv_bin:
-            import threading as _threading
-            env = os.environ.copy()
-            env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
-            try:
-                proc = subprocess.Popen(
-                    [uv_bin, "python", "install", version],
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-
-                _stop_pct = _threading.Event()
-                t_pct = None
-
-                def _time_pct_ticker():
-                    pct = 25
-                    while not _stop_pct.wait(1.0):
-                        if pct < 85:
-                            pct += 1
-                        _progress(pct)
-
-                if on_progress:
-                    t_pct = _threading.Thread(target=_time_pct_ticker, daemon=True)
-                    t_pct.start()
-
-                def _drain(pipe):
-                    try:
-                        pipe.read()
-                    except Exception:
-                        pass
-
-                t_out = _threading.Thread(target=_drain, args=(proc.stdout,), daemon=True)
-                t_err = _threading.Thread(target=_drain, args=(proc.stderr,), daemon=True)
-                t_out.start()
-                t_err.start()
-
-                try:
-                    proc.wait(timeout=UV_PYTHON_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    _stop_pct.set()
-                    raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT))
-
-                _stop_pct.set()
-                if t_pct:
-                    t_pct.join(timeout=2)
-                t_out.join(timeout=2)
-                t_err.join(timeout=2)
-
-                if proc.returncode != 0:
-                    raise InstallError(t("software.python_error.uv_failed", code=proc.returncode))
-
-                new_bin = find_uv_python(version)
-            except InstallError:
-                raise
-            except Exception:
-                new_bin = None
+        new_bin = self._install_with_uv(version, uv_bin, _progress) if uv_bin else None
 
         _progress(75)
         if not new_bin:
-            from core.pkg_runner import get_runner
-            runner = get_runner()
-            entries = self._version_entries()
-            entry = next((e for e in entries if e.display == version), None)
-            need_build = entry.need_build if entry else True
-            if not need_build:
-                try:
-                    new_bin = runner.install_python3(ver=major_minor)
-                except Exception:
-                    new_bin = None
+            new_bin = self._install_with_package_manager(version, major_minor)
 
         if not new_bin:
-            from .common import build_from_source
-            try:
-                new_bin = build_from_source(version)
-            except InstallError:
-                raise
-            except Exception as e:
-                raise InstallError(t("software.python_error.install_failed", version=version)) from e
+            new_bin = self._install_from_source(version)
 
         if not new_bin:
             raise InstallError(t("software.python_error.install_failed", version=version))
 
         _progress(90)
+        self._activate_install(version, new_bin, snap, driver)
+        _progress(100)
+
+    def _load_or_create_snapshot(self, driver) -> dict:
+        snap = load_snapshot()
+        if snap:
+            return snap
+        return {
+            **driver.snapshot_pre_install(),
+            "installed_versions": [],
+            "active_version": None,
+        }
+
+    def _install_with_uv(
+        self,
+        version: str,
+        uv_bin: str,
+        on_progress: Callable[[int], None],
+    ) -> str | None:
+        import threading as _threading
+        from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
+
+        env = os.environ.copy()
+        env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
+        try:
+            proc = subprocess.Popen(
+                [uv_bin, "python", "install", version],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stop_pct = _threading.Event()
+
+            def time_pct_ticker() -> None:
+                pct = 25
+                while not stop_pct.wait(1.0):
+                    if pct < 85:
+                        pct += 1
+                    on_progress(pct)
+
+            def drain(pipe) -> None:
+                try:
+                    pipe.read()
+                except Exception:
+                    pass
+
+            t_pct = _threading.Thread(target=time_pct_ticker, daemon=True)
+            t_out = _threading.Thread(target=drain, args=(proc.stdout,), daemon=True)
+            t_err = _threading.Thread(target=drain, args=(proc.stderr,), daemon=True)
+            t_pct.start()
+            t_out.start()
+            t_err.start()
+
+            try:
+                proc.wait(timeout=UV_PYTHON_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stop_pct.set()
+                raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT))
+
+            stop_pct.set()
+            t_pct.join(timeout=2)
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+
+            if proc.returncode != 0:
+                raise InstallError(t("software.python_error.uv_failed", code=proc.returncode))
+
+            return find_uv_python(version)
+        except InstallError:
+            raise
+        except Exception:
+            return None
+
+    def _install_with_package_manager(self, version: str, major_minor: str) -> str | None:
+        entries = self._version_entries()
+        entry = next((e for e in entries if e.display == version), None)
+        need_build = entry.need_build if entry else True
+        if need_build:
+            return None
+
+        from core.pkg_runner import get_runner
+        try:
+            return get_runner().install_python3(ver=major_minor)
+        except Exception:
+            return None
+
+    def _install_from_source(self, version: str) -> str | None:
+        from .common import build_from_source
+        try:
+            return build_from_source(version)
+        except InstallError:
+            raise
+        except Exception as e:
+            raise InstallError(t("software.python_error.install_failed", version=version)) from e
+
+    def _activate_install(self, version: str, new_bin: str, snap: dict, driver) -> None:
         installed = snap.get("installed_versions", [])
         if version not in installed:
             installed.append(version)
@@ -238,7 +254,6 @@ class PythonRecipe(Recipe):
 
         if not self.detect():
             raise InstallError(t("software.python_error.verify_failed"))
-        _progress(100)
 
     def switch(self, version: str) -> None:
         new_bin = find_uv_python(version)
