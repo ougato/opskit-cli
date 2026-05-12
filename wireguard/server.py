@@ -507,6 +507,7 @@ def install_server() -> None:
         border_style="#a6e3a1",
         padding=(1, 2),
     ))
+    console.print()
 
     # ── 令牌输出 ─────────────────────────────────────────────────────────────
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
@@ -515,7 +516,36 @@ def install_server() -> None:
     console.print(f"[#cdd6f4]{token}[/#cdd6f4]")
     console.print()
 
-    # ── 防火墙提示 ───────────────────────────────────────────────────────────
+    # ── 手机二维码 ────────────────────────────────────────────────────────────────────
+    _install_phone_wg_conf = (
+        f"[Interface]\n"
+        f"PrivateKey = {client_priv}\n"
+        f"Address = {client_ip}/32\n"
+        f"DNS = {vpn_gateway}\n\n"
+        f"[Peer]\n"
+        f"PublicKey = {wg_server_pub}\n"
+        f"PresharedKey = {client_psk}\n"
+        f"AllowedIPs = {vpn_subnet}\n"
+        f"PersistentKeepalive = 25\n"
+        f"Endpoint = {public_ip}:{server_port}\n"
+    )
+    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
+    console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
+    console.print()
+    try:
+        import qrcode as _qr  # type: ignore
+        _qr_obj = _qr.QRCode(border=1)
+        _qr_obj.add_data(_install_phone_wg_conf)
+        _qr_obj.make(fit=True)
+        from io import StringIO as _SIO
+        _qr_buf = _SIO()
+        _qr_obj.print_ascii(out=_qr_buf, invert=True)
+        console.print(_qr_buf.getvalue())
+    except ImportError:
+        console.print(f"[#cdd6f4]{_install_phone_wg_conf}[/#cdd6f4]")
+    console.print()
+
+    # ── 防火墙提示 ────────────────────────────────────────────────────────────────────
     _fw_tbl = Table.grid(padding=(0, 2))
     _fw_tbl.add_column(no_wrap=False)
     _fw_tbl.add_row(_Text(t("wireguard.firewall_hint"), style="#cdd6f4"))
