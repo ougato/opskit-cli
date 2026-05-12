@@ -8,6 +8,11 @@ from abc import ABC, abstractmethod
 class PlatformDriver(ABC):
 
     @abstractmethod
+    def detect(self) -> str | None:
+        """检测已安装 nginx 版本，未安装返回 None"""
+        ...
+
+    @abstractmethod
     def install_pkg(self) -> None:
         """调用包管理器安装 nginx"""
         ...

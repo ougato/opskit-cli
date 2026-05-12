@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from software.base import InstallError, InstallStep, Recipe, UninstallError
 from software.registry import register
@@ -87,148 +87,158 @@ class PythonRecipe(Recipe):
                 InstallStep("software.step.cleanup"),
             ]
         return [
-            InstallStep("software.step.check"),
-            InstallStep("software.step.install_deps"),
-            InstallStep("software.step.download"),
             InstallStep("software.step.install"),
-            InstallStep("software.step.verify"),
         ]
 
     def install(self, version: str) -> None:
-        from core.platform import get_platform
         from core.progress import MultiStepProgress
+
+        descs = [t("software.step.install")]
+        with MultiStepProgress(descs) as sp:
+            sp.step(descs[0])
+            self._do_install(version, on_progress=sp.set_step_pct)
+            sp.complete()
+
+    def _do_install(self, version: str, on_progress: Callable[[int], None] | None = None) -> None:
+        from core.platform import get_platform
         from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
+
+        def _progress(pct: int) -> None:
+            if on_progress:
+                on_progress(pct)
 
         info = get_platform()
         driver = get_driver()
+        if info.os_type not in self.platforms:
+            raise InstallError(t("software.python_error.platform_not_supported", platform=info.os_type))
 
-        descs = ["check", "install_deps", "download", "install", "verify"]
-        with MultiStepProgress(descs) as sp:
-            sp.step("check")
-            if info.os_type not in self.platforms:
-                raise InstallError(t("software.python_error.platform_not_supported", platform=info.os_type))
+        _progress(5)
+        try:
+            uv_bin = driver.ensure_uv()
+        except InstallError:
+            uv_bin = None
 
-            sp.step("install_deps")
+        _progress(15)
+        pre = driver.snapshot_pre_install()
+        snap = load_snapshot()
+        if not snap:
+            snap = {
+                **pre,
+                "installed_versions": [],
+                "active_version": None,
+            }
+
+        _progress(25)
+        new_bin: str | None = None
+        major_minor = ".".join(version.split(".")[:2])
+
+        if uv_bin:
+            import threading as _threading
+            env = os.environ.copy()
+            env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
             try:
-                uv_bin = driver.ensure_uv()
-            except InstallError:
-                uv_bin = None
+                proc = subprocess.Popen(
+                    [uv_bin, "python", "install", version],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
 
-            sp.step("download")
-            pre = driver.snapshot_pre_install()
-            snap = load_snapshot()
-            if not snap:
-                snap = {
-                    **pre,
-                    "installed_versions": [],
-                    "active_version": None,
-                }
+                _stop_pct = _threading.Event()
+                t_pct = None
 
-            sp.step("install")
-            new_bin: str | None = None
-            major_minor = ".".join(version.split(".")[:2])
+                def _time_pct_ticker():
+                    pct = 25
+                    while not _stop_pct.wait(1.0):
+                        if pct < 85:
+                            pct += 1
+                        _progress(pct)
 
-            if uv_bin:
-                import threading as _threading
-                env = os.environ.copy()
-                env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
-                try:
-                    proc = subprocess.Popen(
-                        [uv_bin, "python", "install", version],
-                        env=env,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                    )
-
-                    _stop_pct = _threading.Event()
-
-                    def _time_pct_ticker():
-                        pct = 1
-                        while not _stop_pct.wait(1.0):
-                            if pct < 90:
-                                pct += 1
-                            sp.set_step_pct(pct)
-
+                if on_progress:
                     t_pct = _threading.Thread(target=_time_pct_ticker, daemon=True)
                     t_pct.start()
 
-                    def _drain(pipe):
-                        try:
-                            pipe.read()
-                        except Exception:
-                            pass
-
-                    t_out = _threading.Thread(target=_drain, args=(proc.stdout,), daemon=True)
-                    t_err = _threading.Thread(target=_drain, args=(proc.stderr,), daemon=True)
-                    t_out.start()
-                    t_err.start()
-
+                def _drain(pipe):
                     try:
-                        proc.wait(timeout=UV_PYTHON_TIMEOUT)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        _stop_pct.set()
-                        raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT))
+                        pipe.read()
+                    except Exception:
+                        pass
 
+                t_out = _threading.Thread(target=_drain, args=(proc.stdout,), daemon=True)
+                t_err = _threading.Thread(target=_drain, args=(proc.stderr,), daemon=True)
+                t_out.start()
+                t_err.start()
+
+                try:
+                    proc.wait(timeout=UV_PYTHON_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
                     _stop_pct.set()
+                    raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT))
+
+                _stop_pct.set()
+                if t_pct:
                     t_pct.join(timeout=2)
-                    t_out.join(timeout=2)
-                    t_err.join(timeout=2)
+                t_out.join(timeout=2)
+                t_err.join(timeout=2)
 
-                    if proc.returncode != 0:
-                        raise InstallError(t("software.python_error.uv_failed", code=proc.returncode))
+                if proc.returncode != 0:
+                    raise InstallError(t("software.python_error.uv_failed", code=proc.returncode))
 
-                    new_bin = find_uv_python(version)
-                except InstallError:
-                    raise
+                new_bin = find_uv_python(version)
+            except InstallError:
+                raise
+            except Exception:
+                new_bin = None
+
+        _progress(75)
+        if not new_bin:
+            from core.pkg_runner import get_runner
+            runner = get_runner()
+            entries = self._version_entries()
+            entry = next((e for e in entries if e.display == version), None)
+            need_build = entry.need_build if entry else True
+            if not need_build:
+                try:
+                    new_bin = runner.install_python3(ver=major_minor)
                 except Exception:
                     new_bin = None
 
-            if not new_bin:
-                from core.pkg_runner import get_runner
-                runner = get_runner()
-                entries = self._version_entries()
-                entry = next((e for e in entries if e.display == version), None)
-                need_build = entry.need_build if entry else True
-                if not need_build:
-                    try:
-                        new_bin = runner.install_python3(ver=major_minor)
-                    except Exception:
-                        new_bin = None
-
-            if not new_bin:
-                from .common import build_from_source
-                try:
-                    new_bin = build_from_source(version)
-                except Exception as e:
-                    raise InstallError(str(e)) from e
-
-            if not new_bin:
-                raise InstallError(t("software.python_error.install_failed", version=version))
-
-            installed = snap.get("installed_versions", [])
-            if version not in installed:
-                installed.append(version)
-            snap["installed_versions"] = installed
-            snap["active_version"] = version
-            snap["uv_python_path"] = new_bin
-            save_snapshot(snap)
-
-            sp.step("verify")
+        if not new_bin:
+            from .common import build_from_source
             try:
-                driver.apply_version_link(new_bin)
-            except Exception:
-                pass
+                new_bin = build_from_source(version)
+            except InstallError:
+                raise
+            except Exception as e:
+                raise InstallError(t("software.python_error.install_failed", version=version)) from e
 
-            fallback = snap.get("symlink_path", "") or "/usr/bin/python3"
-            try:
-                driver.install_shim(fallback)
-            except Exception:
-                pass
+        if not new_bin:
+            raise InstallError(t("software.python_error.install_failed", version=version))
 
-            if not self.detect():
-                raise InstallError(t("software.python_error.verify_failed"))
-            sp.complete()
+        _progress(90)
+        installed = snap.get("installed_versions", [])
+        if version not in installed:
+            installed.append(version)
+        snap["installed_versions"] = installed
+        snap["active_version"] = version
+        snap["uv_python_path"] = new_bin
+        save_snapshot(snap)
+
+        try:
+            driver.apply_version_link(new_bin)
+        except Exception:
+            pass
+
+        fallback = snap.get("symlink_path", "") or "/usr/bin/python3"
+        try:
+            driver.install_shim(fallback)
+        except Exception:
+            pass
+
+        if not self.detect():
+            raise InstallError(t("software.python_error.verify_failed"))
+        _progress(100)
 
     def switch(self, version: str) -> None:
         new_bin = find_uv_python(version)

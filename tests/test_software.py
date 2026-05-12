@@ -31,6 +31,66 @@ def test_get_recipe_nginx(tmp_path) -> None:
     assert cls.key == "nginx"
 
 
+def test_nginx_detect_uses_driver(monkeypatch) -> None:
+    from software.recipes.nginx import recipe as nginx_recipe
+
+    class FakePlatform:
+        os_type = "linux"
+
+    class FakeDriver:
+        def detect(self) -> str:
+            return "1.27.0"
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr(nginx_recipe, "get_driver", lambda: FakeDriver())
+
+    assert nginx_recipe.NginxRecipe().detect() == "1.27.0"
+
+
+def test_nginx_install_steps_match_runtime_flow(tmp_path) -> None:
+    cls = get_recipe("nginx")
+    steps = [s.description_key for s in cls().steps("install")]
+    assert steps == [
+        "software.step.install",
+    ]
+
+
+def test_python_install_steps_are_decoupled(tmp_path) -> None:
+    cls = get_recipe("python")
+    steps = [s.description_key for s in cls().steps("install")]
+    assert steps == ["software.step.install"]
+
+
+def test_python_install_delegates_to_do_install(monkeypatch) -> None:
+    from software.recipes.python.recipe import PythonRecipe
+
+    seen: dict[str, object] = {}
+
+    def fake_do_install(self, version: str, on_progress=None) -> None:
+        seen["version"] = version
+        seen["has_progress"] = callable(on_progress)
+        if on_progress:
+            on_progress(100)
+
+    monkeypatch.setattr(PythonRecipe, "_do_install", fake_do_install)
+
+    PythonRecipe().install("3.12.13")
+
+    assert seen == {"version": "3.12.13", "has_progress": True}
+
+
+def test_nginx_enable_service_reports_failure(monkeypatch) -> None:
+    from software.recipes.nginx.linux import LinuxDriver
+
+    def fail_run_as_root(*args, **kwargs):
+        raise RuntimeError("systemctl failed")
+
+    monkeypatch.setattr("core.privilege.run_as_root", fail_run_as_root)
+
+    with pytest.raises(InstallError):
+        LinuxDriver().enable_service()
+
+
 def test_get_recipe_python(tmp_path) -> None:
     cls = get_recipe("python")
     assert cls is not None

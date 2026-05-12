@@ -134,6 +134,9 @@ software:
   nginx: "Nginx"
   nginx_error:
     platform_not_supported: "Nginx recipe does not support platform: {platform}"
+    install_failed: "Nginx installation failed: {detail}"
+    remove_failed: "Nginx removal failed: {detail}"
+    service_enable_failed: "Nginx service failed to start: {detail}"
     verify_failed: "nginx -v check failed after install"
   mysql: "MySQL"
   mysql_error:

@@ -134,6 +134,9 @@ software:
   nginx: "Nginx"
   nginx_error:
     platform_not_supported: "Nginx 配方不支持平台：{platform}"
+    install_failed: "Nginx 安装失败：{detail}"
+    remove_failed: "Nginx 卸载失败：{detail}"
+    service_enable_failed: "Nginx 服务启动失败：{detail}"
     verify_failed: "nginx -v 检测失败"
   mysql: "MySQL"
   mysql_error:
