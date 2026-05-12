@@ -540,7 +540,10 @@ def install_server() -> None:
         from io import StringIO as _SIO
         _qr_buf = _SIO()
         _qr_obj.print_ascii(out=_qr_buf, invert=True)
-        console.print(_qr_buf.getvalue())
+        _qr_lines = []
+        for _line in _qr_buf.getvalue().splitlines():
+            _qr_lines.append("".join(c * 2 for c in _line))
+        console.print("\n".join(_qr_lines))
     except ImportError:
         console.print(f"[#cdd6f4]{_install_phone_wg_conf}[/#cdd6f4]")
     console.print()
@@ -1199,7 +1202,10 @@ def add_peer(breadcrumb: list[str]) -> None:
         from io import StringIO
         _buf = StringIO()
         qr.print_ascii(out=_buf, invert=True)
-        console.print(_buf.getvalue())
+        _qr_lines = []
+        for _line in _buf.getvalue().splitlines():
+            _qr_lines.append("".join(c * 2 for c in _line))
+        console.print("\n".join(_qr_lines))
     except ImportError:
         console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
     console.print()
