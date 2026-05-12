@@ -56,17 +56,20 @@ def _build_vless_uri(uuid: str, sni: str, server_ip: str, port: int = 443,
                      ws_path: str = "/vless-ws", label: str = "") -> str:
     """生成 v2rayNG / Hiddify 可识别的 vless:// 分享链接。
     坑点 1：path 必须 URL 编码（/ → %2F），否则部分客户端解析失败。
-    坑点 2：address 必须用 IP 而非域名，否则 v2rayNG VPN 模式 Fake DNS
-           （198.18.0.0/15）会拦截代理自身域名导致路由环路超时。
-           sni + host 保留域名用于 TLS 证书验证和 Nginx Host 匹配。
+    坑点 2：address 必须用域名而非 IP。用 IP 会导致 Nginx SNI 路由失败（
+           服务器 default_server return 444），TLS 握手被拒绝。
+    坑点 3：v2rayNG VPN 模式下域名会被 Fake DNS（198.18.0.0/15）截获形成
+           环路，通过 domainStrategy=UseIP 让 v2rayNG 在建连前先经过
+           系统 DNS 解析成真实 IP，绕过 Fake DNS，同时保留域名作为 SNI。
     """
     from urllib.parse import quote
     _path = quote(ws_path, safe="")
     _label = quote(label or sni, safe="")
     return (
-        f"vless://{uuid}@{server_ip}:{port}"
+        f"vless://{uuid}@{sni}:{port}"
         f"?encryption=none&security=tls&type=ws"
         f"&host={sni}&path={_path}&sni={sni}&fp=firefox"
+        f"&domainStrategy=UseIP"
         f"#{_label}"
     )
 
