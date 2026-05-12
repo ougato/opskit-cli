@@ -110,6 +110,15 @@ class TestAllocLocalPort:
         tunnels = [{"label": "x"}, {"label": "y"}]
         assert _alloc_local_port(tunnels) == CLIENT_XRAY_LOCAL_PORT_MIN
 
+    def test_full_port_range_returns_none(self):
+        from wireguard.client import _alloc_local_port
+        from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX
+        tunnels = [
+            {"local_port": p}
+            for p in range(CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX + 1)
+        ]
+        assert _alloc_local_port(tunnels) is None
+
 
 # ─── _alloc_client_ip (server) ───────────────────────────────────────────────
 

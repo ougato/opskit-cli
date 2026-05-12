@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from software.base import InstallError, InstallStep, Recipe
+from software.base import InstallStep, Recipe
 from software.registry import register
-from .driver import get_driver
 
 
 @register

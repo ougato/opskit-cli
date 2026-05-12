@@ -1,7 +1,7 @@
 """WireGuard 私网客户端安装 / 卸载 / 诊断逻辑"""
 from __future__ import annotations
 
-from software.base import InstallError, UninstallError
+from software.base import InstallError
 from core.theme import console
 
 
@@ -105,7 +105,7 @@ def _load_client_state() -> dict:
     return {}
 
 
-def _alloc_local_port(tunnels: list[dict]) -> int:
+def _alloc_local_port(tunnels: list[dict]) -> int | None:
     """从已安装隧道列表中自动分配下一个可用本地端口。
     在 CLIENT_XRAY_LOCAL_PORT_MIN~MAX 范围内找最小未占用端口。
     同时扫描系统实际监听端口，避免与旧隧道或其他进程冲突。
@@ -116,7 +116,7 @@ def _alloc_local_port(tunnels: list[dict]) -> int:
     for p in range(CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX + 1):
         if p not in used:
             return p
-    return CLIENT_XRAY_LOCAL_PORT_MIN
+    return None
 
 
 def _scan_listening_ports(port_min: int, port_max: int) -> set[int]:
@@ -262,6 +262,15 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
 
     # ── 自动分配本地端口 ────────────────────────────────────────────
     local_port = _alloc_local_port(_tunnels)
+    if local_port is None:
+        from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX
+        print_error(t(
+            "wireguard.error.local_port_exhausted",
+            min=CLIENT_XRAY_LOCAL_PORT_MIN,
+            max=CLIENT_XRAY_LOCAL_PORT_MAX,
+        ))
+        pause()
+        return
 
     # ── 服务端连通性预检 ──────────────────────────────────────────
     import socket as _socket
@@ -385,6 +394,17 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         if not (_xray_ok and _wg_ok):
             from core.theme import print_warning as _pw
             _pw(f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} {wg_svc}={'active' if _wg_ok else 'INACTIVE'}")
+
+    if not (_xray_ok and _wg_ok):
+        print_error(t(
+            "wireguard.error.client_service_start_fail",
+            xray=xray_svc,
+            xray_status="active" if _xray_ok else "INACTIVE",
+            wg=wg_svc,
+            wg_status="active" if _wg_ok else "INACTIVE",
+        ))
+        pause()
+        return
 
     # ── 保存 tunnels state ──────────────────────────────────────────────
     _tunnels.append({
@@ -935,6 +955,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
         "wg_server_pub": wg_server_pub,
         "vpn_subnet":  vpn_subnet,
         "vpn_gateway": vpn_gateway,
+        "dns":         _upd_dns or "",
     })
     tunnels[idx] = tn
     state["tunnels"] = tunnels
