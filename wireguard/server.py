@@ -513,7 +513,9 @@ def install_server() -> None:
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    console.print(f"[#cdd6f4]{token}[/#cdd6f4]")
+    import sys as _sys_token
+    _sys_token.stdout.write(token + "\n")
+    _sys_token.stdout.flush()
     console.print()
 
     # ── 手机二维码 ────────────────────────────────────────────────────────────────────
@@ -1174,7 +1176,9 @@ def add_peer(breadcrumb: list[str]) -> None:
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    console.print(f"[#cdd6f4]{token}[/#cdd6f4]")
+    import sys as _sys_token2
+    _sys_token2.stdout.write(token + "\n")
+    _sys_token2.stdout.flush()
     console.print()
 
     # ── 输出手机专用 WG 配置 + QR 码 ──────────────────────────────────────
