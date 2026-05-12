@@ -298,12 +298,19 @@ def install_server() -> None:
     with MultiStepProgress([t(s) for s in step_keys]) as sp:
         import subprocess
 
-        # ── 检测 OS ──────────────────────────────────────────────────────────
+        # ── 检测 OS ────────────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.check_os"))
         os_id = get_os_id()
         if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
             raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
         _ensure_system_deps(os_id)
+        try:
+            import qrcode as _qr_check  # noqa: F401
+        except ImportError:
+            subprocess.run(
+                ["pip3", "install", "-q", "qrcode"],
+                check=False, capture_output=True, text=True,
+            )
 
         from core.sysconfig import SysConfigManager
         SysConfigManager.save(
@@ -505,17 +512,7 @@ def install_server() -> None:
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    import sys as _sys
-    _sys.stdout.write(token + "\n")
-    _sys.stdout.flush()
-    try:
-        from pathlib import Path as _TokenPath
-        _TokenPath("/tmp/opskit-token.txt").write_text(token + "\n")
-        console.print(f"[#6c7086]→ cat /tmp/opskit-token.txt[/#6c7086]")
-    except Exception:
-        pass
-    console.print()
-    console.print(f"[#6c7086]{t('wireguard.token_security_hint')}[/#6c7086]")
+    console.print(f"[#cdd6f4]{token}[/#cdd6f4]")
     console.print()
 
     # ── 防火墙提示 ───────────────────────────────────────────────────────────
@@ -1143,17 +1140,7 @@ def add_peer(breadcrumb: list[str]) -> None:
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    import sys as _sys2
-    _sys2.stdout.write(token + "\n")
-    _sys2.stdout.flush()
-    try:
-        from pathlib import Path as _TokenPath2
-        _TokenPath2("/tmp/opskit-token.txt").write_text(token + "\n")
-        console.print(f"[#6c7086]→ cat /tmp/opskit-token.txt[/#6c7086]")
-    except Exception:
-        pass
-    console.print()
-    console.print(f"[#6c7086]{t('wireguard.token_security_hint')}[/#6c7086]")
+    console.print(f"[#cdd6f4]{token}[/#cdd6f4]")
     console.print()
 
     # ── 输出手机专用 WG 配置 + QR 码 ──────────────────────────────────────
@@ -1173,7 +1160,6 @@ def add_peer(breadcrumb: list[str]) -> None:
     console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
     console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
     console.print()
-    console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
     try:
         import qrcode  # type: ignore
         qr = qrcode.QRCode(border=1)
@@ -1182,10 +1168,9 @@ def add_peer(breadcrumb: list[str]) -> None:
         from io import StringIO
         _buf = StringIO()
         qr.print_ascii(out=_buf, invert=True)
-        console.print(f"[bold #89b4fa]{t('wireguard.phone_qr_title')}[/bold #89b4fa]")
         console.print(_buf.getvalue())
     except ImportError:
-        console.print(f"[#6c7086]{t('wireguard.phone_qr_missing')}[/#6c7086]")
+        console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
     console.print()
     pause()
 
