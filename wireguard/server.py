@@ -52,18 +52,21 @@ def _print_qr(data: str) -> None:
         console.print(f"[#cdd6f4]{data}[/#cdd6f4]")
 
 
-def _build_vless_uri(uuid: str, sni: str, port: int = 443,
+def _build_vless_uri(uuid: str, sni: str, server_ip: str, port: int = 443,
                      ws_path: str = "/vless-ws", label: str = "") -> str:
     """生成 v2rayNG / Hiddify 可识别的 vless:// 分享链接。
-    坑点：path 必须 URL 编码（/ → %2F），否则部分客户端解析失败。
+    坑点 1：path 必须 URL 编码（/ → %2F），否则部分客户端解析失败。
+    坑点 2：address 必须用 IP 而非域名，否则 v2rayNG VPN 模式 Fake DNS
+           （198.18.0.0/15）会拦截代理自身域名导致路由环路超时。
+           sni + host 保留域名用于 TLS 证书验证和 Nginx Host 匹配。
     """
     from urllib.parse import quote
     _path = quote(ws_path, safe="")
     _label = quote(label or sni, safe="")
     return (
-        f"vless://{uuid}@{sni}:{port}"
+        f"vless://{uuid}@{server_ip}:{port}"
         f"?encryption=none&security=tls&type=ws"
-        f"&host={sni}&path={_path}&fp=firefox"
+        f"&host={sni}&path={_path}&sni={sni}&fp=firefox"
         f"#{_label}"
     )
 
@@ -586,7 +589,7 @@ def install_server() -> None:
     # ── 手机 vless:// 二维码 ─────────────────────────────────────────────────────────
     from wireguard.constants import XRAY_WS_PATH
     _vless_uri = _build_vless_uri(
-        uuid=uuid, sni=sni, port=server_port,
+        uuid=uuid, sni=sni, server_ip=public_ip, port=server_port,
         ws_path=XRAY_WS_PATH, label=tunnel_label,
     )
     console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_vless_title')}[/bold #89b4fa]")
@@ -1231,6 +1234,7 @@ def add_peer(breadcrumb: list[str]) -> None:
     _vless_uri = _build_vless_uri(
         uuid=state.get("uuid", ""),
         sni=state.get("sni", ""),
+        server_ip=state.get("server_ip", ""),
         port=state.get("server_port", 443),
         ws_path=_WS_PATH,
         label=state.get("tunnel_label", ""),
