@@ -47,16 +47,35 @@ def _detect_local_dns(iface: str, vpn_dns: str | None = None) -> str | None:
     return None
 
 
+def _has_local_dns_service() -> bool:
+    """检测本机是否运行了自定义 DNS 服务。
+    判断依据：/etc/resolv.conf 第一条 nameserver 是否为本机回环地址。
+    CoreDNS / bind / unbound 运行后必然将 resolv.conf 指向 127.x.x.x。
+    """
+    try:
+        from pathlib import Path
+        for line in Path("/etc/resolv.conf").read_text("utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("nameserver"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    ip = parts[1].strip()
+                    return ip.startswith("127.") or ip == "::1"
+    except Exception:
+        pass
+    return False
+
+
 def _merge_dns(vpn_dns: str | None, local_dns: str | None) -> str | None:
-    """合并本机 DNS 与 VPN DNS，确保无重复、本机优先。
+    """合并本机 DNS 与 VPN DNS，VPN DNS 优先。
     - vpn_dns=None（旧 token）→ 返回 None，不写 DNS 行（向后兼容）
     - local_dns 检测失败 → 只用 vpn_dns
-    - 两者均有且不同 → '{local_dns}, {vpn_dns}'
+    - 两者均有且不同 → '{vpn_dns}, {local_dns}'（VPN DNS 优先，确保内网域名先命中）
     """
     if not vpn_dns:
         return None
     if local_dns and local_dns != vpn_dns:
-        return f"{local_dns}, {vpn_dns}"
+        return f"{vpn_dns}, {local_dns}"
     return vpn_dns
 
 
@@ -304,8 +323,11 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         # ── 写入 WireGuard 配置（/etc/wireguard/{wg_iface}.conf）
         sp.step(t("wireguard.step.write_wg_config"))
         wg_cfg_path = f"/etc/wireguard/{wg_iface}.conf"
-        _local_dns = _detect_local_dns(iface, vpn_dns=dns)
-        _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
+        if _has_local_dns_service():
+            _final_dns = None
+        else:
+            _local_dns = _detect_local_dns(iface, vpn_dns=dns)
+            _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv,
             client_ip=client_ip,
@@ -611,17 +633,24 @@ def manage_client() -> None:
         if key is None:
             break
 
-        if not installed:
-            print_warning(t(f"{mk}.not_installed"))
-            pause()
-            continue
-
         if key == "1":
-            view_client_info(breadcrumb)
+            if not installed:
+                print_warning(t(f"{mk}.not_installed"))
+                pause()
+            else:
+                view_client_info(breadcrumb)
         elif key == "2":
-            update_client_token(breadcrumb)
+            if not installed:
+                print_warning(t(f"{mk}.not_installed"))
+                pause()
+            else:
+                update_client_token(breadcrumb)
         elif key == "3":
-            remove_tunnel(breadcrumb)
+            if not installed:
+                print_warning(t(f"{mk}.not_installed"))
+                pause()
+            else:
+                remove_tunnel(breadcrumb)
         elif key == "4":
             _install_client_token(breadcrumb)
 
@@ -858,9 +887,12 @@ def update_client_token(breadcrumb: list[str]) -> None:
 
         sp.step(step_descs[1])
         _upd_vpn_dns = data.get("dns")
-        _upd_iface   = detect_default_iface()
-        _upd_local   = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
-        _upd_dns     = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
+        if _has_local_dns_service():
+            _upd_dns = None
+        else:
+            _upd_iface = detect_default_iface()
+            _upd_local = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
+            _upd_dns   = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
         wg_cfg = wg_client_config(
             client_private_key=wg_client_priv, client_ip=client_ip,
             server_public_key=wg_server_pub, psk=wg_psk,
