@@ -52,6 +52,22 @@ def _print_qr(data: str) -> None:
         console.print(f"[#cdd6f4]{data}[/#cdd6f4]")
 
 
+def _build_vless_uri(uuid: str, sni: str, port: int = 443,
+                     ws_path: str = "/vless-ws", label: str = "") -> str:
+    """生成 v2rayNG / Hiddify 可识别的 vless:// 分享链接。
+    坑点：path 必须 URL 编码（/ → %2F），否则部分客户端解析失败。
+    """
+    from urllib.parse import quote
+    _path = quote(ws_path, safe="")
+    _label = quote(label or sni, safe="")
+    return (
+        f"vless://{uuid}@{sni}:{port}"
+        f"?encryption=none&security=tls&type=ws"
+        f"&host={sni}&path={_path}&fp=chrome"
+        f"#{_label}"
+    )
+
+
 def _detect_public_ip() -> str:
     """检测本机公网 IP"""
     import urllib.request
@@ -567,23 +583,16 @@ def install_server() -> None:
     _sys_token.stdout.flush()
     console.print()
 
-    # ── 手机二维码 ────────────────────────────────────────────────────────────────────
-    _install_phone_wg_conf = (
-        f"[Interface]\n"
-        f"PrivateKey = {client_priv}\n"
-        f"Address = {client_ip}/32\n"
-        f"DNS = {vpn_gateway}\n\n"
-        f"[Peer]\n"
-        f"PublicKey = {wg_server_pub}\n"
-        f"PresharedKey = {client_psk}\n"
-        f"AllowedIPs = {vpn_subnet}\n"
-        f"PersistentKeepalive = 25\n"
-        f"Endpoint = {public_ip}:{server_port}\n"
+    # ── 手机 vless:// 二维码 ─────────────────────────────────────────────────────────
+    from wireguard.constants import XRAY_WS_PATH
+    _vless_uri = _build_vless_uri(
+        uuid=uuid, sni=sni, port=server_port,
+        ws_path=XRAY_WS_PATH, label=tunnel_label,
     )
-    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
-    console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
+    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_vless_title')}[/bold #89b4fa]")
+    console.print(f"[#6c7086]{t('wireguard.phone_vless_hint')}[/#6c7086]")
     console.print()
-    _print_qr(_install_phone_wg_conf)
+    _print_qr(_vless_uri)
     console.print()
 
     # ── 防火墙提示 ────────────────────────────────────────────────────────────────────
@@ -1217,24 +1226,19 @@ def add_peer(breadcrumb: list[str]) -> None:
     _sys_token2.stdout.flush()
     console.print()
 
-    # ── 输出手机专用 WG 配置 + QR 码 ──────────────────────────────────────
-    _server_endpoint = f"{state.get('server_ip', '')}:{state.get('server_port', 443)}"
-    _phone_wg_conf = (
-        f"[Interface]\n"
-        f"PrivateKey = {client_priv}\n"
-        f"Address = {client_ip}/32\n"
-        f"DNS = {_vpn_gateway}\n\n"
-        f"[Peer]\n"
-        f"PublicKey = {state.get('wg_server_pub', '')}\n"
-        f"PresharedKey = {client_psk}\n"
-        f"AllowedIPs = {_vpn_subnet}\n"
-        f"PersistentKeepalive = 25\n"
-        f"Endpoint = {_server_endpoint}\n"
+    # ── 手机 vless:// 二维码 ──────────────────────────────────────────────
+    from wireguard.constants import XRAY_WS_PATH as _WS_PATH
+    _vless_uri = _build_vless_uri(
+        uuid=state.get("uuid", ""),
+        sni=state.get("sni", ""),
+        port=state.get("server_port", 443),
+        ws_path=_WS_PATH,
+        label=state.get("tunnel_label", ""),
     )
-    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
-    console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
+    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_vless_title')}[/bold #89b4fa]")
+    console.print(f"[#6c7086]{t('wireguard.phone_vless_hint')}[/#6c7086]")
     console.print()
-    _print_qr(_phone_wg_conf)
+    _print_qr(_vless_uri)
     console.print()
     pause()
 

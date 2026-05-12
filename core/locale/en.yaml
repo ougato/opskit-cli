@@ -311,6 +311,8 @@ wireguard:
   phone_wg_title: "Phone WireGuard Config"
   phone_wg_hint: "Scan the QR code below in WireGuard App on your phone:"
   phone_qr_title: "Scan to import WireGuard config on phone"
+  phone_vless_title: "Phone Proxy Config"
+  phone_vless_hint: "Install v2rayNG / Hiddify on your phone and scan the QR code below:"
   confirm_install_server: "Install WireGuard public server?"
   confirm_install_client: "Install WireGuard private client?"
   confirm_uninstall: "Uninstall WireGuard? This cannot be undone"
