@@ -63,7 +63,7 @@ def _build_vless_uri(uuid: str, sni: str, port: int = 443,
     return (
         f"vless://{uuid}@{sni}:{port}"
         f"?encryption=none&security=tls&type=ws"
-        f"&host={sni}&path={_path}&fp=chrome"
+        f"&host={sni}&path={_path}&fp=firefox"
         f"#{_label}"
     )
 
