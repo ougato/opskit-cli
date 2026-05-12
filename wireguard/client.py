@@ -48,19 +48,23 @@ def _detect_local_dns(iface: str, vpn_dns: str | None = None) -> str | None:
 
 
 def _has_local_dns_service() -> bool:
-    """检测本机是否运行了自定义 DNS 服务。
-    判断依据：/etc/resolv.conf 第一条 nameserver 是否为本机回环地址。
-    CoreDNS / bind / unbound 运行后必然将 resolv.conf 指向 127.x.x.x。
+    """检测本机是否运行了自定义 DNS 服务（coredns / named / bind / unbound）。
+    判断依据：53 端口是否有已知 DNS 进程在监听。
+    使用 ss 检测端口进程，不依赖 resolv.conf（wg-quick 启动后会覆盖 resolv.conf）。
     """
+    _dns_procs = {"coredns", "named", "bind", "unbound", "pdns", "knot"}
     try:
-        from pathlib import Path
-        for line in Path("/etc/resolv.conf").read_text("utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("nameserver"):
-                parts = line.split()
-                if len(parts) >= 2:
-                    ip = parts[1].strip()
-                    return ip.startswith("127.") or ip == "::1"
+        import subprocess
+        r = subprocess.run(
+            ["ss", "-tulnp"],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            if ":53 " not in line and ":53\t" not in line:
+                continue
+            line_lower = line.lower()
+            if any(proc in line_lower for proc in _dns_procs):
+                return True
     except Exception:
         pass
     return False
