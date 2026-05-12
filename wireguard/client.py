@@ -307,6 +307,11 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
 
         sp.step(t("wireguard.step.install_wg"))
         install_wireguard_pkg(os_id)
+        if os_id in ("debian", "ubuntu"):
+            subprocess.run(
+                ["apt-get", "install", "-y", "openresolv"],
+                check=False, capture_output=True, text=True,
+            )
 
         sp.step(t("wireguard.step.install_xray"))
         install_xray()
