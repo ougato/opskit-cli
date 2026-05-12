@@ -200,7 +200,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     )
     from wireguard.utils import (
         detect_default_iface, enable_and_start, stop_and_disable, write_file, write_secret_file,
-        get_os_id, install_wireguard_pkg, install_xray,
+        get_os_id, install_wireguard_pkg, install_xray, normalize_tunnel_label,
     )
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
@@ -242,8 +242,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     label         = data.get("label",       "default")
     dns           = data.get("dns")
 
-    import re as _re
-    label = _re.sub(r"[^a-zA-Z0-9_-]", "-", label)[:24].strip("-") or "default"
+    label = normalize_tunnel_label(label, default="default")
     wg_iface      = f"wg-{label}"
     xray_instance = label
 
@@ -374,7 +373,6 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         stop_and_disable(xray_svc)
         enable_and_start(xray_svc)
         enable_and_start(wg_svc)
-        _SCM.mark_installed(f"wg_client_{label}")
 
         sp.step(t("wireguard.step.verify"))
         import time
@@ -403,8 +401,24 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             wg=wg_svc,
             wg_status="active" if _wg_ok else "INACTIVE",
         ))
+        stop_and_disable(wg_svc)
+        stop_and_disable(xray_svc)
+        _Path(wg_cfg_path).unlink(missing_ok=True)
+        _Path(xray_cfg_path).unlink(missing_ok=True)
+        (_dropin_dir / "after-xray.conf").unlink(missing_ok=True)
+        try:
+            _dropin_dir.rmdir()
+        except Exception:
+            pass
+        from core.sysconfig import SysConfigManager as _SCM
+        _SCM.restore(f"wg_client_{label}")
+        _SCM.remove(f"wg_client_{label}")
+        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
         pause()
         return
+
+    from core.sysconfig import SysConfigManager as _SCM
+    _SCM.mark_installed(f"wg_client_{label}")
 
     # ── 保存 tunnels state ──────────────────────────────────────────────
     _tunnels.append({

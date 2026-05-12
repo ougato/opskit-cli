@@ -6,7 +6,7 @@ from typing import Callable, ClassVar
 from software.base import InstallError, InstallStep, Recipe
 from software.registry import register
 from core.i18n import t
-from .constants import NGINX_VERSIONS_FALLBACK
+from .constants import NGINX_SYSTEM_PACKAGE_VERSION
 from .driver import get_driver
 
 
@@ -17,6 +17,7 @@ class NginxRecipe(Recipe):
     description: ClassVar[str] = "Nginx Web 服务器"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    has_upgrade: ClassVar[bool] = False
 
     def detect(self) -> str | None:
         from core.platform import get_platform
@@ -25,19 +26,7 @@ class NginxRecipe(Recipe):
         return get_driver().detect()
 
     def versions(self) -> list[str]:
-        from core.constants import TIMEOUT_VERSION_FETCH
-        from .constants import NGINX_GITHUB_API
-        try:
-            import httpx
-            resp = httpx.get(NGINX_GITHUB_API, timeout=TIMEOUT_VERSION_FETCH)
-            if resp.status_code == 200:
-                tags = [t["name"].lstrip("release-") for t in resp.json()]
-                stable = [v for v in tags if not any(c in v for c in ("alpha", "beta", "rc"))]
-                if stable:
-                    return stable[:6]
-        except Exception:
-            pass
-        return list(NGINX_VERSIONS_FALLBACK)
+        return [NGINX_SYSTEM_PACKAGE_VERSION]
 
     def steps(self, action: str = "install") -> list[InstallStep]:
         if action == "uninstall":

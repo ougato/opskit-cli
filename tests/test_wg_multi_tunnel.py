@@ -43,7 +43,9 @@ class TestTokenV2:
         from wireguard.token import encode_token, TOKEN_PREFIX
         import base64
         import gzip
-        tok = encode_token(dict(self._FIELDS))
+        fields = dict(self._FIELDS)
+        tok = encode_token(fields)
+        assert "v" not in fields
         b64_part = tok[len(TOKEN_PREFIX):]
         compressed = base64.urlsafe_b64decode(b64_part + "==")
         data = json.loads(gzip.decompress(compressed))
@@ -118,6 +120,21 @@ class TestWireGuardSecretFiles:
             assert (target.stat().st_mode & 0o777) == 0o600
 
 
+class TestTunnelLabel:
+    """隧道 label 规范化应在服务端/客户端复用同一规则"""
+
+    def test_normalize_tunnel_label_replaces_unsafe_chars(self):
+        from wireguard.utils import normalize_tunnel_label
+
+        assert normalize_tunnel_label(" hk cn/01 ", default="default") == "hk-cn-01"
+
+    def test_normalize_tunnel_label_limits_length_and_fallback(self):
+        from wireguard.utils import normalize_tunnel_label
+
+        assert normalize_tunnel_label("a" * 30, default="default") == "a" * 24
+        assert normalize_tunnel_label("///", default="server") == "server"
+
+
 # ─── 配方文案与卸载安全边界 ───────────────────────────────────────────────────
 
 class TestWireGuardRecipeSafety:
@@ -159,6 +176,38 @@ class TestWireGuardRecipeSafety:
 
         assert "WG_STATE_FILE" in source
         assert "Path(WG_STATE_FILE).unlink" in source
+
+    def test_install_marks_installed_after_service_verification(self):
+        import inspect
+        from wireguard import client, server
+
+        server_source = inspect.getsource(server.install_server)
+        assert server_source.index("service_start_fail") < server_source.index('mark_installed("wg_server")')
+
+        client_source = inspect.getsource(client._install_client_token)
+        assert client_source.index("client_service_start_fail") < client_source.index("mark_installed")
+
+    def test_server_state_saved_after_service_verification(self):
+        import inspect
+        from wireguard import server
+
+        source = inspect.getsource(server.install_server)
+
+        assert source.index("service_start_fail") < source.index("_save_state(state)")
+        assert source.index("_save_state(state)") < source.index('mark_installed("wg_server")')
+
+    def test_client_failed_install_cleans_orphan_runtime(self):
+        import inspect
+        from wireguard import client
+
+        source = inspect.getsource(client._install_client_token)
+        failure_block = source[source.index("client_service_start_fail"):source.index("pause()", source.index("client_service_start_fail"))]
+
+        assert "stop_and_disable(wg_svc)" in failure_block
+        assert "stop_and_disable(xray_svc)" in failure_block
+        assert "_Path(wg_cfg_path).unlink" in failure_block
+        assert "_Path(xray_cfg_path).unlink" in failure_block
+        assert "_SCM.remove" in failure_block
 
 
 # ─── _alloc_local_port ────────────────────────────────────────────────────────

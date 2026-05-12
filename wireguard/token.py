@@ -112,8 +112,9 @@ def encode_token(data: dict) -> str:
 
     流程：dict → JSON bytes → gzip → base64 → 加前缀
     """
-    data["v"] = TOKEN_VERSION
-    raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload = dict(data)
+    payload["v"] = TOKEN_VERSION
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     compressed = gzip.compress(raw, compresslevel=9)
     b64 = base64.urlsafe_b64encode(compressed).decode("ascii")
     return f"{TOKEN_PREFIX}{b64}"

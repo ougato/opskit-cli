@@ -27,7 +27,7 @@ class LinuxDriver(PlatformDriver):
         try:
             runner = get_runner()
             runner.update_index()
-            runner.install([NGINX_PACKAGE] + NGINX_EXTRA_PACKAGES)
+            runner.install(self._packages_for_runner(runner.name))
         except Exception as e:
             raise InstallError(t("software.nginx_error.install_failed", detail=str(e))) from e
 
@@ -53,3 +53,8 @@ class LinuxDriver(PlatformDriver):
                         capture_output=True)
         except Exception:
             pass
+
+    def _packages_for_runner(self, runner_name: str) -> list[str]:
+        if runner_name == "apt":
+            return [NGINX_PACKAGE] + NGINX_EXTRA_PACKAGES
+        return [NGINX_PACKAGE]

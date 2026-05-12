@@ -80,8 +80,13 @@ SHIM_CMD_TEMPLATE = (
     "    exit /b %ERRORLEVEL%\r\n"
     ")\r\n"
     ":fallback\r\n"
-    "where python >nul 2>&1\r\n"
-    "if %ERRORLEVEL% equ 0 ( python %* ) else ( echo Python not found & exit /b 1 )\r\n"
+    r"""for /f "delims=" %%P in ('where python 2^>nul') do (""" + "\r\n"
+    r'    if /I not "%%~fP"=="%~f0" (' + "\r\n"
+    r'        "%%~fP" %*' + "\r\n"
+    "        exit /b %ERRORLEVEL%\r\n"
+    "    )\r\n"
+    ")\r\n"
+    "echo Python not found & exit /b 1\r\n"
 )
 
 # ─── Linux/macOS sh shim 模板 ─────────────────────────────────────────────────

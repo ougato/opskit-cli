@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, ClassVar
 
-from software.base import InstallError, InstallStep, Recipe, UninstallError
+from software.base import InstallError, InstallStep, Recipe
 from software.registry import register
 from core.i18n import t
 from .common import (
@@ -15,7 +15,6 @@ from .common import (
     load_snapshot,
     save_snapshot,
     delete_snapshot,
-    shim_dir,
     uv_python_dir,
     version_entries,
     VersionEntry,
@@ -233,27 +232,46 @@ class PythonRecipe(Recipe):
             raise InstallError(t("software.python_error.install_failed", version=version)) from e
 
     def _activate_install(self, version: str, new_bin: str, snap: dict, driver) -> None:
-        installed = snap.get("installed_versions", [])
+        next_snap = dict(snap)
+        installed = list(next_snap.get("installed_versions", []))
         if version not in installed:
             installed.append(version)
-        snap["installed_versions"] = installed
-        snap["active_version"] = version
-        snap["uv_python_path"] = new_bin
-        save_snapshot(snap)
+        next_snap["installed_versions"] = installed
+        next_snap["active_version"] = version
+        next_snap["uv_python_path"] = new_bin
 
         try:
             driver.apply_version_link(new_bin)
         except Exception:
             pass
 
-        fallback = snap.get("symlink_path", "") or "/usr/bin/python3"
+        fallback = next_snap.get("symlink_path", "") or "/usr/bin/python3"
         try:
             driver.install_shim(fallback)
         except Exception:
             pass
 
-        if not self.detect():
+        if not self._python_bin_matches(new_bin, version):
             raise InstallError(t("software.python_error.verify_failed"))
+        save_snapshot(next_snap)
+
+    def _python_bin_matches(self, python_bin: str, version: str) -> bool:
+        target_minor = ".".join(version.split(".")[:2])
+        try:
+            result = subprocess.run(
+                [python_bin, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            line = result.stdout.strip() or result.stderr.strip()
+            if "Python" not in line:
+                return False
+            detected = line.split()[-1]
+            return detected == target_minor or detected.startswith(f"{target_minor}.")
+        except Exception:
+            return False
 
     def switch(self, version: str) -> None:
         new_bin = find_uv_python(version)
@@ -289,9 +307,9 @@ class PythonRecipe(Recipe):
                     import shutil as _sh
                     _sh.rmtree(str(entry), ignore_errors=True)
 
-        descs = ["remove", "cleanup"]
+        descs = [t("software.step.remove_files"), t("software.step.cleanup")]
         with MultiStepProgress(descs) as sp:
-            sp.step("remove")
+            sp.step(descs[0])
             installed = self.installed_versions()
 
             if version is None:
@@ -303,6 +321,7 @@ class PythonRecipe(Recipe):
             else:
                 _remove_dir(version)
                 remaining = [v for v in installed if v != version]
+                switched_version: str | None = None
 
                 if version == active:
                     if remaining:
@@ -311,6 +330,7 @@ class PythonRecipe(Recipe):
                             try:
                                 self.switch(fallback_ver)
                                 switched = True
+                                switched_version = fallback_ver
                                 break
                             except Exception:
                                 continue
@@ -324,9 +344,15 @@ class PythonRecipe(Recipe):
                 if snap:
                     snap["installed_versions"] = remaining
                     if version == active:
-                        snap["active_version"] = remaining[0] if remaining else None
+                        if switched_version:
+                            snap = load_snapshot()
+                            snap["installed_versions"] = remaining
+                            snap["active_version"] = switched_version
+                            snap["uv_python_path"] = find_uv_python(switched_version) or snap.get("uv_python_path")
+                        else:
+                            snap["active_version"] = remaining[0] if remaining else None
                     if remaining:
                         save_snapshot(snap)
 
-            sp.step("cleanup")
+            sp.step(descs[1])
             sp.complete()

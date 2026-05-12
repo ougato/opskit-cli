@@ -167,7 +167,7 @@ def install_server() -> None:
     from wireguard.utils import (
         gen_wg_keypair, gen_wg_psk, gen_xray_keypair, gen_uuid, gen_short_id,
         detect_default_iface, enable_and_start, write_file, write_secret_file,
-        get_os_id, install_wireguard_pkg, install_xray,
+        get_os_id, install_wireguard_pkg, install_xray, normalize_tunnel_label,
     )
     from wireguard.templates import (
         xray_server_config_ws,
@@ -262,9 +262,7 @@ def install_server() -> None:
         )
     except UserCancel:
         return
-    tunnel_label = (_label_raw or "").strip() or _default_label
-    import re as _re
-    tunnel_label = _re.sub(r"[^a-zA-Z0-9_-]", "-", tunnel_label)[:24].strip("-") or _default_label
+    tunnel_label = normalize_tunnel_label(_label_raw, default=_default_label)
 
     if tunnel_label != _saved_label:
         _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
@@ -429,8 +427,8 @@ def install_server() -> None:
             dns=vpn_gateway,
         )
 
-        # 保存状态（令牌生成后写入，确保 client-1 含 token 字段）
-        _save_state({
+        # 服务验证通过后再落盘 state，避免半安装状态被管理菜单误判为可用。
+        state = {
             "mode": "443",
             "sni": sni,
             "base_domain": _base_domain,
@@ -451,7 +449,7 @@ def install_server() -> None:
                     "token": token,
                 }
             ],
-        })
+        }
 
         # ── 安装 dnsmasq ──────────────────────────────────────────────────────
         sp.step(t("wireguard.step.install_dnsmasq"))
@@ -472,7 +470,6 @@ def install_server() -> None:
         subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
         subprocess.run(["systemctl", "reload", "nginx"], check=False,
                        capture_output=True, text=True)
-        SysConfigManager.mark_installed("wg_server")
 
         # ── 验证 ─────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.verify"))
@@ -493,6 +490,8 @@ def install_server() -> None:
                 wg='OK' if _wg_ok else 'FAIL',
                 nginx='OK' if _nginx_ok else 'FAIL',
             ))
+        _save_state(state)
+        SysConfigManager.mark_installed("wg_server")
 
     # ── 输出结果 ─────────────────────────────────────────────────────────────
     clear_screen()
