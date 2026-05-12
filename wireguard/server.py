@@ -1,15 +1,11 @@
 """WireGuard 公网服务端安装 / 卸载 / 诊断 / 管理逻辑"""
 from __future__ import annotations
 
-from software.base import InstallError, UninstallError
-from core.constants import PUBLIC_IP_APIS, GITHUB_BASE
+from software.base import InstallError
+from core.constants import PUBLIC_IP_APIS
 from core.theme import console
-from wireguard.constants import (
-    ACME_INSTALL_MIRRORS,
-    XRAY_API_LATEST, XRAY_API_LATEST_GHPROXY,
-    XRAY_DOWNLOAD_ZIP, XRAY_REPO,
-    XRAY_DOC_URL,
-)
+from wireguard.constants import ACME_INSTALL_MIRRORS
+
 
 
 def _detect_public_ip() -> str:
@@ -32,8 +28,8 @@ def _save_state(state: dict) -> None:
     """保存服务端状态文件"""
     import json
     from wireguard.constants import WG_STATE_FILE
-    from wireguard.utils import write_file
-    write_file(WG_STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
+    from wireguard.utils import write_secret_file
+    write_secret_file(WG_STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
 
 
 def _load_state() -> dict:
@@ -48,6 +44,32 @@ def _load_state() -> dict:
         except Exception:
             pass
     return {}
+
+
+def _extract_xray_client_creds(cfg: dict, state: dict | None = None) -> tuple[str, str, str, str | None]:
+    """从当前 WS/TLS 配置提取诊断凭证，并兼容旧 REALITY state 字段。"""
+    state = state or {}
+    xray_pub = state.get("xray_pub") or state.get("reality_pubkey") or "—"
+    uuid = state.get("uuid") or "—"
+    short_id = state.get("short_id") or "—"
+    reality_private_key: str | None = None
+
+    try:
+        ib = cfg.get("inbounds", [{}])[0]
+        clients = ib.get("settings", {}).get("clients", [])
+        if clients and clients[0].get("id"):
+            uuid = clients[0]["id"]
+
+        reality = ib.get("streamSettings", {}).get("realitySettings") or {}
+        short_ids = reality.get("shortIds") or []
+        if short_ids:
+            short_id = short_ids[0]
+        if reality.get("privateKey"):
+            reality_private_key = reality["privateKey"]
+    except Exception:
+        pass
+
+    return xray_pub, uuid, short_id, reality_private_key
 
 
 def _generate_client_token(
@@ -139,13 +161,13 @@ def install_server() -> None:
         WG_CONFIG_FILE, XRAY_CONFIG_FILE, WG_SERVICE, XRAY_SERVICE,
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
         XRAY_WS_PORT, XRAY_WS_PATH, ACME_CERT_DIR,
-        ACME_DEFAULT_EMAIL, VPN_CLIENT_IP_START,
+        VPN_CLIENT_IP_START,
         VPN_SUBNET_TPL, VPN_GW_TPL, VPN_DEFAULT_OCTET3,
     )
     from wireguard.utils import (
         gen_wg_keypair, gen_wg_psk, gen_xray_keypair, gen_uuid, gen_short_id,
-        detect_default_iface, enable_and_start, write_file,
-        get_os_id, install_wireguard_pkg, install_xray,
+        detect_default_iface, enable_and_start, write_file, write_secret_file,
+        get_os_id, install_wireguard_pkg, install_xray, normalize_tunnel_label,
     )
     from wireguard.templates import (
         xray_server_config_ws,
@@ -180,7 +202,7 @@ def install_server() -> None:
     sni = sni.strip()
     if sni != _saved_domain:
         _cfg = set_config_value(_cfg, "wireguard.domain", sni)
-    cert_email = ACME_DEFAULT_EMAIL
+    cert_email = _get_acme_email()
 
     public_ip = _detect_public_ip()
     if not public_ip:
@@ -240,9 +262,7 @@ def install_server() -> None:
         )
     except UserCancel:
         return
-    tunnel_label = (_label_raw or "").strip() or _default_label
-    import re as _re
-    tunnel_label = _re.sub(r"[^a-zA-Z0-9_-]", "-", tunnel_label)[:24].strip("-") or _default_label
+    tunnel_label = normalize_tunnel_label(_label_raw, default=_default_label)
 
     if tunnel_label != _saved_label:
         _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
@@ -278,7 +298,10 @@ def install_server() -> None:
         "wireguard.step.check_os",
         "wireguard.step.install_wg",
         "wireguard.step.install_xray",
-        "wireguard.step.install_nginx",
+    ]
+    if nginx_mode == "install":
+        step_keys.append("wireguard.step.install_nginx")
+    step_keys += [
         "wireguard.step.issue_cert",
         "wireguard.step.config_nginx",
         "wireguard.step.gen_keys",
@@ -295,12 +318,12 @@ def install_server() -> None:
     with MultiStepProgress([t(s) for s in step_keys]) as sp:
         import subprocess
 
-        # ── 检测 OS ──────────────────────────────────────────────────────────
+        # ── 检测 OS ────────────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.check_os"))
         os_id = get_os_id()
         if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
             raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
-
+        _ensure_system_deps(os_id)
         from core.sysconfig import SysConfigManager
         SysConfigManager.save(
             "wg_server",
@@ -316,12 +339,14 @@ def install_server() -> None:
         sp.step(t("wireguard.step.install_xray"))
         install_xray()
 
-        # ── 安装 / 配置 nginx（根据場景自动选择 install / append）───────────────────
-        sp.step(t("wireguard.step.install_nginx"))
+        # ── 安装 / 配置 nginx（根据场景自动选择 install / append）───────────────────
+        if nginx_mode == "install":
+            sp.step(t("wireguard.step.install_nginx"))
         _setup_nginx(
             os_id=os_id, nginx_mode=nginx_mode,
             sni=sni, ws_port=XRAY_WS_PORT,
             cert_dir=ACME_CERT_DIR, ws_path=XRAY_WS_PATH,
+            sp=sp,
         )
 
         sp.step(t("wireguard.step.issue_cert"))
@@ -363,7 +388,7 @@ def install_server() -> None:
             iface=iface,
             vpn_subnet=vpn_subnet,
         )
-        write_file(WG_CONFIG_FILE, wg_cfg)
+        write_secret_file(WG_CONFIG_FILE, wg_cfg)
 
         # ── 自动生成第一个客户端 ─────────────────────────────────────────────
         sp.step(t("wireguard.step.gen_client"))
@@ -377,7 +402,6 @@ def install_server() -> None:
             client_ip=client_ip,
             psk=client_psk,
         )
-        from pathlib import Path as _AppendPath
         with open(WG_CONFIG_FILE, "a") as f:
             f.write(peer_section)
 
@@ -403,8 +427,8 @@ def install_server() -> None:
             dns=vpn_gateway,
         )
 
-        # 保存状态（令牌生成后写入，确保 client-1 含 token 字段）
-        _save_state({
+        # 服务验证通过后再落盘 state，避免半安装状态被管理菜单误判为可用。
+        state = {
             "mode": "443",
             "sni": sni,
             "base_domain": _base_domain,
@@ -425,7 +449,7 @@ def install_server() -> None:
                     "token": token,
                 }
             ],
-        })
+        }
 
         # ── 安装 dnsmasq ──────────────────────────────────────────────────────
         sp.step(t("wireguard.step.install_dnsmasq"))
@@ -446,7 +470,6 @@ def install_server() -> None:
         subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
         subprocess.run(["systemctl", "reload", "nginx"], check=False,
                        capture_output=True, text=True)
-        SysConfigManager.mark_installed("wg_server")
 
         # ── 验证 ─────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.verify"))
@@ -467,6 +490,8 @@ def install_server() -> None:
                 wg='OK' if _wg_ok else 'FAIL',
                 nginx='OK' if _nginx_ok else 'FAIL',
             ))
+        _save_state(state)
+        SysConfigManager.mark_installed("wg_server")
 
     # ── 输出结果 ─────────────────────────────────────────────────────────────
     clear_screen()
@@ -494,25 +519,18 @@ def install_server() -> None:
         border_style="#a6e3a1",
         padding=(1, 2),
     ))
+    console.print()
 
     # ── 令牌输出 ─────────────────────────────────────────────────────────────
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    import sys as _sys
-    _sys.stdout.write(token + "\n")
-    _sys.stdout.flush()
-    try:
-        from pathlib import Path as _TokenPath
-        _TokenPath("/tmp/opskit-token.txt").write_text(token + "\n")
-        console.print(f"[#6c7086]→ cat /tmp/opskit-token.txt[/#6c7086]")
-    except Exception:
-        pass
-    console.print()
-    console.print(f"[#6c7086]{t('wireguard.token_security_hint')}[/#6c7086]")
+    import sys as _sys_token
+    _sys_token.stdout.write(token + "\n")
+    _sys_token.stdout.flush()
     console.print()
 
-    # ── 防火墙提示 ───────────────────────────────────────────────────────────
+    # ── 防火墙提示 ────────────────────────────────────────────────────────────────────
     _fw_tbl = Table.grid(padding=(0, 2))
     _fw_tbl.add_column(no_wrap=False)
     _fw_tbl.add_row(_Text(t("wireguard.firewall_hint"), style="#cdd6f4"))
@@ -534,14 +552,12 @@ def uninstall_server() -> None:
     from core.progress import MultiStepProgress
     from wireguard.constants import (
         WG_SERVICE, XRAY_SERVICE,
-        WG_CONFIG_DIR, XRAY_CONFIG_DIR,
-        XRAY_BINARY,
+        WG_CONFIG_FILE, WG_STATE_FILE, XRAY_CONFIG_FILE,
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
     )
     from wireguard.utils import stop_and_disable
 
     import subprocess
-    import shutil
     from pathlib import Path
 
     step_keys = [
@@ -569,23 +585,13 @@ def uninstall_server() -> None:
 
         # ── 3. 清理 systemd service 文件 ─────────────────────────────────────
         sp.step(descs[2])
-        for svc in (XRAY_SERVICE,):
-            svc_path = Path(f"/etc/systemd/system/{svc}.service")
-            svc_path.unlink(missing_ok=True)
-            override_dir = Path(f"/etc/systemd/system/{svc}.service.d")
-            shutil.rmtree(override_dir, ignore_errors=True)
-        for tpl in ("xray@",):
-            Path(f"/etc/systemd/system/{tpl}.service").unlink(missing_ok=True)
-            shutil.rmtree(f"/etc/systemd/system/{tpl}.service.d", ignore_errors=True)
-        Path("/etc/systemd/system/xray-restart.timer").unlink(missing_ok=True)
-        Path("/etc/systemd/system/xray-restart.service").unlink(missing_ok=True)
+        # xray 二进制与 systemd 单元可能由外部或客户端共用，卸载服务端时只停用不删除。
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        Path(XRAY_BINARY).unlink(missing_ok=True)
 
         # ── 4. 清理配置目录 ───────────────────────────────────────────────────
         sp.step(descs[3])
-        for path in (WG_CONFIG_DIR, XRAY_CONFIG_DIR):
-            shutil.rmtree(path, ignore_errors=True)
+        Path(WG_CONFIG_FILE).unlink(missing_ok=True)
+        Path(XRAY_CONFIG_FILE).unlink(missing_ok=True)
         Path(NGINX_VLESS_WS_CONF).unlink(missing_ok=True)
         Path(NGINX_STREAM_CONF).unlink(missing_ok=True)
         Path(NGINX_STEAL_CONF).unlink(missing_ok=True)
@@ -594,9 +600,7 @@ def uninstall_server() -> None:
 
         # ── 5. 清理日志目录 ───────────────────────────────────────────────────
         sp.step(descs[4])
-        from core.paths import xray_log_dir, xray_data_dir
-        for path in (xray_log_dir(), xray_data_dir()):
-            shutil.rmtree(str(path), ignore_errors=True)
+        # 保留 xray 日志/数据目录，避免影响同机其他 xray 实例。
 
         # ── 6. 清理系统配置 ──────────────────────────────────────────────────────
         sp.step(descs[5])
@@ -606,6 +610,7 @@ def uninstall_server() -> None:
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore("wg_server")
         _SCM.remove("wg_server")
+        Path(WG_STATE_FILE).unlink(missing_ok=True)
         Path("/root/wg_server_info.txt").unlink(missing_ok=True)
 
     print_success(t('wireguard.diagnose.uninstall_success'))
@@ -720,8 +725,7 @@ def diagnose_server() -> None:
     tbl.add_row(_lbl(t(f"{dk}.wg_pub")), _val(wg_pub))
     tbl.add_row(_lbl(t(f"{dk}.wg_port")), _port_status(wg_port, "udp"))
     tbl.add_row(_lbl(t(f"{dk}.xray_port")), _port_status(xray_port, "tcp"))
-    from core.sysconfig import _load as _sc_load
-    _srv_state = _sc_load().get("wg_server", {})
+    _srv_state = _load_state()
     _vpn_gw = _srv_state.get("vpn_gateway", "—")
     tbl.add_row(_lbl(t(f"{dk}.vpn_gateway")), _val(_vpn_gw))
     tbl.add_row(_lbl(t("wireguard.info.dns")), _val(_vpn_gw if _vpn_gw != "—" else "—"))
@@ -729,23 +733,21 @@ def diagnose_server() -> None:
 
     # ── 3. 客户端连接凭证（从 xray config 读取）──────────────────────────────
     tbl.add_row(_sec(t(f'{dk}.section_client_creds')), Text(""))
-    creds_xray_pub = "—"
-    creds_uuid = "—"
-    creds_short_id = "—"
+    creds_xray_pub = _srv_state.get("xray_pub", "—")
+    creds_uuid = _srv_state.get("uuid", "—")
+    creds_short_id = _srv_state.get("short_id", "—")
     try:
         cfg = json.loads(Path(XRAY_CONFIG_FILE).read_text())
-        ib = cfg["inbounds"][0]
-        priv_key = ib["streamSettings"]["realitySettings"]["privateKey"]
-        r = subprocess.run(
-            ["xray", "x25519", "-i", priv_key],
-            capture_output=True, text=True, check=False
-        )
-        for line in r.stdout.splitlines():
-            if "Public" in line:
-                creds_xray_pub = line.split(":", 1)[-1].strip()
-                break
-        creds_uuid = ib["settings"]["clients"][0]["id"]
-        creds_short_id = ib["streamSettings"]["realitySettings"]["shortIds"][0]
+        creds_xray_pub, creds_uuid, creds_short_id, priv_key = _extract_xray_client_creds(cfg, _srv_state)
+        if priv_key and creds_xray_pub == "—":
+            r = subprocess.run(
+                ["xray", "x25519", "-i", priv_key],
+                capture_output=True, text=True, check=False
+            )
+            for line in r.stdout.splitlines():
+                if "Public" in line:
+                    creds_xray_pub = line.split(":", 1)[-1].strip()
+                    break
     except Exception:
         pass
     tbl.add_row(_lbl(t(f"{dk}.creds_xray_pub")), _val(creds_xray_pub))
@@ -920,16 +922,6 @@ def _get_clients() -> list[dict]:
     return _load_state().get("clients", [])
 
 
-def _has_icon(key: str) -> bool:
-    """检查主题是否定义了指定 icon key"""
-    try:
-        from core.theme import get_icon
-        val = get_icon(key)
-        return bool(val and val != key)
-    except Exception:
-        return False
-
-
 def manage_peers() -> None:
     """peer 管理主菜单"""
     from core.i18n import t
@@ -950,7 +942,6 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"{get_icon('edit')} {t(f'{mk}.rename_peer')}"},
                 {"key": "4", "label": f"{get_icon('delete')} {t(f'{mk}.remove_peer')}"},
-                {"key": "5", "label": f"{get_icon('network')} {t(f'{mk}.setup_dns')}"},
             ]
         else:
             choices = [
@@ -958,7 +949,6 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"[{muted}]{get_icon('edit')} {t(f'{mk}.rename_peer')}[/{muted}]", "disabled": True},
                 {"key": "4", "label": f"[{muted}]{get_icon('delete')} {t(f'{mk}.remove_peer')}[/{muted}]", "disabled": True},
-                {"key": "5", "label": f"[{muted}]{get_icon('network')} {t(f'{mk}.setup_dns')}[/{muted}]", "disabled": True},
             ]
 
         try:
@@ -994,37 +984,6 @@ def manage_peers() -> None:
                 pause()
             else:
                 remove_peer(breadcrumb)
-        elif key == "5":
-            if not installed:
-                print_warning(t("wireguard.manage.not_installed"))
-                pause()
-            else:
-                _run_setup_dns(breadcrumb)
-
-
-def _run_setup_dns(breadcrumb: list[str]) -> None:
-    """补装/更新 dnsmasq DNS 配置（已安装服务端使用）"""
-    from core.i18n import t
-    from core.prompt import pause, clear_screen
-    from core.theme import print_action_title, print_success
-    from wireguard.utils import get_os_id
-
-    clear_screen()
-    mk = "wireguard.manage"
-    print_action_title([*breadcrumb, t(f"{mk}.setup_dns")])
-
-    state = _load_state()
-    vpn_gateway  = state.get("vpn_gateway", "")
-    base_domain  = state.get("base_domain", "")
-    if not vpn_gateway or not base_domain:
-        sni = state.get("sni", "")
-        _parts = sni.strip().split(".")
-        base_domain = ".".join(_parts[-2:]) if len(_parts) >= 2 else sni
-
-    os_id = get_os_id()
-    _setup_dnsmasq(vpn_gateway=vpn_gateway, base_domain=base_domain, os_id=os_id)
-    print_success(t("wireguard.dnsmasq_setup_success").format(domain=base_domain, dns=vpn_gateway))
-    pause()
 
 
 def add_peer(breadcrumb: list[str]) -> None:
@@ -1077,17 +1036,27 @@ def add_peer(breadcrumb: list[str]) -> None:
     client_psk = gen_wg_psk()
 
     # 添加 peer 到运行中的 wg0
-    subprocess.run(
+    r_set = subprocess.run(
         ["wg", "set", "wg0", "peer", client_pub,
          "preshared-key", "/dev/stdin",
          "allowed-ips", f"{client_ip}/32"],
         input=client_psk,
         check=False, capture_output=True, text=True,
     )
-    subprocess.run(
+    if r_set.returncode != 0:
+        detail = (r_set.stderr or r_set.stdout or "").strip()
+        print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set failed"))
+        pause()
+        return
+    r_save = subprocess.run(
         ["wg-quick", "save", "wg0"],
         check=False, capture_output=True, text=True,
     )
+    if r_save.returncode != 0:
+        detail = (r_save.stderr or r_save.stdout or "").strip()
+        print_error(t("wireguard.error.peer_save_fail", detail=detail or "wg-quick save failed"))
+        pause()
+        return
 
     # 生成令牌（含 dns 字段）
     token = _generate_client_token(
@@ -1132,55 +1101,17 @@ def add_peer(breadcrumb: list[str]) -> None:
         border_style="#a6e3a1",
         padding=(1, 2),
     ))
+    console.print()
 
     # 输出令牌
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
     console.print(f"[#cdd6f4]{t('wireguard.token_hint')}[/#cdd6f4]")
     console.print()
-    import sys as _sys2
-    _sys2.stdout.write(token + "\n")
-    _sys2.stdout.flush()
-    try:
-        from pathlib import Path as _TokenPath2
-        _TokenPath2("/tmp/opskit-token.txt").write_text(token + "\n")
-        console.print(f"[#6c7086]→ cat /tmp/opskit-token.txt[/#6c7086]")
-    except Exception:
-        pass
-    console.print()
-    console.print(f"[#6c7086]{t('wireguard.token_security_hint')}[/#6c7086]")
+    import sys as _sys_token2
+    _sys_token2.stdout.write(token + "\n")
+    _sys_token2.stdout.flush()
     console.print()
 
-    # ── 输出手机专用 WG 配置 + QR 码 ──────────────────────────────────────
-    _server_endpoint = f"{state.get('server_ip', '')}:{state.get('server_port', 443)}"
-    _phone_wg_conf = (
-        f"[Interface]\n"
-        f"PrivateKey = {client_priv}\n"
-        f"Address = {client_ip}/32\n"
-        f"DNS = {_vpn_gateway}\n\n"
-        f"[Peer]\n"
-        f"PublicKey = {state.get('wg_server_pub', '')}\n"
-        f"PresharedKey = {client_psk}\n"
-        f"AllowedIPs = {_vpn_subnet}\n"
-        f"PersistentKeepalive = 25\n"
-        f"Endpoint = {_server_endpoint}\n"
-    )
-    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
-    console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
-    console.print()
-    console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
-    try:
-        import qrcode  # type: ignore
-        qr = qrcode.QRCode(border=1)
-        qr.add_data(_phone_wg_conf)
-        qr.make(fit=True)
-        from io import StringIO
-        _buf = StringIO()
-        qr.print_ascii(out=_buf, invert=True)
-        console.print(f"[bold #89b4fa]{t('wireguard.phone_qr_title')}[/bold #89b4fa]")
-        console.print(_buf.getvalue())
-    except ImportError:
-        console.print(f"[#6c7086]{t('wireguard.phone_qr_missing')}[/#6c7086]")
-    console.print()
     pause()
 
 
@@ -1229,7 +1160,7 @@ def remove_peer(breadcrumb: list[str]) -> None:
     import subprocess
     from core.i18n import t
     from core.prompt import select, pause, clear_screen, UserCancel
-    from core.theme import get_icon, print_action_title, print_warning
+    from core.theme import get_icon, print_action_title, print_error, print_warning
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
@@ -1268,14 +1199,24 @@ def remove_peer(breadcrumb: list[str]) -> None:
     pubkey = client.get("pubkey", "")
 
     if pubkey:
-        subprocess.run(
+        r_remove = subprocess.run(
             ["wg", "set", "wg0", "peer", pubkey, "remove"],
             check=False, capture_output=True, text=True,
         )
-        subprocess.run(
+        if r_remove.returncode != 0:
+            detail = (r_remove.stderr or r_remove.stdout or "").strip()
+            print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set remove failed"))
+            pause()
+            return
+        r_save = subprocess.run(
             ["wg-quick", "save", "wg0"],
             check=False, capture_output=True, text=True,
         )
+        if r_save.returncode != 0:
+            detail = (r_save.stderr or r_save.stdout or "").strip()
+            print_error(t("wireguard.error.peer_save_fail", detail=detail or "wg-quick save failed"))
+            pause()
+            return
 
     # 从 state.clients 移除
     state = _load_state()
@@ -1391,6 +1332,49 @@ def rename_peer(breadcrumb: list[str]) -> None:
 # ─── 内部辅助 ─────────────────────────────────────────────────────────────────
 
 
+def _ensure_system_deps(os_id: str) -> None:
+    """检测并自动安装 WireGuard 服务端所需的前置系统依赖。
+    缺失的包静默安装，已安装则跳过，不影响进度条显示。
+    """
+    import shutil
+    from core.pkg_runner import get_runner
+
+    _check_map: dict[str, str]
+    if os_id in ("debian", "ubuntu"):
+        _check_map = {
+            "iptables":  "iptables",
+            "curl":      "curl",
+            "openssl":   "openssl",
+            "iproute2":  "ip",
+        }
+    else:
+        _check_map = {
+            "iptables": "iptables",
+            "curl":     "curl",
+            "openssl":  "openssl",
+            "iproute":  "ip",
+        }
+
+    missing = [pkg for pkg, cmd in _check_map.items() if not shutil.which(cmd)]
+    if missing:
+        runner = get_runner()
+        runner.update_index()
+        runner.install(missing)
+
+
+def _get_acme_email() -> str:
+    """获取 ACME 邮箱：优先读 config，否则随机生成 @gmail.com 并持久化"""
+    import uuid
+    from core.config import set_config_value, load_config
+    cfg = load_config()
+    saved = (cfg.get('wireguard') or {}).get('acme_email', '')
+    if saved and '@' in saved and not saved.endswith('.local'):
+        return saved
+    email = f'opskit.{uuid.uuid4().hex[:12]}@gmail.com'
+    set_config_value(cfg, 'wireguard.acme_email', email)
+    return email
+
+
 def _check_port_443() -> tuple:
     """检测 443 端口占用情况。
     返回 ("free"|"nginx"|"other", 占用进程描述字符串)
@@ -1436,10 +1420,10 @@ def _check_port_443() -> tuple:
     return result
 
 
-def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str) -> None:
+def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str, sp=None) -> None:
     """根据场景初始化 nginx 配置。
     nginx_mode:
-      "install" — 无 nginx，静默安装并删除默认站点
+      "install" — 无 nginx，复用 NginxRecipe._do_install 安装并删除默认站点
       "append"  — 已有 nginx，只追加本程序配置文件
     两种模式都只写 NGINX_VLESS_WS_CONF，不改用户其他文件。
     """
@@ -1452,7 +1436,8 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
     from wireguard.utils import write_file
 
     if nginx_mode == "install":
-        _install_nginx(os_id)
+        from software.recipes.nginx.recipe import NginxRecipe
+        NginxRecipe()._do_install(on_progress=sp.set_step_pct if sp else None)
         from core.paths import nginx_sites_enabled_dir, nginx_conf_dir
         (nginx_sites_enabled_dir() / "default").unlink(missing_ok=True)
         (nginx_conf_dir() / "default.conf").unlink(missing_ok=True)
@@ -1463,28 +1448,6 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
     write_file(NGINX_VLESS_WS_CONF, nginx_http_only_config(sni))
     subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True, text=True)
-
-
-def _install_nginx(os_id: str) -> None:
-    """安装 nginx（含 stream 模块），已安装则跳过"""
-    import subprocess
-    import shutil
-    from core.i18n import t
-    from software.base import InstallError
-    from core.pkg_runner import get_runner
-    if shutil.which("nginx"):
-        return
-    runner = get_runner()
-    runner.update_index()
-    if os_id in ("centos", "rocky", "almalinux", "rhel"):
-        runner.install_extras(["epel-release"])
-    elif os_id not in ("debian", "ubuntu", "fedora", "alpine", "centos"):
-        raise InstallError(t("wireguard.error.unsupported_nginx", os_id=os_id))
-    runner.install(["nginx"])
-    subprocess.run(["systemctl", "enable", "nginx"], check=False,
-                   capture_output=True, text=True)
-    subprocess.run(["systemctl", "start", "nginx"], check=False,
-                   capture_output=True, text=True)
 
 
 def _issue_cert(sni: str, email: str, cert_dir: str) -> None:
@@ -1566,171 +1529,3 @@ def _issue_cert(sni: str, email: str, cert_dir: str) -> None:
          "--reloadcmd",      "systemctl reload nginx"],
         check=True, capture_output=True, text=True, timeout=30,
     )
-
-
-def _install_wireguard_pkg(os_id: str) -> None:
-    """根据发行版安装 WireGuard 包"""
-    from core.i18n import t
-    from software.base import InstallError
-    from core.pkg_runner import get_runner
-
-    runner = get_runner()
-    runner.update_index()
-
-    if os_id == "centos" and _get_os_version() == 7:
-        runner.install_extras(["epel-release", "elrepo-release"])
-        runner.install(["kmod-wireguard", "wireguard-tools"])
-    elif os_id in ("centos", "rocky", "almalinux", "rhel"):
-        runner.install_extras(["epel-release"])
-        runner.install(["wireguard-tools"])
-    elif os_id in ("debian", "ubuntu", "fedora", "alpine"):
-        runner.install(["wireguard", "wireguard-tools"])
-    else:
-        raise InstallError(t("wireguard.error.unsupported_wg", os_id=os_id))
-
-
-def _ensure_xray_service(xray_path, service_name: str) -> None:
-    """确保 xray systemd service 文件存在（带 CAP_NET_ADMIN）并 daemon-reload"""
-    import subprocess
-    from pathlib import Path
-    from core.paths import xray_config_file
-    service_path = Path(f"/etc/systemd/system/{service_name}.service")
-    if not service_path.exists():
-        service_path.write_text(
-            "[Unit]\n"
-            "Description=Xray Service\n"
-            f"Documentation={XRAY_DOC_URL}\n"
-            "After=network.target nss-lookup.target\n\n"
-            "[Service]\n"
-            "User=nobody\n"
-            "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "NoNewPrivileges=true\n"
-            f"ExecStart={xray_path} run -config {xray_config_file()}\n"
-            "Restart=on-failure\n"
-            "RestartPreventExitStatus=23\n"
-            "LimitNPROC=10000\n"
-            "LimitNOFILE=1000000\n"
-            "RuntimeDirectory=xray\n"
-            "RuntimeDirectoryMode=0755\n\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n"
-        )
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-
-
-def _install_xray() -> None:
-    """安装 xray-core（多镜像回退，不依赖官方脚本）"""
-    import subprocess
-    import tempfile
-    import zipfile
-    import shutil
-    from pathlib import Path
-    from core.i18n import t
-    from software.base import InstallError
-    from wireguard.constants import XRAY_BINARY, XRAY_SERVICE
-
-    from core.paths import xray_config_dir, xray_data_dir, xray_log_dir
-    xray_path = Path(XRAY_BINARY)
-    log_dir = xray_log_dir()
-
-    if xray_path.exists():
-        log_dir.mkdir(parents=True, exist_ok=True)
-        xray_config_dir().mkdir(parents=True, exist_ok=True)
-        xray_data_dir().mkdir(parents=True, exist_ok=True)
-        _ensure_xray_service(xray_path, XRAY_SERVICE)
-        return
-
-    # ── 1. 获取最新版本号 ────────────────────────────────────────────────────
-    import json
-    import urllib.request
-    ver = None
-    api_urls = [XRAY_API_LATEST, XRAY_API_LATEST_GHPROXY]
-    for api_url in api_urls:
-        try:
-            req = urllib.request.Request(api_url, headers={"User-Agent": "opskit/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                ver = data.get("tag_name", "").lstrip("v")
-                if ver:
-                    break
-        except Exception:
-            continue
-
-    if not ver:
-        ver = "25.3.6"  # 已知可用的稳定版本兜底
-
-    # ── 2. 下载 xray-core ────────────────────────────────────────────────────
-    zip_name = XRAY_DOWNLOAD_ZIP
-    github_path = f"{XRAY_REPO}/releases/download/v{ver}/{zip_name}"
-    github_direct = f"{GITHUB_BASE}/{github_path}"
-    url_template = f"{{mirror}}/https://github.com/{github_path}"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = Path(tmpdir) / zip_name
-        downloaded = False
-
-        # ── 优先使用智能源管理下载（自动测速选源 + 断点续传）──
-        try:
-            from core.mirror import download as mirror_download
-            mirror_download(url_template, zip_path, category="github_releases")
-            if zip_path.exists() and zip_path.stat().st_size > 1_000_000:
-                downloaded = True
-            else:
-                zip_path.unlink(missing_ok=True)
-        except Exception:
-            zip_path.unlink(missing_ok=True)
-
-        # ── GitHub 直连兜底 ──
-        if not downloaded:
-            try:
-                result = subprocess.run(
-                    ["curl", "-fL",
-                     "--connect-timeout", "10",
-                     "--speed-time", "30", "--speed-limit", "10000",
-                     "--max-time", "300",
-                     "-s", "-o", str(zip_path), github_direct],
-                    check=False, capture_output=True, text=True,
-                )
-                if result.returncode == 0 and zip_path.exists() and zip_path.stat().st_size > 1_000_000:
-                    downloaded = True
-                else:
-                    zip_path.unlink(missing_ok=True)
-            except Exception:
-                zip_path.unlink(missing_ok=True)
-
-        if not downloaded:
-            raise InstallError(t("wireguard.error.xray_download_fail", ver=ver, url=github_direct, path=cache_zip))
-
-        # ── 4. 解压并安装 ────────────────────────────────────────────────────
-        extract_dir = Path(tmpdir) / "xray"
-        extract_dir.mkdir()
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
-
-        src = extract_dir / "xray"
-        if not src.exists():
-            raise InstallError(t("wireguard.error.xray_zip_missing"))
-
-        xray_path.parent.mkdir(parents=True, exist_ok=True)
-        xray_data_dir().mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(xray_path))
-        xray_path.chmod(0o755)
-
-        for geo in ("geoip.dat", "geosite.dat"):
-            geo_src = extract_dir / geo
-            if geo_src.exists():
-                shutil.copy2(str(geo_src), str(xray_data_dir() / geo))
-
-    # ── 5. 创建 systemd service + 目录 ──────────────────────────────────────
-    _ensure_xray_service(xray_path, XRAY_SERVICE)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    xray_config_dir().mkdir(parents=True, exist_ok=True)
-    xray_data_dir().mkdir(parents=True, exist_ok=True)
-    import shutil as _shutil
-    try:
-        import pwd as _pwd
-        _nobody = _pwd.getpwnam("nobody")
-        _shutil.chown(str(log_dir), user=_nobody.pw_uid, group=_nobody.pw_gid)
-    except Exception:
-        pass

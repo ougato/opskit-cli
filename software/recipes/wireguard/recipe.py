@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from software.base import InstallError, InstallStep, Recipe
+from software.base import InstallStep, Recipe
 from software.registry import register
-from .driver import get_driver
 
 
 @register
@@ -44,9 +43,9 @@ class WireGuardRecipe(Recipe):
 class WgServerRecipe(Recipe):
     key: ClassVar[str] = "wg_server"
     category: ClassVar[str] = "devops"
-    description: ClassVar[str] = "WireGuard 公网服务端（over Xray REALITY）"
+    description: ClassVar[str] = "WireGuard 公网服务端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
-    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}, "nginx"]
+    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -121,7 +120,7 @@ class WgServerRecipe(Recipe):
 class WgClientRecipe(Recipe):
     key: ClassVar[str] = "wg_client"
     category: ClassVar[str] = "devops"
-    description: ClassVar[str] = "WireGuard 私网客户端（over Xray REALITY）"
+    description: ClassVar[str] = "WireGuard 私网客户端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
 

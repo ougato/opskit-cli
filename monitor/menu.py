@@ -352,7 +352,7 @@ def show_memory_detail() -> None:
 
 # ─── 磁盘详情 ─────────────────────────────────────────────────────────────────
 
-def show_disk_detail() -> None:
+def show_disk_detail(pause_after: bool = True) -> None:
     """磁盘分区使用情况（静态，按任意键返回）"""
     from monitor.commands import get_disks, fmt_bytes, fmt_percent_bar
 
@@ -391,7 +391,8 @@ def show_disk_detail() -> None:
 
     clear_screen()
     base_console.print(_titled(tbl, title))
-    pause()
+    if pause_after:
+        pause()
 
 
 # ─── 网络详情 ─────────────────────────────────────────────────────────────────

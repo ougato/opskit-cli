@@ -3,9 +3,16 @@ from __future__ import annotations
 
 import secrets
 import subprocess
+import re
 from pathlib import Path
 
 from wireguard.constants import XRAY_DOC_URL as _XRAY_DOC_URL
+
+
+def normalize_tunnel_label(value: str | None, default: str = "default") -> str:
+    """规范化 systemd 实例和文件名中使用的隧道 label。"""
+    raw = (value or "").strip() or default
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", raw)[:24].strip("-") or default
 
 
 def gen_wg_keypair() -> tuple[str, str]:
@@ -116,6 +123,23 @@ def write_file(path: str, content: str) -> None:
     tmp = p.with_suffix(".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(p)
+
+
+def write_secret_file(path: str, content: str) -> None:
+    """原子写入敏感文件，并限制为 owner 可读写。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except Exception:
+        pass
+    tmp.replace(p)
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
 
 
 def get_os_id() -> str:

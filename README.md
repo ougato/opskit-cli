@@ -166,7 +166,15 @@ opskit --theme catppuccin --lang en   # 同时指定主题和语言
 | 短参数 | `opskit -y software install docker` | 同上 |
 | 环境变量 | `OPSKIT_YES=1 opskit software install docker` | CI/CD 管道一次性禁用所有 prompt |
 
-> `--yes` 仅跳过确认弹窗和 pause，不会替代必填的业务参数（如 `--token` / `--version` / `HOST`）。缺少必填参数时仍进入交互输入。
+> `--yes` 仅跳过确认弹窗和 pause，不会替代必填的业务参数（如 `--token` / `--version` / `HOST`）。不带 `NAME` 的命令保留交互菜单；带 `NAME` 但缺少脚本化必填参数时会直接报错并返回非零退出码。
+
+#### 非交互退出码
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 执行成功 |
+| `1` | 运行失败，例如安装失败、未安装、版本不存在 |
+| `2` | 用法错误或能力不支持，例如软件不存在、缺少 `--version`、不支持升级 |
 
 ### 📦 软件管理 `opskit software <command>`
 
@@ -174,13 +182,14 @@ opskit --theme catppuccin --lang en   # 同时指定主题和语言
 
 | 命令 | 说明 |
 |---|---|
-| `opskit software list` | 显示所有可用软件及安装状态（表格形式，含版本、平台） |
-| `opskit software search` | 搜索软件（交互式输入关键词，按名称匹配） |
-| `opskit software installed` | 仅显示已安装的软件列表（支持翻页） |
+| `opskit software list` | 直接显示所有可用软件及安装状态，不进入选择器 |
+| `opskit software search [QUERY]` | 传入 `QUERY` 时直接输出匹配结果；不传则进入交互输入 |
+| `opskit software installed` | 直接显示已安装软件，不进入操作菜单 |
+| `opskit software versions NAME` | 直接列出可安装版本；系统包软件会说明版本由发行版仓库决定 |
 
 #### 安装 `opskit software install [NAME] [OPTIONS]`
 
-不带参数时进入交互式选择；带参数时直接安装指定软件。支持 `--token` 和 `--version` 选项跳过所有交互。
+不带 `NAME` 时进入交互式选择；带 `NAME` 时必须满足该软件的脚本化参数要求，不会再回退到版本选择器。
 
 | 选项 | 说明 |
 |---|---|
@@ -192,20 +201,9 @@ opskit --theme catppuccin --lang en   # 同时指定主题和语言
 # 交互式安装（弹出分类列表选择）
 opskit software install
 
-# ── 运维工具（DevOps）──────────────────────────────────────────────
-opskit software install docker        # Docker 容器引擎（Linux）
-opskit software install nginx         # Nginx Web 服务器（Linux）
-opskit software install mysql         # MySQL 关系型数据库（Linux / macOS / Windows）
-opskit software install redis         # Redis 内存数据库（Linux / macOS / Windows）
-opskit software install postgresql    # PostgreSQL 关系型数据库（Linux / macOS / Windows）
-opskit software install mongodb       # MongoDB 文档型数据库（Linux / macOS / Windows）
-opskit software install wireguard     # WireGuard VPN（Linux）→ 进入子菜单选择服务端 / 客户端
-
-# ── 开发工具（DevTools）────────────────────────────────────────────
-opskit software install golang        # Go 编程语言（Linux / macOS / Windows）
-opskit software install python        # Python 解释器（Linux / macOS / Windows）
-opskit software install java          # Java JDK（Linux / macOS / Windows）
-opskit software install nodejs        # Node.js 运行时（Linux / macOS / Windows）
+# 查询版本后再脚本化安装
+opskit software versions python
+opskit software install python --version 3.12.3
 ```
 
 ##### 非交互式安装（脚本化 / 自动化）
@@ -215,7 +213,11 @@ opskit software install nodejs        # Node.js 运行时（Linux / macOS / Wind
 opskit software install wg_client --token "eJy0VE1v2zAM..."
 opskit software install wg_client -t "eJy0VE1v2zAM..."
 
+# ── Nginx：系统包安装，不支持指定版本 ─────────────────────────────
+opskit software install nginx
+
 # ── 多版本软件：--version 指定版本号，跳过版本选择器 ────────────────
+opskit software install docker --version 26.1.0
 opskit software install mysql --version 8.0.36
 opskit software install redis --version 7.2.4
 opskit software install postgresql --version 16.2
@@ -226,58 +228,51 @@ opskit software install java --version 21.0.3
 opskit software install nodejs --version 20.12.2
 ```
 
-> **多版本软件**（mysql / redis / postgresql / mongodb / golang / python / java / nodejs）不带 `--version` 时会弹出版本选择器，支持翻页浏览。
+> `wireguard` 是父级分类，CLI 脚本化请使用 `wg_server` 或 `wg_client`。`wg_server` 当前仍是交互式安装向导；`wg_client --token` 是完整非交互入口。Nginx 使用系统包管理器安装，实际版本由发行版仓库决定，安装完成后自动检测显示。
 
 #### 卸载 `opskit software uninstall [NAME]`
 
-不带参数时进入交互式选择；带参数时直接卸载指定软件。
+不带 `NAME` 时进入交互式选择；单版本软件带 `NAME` 可直接卸载。多版本软件必须加 `--version` 指定版本，或加 `--all` 卸载全部版本。
 
 ```bash
 # 交互式卸载（仅列出已安装的软件）
 opskit software uninstall
 
-# 直接卸载指定软件
+# 单版本软件直接卸载
 opskit software uninstall docker      # 卸载 Docker
 opskit software uninstall nginx       # 卸载 Nginx
-opskit software uninstall mysql       # 卸载 MySQL（多版本时弹出版本选择 / 全部卸载）
-opskit software uninstall redis       # 卸载 Redis（同上）
-opskit software uninstall postgresql  # 卸载 PostgreSQL（同上）
-opskit software uninstall mongodb     # 卸载 MongoDB（同上）
-opskit software uninstall golang      # 卸载 Go（同上）
-opskit software uninstall python      # 卸载 Python（同上）
-opskit software uninstall java        # 卸载 Java（同上）
-opskit software uninstall nodejs      # 卸载 Node.js（同上）
-opskit software uninstall wireguard   # 卸载 WireGuard（进入子菜单选择服务端 / 客户端）
 opskit software uninstall wg_server   # 直接卸载 WireGuard 服务端
 opskit software uninstall wg_client   # 直接卸载 WireGuard 客户端（所有隧道）
+
+# 多版本软件
+opskit software uninstall python --version 3.12.3
+opskit software uninstall nodejs --all
 ```
 
 #### 升级 `opskit software upgrade [NAME]`
 
-不带参数时进入交互式选择；带参数时直接升级指定软件。
+不带 `NAME` 时进入交互式选择；带 `NAME` 的脚本化升级必须指定目标版本。
 
 ```bash
 # 交互式升级（仅列出已安装且有新版本的软件）
 opskit software upgrade
 
-# 直接升级指定软件（自动检测当前版本，仅显示更新版本）
-opskit software upgrade docker        # 升级 Docker
-opskit software upgrade nginx         # 升级 Nginx
-opskit software upgrade mysql         # 升级 MySQL
-opskit software upgrade redis         # 升级 Redis
-opskit software upgrade postgresql    # 升级 PostgreSQL
-opskit software upgrade mongodb       # 升级 MongoDB
-opskit software upgrade golang        # 升级 Go
-opskit software upgrade python        # 升级 Python
-opskit software upgrade java          # 升级 Java
-opskit software upgrade nodejs        # 升级 Node.js
+# 脚本化升级：显式指定目标版本
+opskit software upgrade docker --version 26.1.0
+opskit software upgrade python --version 3.12.3
+opskit software upgrade nodejs --version 20.12.2
 ```
 
-> **注意**：WireGuard 不支持升级（`has_upgrade=False`），升级菜单中会置灰显示。
+> **注意**：Nginx / WireGuard / `wg_server` / `wg_client` 不支持 `upgrade`。Nginx 跟随系统包仓库升级策略，不在 OpsKit 中暴露版本选择。
 
-#### 版本切换 `opskit software install <NAME>`
+#### 版本切换 `opskit software switch NAME --version VERSION`
 
-多版本软件安装后，可通过操作菜单中的「切换」选项切换活跃版本（仅限本地已安装版本）：
+多版本软件安装后，可切换活跃版本（仅限本地已安装版本）：
+
+```bash
+opskit software switch python --version 3.12.3
+opskit software switch nodejs --version 20.12.2
+```
 
 > 支持版本切换的软件：mysql / redis / postgresql / mongodb / golang / python / java / nodejs
 
@@ -325,14 +320,14 @@ opskit software manage wg_client      # WireGuard 客户端管理
 | 软件 key | 分类 | 平台 | 安装 | 卸载 | 升级 | 多版本切换 | 诊断 | 管理 |
 |---|---|---|---|---|---|---|---|---|
 | `docker` | DevOps | Linux | ✅ | ✅ | ✅ | — | — | — |
-| `nginx` | DevOps | Linux | ✅ | ✅ | ✅ | — | — | — |
+| `nginx` | DevOps | Linux | ✅ 系统包 | ✅ | — | — | — | — |
 | `mysql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `redis` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `postgresql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `mongodb` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `wireguard` | DevOps | Linux | ✅ 子菜单 | ✅ | — | — | — | — |
-| `wg_server` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
-| `wg_client` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
+| `wg_server` | DevOps | Linux | ✅ 交互向导 | ✅ | — | — | ✅ | ✅ |
+| `wg_client` | DevOps | Linux | ✅ 向导 / `--token` | ✅ | — | — | ✅ | ✅ |
 | `golang` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `python` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `java` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
@@ -359,9 +354,11 @@ opskit monitor network                # 查看网络接口实时流量
 opskit monitor processes              # 查看进程列表（Top 15）
 ```
 
+> `monitor disk` 是一次性输出，适合脚本化调用；`dashboard` / `cpu` / `memory` / `network` / `processes` 是实时 TUI，不适合作为一次性非交互命令。
+
 ### 🌐 网络工具 `opskit network <command> [HOST]`
 
-所有需要目标主机的命令均支持直传 `HOST` 参数跳过交互输入。
+所有需要目标主机的命令均支持直传 `HOST` 参数跳过交互输入；CLI 直达调用不会在结果后等待按键。
 
 | 命令 | 参数 | 说明 |
 |---|---|---|

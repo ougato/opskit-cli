@@ -28,6 +28,8 @@ class Recipe(ABC):
     has_wizard: bool = False       # 是否使用自定义安装向导
     has_manage: bool = False       # 是否支持管理（如 WireGuard peer 管理）
     has_version_picker: bool = False  # 安装时直接展示版本列表（subtitle 显示已安装版本，选中即装，无二次确认）
+    has_install_version_selection: bool = True  # 普通安装时是否需要展示版本选择
+    confirm_before_install: bool = True  # 未安装时是否需要二次确认安装
     has_switch: bool = False       # 是否支持版本切换（多版本共存，切换激活版本）
     hidden: bool = False           # 是否在分类/搜索列表中隐藏（仅通过父 recipe submenu 访问）
 
