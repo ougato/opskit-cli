@@ -209,6 +209,15 @@ class TestWireGuardRecipeSafety:
         assert "_Path(xray_cfg_path).unlink" in failure_block
         assert "_SCM.remove" in failure_block
 
+    def test_server_manage_menu_has_no_manual_dns_entry(self):
+        import inspect
+        from wireguard import server
+
+        source = inspect.getsource(server.manage_peers)
+
+        assert "setup_dns" not in source
+        assert "_run_setup_dns" not in source
+
 
 # ─── _alloc_local_port ────────────────────────────────────────────────────────
 

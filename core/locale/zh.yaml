@@ -309,7 +309,6 @@ wireguard:
   wg_client_priv_required: "WireGuard 客户端私钥不能为空"
   client_ip_required: "客户端 VPN IP 不能为空"
   token_hint: "复制以下连接令牌，在客户端粘贴即可完成安装："
-  dnsmasq_setup_success: "dnsmasq DNS 配置完成：{domain} → {dns}"
   token_panel_title: "客户端连接令牌"
   confirm_install_server: "确认安装 WireGuard 公网服务端？"
   confirm_install_client: "确认安装 WireGuard 内网客户端？"
@@ -423,7 +422,6 @@ wireguard:
     pubkey_required: "WG 公钥不能为空"
     pubkey_duplicate: "该公钥已存在"
     not_installed: "服务端未安装，请先完成安装后再操作"
-    setup_dns: "配置 DNS（dnsmasq）"
   client_manage:
     title: "管理"
     view: "查看信息"

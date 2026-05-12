@@ -942,7 +942,6 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"{get_icon('edit')} {t(f'{mk}.rename_peer')}"},
                 {"key": "4", "label": f"{get_icon('delete')} {t(f'{mk}.remove_peer')}"},
-                {"key": "5", "label": f"{get_icon('network')} {t(f'{mk}.setup_dns')}"},
             ]
         else:
             choices = [
@@ -950,7 +949,6 @@ def manage_peers() -> None:
                 {"key": "2", "label": f"{get_icon('list')} {t(f'{mk}.list_peers')}"},
                 {"key": "3", "label": f"[{muted}]{get_icon('edit')} {t(f'{mk}.rename_peer')}[/{muted}]", "disabled": True},
                 {"key": "4", "label": f"[{muted}]{get_icon('delete')} {t(f'{mk}.remove_peer')}[/{muted}]", "disabled": True},
-                {"key": "5", "label": f"[{muted}]{get_icon('network')} {t(f'{mk}.setup_dns')}[/{muted}]", "disabled": True},
             ]
 
         try:
@@ -986,37 +984,6 @@ def manage_peers() -> None:
                 pause()
             else:
                 remove_peer(breadcrumb)
-        elif key == "5":
-            if not installed:
-                print_warning(t("wireguard.manage.not_installed"))
-                pause()
-            else:
-                _run_setup_dns(breadcrumb)
-
-
-def _run_setup_dns(breadcrumb: list[str]) -> None:
-    """补装/更新 dnsmasq DNS 配置（已安装服务端使用）"""
-    from core.i18n import t
-    from core.prompt import pause, clear_screen
-    from core.theme import print_action_title, print_success
-    from wireguard.utils import get_os_id
-
-    clear_screen()
-    mk = "wireguard.manage"
-    print_action_title([*breadcrumb, t(f"{mk}.setup_dns")])
-
-    state = _load_state()
-    vpn_gateway  = state.get("vpn_gateway", "")
-    base_domain  = state.get("base_domain", "")
-    if not vpn_gateway or not base_domain:
-        sni = state.get("sni", "")
-        _parts = sni.strip().split(".")
-        base_domain = ".".join(_parts[-2:]) if len(_parts) >= 2 else sni
-
-    os_id = get_os_id()
-    _setup_dnsmasq(vpn_gateway=vpn_gateway, base_domain=base_domain, os_id=os_id)
-    print_success(t("wireguard.dnsmasq_setup_success").format(domain=base_domain, dns=vpn_gateway))
-    pause()
 
 
 def add_peer(breadcrumb: list[str]) -> None:

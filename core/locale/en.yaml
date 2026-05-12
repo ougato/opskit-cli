@@ -309,7 +309,6 @@ wireguard:
   wg_client_priv_required: "WireGuard client private key is required"
   client_ip_required: "Client VPN IP is required"
   token_hint: "Copy the token below and paste it on the client to complete setup:"
-  dnsmasq_setup_success: "dnsmasq DNS configured: {domain} → {dns}"
   token_panel_title: "Client Connection Token"
   confirm_install_server: "Install WireGuard public server?"
   confirm_install_client: "Install WireGuard private client?"
@@ -423,7 +422,6 @@ wireguard:
     pubkey_required: "WG public key is required"
     pubkey_duplicate: "This public key already exists"
     not_installed: "Server not installed, please install it first"
-    setup_dns: "Configure DNS (dnsmasq)"
   client_manage:
     title: "Manage"
     view: "View Info"

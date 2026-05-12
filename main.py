@@ -598,7 +598,8 @@ def _do_install_direct(
     _t0 = _time.monotonic()
     try:
         instance.install(version)
-        print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
+        installed_version = instance.detect() or version
+        print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
     except InstallError as e:
         print_error(t("install.failed", name=_name, error=str(e)))
     except Exception as e:

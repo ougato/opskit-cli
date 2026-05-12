@@ -18,6 +18,8 @@ class NginxRecipe(Recipe):
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
     has_upgrade: ClassVar[bool] = False
+    has_install_version_selection: ClassVar[bool] = False
+    confirm_before_install: ClassVar[bool] = False
 
     def detect(self) -> str | None:
         from core.platform import get_platform

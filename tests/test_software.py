@@ -61,7 +61,86 @@ def test_nginx_versions_match_distro_package_semantics() -> None:
     cls = get_recipe("nginx")
 
     assert cls.has_upgrade is False
+    assert cls.has_install_version_selection is False
+    assert cls.confirm_before_install is False
     assert cls().versions() == [NGINX_SYSTEM_PACKAGE_VERSION]
+
+
+def test_nginx_install_skips_version_select_and_plain_confirm(monkeypatch) -> None:
+    from software import menu
+
+    installed: dict[str, object] = {"called": False}
+    successes: list[str] = []
+
+    class FakeNginxRecipe:
+        key = "nginx"
+        description = "Nginx"
+        has_wizard = False
+        has_version_picker = False
+        has_install_version_selection = False
+        confirm_before_install = False
+
+    class FakeNginx:
+        def detect(self) -> str | None:
+            return "1.22.1" if installed["called"] else None
+
+        def install(self, version: str) -> None:
+            installed["called"] = version
+
+    monkeypatch.setattr("software.resolver.resolve_deps", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.platform.check_disk_space", lambda *args, **kwargs: True)
+    monkeypatch.setattr(menu, "select", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("select should not be called")))
+    monkeypatch.setattr(menu, "confirm", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("confirm should not be called")))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu, "print_success", lambda message: successes.append(message))
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(
+        menu,
+        "t",
+        lambda key, **kwargs: (
+            f"{kwargs.get('name')} {kwargs.get('version')}"
+            if key == "install.success"
+            else ("Nginx" if key == "software.nginx" else key)
+        ),
+    )
+
+    menu._do_install(["OpsKit"], FakeNginxRecipe, FakeNginx())
+
+    assert installed["called"] == "latest"
+    assert successes
+    assert "1.22.1" in successes[0]
+    assert "distro-package" not in successes[0]
+
+
+def test_nginx_reinstall_still_requires_confirmation(monkeypatch) -> None:
+    from software import menu
+
+    confirm_calls: list[str] = []
+
+    class FakeNginxRecipe:
+        key = "nginx"
+        description = "Nginx"
+        has_wizard = False
+        has_version_picker = False
+        has_install_version_selection = False
+        confirm_before_install = False
+
+    class FakeNginx:
+        def detect(self) -> str | None:
+            return "1.22.1"
+
+        def install(self, version: str) -> None:
+            raise AssertionError("install should not run when reinstall is declined")
+
+    monkeypatch.setattr("software.resolver.resolve_deps", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu, "print_warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu, "confirm", lambda *args, **kwargs: confirm_calls.append("called") or False)
+
+    menu._do_install(["OpsKit"], FakeNginxRecipe, FakeNginx())
+
+    assert confirm_calls == ["called"]
 
 
 def test_nginx_driver_rejects_non_linux(monkeypatch) -> None:
@@ -228,6 +307,17 @@ def test_windows_python_shim_fallback_skips_itself() -> None:
 
     assert 'if /I not "%%~fP"=="%~f0"' in SHIM_CMD_TEMPLATE
     assert "( python %* )" not in SHIM_CMD_TEMPLATE
+
+
+def test_python_linux_uv_installer_output_is_captured() -> None:
+    import inspect
+    from software.recipes.python.linux import LinuxDriver
+
+    source = inspect.getsource(LinuxDriver.ensure_uv)
+
+    assert '["sh", script]' in source
+    assert "capture_output=True" in source
+    assert "text=True" in source
 
 
 def test_nginx_enable_service_reports_failure(monkeypatch) -> None:
