@@ -1165,6 +1165,7 @@ def add_peer(breadcrumb: list[str]) -> None:
         border_style="#a6e3a1",
         padding=(1, 2),
     ))
+    console.print()
 
     # 输出令牌
     console.print(f"[bold #f9e2af]▶  {t('wireguard.token_panel_title')}[/bold #f9e2af]")
