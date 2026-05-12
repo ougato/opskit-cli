@@ -13,30 +13,41 @@ from wireguard.constants import (
 
 
 def _print_qr(data: str) -> None:
-    """用半块字符渲染二维码，每2行合并为1行，修正终端字符高宽比使二维码呈正方形。"""
+    """输出二维码到终端。优先 qrencode CLI (ANSIUTF8)，兜底 Python qrcode 半块字符。"""
+    import shutil, subprocess, sys
+    if shutil.which("qrencode"):
+        _r = subprocess.run(
+            ["qrencode", "-t", "ANSIUTF8", "-o", "-", "-m", "2"],
+            input=data, capture_output=True, text=True, check=False,
+        )
+        if _r.returncode == 0 and _r.stdout.strip():
+            sys.stdout.write(_r.stdout)
+            sys.stdout.flush()
+            return
     try:
         import qrcode as _qrcode  # type: ignore
-        _qr = _qrcode.QRCode(border=1)
+        _qr = _qrcode.QRCode(border=2)
         _qr.add_data(data)
         _qr.make(fit=True)
         _matrix = _qr.get_matrix()
         _rows = len(_matrix)
         _output = []
-        for _r in range(0, _rows, 2):
-            _top = _matrix[_r]
-            _bot = _matrix[_r + 1] if _r + 1 < _rows else [False] * len(_top)
+        for _ri in range(0, _rows, 2):
+            _top = _matrix[_ri]
+            _bot = _matrix[_ri + 1] if _ri + 1 < _rows else [False] * len(_top)
             _line = ""
             for _t, _b in zip(_top, _bot):
                 if _t and _b:
-                    _line += "█"
+                    _line += "\033[40m \033[0m"
                 elif _t and not _b:
-                    _line += "▀"
+                    _line += "\033[40;97m▄\033[0m"
                 elif not _t and _b:
-                    _line += "▄"
+                    _line += "\033[40;97m▀\033[0m"
                 else:
-                    _line += " "
+                    _line += "\033[47m \033[0m"
             _output.append(_line)
-        console.print("\n".join(_output))
+        sys.stdout.write("\n".join(_output) + "\n")
+        sys.stdout.flush()
     except ImportError:
         console.print(f"[#cdd6f4]{data}[/#cdd6f4]")
 
@@ -333,13 +344,22 @@ def install_server() -> None:
         if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
             raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
         _ensure_system_deps(os_id)
-        try:
-            import qrcode as _qr_check  # noqa: F401
-        except ImportError:
-            subprocess.run(
-                ["pip3", "install", "-q", "qrcode"],
-                check=False, capture_output=True, text=True,
-            )
+        import shutil as _shutil_qr
+        if not _shutil_qr.which("qrencode"):
+            if os_id in ("debian", "ubuntu"):
+                subprocess.run(["apt-get", "install", "-y", "qrencode"],
+                               check=False, capture_output=True, text=True)
+            else:
+                subprocess.run(["yum", "install", "-y", "qrencode"],
+                               check=False, capture_output=True, text=True)
+        if not _shutil_qr.which("qrencode"):
+            try:
+                import qrcode as _qr_check  # noqa: F401
+            except ImportError:
+                subprocess.run(
+                    ["pip3", "install", "-q", "qrcode"],
+                    check=False, capture_output=True, text=True,
+                )
 
         from core.sysconfig import SysConfigManager
         SysConfigManager.save(
