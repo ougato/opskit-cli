@@ -12,6 +12,35 @@ from wireguard.constants import (
 )
 
 
+def _print_qr(data: str) -> None:
+    """用半块字符渲染二维码，每2行合并为1行，修正终端字符高宽比使二维码呈正方形。"""
+    try:
+        import qrcode as _qrcode  # type: ignore
+        _qr = _qrcode.QRCode(border=1)
+        _qr.add_data(data)
+        _qr.make(fit=True)
+        _matrix = _qr.get_matrix()
+        _rows = len(_matrix)
+        _output = []
+        for _r in range(0, _rows, 2):
+            _top = _matrix[_r]
+            _bot = _matrix[_r + 1] if _r + 1 < _rows else [False] * len(_top)
+            _line = ""
+            for _t, _b in zip(_top, _bot):
+                if _t and _b:
+                    _line += "█"
+                elif _t and not _b:
+                    _line += "▀"
+                elif not _t and _b:
+                    _line += "▄"
+                else:
+                    _line += " "
+            _output.append(_line)
+        console.print("\n".join(_output))
+    except ImportError:
+        console.print(f"[#cdd6f4]{data}[/#cdd6f4]")
+
+
 def _detect_public_ip() -> str:
     """检测本机公网 IP"""
     import urllib.request
@@ -534,20 +563,7 @@ def install_server() -> None:
     console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
     console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
     console.print()
-    try:
-        import qrcode as _qr  # type: ignore
-        _qr_obj = _qr.QRCode(border=1)
-        _qr_obj.add_data(_install_phone_wg_conf)
-        _qr_obj.make(fit=True)
-        from io import StringIO as _SIO
-        _qr_buf = _SIO()
-        _qr_obj.print_ascii(out=_qr_buf, invert=True)
-        _qr_lines = []
-        for _line in _qr_buf.getvalue().splitlines():
-            _qr_lines.append("".join(c * 2 for c in _line))
-        console.print("\n".join(_qr_lines))
-    except ImportError:
-        console.print(f"[#cdd6f4]{_install_phone_wg_conf}[/#cdd6f4]")
+    _print_qr(_install_phone_wg_conf)
     console.print()
 
     # ── 防火墙提示 ────────────────────────────────────────────────────────────────────
@@ -1198,20 +1214,7 @@ def add_peer(breadcrumb: list[str]) -> None:
     console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_wg_title')}[/bold #89b4fa]")
     console.print(f"[#6c7086]{t('wireguard.phone_wg_hint')}[/#6c7086]")
     console.print()
-    try:
-        import qrcode  # type: ignore
-        qr = qrcode.QRCode(border=1)
-        qr.add_data(_phone_wg_conf)
-        qr.make(fit=True)
-        from io import StringIO
-        _buf = StringIO()
-        qr.print_ascii(out=_buf, invert=True)
-        _qr_lines = []
-        for _line in _buf.getvalue().splitlines():
-            _qr_lines.append("".join(c * 2 for c in _line))
-        console.print("\n".join(_qr_lines))
-    except ImportError:
-        console.print(f"[#cdd6f4]{_phone_wg_conf}[/#cdd6f4]")
+    _print_qr(_phone_wg_conf)
     console.print()
     pause()
 
