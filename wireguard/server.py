@@ -12,67 +12,6 @@ from wireguard.constants import (
 )
 
 
-def _print_qr(data: str) -> None:
-    """输出二维码到终端。优先 qrencode CLI (ANSIUTF8)，兜底 Python qrcode 半块字符。"""
-    import shutil, subprocess, sys
-    if shutil.which("qrencode"):
-        _r = subprocess.run(
-            ["qrencode", "-t", "ANSIUTF8", "-o", "-", "-m", "2"],
-            input=data, capture_output=True, text=True, check=False,
-        )
-        if _r.returncode == 0 and _r.stdout.strip():
-            sys.stdout.write(_r.stdout)
-            sys.stdout.flush()
-            return
-    try:
-        import qrcode as _qrcode  # type: ignore
-        _qr = _qrcode.QRCode(border=2)
-        _qr.add_data(data)
-        _qr.make(fit=True)
-        _matrix = _qr.get_matrix()
-        _rows = len(_matrix)
-        _output = []
-        for _ri in range(0, _rows, 2):
-            _top = _matrix[_ri]
-            _bot = _matrix[_ri + 1] if _ri + 1 < _rows else [False] * len(_top)
-            _line = ""
-            for _t, _b in zip(_top, _bot):
-                if _t and _b:
-                    _line += "\033[40m \033[0m"
-                elif _t and not _b:
-                    _line += "\033[40;97m▄\033[0m"
-                elif not _t and _b:
-                    _line += "\033[40;97m▀\033[0m"
-                else:
-                    _line += "\033[47m \033[0m"
-            _output.append(_line)
-        sys.stdout.write("\n".join(_output) + "\n")
-        sys.stdout.flush()
-    except ImportError:
-        console.print(f"[#cdd6f4]{data}[/#cdd6f4]")
-
-
-def _build_vless_uri(uuid: str, sni: str, server_ip: str, port: int = 443,
-                     ws_path: str = "/vless-ws", label: str = "") -> str:
-    """生成 v2rayNG / Hiddify 可识别的 vless:// 分享链接。
-    坑点 1：path 必须 URL 编码（/ → %2F），否则部分客户端解析失败。
-    坑点 2：address 必须用域名而非国内 IP。v2rayNG 默认路由规则对国内 IP
-           走直连（bypass），导致流量不经过 VLESS 代理隧道直接发出，
-           服务端收到的是裸 TLS 而非 VLESS 流量，握手失败。
-           用域名时 v2rayNG 正确走代理出站，SNI 由 sni 参数单独指定。
-    坑点 3：domainStrategy 仅支持 JSON 配置，vless:// URI 中传入会导致
-           v2rayNG 解析异常，TLS 握手后立即发 RST，禁止加入 URI。
-    """
-    from urllib.parse import quote
-    _path = quote(ws_path, safe="")
-    _label = quote(label or sni, safe="")
-    return (
-        f"vless://{uuid}@{sni}:{port}"
-        f"?encryption=none&security=tls&type=ws"
-        f"&host={sni}&path={_path}&fp=chrome"
-        f"#{_label}"
-    )
-
 
 def _detect_public_ip() -> str:
     """检测本机公网 IP"""
@@ -366,23 +305,6 @@ def install_server() -> None:
         if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
             raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
         _ensure_system_deps(os_id)
-        import shutil as _shutil_qr
-        if not _shutil_qr.which("qrencode"):
-            if os_id in ("debian", "ubuntu"):
-                subprocess.run(["apt-get", "install", "-y", "qrencode"],
-                               check=False, capture_output=True, text=True)
-            else:
-                subprocess.run(["yum", "install", "-y", "qrencode"],
-                               check=False, capture_output=True, text=True)
-        if not _shutil_qr.which("qrencode"):
-            try:
-                import qrcode as _qr_check  # noqa: F401
-            except ImportError:
-                subprocess.run(
-                    ["pip3", "install", "-q", "qrcode"],
-                    check=False, capture_output=True, text=True,
-                )
-
         from core.sysconfig import SysConfigManager
         SysConfigManager.save(
             "wg_server",
@@ -587,18 +509,6 @@ def install_server() -> None:
     import sys as _sys_token
     _sys_token.stdout.write(token + "\n")
     _sys_token.stdout.flush()
-    console.print()
-
-    # ── 手机 vless:// 二维码 ─────────────────────────────────────────────────────────
-    from wireguard.constants import XRAY_WS_PATH
-    _vless_uri = _build_vless_uri(
-        uuid=uuid, sni=sni, server_ip=public_ip, port=server_port,
-        ws_path=XRAY_WS_PATH, label=tunnel_label,
-    )
-    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_vless_title')}[/bold #89b4fa]")
-    console.print(f"[#6c7086]{t('wireguard.phone_vless_hint')}[/#6c7086]")
-    console.print()
-    _print_qr(_vless_uri)
     console.print()
 
     # ── 防火墙提示 ────────────────────────────────────────────────────────────────────
@@ -1232,21 +1142,6 @@ def add_peer(breadcrumb: list[str]) -> None:
     _sys_token2.stdout.flush()
     console.print()
 
-    # ── 手机 vless:// 二维码 ──────────────────────────────────────────────
-    from wireguard.constants import XRAY_WS_PATH as _WS_PATH
-    _vless_uri = _build_vless_uri(
-        uuid=state.get("uuid", ""),
-        sni=state.get("sni", ""),
-        server_ip=state.get("server_ip", ""),
-        port=state.get("server_port", 443),
-        ws_path=_WS_PATH,
-        label=state.get("tunnel_label", ""),
-    )
-    console.print(f"[bold #89b4fa]▶  {t('wireguard.phone_vless_title')}[/bold #89b4fa]")
-    console.print(f"[#6c7086]{t('wireguard.phone_vless_hint')}[/#6c7086]")
-    console.print()
-    _print_qr(_vless_uri)
-    console.print()
     pause()
 
 
