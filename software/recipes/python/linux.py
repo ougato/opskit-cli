@@ -50,7 +50,14 @@ class LinuxDriver(PlatformDriver):
                         continue
                     f.write(result.stdout.decode())
                     script = f.name
-                subprocess.run(["sh", script], env=env, check=True, timeout=UV_INSTALL_TIMEOUT)
+                subprocess.run(
+                    ["sh", script],
+                    env=env,
+                    check=True,
+                    timeout=UV_INSTALL_TIMEOUT,
+                    capture_output=True,
+                    text=True,
+                )
                 os.unlink(script)
                 if private_uv.exists():
                     return str(private_uv)

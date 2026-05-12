@@ -339,47 +339,51 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
             pause()
         return
 
-    from core.progress import spinner
-    with spinner(t("software.fetching_versions")):
+    if getattr(cls, "has_install_version_selection", True):
+        from core.progress import spinner
+        with spinner(t("software.fetching_versions")):
+            try:
+                versions = instance.versions()
+            except Exception:
+                versions = []
+
+        if not versions:
+            print_error(t("software.no_versions"))
+            pause()
+            return
+
+        ver_choices = [
+            {"key": str(i + 1), "label": v, "hint": t("software.recommended") if i == 0 else ""}
+            for i, v in enumerate(versions)
+        ]
         try:
-            versions = instance.versions()
-        except Exception:
-            versions = []
+            ver_key = select(
+                breadcrumb=[*breadcrumb, t("software.install")],
+                subtitle=t("software.select_version"),
+                choices=ver_choices,
+                theme_key=_THEME_KEY,
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            return
+        if not ver_key:
+            return
 
-    if not versions:
-        print_error(t("software.no_versions"))
-        pause()
-        return
-
-    ver_choices = [
-        {"key": str(i + 1), "label": v, "hint": t("software.recommended") if i == 0 else ""}
-        for i, v in enumerate(versions)
-    ]
-    try:
-        ver_key = select(
-            breadcrumb=[*breadcrumb, t("software.install")],
-            subtitle=t("software.select_version"),
-            choices=ver_choices,
-            theme_key=_THEME_KEY,
-            back_label=f"{get_icon('back')} {t('menu.back')}",
-        )
-    except UserCancel:
-        return
-    if not ver_key:
-        return
-
-    version = versions[int(ver_key) - 1]
+        version = versions[int(ver_key) - 1]
+    else:
+        version = "latest"
 
     if not check_disk_space(MIN_DISK_FREE_BYTES):
         print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
         pause()
         return
 
-    try:
-        if not confirm(breadcrumb=breadcrumb, prompt=t("install.confirm", name=_name, version=version)):
+    if getattr(cls, "confirm_before_install", True):
+        try:
+            if not confirm(breadcrumb=breadcrumb, prompt=t("install.confirm", name=_name, version=version)):
+                return
+        except UserCancel:
             return
-    except UserCancel:
-        return
 
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
@@ -388,7 +392,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     _t0 = _time.monotonic()
     try:
         instance.install(version)
-        print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
+        installed_version = instance.detect() or version
+        print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
     except InstallError as e:
         _report(e, software=cls.key, version=version, action="install")
         print_error(t("install.failed", name=_name, error=str(e)))

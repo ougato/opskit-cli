@@ -43,7 +43,9 @@ class TestTokenV2:
         from wireguard.token import encode_token, TOKEN_PREFIX
         import base64
         import gzip
-        tok = encode_token(dict(self._FIELDS))
+        fields = dict(self._FIELDS)
+        tok = encode_token(fields)
+        assert "v" not in fields
         b64_part = tok[len(TOKEN_PREFIX):]
         compressed = base64.urlsafe_b64decode(b64_part + "==")
         data = json.loads(gzip.decompress(compressed))
@@ -80,6 +82,142 @@ class TestTokenV2:
         result = decode_token(tok)
         assert result["label"] == "aliyun"
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("client_ip", "10.10.20.2\nPostUp = touch /tmp/pwned"),
+            ("vpn_subnet", "10.10.20.0/24\nAllowedIPs = 0.0.0.0/0"),
+            ("server_port", 70000),
+            ("uuid", "not-a-uuid"),
+            ("sni", "bad.example.com\nserver_name evil"),
+            ("dns", "10.10.20.1\nPostUp = touch /tmp/pwned"),
+        ],
+    )
+    def test_invalid_token_field_rejected(self, field, value):
+        from wireguard.token import encode_token, decode_token
+
+        fields = dict(self._FIELDS)
+        fields[field] = value
+        tok = encode_token(fields)
+
+        with pytest.raises(ValueError):
+            decode_token(tok)
+
+
+# ─── 敏感文件写入 ─────────────────────────────────────────────────────────────
+
+class TestWireGuardSecretFiles:
+    """WireGuard state/config 类敏感文件必须限制权限"""
+
+    def test_write_secret_file_sets_0600(self, tmp_path):
+        from wireguard.utils import write_secret_file
+
+        target = tmp_path / "wg0.conf"
+        write_secret_file(str(target), "PrivateKey = secret\n")
+
+        assert target.read_text(encoding="utf-8") == "PrivateKey = secret\n"
+        if os.name != "nt":
+            assert (target.stat().st_mode & 0o777) == 0o600
+
+
+class TestTunnelLabel:
+    """隧道 label 规范化应在服务端/客户端复用同一规则"""
+
+    def test_normalize_tunnel_label_replaces_unsafe_chars(self):
+        from wireguard.utils import normalize_tunnel_label
+
+        assert normalize_tunnel_label(" hk cn/01 ", default="default") == "hk-cn-01"
+
+    def test_normalize_tunnel_label_limits_length_and_fallback(self):
+        from wireguard.utils import normalize_tunnel_label
+
+        assert normalize_tunnel_label("a" * 30, default="default") == "a" * 24
+        assert normalize_tunnel_label("///", default="server") == "server"
+
+
+# ─── 配方文案与卸载安全边界 ───────────────────────────────────────────────────
+
+class TestWireGuardRecipeSafety:
+    """锁住 WG 当前协议描述和卸载时的共享资源保护边界"""
+
+    def test_recipe_description_matches_ws_tls_transport(self):
+        from software.recipes.wireguard.recipe import WgClientRecipe, WgServerRecipe
+
+        assert "VLESS WS TLS" in WgServerRecipe.description
+        assert "VLESS WS TLS" in WgClientRecipe.description
+        assert "REALITY" not in WgServerRecipe.description
+        assert "REALITY" not in WgClientRecipe.description
+
+    def test_uninstall_preserves_shared_xray_runtime(self):
+        import inspect
+        from wireguard import client, server
+
+        combined = inspect.getsource(server.uninstall_server) + inspect.getsource(client.uninstall_client)
+
+        assert "XRAY_BINARY" not in combined
+        assert "/etc/systemd/system/xray@.service" not in combined
+        assert "/etc/systemd/system/xray.service" not in combined
+        assert "xray_log_dir" not in combined
+        assert "xray_data_dir" not in combined
+
+    def test_client_uninstall_does_not_remove_server_sysctl(self):
+        import inspect
+        from wireguard import client
+
+        source = inspect.getsource(client.uninstall_client)
+
+        assert "/etc/sysctl.d/99-wg.conf" not in source
+
+    def test_server_uninstall_removes_server_state(self):
+        import inspect
+        from wireguard import server
+
+        source = inspect.getsource(server.uninstall_server)
+
+        assert "WG_STATE_FILE" in source
+        assert "Path(WG_STATE_FILE).unlink" in source
+
+    def test_install_marks_installed_after_service_verification(self):
+        import inspect
+        from wireguard import client, server
+
+        server_source = inspect.getsource(server.install_server)
+        assert server_source.index("service_start_fail") < server_source.index('mark_installed("wg_server")')
+
+        client_source = inspect.getsource(client._install_client_token)
+        assert client_source.index("client_service_start_fail") < client_source.index("mark_installed")
+
+    def test_server_state_saved_after_service_verification(self):
+        import inspect
+        from wireguard import server
+
+        source = inspect.getsource(server.install_server)
+
+        assert source.index("service_start_fail") < source.index("_save_state(state)")
+        assert source.index("_save_state(state)") < source.index('mark_installed("wg_server")')
+
+    def test_client_failed_install_cleans_orphan_runtime(self):
+        import inspect
+        from wireguard import client
+
+        source = inspect.getsource(client._install_client_token)
+        failure_block = source[source.index("client_service_start_fail"):source.index("pause()", source.index("client_service_start_fail"))]
+
+        assert "stop_and_disable(wg_svc)" in failure_block
+        assert "stop_and_disable(xray_svc)" in failure_block
+        assert "_Path(wg_cfg_path).unlink" in failure_block
+        assert "_Path(xray_cfg_path).unlink" in failure_block
+        assert "_SCM.remove" in failure_block
+
+    def test_server_manage_menu_has_no_manual_dns_entry(self):
+        import inspect
+        from wireguard import server
+
+        source = inspect.getsource(server.manage_peers)
+
+        assert "setup_dns" not in source
+        assert "_run_setup_dns" not in source
+
 
 # ─── _alloc_local_port ────────────────────────────────────────────────────────
 
@@ -109,6 +247,15 @@ class TestAllocLocalPort:
         from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN
         tunnels = [{"label": "x"}, {"label": "y"}]
         assert _alloc_local_port(tunnels) == CLIENT_XRAY_LOCAL_PORT_MIN
+
+    def test_full_port_range_returns_none(self):
+        from wireguard.client import _alloc_local_port
+        from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX
+        tunnels = [
+            {"local_port": p}
+            for p in range(CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX + 1)
+        ]
+        assert _alloc_local_port(tunnels) is None
 
 
 # ─── _alloc_client_ip (server) ───────────────────────────────────────────────
@@ -210,6 +357,31 @@ class TestWgServerConfig:
         cfg = wg_server_config("PRIV==", "10.10.20.1", 3002, "eth0", vpn_subnet="10.10.20.0/24")
         assert "10.10.20.0/24" in cfg
         assert "10.10.10.0/24" not in cfg
+
+
+class TestXrayServerDiagnose:
+    """服务端诊断应兼容当前 WS/TLS xray 配置"""
+
+    def test_ws_tls_config_extracts_uuid_and_state_compat_fields(self):
+        from wireguard.server import _extract_xray_client_creds
+        from wireguard.templates import xray_server_config_ws
+
+        cfg = json.loads(xray_server_config_ws(
+            uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            ws_port=2443,
+            ws_path="/vless-ws",
+        ))
+        creds = _extract_xray_client_creds(
+            cfg,
+            {"xray_pub": "PUB_FROM_STATE", "short_id": "SHORT_FROM_STATE"},
+        )
+
+        assert creds == (
+            "PUB_FROM_STATE",
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "SHORT_FROM_STATE",
+            None,
+        )
 
 
 # ─── xray_client_config 随机 SNI ─────────────────────────────────────────────
