@@ -120,7 +120,7 @@ def entry() -> None:
             pass
 
 
-def show_ping(host: str | None = None) -> None:
+def show_ping(host: str | None = None, pause_after: bool = True) -> None:
     from network.commands import ping
 
     if not host:
@@ -162,10 +162,11 @@ def show_ping(host: str | None = None) -> None:
     console.print(f"  [{status_color}]{result.packets_recv}/{result.packets_sent} packets received[/{status_color}]")
     if result.reachable:
         console.print(f"  min/avg/max: [{success}]{result.min_ms:.1f}/{result.avg_ms:.1f}/{result.max_ms:.1f} ms[/{success}]")
-    pause()
+    if pause_after:
+        pause()
 
 
-def show_traceroute(host: str | None = None) -> None:
+def show_traceroute(host: str | None = None, pause_after: bool = True) -> None:
     from network.commands import traceroute
 
     if not host:
@@ -193,10 +194,11 @@ def show_traceroute(host: str | None = None) -> None:
 
     if interrupted[0]:
         return
-    pause()
+    if pause_after:
+        pause()
 
 
-def show_dns(host: str | None = None) -> None:
+def show_dns(host: str | None = None, pause_after: bool = True) -> None:
     from network.commands import dns_lookup, dns_reverse
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
@@ -226,7 +228,8 @@ def show_dns(host: str | None = None) -> None:
                     console.print(f"  [{success}]{addr}[/{success}]")
             else:
                 print_error(t("network.dns_not_found"))
-        pause()
+        if pause_after:
+            pause()
         return
 
     # 交互模式：选择正查 / 反查
@@ -285,10 +288,11 @@ def show_dns(host: str | None = None) -> None:
             console.print(f"\n[{success}]{ip}[/{success}] → [{title_color}]{hostname}[/{title_color}]")
         else:
             print_error(t("network.dns_not_found"))
-    pause()
+    if pause_after:
+        pause()
 
 
-def show_port_scan(host: str | None = None) -> None:
+def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
     from network.commands import scan_ports
 
     if not host:
@@ -340,10 +344,11 @@ def show_port_scan(host: str | None = None) -> None:
             )
 
     console.print(tbl)
-    pause()
+    if pause_after:
+        pause()
 
 
-def show_speed_test() -> None:
+def show_speed_test(pause_after: bool = True) -> None:
     clear_screen()
     from network.commands import speed_test_download
     from core.progress import spinner
@@ -364,10 +369,11 @@ def show_speed_test() -> None:
 
     success = get_color("success")
     console.print(f"\n[{success}]↓ {fmt_bytes(speed_ref[0] if speed_ref else 0)}/s[/{success}]")
-    pause()
+    if pause_after:
+        pause()
 
 
-def show_public_ip() -> None:
+def show_public_ip(pause_after: bool = True) -> None:
     clear_screen()
     from network.commands import get_public_ip, get_local_ip
     from core.progress import spinner
@@ -394,4 +400,5 @@ def show_public_ip() -> None:
         console.print(f"[{title_color}]{t('network.public_ip')}:[/{title_color}] [{success}]{public}[/{success}]")
     else:
         console.print(f"[{muted}]{t('network.public_ip_failed')}[/{muted}]")
-    pause()
+    if pause_after:
+        pause()

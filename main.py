@@ -437,22 +437,46 @@ app.add_typer(net_app, name="network")
 @sw_app.command("list", help=_ct("sw_list"))
 def sw_list() -> None:
     _boot()
-    from software.menu import show_list
-    show_list()
+    _print_software_table()
 
 
 @sw_app.command("search", help=_ct("sw_search"))
-def sw_search() -> None:
+def sw_search(
+    query: str = typer.Argument(None, help=_ct("sw_query")),
+) -> None:
     _boot()
-    from software.menu import show_search
-    show_search()
+    if query:
+        _print_software_table(query=query)
+    else:
+        from software.menu import show_search
+        show_search()
 
 
 @sw_app.command("installed", help=_ct("sw_installed"))
 def sw_installed() -> None:
     _boot()
-    from software.menu import show_installed
-    show_installed()
+    _print_software_table(installed_only=True, include_hidden=True)
+
+
+@sw_app.command("versions", help=_ct("sw_versions"))
+def sw_versions(
+    name: str = typer.Argument(..., help=_ct("sw_name")),
+) -> None:
+    _boot()
+    cls, instance = _get_recipe_for_direct(name)
+    if getattr(cls, "has_submenu", False):
+        _direct_fail(t("cli.error.submenu_recipe", name=name), _EXIT_USAGE)
+    try:
+        versions = instance.versions()
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    if not versions:
+        _direct_fail(t("software.no_versions"), _EXIT_RUNTIME)
+    if not getattr(cls, "has_install_version_selection", True):
+        console.print(t("cli.system_package_version", name=_recipe_name(cls)))
+        return
+    for item in versions:
+        console.print(item)
 
 
 @sw_app.command("install", help=_ct("sw_install"))
@@ -472,10 +496,12 @@ def sw_install(
 @sw_app.command("uninstall", help=_ct("sw_uninstall"))
 def sw_uninstall(
     name: str = typer.Argument(None, help=_ct("sw_name")),
+    version: str = typer.Option("", "--version", help=_ct("sw_version")),
+    all_versions: bool = typer.Option(False, "--all", help=_ct("sw_all_versions")),
 ) -> None:
     _boot()
     if name:
-        _sw_action_by_name(name, "uninstall")
+        _sw_action_by_name(name, "uninstall", version=version or None, all_versions=all_versions)
     else:
         from software.menu import show_uninstall
         show_uninstall()
@@ -484,13 +510,23 @@ def sw_uninstall(
 @sw_app.command("upgrade", help=_ct("sw_upgrade"))
 def sw_upgrade(
     name: str = typer.Argument(None, help=_ct("sw_name")),
+    version: str = typer.Option("", "--version", help=_ct("sw_version")),
 ) -> None:
     _boot()
     if name:
-        _sw_action_by_name(name, "upgrade")
+        _sw_action_by_name(name, "upgrade", version=version or None)
     else:
         from software.menu import show_upgrade
         show_upgrade()
+
+
+@sw_app.command("switch", help=_ct("sw_switch"))
+def sw_switch(
+    name: str = typer.Argument(..., help=_ct("sw_name")),
+    version: str = typer.Option(..., "--version", help=_ct("sw_version")),
+) -> None:
+    _boot()
+    _sw_action_by_name(name, "switch", version=version)
 
 
 @sw_app.command("diagnose", help=_ct("sw_diagnose"))
@@ -514,6 +550,7 @@ def _sw_action_by_name(
     action: str,
     token: str | None = None,
     version: str | None = None,
+    all_versions: bool = False,
 ) -> None:
     """按软件名执行指定操作
 
@@ -523,87 +560,294 @@ def _sw_action_by_name(
         token: WireGuard 客户端令牌（非交互模式）
         version: 指定安装版本（非交互模式）
     """
-    from software.registry import get as get_recipe
-    from software.menu import (
-        _do_install, _do_uninstall, _do_upgrade,
-        _do_diagnose, _do_manage, _show_submenu, show_actions,
-    )
-    cls = get_recipe(name)
-    if cls is None:
-        from core.theme import print_error
-        print_error(f"未找到软件: {name}")
-        raise typer.Exit(1)
-    instance = cls()
+    from software.menu import _do_manage
+
+    cls, instance = _get_recipe_for_direct(name)
     breadcrumb = ["OpsKit", t("menu.software")]
     if action == "install":
-        # WireGuard 客户端：--token 直达安装
-        if name == "wg_client" and token:
-            from wireguard.client import install_client
-            install_client(token=token)
-            return
-        # 多版本软件：--version 直达安装
-        if version and not getattr(cls, "has_wizard", False):
-            _do_install_direct(breadcrumb, cls, instance, version)
-            return
-        if getattr(cls, "has_submenu", False):
-            _show_submenu(breadcrumb=breadcrumb, cls=cls)
-        else:
-            _do_install(breadcrumb, cls, instance)
+        _install_direct(breadcrumb, cls, instance, version=version, token=token)
     elif action == "uninstall":
-        _do_uninstall(breadcrumb, cls, instance)
+        _uninstall_direct(cls, instance, version=version, all_versions=all_versions)
     elif action == "upgrade":
-        _do_upgrade(breadcrumb, cls, instance)
+        _upgrade_direct(breadcrumb, cls, instance, version=version)
+    elif action == "switch":
+        _switch_direct(cls, instance, version=version)
     elif action == "diagnose":
         if getattr(cls, "has_diagnose", False):
-            _do_diagnose(breadcrumb, cls, instance)
+            _diagnose_direct(cls, instance)
         else:
-            from core.theme import print_warning
-            print_warning(t("software.not_supported"))
+            _direct_fail(t("software.not_supported"), _EXIT_USAGE)
     elif action == "manage":
         if getattr(cls, "has_manage", False):
             _do_manage(breadcrumb, cls, instance)
         else:
-            from core.theme import print_warning
-            print_warning(t("software.not_supported"))
+            _direct_fail(t("software.not_supported"), _EXIT_USAGE)
 
 
-def _do_install_direct(
-    breadcrumb: list[str], cls: type, instance, version: str,
+_EXIT_RUNTIME = 1
+_EXIT_USAGE = 2
+
+
+def _direct_fail(message: str, code: int = _EXIT_RUNTIME) -> None:
+    from core.theme import print_error
+
+    print_error(message)
+    raise typer.Exit(code)
+
+
+def _recipe_name(cls: type) -> str:
+    key = f"software.{cls.key}"
+    value = t(key)
+    return value if value != key else (getattr(cls, "description", "") or cls.key)
+
+
+def _get_recipe_for_direct(name: str):
+    from software.registry import get as get_recipe
+    from core.platform import get_platform
+
+    cls = get_recipe(name)
+    if cls is None:
+        _direct_fail(t("cli.error.software_not_found", name=name), _EXIT_USAGE)
+    info = get_platform()
+    if info.os_type not in getattr(cls, "platforms", []):
+        _direct_fail(t("cli.error.platform_not_supported", name=name, platform=info.os_type), _EXIT_USAGE)
+    return cls, cls()
+
+
+def _is_multi_version(cls: type, instance) -> bool:
+    return bool(getattr(cls, "has_switch", False) and hasattr(instance, "installed_versions"))
+
+
+def _print_software_table(
+    query: str | None = None,
+    installed_only: bool = False,
+    include_hidden: bool = False,
 ) -> None:
-    """非交互式直接安装指定版本（跳过版本选择器和确认弹窗）"""
+    """脚本友好的软件列表输出：不进入选择器，不暂停。"""
+    from rich import box as rich_box
+    from rich.table import Table
+    from software.registry import all_recipes
+    from core.platform import get_platform
+    from core.theme import get_color, get_icon
+
+    info = get_platform()
+    keyword = (query or "").strip().lower()
+    rows: list[tuple[type, str | None]] = []
+    for cls in all_recipes():
+        if info.os_type not in getattr(cls, "platforms", []):
+            continue
+        if getattr(cls, "hidden", False) and not include_hidden:
+            continue
+        name = _recipe_name(cls)
+        if keyword and keyword not in cls.key.lower() and keyword not in name.lower() and keyword not in getattr(cls, "description", "").lower():
+            continue
+        try:
+            version = cls().detect()
+        except Exception:
+            version = None
+        if installed_only and not version:
+            continue
+        rows.append((cls, version))
+
+    if not rows:
+        console.print(t("software.none_installed") if installed_only else t("software.search_no_result", keyword=query or ""))
+        return
+
+    muted = get_color("muted")
+    success = get_color("success")
+    table = Table(title=t("software.list"), box=rich_box.ROUNDED)
+    table.add_column("key")
+    table.add_column(t("software.name"))
+    table.add_column(t("software.status"))
+    table.add_column(t("software.version"))
+    table.add_column(t("software.platforms"))
+    for cls, version in rows:
+        status = f"[{success}]{t('software.installed')}[/{success}]" if version else f"[{muted}]{t('software.not_installed')}[/{muted}]"
+        table.add_row(
+            cls.key,
+            f"{get_icon(cls.key)} {_recipe_name(cls)}",
+            status,
+            version or "-",
+            " / ".join(getattr(cls, "platforms", [])),
+        )
+    console.print(table)
+
+
+def _resolve_deps_or_exit(instance, breadcrumb: list[str]) -> None:
     from software.base import InstallError
     from software.resolver import resolve_deps
-    from core.platform import check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
-    from core.theme import print_error, print_success, print_header
-    from core.prompt import clear_screen
-    from rich.console import Console as _Con
-
-    _name = t(f"software.{cls.key}") if f"software.{cls.key}" else cls.description
 
     try:
         resolve_deps(instance, breadcrumb)
-    except (InstallError, Exception) as e:
-        print_error(str(e))
-        return
+    except InstallError as e:
+        _direct_fail(str(e), _EXIT_RUNTIME)
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+
+
+def _check_disk_or_exit() -> None:
+    from core.platform import check_disk_space
+    from core.constants import MIN_DISK_FREE_BYTES
 
     if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
-        return
+        _direct_fail(
+            t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""),
+            _EXIT_RUNTIME,
+        )
 
-    clear_screen()
-    print_header([*breadcrumb, t("software.install")])
-    _Con().print()
+
+def _install_direct(
+    breadcrumb: list[str],
+    cls: type,
+    instance,
+    version: str | None = None,
+    token: str | None = None,
+) -> None:
+    """非交互式安装：参数不足或能力不支持时返回用法错误。"""
+    from software.base import InstallError
+    from core.theme import print_success
+
+    name = _recipe_name(cls)
+    if token and cls.key != "wg_client":
+        _direct_fail(t("cli.error.token_only_wg_client"), _EXIT_USAGE)
+    if getattr(cls, "has_submenu", False):
+        _direct_fail(t("cli.error.submenu_recipe", name=cls.key), _EXIT_USAGE)
+    if cls.key == "wg_client" and token:
+        _resolve_deps_or_exit(instance, breadcrumb)
+        try:
+            from wireguard.client import install_client
+            install_client(token=token)
+            detected = instance.detect() or "installed"
+            print_success(t("install.success", name=name, version=detected, elapsed=0))
+            return
+        except InstallError as e:
+            _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
+        except Exception as e:
+            _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    if getattr(cls, "has_wizard", False):
+        _direct_fail(t("cli.error.wizard_requires_interactive", name=name), _EXIT_USAGE)
+    if version and not getattr(cls, "has_install_version_selection", True):
+        _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
+    if not version:
+        if getattr(cls, "has_install_version_selection", True):
+            _direct_fail(t("cli.error.version_required", name=name), _EXIT_USAGE)
+        version = "latest"
+
+    _resolve_deps_or_exit(instance, breadcrumb)
+    _check_disk_or_exit()
+
     import time as _time
-    _t0 = _time.monotonic()
+    start = _time.monotonic()
     try:
         instance.install(version)
         installed_version = instance.detect() or version
-        print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
+        print_success(t("install.success", name=name, version=installed_version, elapsed=_time.monotonic() - start))
     except InstallError as e:
-        print_error(t("install.failed", name=_name, error=str(e)))
+        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
     except Exception as e:
-        print_error(t("error.unknown", error=str(e)))
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+
+
+def _uninstall_direct(
+    cls: type,
+    instance,
+    version: str | None = None,
+    all_versions: bool = False,
+) -> None:
+    from software.base import UninstallError
+    from core.theme import print_success
+
+    name = _recipe_name(cls)
+    if getattr(cls, "has_submenu", False):
+        _direct_fail(t("cli.error.submenu_recipe", name=cls.key), _EXIT_USAGE)
+    if version and all_versions:
+        _direct_fail(t("cli.error.version_all_conflict"), _EXIT_USAGE)
+
+    try:
+        if _is_multi_version(cls, instance):
+            installed = instance.installed_versions()
+            if not installed:
+                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+            if not version and not all_versions:
+                _direct_fail(t("cli.error.uninstall_version_required", name=name), _EXIT_USAGE)
+            if version and version not in installed:
+                _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
+            instance.uninstall(None if all_versions else version)
+        else:
+            if version or all_versions:
+                _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
+            if not instance.detect():
+                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+            instance.uninstall()
+        print_success(t("uninstall.success", name=name))
+    except UninstallError as e:
+        _direct_fail(t("uninstall.failed", name=name, error=str(e)), _EXIT_RUNTIME)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+
+
+def _upgrade_direct(
+    breadcrumb: list[str],
+    cls: type,
+    instance,
+    version: str | None,
+) -> None:
+    from software.base import InstallError
+    from core.theme import print_success
+
+    name = _recipe_name(cls)
+    if not getattr(cls, "has_upgrade", True):
+        _direct_fail(t("software.not_supported"), _EXIT_USAGE)
+    if not version:
+        _direct_fail(t("cli.error.version_required", name=name), _EXIT_USAGE)
+    if not instance.detect():
+        _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+
+    _resolve_deps_or_exit(instance, breadcrumb)
+
+    import time as _time
+    start = _time.monotonic()
+    try:
+        if _is_multi_version(cls, instance) and version in instance.installed_versions() and hasattr(instance, "switch"):
+            instance.switch(version)
+            print_success(t("software.switch_success", name=name, version=version))
+        else:
+            instance.upgrade(version)
+            print_success(t("upgrade.success", name=name, elapsed=_time.monotonic() - start))
+    except InstallError as e:
+        _direct_fail(t("upgrade.failed", name=name, error=str(e)), _EXIT_RUNTIME)
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+
+
+def _switch_direct(cls: type, instance, version: str | None) -> None:
+    from software.base import InstallError
+    from core.theme import print_success
+
+    name = _recipe_name(cls)
+    if not getattr(cls, "has_switch", False) or not hasattr(instance, "switch"):
+        _direct_fail(t("software.not_supported"), _EXIT_USAGE)
+    if not version:
+        _direct_fail(t("cli.error.version_required", name=name), _EXIT_USAGE)
+    installed = instance.installed_versions() if hasattr(instance, "installed_versions") else []
+    if version not in installed:
+        _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
+    try:
+        instance.switch(version)
+        print_success(t("software.switch_success", name=name, version=version))
+    except InstallError as e:
+        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+
+
+def _diagnose_direct(cls: type, instance) -> None:
+    try:
+        instance.diagnose()
+    except Exception as e:
+        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
 
 
 # ─── monitor 子命令 ───────────────────────────────────────────────────────────
@@ -633,7 +877,7 @@ def mon_memory() -> None:
 def mon_disk() -> None:
     _boot()
     from monitor.menu import show_disk_detail
-    show_disk_detail()
+    show_disk_detail(pause_after=False)
 
 
 @mon_app.command("network", help=_ct("mon_network"))
@@ -658,7 +902,7 @@ def net_ping(
 ) -> None:
     _boot()
     from network.menu import show_ping
-    show_ping(host=host)
+    show_ping(host=host, pause_after=host is None)
 
 
 @net_app.command("traceroute", help=_ct("net_traceroute"))
@@ -667,7 +911,7 @@ def net_traceroute(
 ) -> None:
     _boot()
     from network.menu import show_traceroute
-    show_traceroute(host=host)
+    show_traceroute(host=host, pause_after=host is None)
 
 
 @net_app.command("dns", help=_ct("net_dns"))
@@ -676,7 +920,7 @@ def net_dns(
 ) -> None:
     _boot()
     from network.menu import show_dns
-    show_dns(host=host)
+    show_dns(host=host, pause_after=host is None)
 
 
 @net_app.command("port-scan", help=_ct("net_port_scan"))
@@ -685,21 +929,21 @@ def net_port_scan(
 ) -> None:
     _boot()
     from network.menu import show_port_scan
-    show_port_scan(host=host)
+    show_port_scan(host=host, pause_after=host is None)
 
 
 @net_app.command("speed-test", help=_ct("net_speed_test"))
 def net_speed_test() -> None:
     _boot()
     from network.menu import show_speed_test
-    show_speed_test()
+    show_speed_test(pause_after=False)
 
 
 @net_app.command("public-ip", help=_ct("net_public_ip"))
 def net_public_ip() -> None:
     _boot()
     from network.menu import show_public_ip
-    show_public_ip()
+    show_public_ip(pause_after=False)
 
 
 if __name__ == "__main__":
