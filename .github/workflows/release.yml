@@ -26,10 +26,13 @@ jobs:
           if [ -z "${HOOK_URL:-}" ]; then echo "::error::HOOK_URL secret is empty or not set"; exit 1; fi
           if [ -z "${HOOK_SECRET:-}" ]; then echo "::error::HOOK_SECRET secret is empty or not set (server will return 401)"; exit 1; fi
           HOOK_URL="${HOOK_URL%/}"
+          # hook 服务要求 X-Hook-Secret = hex(HMAC-SHA256(HOOK_SECRET, 原始 body))，不能传密钥原文
+          BODY='{"event":"build_start"}'
+          SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HOOK_SECRET" -binary | xxd -p | tr -d '\n')
           curl -fsSL -X POST "${HOOK_URL}/build-notify" \
-            -H "X-Hook-Secret: ${HOOK_SECRET}" \
+            -H "X-Hook-Secret: ${SIG}" \
             -H "Content-Type: application/json" \
-            -d '{"event":"build_start"}'
+            --data-binary "$BODY"
           echo "[hook] build-notify sent"
 
   test:
@@ -181,8 +184,10 @@ jobs:
           if [ -z "${HOOK_URL:-}" ]; then echo "::error::HOOK_URL secret is empty or not set"; exit 1; fi
           if [ -z "${HOOK_SECRET:-}" ]; then echo "::error::HOOK_SECRET secret is empty or not set (server will return 401)"; exit 1; fi
           HOOK_URL="${HOOK_URL%/}"
+          BODY='{"event":"release_sync"}'
+          SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HOOK_SECRET" -binary | xxd -p | tr -d '\n')
           curl -fsSL -X POST "${HOOK_URL}/artifact-pull" \
-            -H "X-Hook-Secret: ${HOOK_SECRET}" \
+            -H "X-Hook-Secret: ${SIG}" \
             -H "Content-Type: application/json" \
-            -d '{"event":"release_sync"}'
+            --data-binary "$BODY"
           echo "[hook] artifact-pull triggered"
