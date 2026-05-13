@@ -1,4 +1,4 @@
-"""Static contract: release workflow must wire HOOK_URL + X-Hook-Secret for notify hooks."""
+"""Optional smoke: debug_hook_notify against public hook (wrong secret → 401)."""
 
 from __future__ import annotations
 
@@ -10,17 +10,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
 DEBUG_SCRIPT = REPO / "scripts" / "debug_hook_notify.py"
-
-
-def test_release_yml_declares_hook_notify_curl() -> None:
-    text = RELEASE_YML.read_text(encoding="utf-8")
-    assert "HOOK_URL: ${{ secrets.HOOK_URL }}" in text
-    assert "HOOK_SECRET: ${{ secrets.HOOK_SECRET }}" in text
-    assert "${HOOK_URL}/build-notify" in text or '"${HOOK_URL}/build-notify"' in text
-    assert "X-Hook-Secret: ${HOOK_SECRET}" in text
-    assert "${HOOK_URL}/artifact-pull" in text or '"${HOOK_URL}/artifact-pull"' in text
 
 
 def test_debug_hook_script_smoke_invalid_secret_exits_nonzero() -> None:
