@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "bajie-mcp": {
+      "command": "node",
+      "args": [
+        "C:/Users/Administrator/.cursor/bajie-mcp-server/index.mjs"
+      ],
+      "env": {
+        "bajie_INSTANCE_ID": "bajie-win-f338bb47-98ff-4113-bec5-",
+        "bajie_QUEUE_ROOT": "C:\\Users\\Administrator\\.cursor\\bajie-mcp-messages"
+      },
+      "disabled": false
+    }
+  }
+}
