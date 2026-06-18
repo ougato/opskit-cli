@@ -53,6 +53,7 @@ include = [
     "network*",
     "security*",
     "loganalysis*",
+    "xui*",
 ]
 
 [tool.setuptools.package-data]

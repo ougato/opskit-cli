@@ -103,6 +103,9 @@ icons:
   mongodb: "\U0001F343"       # 🍃
   redis: "\U0001F534"         # 🔴
 
+  xui: "\U0001F310"             # 🌐
+  xui_server: "\U0001F6E0\uFE0F"   # 🛠️
+
   # WireGuard
   wireguard: "\U0001F510"     # 🔐
   wg_server: "\U0001F30D"     # 🌍
