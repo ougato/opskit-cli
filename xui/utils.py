@@ -36,7 +36,6 @@ from xui.constants import (
     PANEL_API_RETRY_COUNT,
     PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
-    PUBLIC_HOST_SOURCE,
     REDACTED_VALUE,
     SECONDS_PER_DAY,
     SENSITIVE_STATE_KEYS,
@@ -45,9 +44,6 @@ from xui.constants import (
     SS_COMMAND,
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
-    TAILSCALE_COMMAND,
-    TAILSCALE_HOST_SOURCE,
-    TAILSCALE_IP_VERSION_ARG,
     TROJAN_CERT_DAYS,
     TROJAN_CERT_FILE,
     TROJAN_CERT_RSA_BITS,
@@ -116,32 +112,6 @@ def detect_public_host() -> str:
         except Exception:
             continue
     return ""
-
-
-def detect_tailscale_host() -> str:
-    if not command_exists(TAILSCALE_COMMAND):
-        return ""
-    try:
-        result = subprocess.run(
-            [TAILSCALE_COMMAND, "ip", TAILSCALE_IP_VERSION_ARG],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-    except Exception:
-        return ""
-    if result.returncode != 0:
-        return ""
-    return result.stdout.splitlines()[0].strip() if result.stdout.splitlines() else ""
-
-
-def detect_share_host() -> tuple[str, str]:
-    tailscale_host = detect_tailscale_host()
-    if tailscale_host:
-        return tailscale_host, TAILSCALE_HOST_SOURCE
-    public_host = detect_public_host()
-    return public_host, PUBLIC_HOST_SOURCE if public_host else ""
 
 
 def is_service_active(service: str = XUI_SERVICE) -> bool:

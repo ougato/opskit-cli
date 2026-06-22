@@ -29,7 +29,6 @@ from xui.constants import (
     DEFAULT_VLESS_PORT,
     DEFAULT_VLESS_REMARK,
     DEFAULT_XHTTP_PATH_PREFIX,
-    CUSTOM_HOST_SOURCE,
     APT_GET_COMMAND,
     CURL_COMMAND,
     HTTP_URL_TEMPLATE,
@@ -42,8 +41,6 @@ from xui.constants import (
     YUM_COMMAND,
     YUM_INSTALL_COMMAND,
     XUI_COMMAND,
-    PUBLIC_HOST_SOURCE,
-    TAILSCALE_HOST_SOURCE,
     XUI_LOG_LINES,
     XUI_PENDING_INBOUNDS_FILE,
     XUI_STATE_FILE,
@@ -56,8 +53,7 @@ from xui.utils import (
     add_inbound,
     command_exists,
     configure_panel_settings,
-    detect_share_host,
-    detect_tailscale_host,
+    detect_public_host,
     enable_inbound_clients,
     ensure_trojan_certificate,
     generate_reality_keypair,
@@ -175,14 +171,12 @@ def _create_inbounds(
 
 def install_server() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
-    host_default, host_source = detect_share_host()
+    host_default = detect_public_host()
     panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
     panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
     panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password())
     panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
     host = _read_text(breadcrumb, "xui.input.host", host_default)
-    if host != host_default:
-        host_source = CUSTOM_HOST_SOURCE
     vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
     sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
     dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
@@ -308,7 +302,6 @@ def install_server() -> None:
             "panel_password": panel_password,
             "panel_base_path": panel_base_path,
             "api_configured": api_ok,
-            "host_source": host_source,
             "vless": {
                 "host": host,
                 "port": vless_port,
@@ -337,10 +330,6 @@ def install_server() -> None:
         sp.step(t("xui.step.print_links"))
 
     print_success(t("xui.output.install_done"))
-    if host_source == TAILSCALE_HOST_SOURCE:
-        console.print(f"{t('xui.output.host_source')}: Tailscale")
-    elif host_source == PUBLIC_HOST_SOURCE:
-        print_warning(t("xui.output.public_host_warning"))
     if not api_ok:
         print_warning(t("xui.output.pending_inbounds", path=str(XUI_PENDING_INBOUNDS_FILE)))
     panel_url = HTTP_URL_TEMPLATE.format(host=LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
@@ -368,7 +357,6 @@ def diagnose_server() -> None:
     redacted = redact_state(state)
     print_info(t("xui.diagnose.title"))
     console.print(f"{t('xui.diagnose.service')}: {is_service_active()}")
-    console.print(f"{t('xui.diagnose.tailscale_ip')}: {detect_tailscale_host() or '-'}")
     panel_port = state.get("panel_port")
     if isinstance(panel_port, int):
         console.print(f"{t('xui.diagnose.panel_port')}: {is_port_listening(panel_port)}")

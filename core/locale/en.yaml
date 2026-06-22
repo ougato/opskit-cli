@@ -313,12 +313,9 @@ xui:
     panel_password: "Panel password"
     vless_link: "VLESS link"
     trojan_link: "Trojan link"
-    host_source: "Share host"
-    public_host_warning: "No Tailscale IP found; public IP may not be reachable behind Cloud VM"
   diagnose:
     title: "x-ui diagnostics"
     service: "Service active"
-    tailscale_ip: "Tailscale IP"
     panel_port: "Panel port"
     vless_port: "VLESS port"
     trojan_port: "Trojan port"

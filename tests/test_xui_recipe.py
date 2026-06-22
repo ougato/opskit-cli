@@ -185,21 +185,3 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]
-
-
-def test_detect_share_host_prefers_tailscale(monkeypatch) -> None:
-    from xui import utils
-
-    monkeypatch.setattr(utils, "detect_tailscale_host", lambda: "100.64.0.1")
-    monkeypatch.setattr(utils, "detect_public_host", lambda: "203.0.113.1")
-
-    assert utils.detect_share_host() == ("100.64.0.1", "tailscale")
-
-
-def test_detect_share_host_falls_back_to_public(monkeypatch) -> None:
-    from xui import utils
-
-    monkeypatch.setattr(utils, "detect_tailscale_host", lambda: "")
-    monkeypatch.setattr(utils, "detect_public_host", lambda: "203.0.113.1")
-
-    assert utils.detect_share_host() == ("203.0.113.1", "public")
