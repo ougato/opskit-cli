@@ -221,8 +221,9 @@ software:
     extract_failed: "Java {version} 解压失败：{error}"
     bad_structure: "Java {version} 安装目录结构异常，未找到 {file}"
     download_failed: "Java {version} 下载失败：{error}"
-  xui: "x-ui"
-  xui_server: "x-ui 服务端"
+  xui: "X-UI"
+  xui_server: "X-UI 服务端"
+  rustdesk: "RustDesk"
   tailscale: "Tailscale"
   wireguard: "WireGuard"
   wireguard_linux_only: "WireGuard 仅支持 Linux"
@@ -271,6 +272,31 @@ deps:
   version_mismatch: "依赖 '{dep}' 版本不满足（需 >={required}，当前 {current}），安装已取消"
   installing: "安装依赖 {dep} {target}..."
 
+rustdesk:
+  step:
+    download: "\u4e0b\u8f7d\u5305"
+    install_binaries: "\u5b89\u88c5\u4e8c\u8fdb\u5236"
+    configure_service: "\u914d\u7f6e\u670d\u52a1"
+    start_service: "\u542f\u52a8\u670d\u52a1"
+    verify: "\u9a8c\u8bc1\u670d\u52a1"
+    print_info: "\u6253\u5370\u8fde\u63a5"
+  error:
+    platform_not_supported: "RustDesk Server \u4e0d\u652f\u6301\u5e73\u53f0\uff1a{platform}"
+    arch_not_supported: "RustDesk Server \u4e0d\u652f\u6301\u67b6\u6784\uff1a{arch}"
+    download_failed: "RustDesk Server \u4e0b\u8f7d\u5931\u8d25\uff1a{error}"
+    extract_failed: "RustDesk Server \u89e3\u538b\u5931\u8d25\uff1a{error}"
+    binary_missing: "RustDesk \u4e8c\u8fdb\u5236\u7f3a\u5931\uff1a{binary}"
+    key_missing: "RustDesk \u516c\u94a5\u672a\u751f\u6210"
+    verify_failed: "RustDesk \u670d\u52a1\u9a8c\u8bc1\u5931\u8d25"
+  info:
+    done: "RustDesk Server \u5df2\u5b89\u88c5"
+    id_server: "ID Server\uff1a{value}"
+    relay_server: "Relay Server\uff1a{value}"
+    key: "Key\uff1a{value}"
+    client_hint: "\u5ba2\u6237\u7aef\uff1a\u8bbe\u7f6e \u2192 \u7f51\u7edc \u2192 ID/Relay Server"
+    version: "\u7248\u672c\uff1a{version}"
+    hbbs: "ID \u670d\u52a1 active\uff1a{active}"
+    hbbr: "\u4e2d\u7ee7\u670d\u52a1 active\uff1a{active}"
 xui:
   input:
     panel_port: "面板端口（默认 {default}）"
@@ -285,11 +311,11 @@ xui:
     enable_trojan: "是否创建 Trojan 备用节点？"
     trojan_port: "Trojan 端口（默认 {default}）"
   confirm:
-    install: "确认安装并创建 x-ui 节点？"
+    install: "确认安装并创建 X-UI 节点？"
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"
-    install_xui: "安装 x-ui"
+    install_xui: "安装 X-UI"
     generate_credentials: "生成凭据"
     configure_panel: "配置面板"
     create_vless_xhttp: "创建 VLESS XHTTP"
@@ -305,8 +331,8 @@ xui:
     reality_key_failed: "REALITY 密钥生成失败"
     panel_api_failed: "面板 API 调用失败：{error}"
   output:
-    install_done: "x-ui 配置完成"
-    uninstall_done: "x-ui 已卸载"
+    install_done: "X-UI 配置完成"
+    uninstall_done: "X-UI 已卸载"
     pending_inbounds: "面板 API 未完成，入站已写入 {path}"
     panel: "面板地址"
     panel_user: "面板用户"
@@ -314,18 +340,18 @@ xui:
     vless_link: "VLESS 链接"
     trojan_link: "Trojan 链接"
   diagnose:
-    title: "x-ui 诊断"
+    title: "X-UI 诊断"
     service: "服务运行"
     panel_port: "面板端口"
     vless_port: "VLESS 端口"
     trojan_port: "Trojan 端口"
   manage:
-    no_state: "未找到 x-ui 状态"
+    no_state: "未找到 X-UI 状态"
     print_links: "打印链接"
     show_state: "查看脱敏状态"
-    restart: "重启 x-ui"
+    restart: "重启 X-UI"
     logs: "查看日志"
-    restart_done: "x-ui 已重启"
+    restart_done: "X-UI 已重启"
 
 tailscale:
   step:

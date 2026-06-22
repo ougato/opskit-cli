@@ -236,8 +236,9 @@ software:
     extract_failed: "Java {version} extraction failed: {error}"
     bad_structure: "Java {version} install directory structure invalid, missing {file}"
     download_failed: "Java {version} download failed: {error}"
-  xui: "x-ui"
-  xui_server: "x-ui Server"
+  xui: "X-UI"
+  xui_server: "X-UI Server"
+  rustdesk: "RustDesk"
   tailscale: "Tailscale"
   wireguard: "WireGuard"
   wireguard_linux_only: "WireGuard only supports Linux"
@@ -271,6 +272,32 @@ deps:
   version_mismatch: "Dependency '{dep}' version mismatch (need >={required}, got {current}), install cancelled"
   installing: "Installing dependency {dep} {target}..."
 
+rustdesk:
+  step:
+    download: "Download package"
+    install_binaries: "Install binaries"
+    configure_service: "Configure service"
+    start_service: "Start service"
+    verify: "Verify service"
+    print_info: "Print client info"
+  error:
+    platform_not_supported: "RustDesk Server does not support platform: {platform}"
+    arch_not_supported: "RustDesk Server does not support architecture: {arch}"
+    download_failed: "RustDesk Server download failed: {error}"
+    extract_failed: "RustDesk Server extraction failed: {error}"
+    binary_missing: "RustDesk binary missing: {binary}"
+    key_missing: "RustDesk public key was not generated"
+    verify_failed: "RustDesk service verification failed"
+  info:
+    done: "RustDesk Server installed"
+    id_server: "ID Server: {value}"
+    relay_server: "Relay Server: {value}"
+    key: "Key: {value}"
+    client_hint: "Client: Settings → Network → ID/Relay Server"
+    version: "Version: {version}"
+    hbbs: "ID service active: {active}"
+    hbbr: "Relay service active: {active}"
+
 xui:
   input:
     panel_port: "Panel port (default {default})"
@@ -285,11 +312,11 @@ xui:
     enable_trojan: "Create Trojan fallback node?"
     trojan_port: "Trojan port (default {default})"
   confirm:
-    install: "Install and create x-ui nodes?"
+    install: "Install and create X-UI nodes?"
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
-    install_xui: "Install x-ui"
+    install_xui: "Install X-UI"
     generate_credentials: "Generate credentials"
     configure_panel: "Configure panel"
     create_vless_xhttp: "Create VLESS XHTTP"
@@ -305,8 +332,8 @@ xui:
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
   output:
-    install_done: "x-ui configured"
-    uninstall_done: "x-ui uninstalled"
+    install_done: "X-UI configured"
+    uninstall_done: "X-UI uninstalled"
     pending_inbounds: "Panel API did not finish; inbounds written to {path}"
     panel: "Panel URL"
     panel_user: "Panel user"
@@ -314,18 +341,18 @@ xui:
     vless_link: "VLESS link"
     trojan_link: "Trojan link"
   diagnose:
-    title: "x-ui diagnostics"
+    title: "X-UI diagnostics"
     service: "Service active"
     panel_port: "Panel port"
     vless_port: "VLESS port"
     trojan_port: "Trojan port"
   manage:
-    no_state: "No x-ui state found"
+    no_state: "No X-UI state found"
     print_links: "Print links"
     show_state: "Show redacted state"
-    restart: "Restart x-ui"
+    restart: "Restart X-UI"
     logs: "Show logs"
-    restart_done: "x-ui restarted"
+    restart_done: "X-UI restarted"
 
 tailscale:
   step:

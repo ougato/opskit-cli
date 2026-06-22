@@ -540,3 +540,98 @@ def test_register_returns_module_info(tmp_path) -> None:
     assert isinstance(info, ModuleInfo)
     assert info.key == "software"
     assert info.order > 0
+
+
+def test_get_recipe_rustdesk() -> None:
+    cls = get_recipe("rustdesk")
+    assert cls is not None
+    assert cls.key == "rustdesk"
+    assert cls.category == "devops"
+    assert cls.has_diagnose is True
+    assert cls.has_install_version_selection is False
+
+
+def test_rustdesk_steps_and_connection_state() -> None:
+    from software.recipes.rustdesk.recipe import RustDeskRecipe
+    from software.recipes.rustdesk.server import build_state
+
+    recipe = RustDeskRecipe()
+    assert [s.description_key for s in recipe.steps("install")] == [
+        "software.step.check",
+        "rustdesk.step.download",
+        "rustdesk.step.install_binaries",
+        "rustdesk.step.configure_service",
+        "rustdesk.step.start_service",
+        "rustdesk.step.verify",
+        "rustdesk.step.print_info",
+    ]
+    assert [s.description_key for s in recipe.steps("uninstall")] == [
+        "software.step.stop_service",
+        "software.step.remove_files",
+        "software.step.cleanup",
+    ]
+
+    state = build_state("1.1.15", "203.0.113.10", "pubkey")
+    assert state["id_server"] == "203.0.113.10"
+    assert state["relay_server"] == "203.0.113.10:21117"
+    assert state["key"] == "pubkey"
+
+
+def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
+    import software.menu as menu
+
+    class Spinner:
+        def __init__(self, label: str):
+            self.label = label
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def make_recipe(index: int):
+        class FakeRecipe:
+            key = f"fake{index}"
+            platforms = ["linux"]
+            has_submenu = False
+
+            def detect(self) -> None:
+                return None
+
+        return FakeRecipe
+
+    recipes = [make_recipe(i) for i in range(10)]
+    selected: list[str] = []
+    calls: list[dict] = []
+    keys = iter(["n", "1"])
+
+    def fake_select(**kwargs):
+        calls.append(kwargs)
+        return next(keys)
+
+    monkeypatch.setattr("core.progress.spinner", lambda label: Spinner(label))
+    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr(menu, "show_actions", lambda breadcrumb, cls: selected.append(cls.key))
+
+    menu._pick_and_act(["OpsKit"], recipes)
+
+    assert len(calls[0]["choices"]) == 10
+    assert calls[0]["choices"][-1]["key"] == "n"
+    assert calls[1]["choices"][-1]["key"] == "p"
+    assert selected == ["fake9"]
+
+
+def test_rustdesk_xui_tailscale_labels_and_icons() -> None:
+    from core.i18n import init as i18n_init, t
+    from core.theme import get_icon, init as theme_init
+
+    i18n_init()
+    theme_init()
+    assert t("software.xui") == "X-UI"
+    assert t("software.xui_server").startswith("X-UI")
+    assert t("software.rustdesk") == "RustDesk"
+    assert get_icon("xui") != "•"
+    assert get_icon("xui_server") != "•"
+    assert get_icon("tailscale") != "•"
+    assert get_icon("rustdesk") != "•"
