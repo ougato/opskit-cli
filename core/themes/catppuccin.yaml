@@ -107,7 +107,7 @@ icons:
   xui_server: "\U0001F4E1"   # 📡️
 
   # WireGuard
-  rustdesk: "\U0001F5A5"     # 🖥
+  rustdesk: "\U0001F4BB"     # 💻
   tailscale: "\U0001F517"     # 🔗
   wireguard: "\U0001F510"     # 🔐
   wg_server: "\U0001F30D"     # 🌍
