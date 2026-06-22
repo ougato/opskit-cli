@@ -146,7 +146,9 @@ def _init_system(os_type: str) -> str:
     if os_type == "darwin":
         return "launchd"
     # Linux
-    if shutil.which("systemctl") and _cmd_ok(["systemctl", "--version"]):
+    from core.service import systemd_is_available
+
+    if systemd_is_available():
         return "systemd"
     if Path("/etc/init.d").exists() and shutil.which("service"):
         return "sysvinit"

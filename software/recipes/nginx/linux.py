@@ -39,18 +39,16 @@ class LinuxDriver(PlatformDriver):
             raise UninstallError(t("software.nginx_error.remove_failed", detail=str(e))) from e
 
     def enable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import enable_now
         try:
-            run_as_root(["systemctl", "enable", "--now", NGINX_SERVICE],
-                        capture_output=True, text=True, check=True)
+            enable_now(NGINX_SERVICE)
         except Exception as e:
             raise InstallError(t("software.nginx_error.service_enable_failed", detail=str(e))) from e
 
     def disable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import disable_now
         try:
-            run_as_root(["systemctl", "disable", "--now", NGINX_SERVICE],
-                        capture_output=True)
+            disable_now(NGINX_SERVICE)
         except Exception:
             pass
 

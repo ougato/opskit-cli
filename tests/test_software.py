@@ -161,6 +161,18 @@ def test_nginx_extra_stream_package_is_apt_only() -> None:
     assert driver._packages_for_runner("dnf") == ["nginx"]
 
 
+def test_nginx_enable_service_uses_service_compat_layer(monkeypatch) -> None:
+    from software.recipes.nginx.linux import LinuxDriver
+    from software.recipes.nginx.constants import NGINX_SERVICE
+
+    calls: list[str] = []
+    monkeypatch.setattr("core.service.enable_now", lambda service_name: calls.append(service_name))
+
+    LinuxDriver().enable_service()
+
+    assert calls == [NGINX_SERVICE]
+
+
 def test_python_install_steps_are_decoupled(tmp_path) -> None:
     cls = get_recipe("python")
     steps = [s.description_key for s in cls().steps("install")]

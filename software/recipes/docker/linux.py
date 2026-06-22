@@ -39,17 +39,15 @@ class LinuxDriver(PlatformDriver):
             pass
 
     def enable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import enable_now
         try:
-            run_as_root(["systemctl", "enable", "--now", DOCKER_SERVICE],
-                        capture_output=True)
+            enable_now(DOCKER_SERVICE)
         except Exception:
             pass
 
     def disable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import disable_now
         try:
-            run_as_root(["systemctl", "disable", "--now", DOCKER_SERVICE],
-                        capture_output=True)
+            disable_now(DOCKER_SERVICE)
         except Exception:
             pass
