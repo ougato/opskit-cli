@@ -29,8 +29,10 @@ def test_build_trojan_link() -> None:
         port=8443,
         sni="example.com",
         remark="trojan node",
+        allow_insecure=True,
     )
     assert link.startswith("trojan://pass%20word@example.com:8443?")
     assert "security=tls" in link
     assert "sni=example.com" in link
+    assert "allowInsecure=1" in link
     assert link.endswith("#trojan%20node")

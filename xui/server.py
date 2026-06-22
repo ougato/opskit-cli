@@ -54,6 +54,8 @@ from xui.utils import (
     command_exists,
     configure_panel_settings,
     detect_public_host,
+    enable_inbound_clients,
+    ensure_trojan_certificate,
     generate_reality_keypair,
     gen_password,
     gen_short_id,
@@ -161,6 +163,8 @@ def _create_inbounds(
             ok = False
     if not ok:
         _save_pending_inbounds(inbounds)
+    else:
+        enable_inbound_clients([str(inbound["remark"]) for inbound in inbounds])
     return ok
 
 
@@ -256,11 +260,14 @@ def install_server() -> None:
         trojan_link = ""
         if enable_trojan:
             sp.step(t("xui.step.create_trojan"))
+            certificate_file, key_file = ensure_trojan_certificate(sni)
             trojan = trojan_inbound(
                 port=trojan_port,
                 password=trojan_password,
                 sni=sni,
                 remark=DEFAULT_TROJAN_REMARK,
+                certificate_file=certificate_file,
+                key_file=key_file,
             )
             inbounds.append(trojan)
             trojan_link = build_trojan_link(
@@ -269,6 +276,7 @@ def install_server() -> None:
                 port=trojan_port,
                 sni=sni,
                 remark=DEFAULT_TROJAN_REMARK,
+                allow_insecure=True,
             )
 
         api_ok = _create_inbounds(
@@ -296,6 +304,7 @@ def install_server() -> None:
             "vless": {
                 "host": host,
                 "port": vless_port,
+                "local_port": vless_port,
                 "uuid": uuid,
                 "public_key": public_key,
                 "private_key": private_key,
@@ -310,6 +319,7 @@ def install_server() -> None:
             state["trojan"] = {
                 "host": host,
                 "port": trojan_port,
+                "local_port": trojan_port,
                 "password": trojan_password,
                 "sni": sni,
                 "link": trojan_link,
@@ -352,12 +362,12 @@ def diagnose_server() -> None:
         console.print(f"{t('xui.diagnose.panel_port')}: {is_port_listening(panel_port)}")
     vless_state = state.get("vless")
     if isinstance(vless_state, dict):
-        port = vless_state.get("port")
+        port = vless_state.get("local_port", vless_state.get("port"))
         if isinstance(port, int):
             console.print(f"{t('xui.diagnose.vless_port')}: {is_port_listening(port)}")
     trojan_state = state.get("trojan")
     if isinstance(trojan_state, dict):
-        port = trojan_state.get("port")
+        port = trojan_state.get("local_port", trojan_state.get("port"))
         if isinstance(port, int):
             console.print(f"{t('xui.diagnose.trojan_port')}: {is_port_listening(port)}")
     console.print(json.dumps(redacted, indent=2, ensure_ascii=False))

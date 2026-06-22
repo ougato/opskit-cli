@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from xui.constants import (
+    CLIENT_TOTAL_GB,
     DEFAULT_TROJAN_REMARK,
     DEFAULT_VLESS_REMARK,
     DEFAULT_XHTTP_MODE,
@@ -17,6 +18,20 @@ from xui.constants import (
     VLESS_DECRYPTION,
     XHTTP_NETWORK,
 )
+
+
+def _client_defaults(email: str) -> dict[str, object]:
+    return {
+        "email": email,
+        "enable": True,
+        "limitIp": 0,
+        "totalGB": CLIENT_TOTAL_GB,
+        "expiryTime": 0,
+        "tgId": 0,
+        "subId": "",
+        "comment": "",
+        "reset": 0,
+    }
 
 
 def vless_reality_xhttp_inbound(
@@ -36,7 +51,7 @@ def vless_reality_xhttp_inbound(
         "protocol": VLESS_PROTOCOL,
         "port": port,
         "settings": {
-            "clients": [{"id": uuid, "email": remark}],
+            "clients": [{"id": uuid, **_client_defaults(remark)}],
             "decryption": VLESS_DECRYPTION,
         },
         "streamSettings": {
@@ -68,18 +83,24 @@ def trojan_inbound(
     password: str,
     sni: str,
     remark: str = DEFAULT_TROJAN_REMARK,
+    certificate_file: str = "",
+    key_file: str = "",
 ) -> dict[str, object]:
+    tls_settings: dict[str, object] = {"serverName": sni}
+    if certificate_file and key_file:
+        tls_settings["certificates"] = [{"certificateFile": certificate_file, "keyFile": key_file}]
     return {
         "remark": remark,
         "protocol": TROJAN_PROTOCOL,
         "port": port,
         "settings": {
-            "clients": [{"password": password, "email": remark}],
+            "clients": [{"password": password, **_client_defaults(remark)}],
+            "fallbacks": [],
         },
         "streamSettings": {
             "network": TCP_NETWORK,
             "security": TLS_SECURITY,
-            "tlsSettings": {"serverName": sni},
+            "tlsSettings": tls_settings,
         },
         "sniffing": {
             "enabled": True,

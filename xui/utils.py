@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import stat
 import subprocess
 import time
@@ -31,20 +32,28 @@ from xui.constants import (
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
+    OPENSSL_COMMAND,
     PANEL_API_RETRY_COUNT,
     PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
     REDACTED_VALUE,
+    SECONDS_PER_DAY,
     SENSITIVE_STATE_KEYS,
     SERVICE_RESTART_TIMEOUT,
     SHORT_ID_BYTES,
     SS_COMMAND,
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
+    TROJAN_CERT_DAYS,
+    TROJAN_CERT_FILE,
+    TROJAN_CERT_RSA_BITS,
+    TROJAN_KEY_FILE,
     HTTP_URL_TEMPLATE,
     HTTP_VALUE_XMLHTTPREQUEST,
     XHTTP_PATH_SUFFIX_BYTES,
     BASH_COMMAND,
+    CLIENT_EXPIRY_DAYS,
+    CLIENT_TOTAL_GB,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
     XUI_API_ADD_INBOUND_PATH,
@@ -52,6 +61,8 @@ from xui.constants import (
     XUI_API_LOGIN_PATH,
     XUI_BINARY_COMMAND,
     XUI_COMMAND,
+    XUI_CONFIG_DIR,
+    XUI_DATABASE_FILE,
     XUI_SETTING_PASSWORD_ARG,
     XUI_SETTING_PORT_ARG,
     XUI_SETTING_SUBCOMMAND,
@@ -166,6 +177,37 @@ def install_xui_script() -> None:
         )
     finally:
         script_path.unlink(missing_ok=True)
+
+
+def ensure_trojan_certificate(sni: str) -> tuple[str, str]:
+    if TROJAN_CERT_FILE.exists() and TROJAN_KEY_FILE.exists():
+        return str(TROJAN_CERT_FILE), str(TROJAN_KEY_FILE)
+    XUI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            OPENSSL_COMMAND,
+            "req",
+            "-x509",
+            "-newkey",
+            f"rsa:{TROJAN_CERT_RSA_BITS}",
+            "-nodes",
+            "-days",
+            str(TROJAN_CERT_DAYS),
+            "-subj",
+            f"/CN={sni}",
+            "-keyout",
+            str(TROJAN_KEY_FILE),
+            "-out",
+            str(TROJAN_CERT_FILE),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
+    TROJAN_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    TROJAN_CERT_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    return str(TROJAN_CERT_FILE), str(TROJAN_KEY_FILE)
 
 
 def generate_reality_keypair() -> tuple[str, str]:
@@ -304,7 +346,14 @@ def _post_json(url: str, payload: dict[str, object], cookie: str, csrf_token: st
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-        return resp.status == HTTP_STATUS_OK
+        text = resp.read().decode("utf-8", errors="ignore")
+        if resp.status != HTTP_STATUS_OK:
+            return False
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return True
+        return data.get("success") is True
 
 
 def login_panel(port: int, username: str, password: str, base_path: str) -> tuple[str, str]:
@@ -335,9 +384,47 @@ def login_panel(port: int, username: str, password: str, base_path: str) -> tupl
         method="POST",
     )
     with opener.open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-        if resp.status in range(HTTP_STATUS_REDIRECT_MIN, HTTP_STATUS_REDIRECT_MAX + 1) or resp.status == HTTP_STATUS_OK:
+        text = resp.read().decode("utf-8", errors="ignore")
+        if resp.status in range(HTTP_STATUS_REDIRECT_MIN, HTTP_STATUS_REDIRECT_MAX + 1):
             return _cookie_header(jar), csrf_token
+        if resp.status == HTTP_STATUS_OK:
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {}
+            if data.get("success") is True:
+                return _cookie_header(jar), csrf_token
     return "", ""
+
+
+def enable_inbound_clients(remarks: list[str]) -> None:
+    if not XUI_DATABASE_FILE.exists():
+        return
+    expiry_time = int((time.time() + CLIENT_EXPIRY_DAYS * SECONDS_PER_DAY) * 1000)
+    with sqlite3.connect(XUI_DATABASE_FILE) as conn:
+        for remark in remarks:
+            _enable_inbound_client(conn, remark, expiry_time)
+
+
+def _enable_inbound_client(conn: sqlite3.Connection, remark: str, expiry_time: int) -> None:
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("select id, settings from inbounds where remark = ?", (remark,)).fetchone()
+    if not row:
+        return
+    settings = json.loads(row["settings"])
+    for client in settings.get("clients") or []:
+        client["enable"] = True
+        client["totalGB"] = CLIENT_TOTAL_GB
+        client["expiryTime"] = expiry_time
+    conn.execute("update inbounds set settings = ? where id = ?", (json.dumps(settings, ensure_ascii=False), row["id"]))
+    conn.execute(
+        "update clients set enable = 1, total_gb = ?, expiry_time = ? where email = ?",
+        (CLIENT_TOTAL_GB, expiry_time, remark),
+    )
+    conn.execute(
+        "update client_traffics set enable = 1, total = ?, expiry_time = ? where inbound_id = ? and email = ?",
+        (CLIENT_TOTAL_GB, expiry_time, row["id"], remark),
+    )
 
 
 def add_inbound(port: int, username: str, password: str, base_path: str, payload: dict[str, object]) -> bool:

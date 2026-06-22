@@ -17,6 +17,9 @@ def test_vless_reality_xhttp_template() -> None:
     )
     assert inbound["protocol"] == "vless"
     assert inbound["port"] == 443
+    client = inbound["settings"]["clients"][0]
+    assert client["enable"] is True
+    assert client["totalGB"] > 0
     stream = inbound["streamSettings"]
     assert isinstance(stream, dict)
     assert stream["network"] == "xhttp"
@@ -32,6 +35,8 @@ def test_trojan_template_and_api_payload() -> None:
         port=8443,
         password="secret",
         sni="example.com",
+        certificate_file="/etc/x-ui/opskit-trojan.crt",
+        key_file="/etc/x-ui/opskit-trojan.key",
     )
     assert inbound["protocol"] == "trojan"
     payload = to_xui_api_payload(inbound)
@@ -39,3 +44,9 @@ def test_trojan_template_and_api_payload() -> None:
     assert payload["port"] == 8443
     settings = json.loads(str(payload["settings"]))
     assert settings["clients"][0]["password"] == "secret"
+    assert settings["clients"][0]["enable"] is True
+    assert settings["fallbacks"] == []
+    stream = json.loads(str(payload["streamSettings"]))
+    certificate = stream["tlsSettings"]["certificates"][0]
+    assert certificate["certificateFile"] == "/etc/x-ui/opskit-trojan.crt"
+    assert certificate["keyFile"] == "/etc/x-ui/opskit-trojan.key"

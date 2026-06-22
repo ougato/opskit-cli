@@ -10,6 +10,7 @@ from xui.constants import (
     REALITY_SECURITY,
     TCP_NETWORK,
     TLS_SECURITY,
+    TROJAN_ALLOW_INSECURE,
     TROJAN_PROTOCOL,
     XHTTP_NETWORK,
 )
@@ -51,12 +52,16 @@ def build_trojan_link(
     port: int,
     sni: str,
     remark: str,
+    allow_insecure: bool = False,
 ) -> str:
+    query_params = {
+        "security": TLS_SECURITY,
+        "sni": sni,
+        "type": TCP_NETWORK,
+    }
+    if allow_insecure:
+        query_params["allowInsecure"] = TROJAN_ALLOW_INSECURE
     query = urlencode(
-        {
-            "security": TLS_SECURITY,
-            "sni": sni,
-            "type": TCP_NETWORK,
-        }
+        query_params
     )
     return f"{TROJAN_PROTOCOL}://{quote(password, safe='')}@{host}:{port}?{query}#{quote(remark)}"
