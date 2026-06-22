@@ -25,6 +25,7 @@ def test_tailscale_steps() -> None:
         "tailscale.step.check_os",
         "tailscale.step.install",
         "tailscale.step.start",
+        "tailscale.step.exit_node",
         "tailscale.step.login",
     ]
     assert uninstall_steps == [
@@ -57,6 +58,80 @@ def test_remove_tailscale_artifacts(tmp_path, monkeypatch) -> None:
     assert not run_dir.exists()
     assert not repo.exists()
     assert not keyring.exists()
+
+
+def test_configure_exit_node_writes_persistent_rules(tmp_path, monkeypatch) -> None:
+    from tailscale import server
+
+    sysctl_file = tmp_path / "sysctl.conf"
+    script_file = tmp_path / "tailscale-exit-node-nat"
+    service_file = tmp_path / "tailscale-exit-node-nat.service"
+    writes: dict[str, str] = {}
+    calls: list[list[str]] = []
+
+    def fake_write_root_file(path, content, mode):
+        writes[str(path)] = content
+        path.write_text(content, encoding="utf-8")
+
+    def fake_run_root(command, check=True, timeout=0):
+        calls.append(command)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SYSCTL_FILE", sysctl_file)
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SCRIPT_FILE", script_file)
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SERVICE_FILE", service_file)
+    monkeypatch.setattr(server, "_write_root_file", fake_write_root_file)
+    monkeypatch.setattr(server, "_run_root", fake_run_root)
+
+    server.configure_exit_node()
+
+    assert "net.ipv4.ip_forward = 1" in writes[str(sysctl_file)]
+    assert "MASQUERADE" in writes[str(script_file)]
+    assert "TCPMSS --clamp-mss-to-pmtu" in writes[str(script_file)]
+    assert "ip6tables -I FORWARD 1 -i tailscale0 -j REJECT" in writes[str(script_file)]
+    assert "RemainAfterExit=yes" in writes[str(service_file)]
+    assert [server.SYSTEMCTL_COMMAND, "enable", "--now", server.TAILSCALE_EXIT_NODE_SERVICE] in calls
+
+
+def test_cleanup_exit_node_removes_persistent_rules(tmp_path, monkeypatch) -> None:
+    from tailscale import server
+
+    script_file = tmp_path / "tailscale-exit-node-nat"
+    service_file = tmp_path / "tailscale-exit-node-nat.service"
+    sysctl_file = tmp_path / "sysctl.conf"
+    script_file.write_text("#!/bin/sh", encoding="utf-8")
+    service_file.write_text("service", encoding="utf-8")
+    sysctl_file.write_text("sysctl", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run_root(command, check=True, timeout=0):
+        calls.append(command)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SCRIPT_FILE", script_file)
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SERVICE_FILE", service_file)
+    monkeypatch.setattr(server, "TAILSCALE_EXIT_NODE_SYSCTL_FILE", sysctl_file)
+    monkeypatch.setattr(server, "_run_root", fake_run_root)
+
+    server.cleanup_exit_node()
+
+    assert [str(script_file), "clean"] in calls
+    assert [server.SYSTEMCTL_COMMAND, "disable", "--now", server.TAILSCALE_EXIT_NODE_SERVICE] in calls
+    assert [server.RM_COMMAND, "-f", str(script_file)] in calls
+    assert [server.RM_COMMAND, "-f", str(service_file)] in calls
+    assert [server.RM_COMMAND, "-f", str(sysctl_file)] in calls
 
 
 def test_start_login_returns_timeout_output(monkeypatch) -> None:

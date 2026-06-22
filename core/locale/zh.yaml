@@ -332,6 +332,7 @@ tailscale:
     check_os: "检系"
     install: "安 Tailscale"
     start: "启服"
+    exit_node: "Exit Node"
     login: "登录"
   error:
     unsupported_os: "仅持 Linux"

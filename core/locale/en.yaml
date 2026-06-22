@@ -332,6 +332,7 @@ tailscale:
     check_os: "Check OS"
     install: "Install Tailscale"
     start: "Start service"
+    exit_node: "Configure exit node"
     login: "Login"
   error:
     unsupported_os: "Linux only"

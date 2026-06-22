@@ -41,6 +41,7 @@ class TailscaleRecipe(Recipe):
             InstallStep("tailscale.step.check_os"),
             InstallStep("tailscale.step.install"),
             InstallStep("tailscale.step.start"),
+            InstallStep("tailscale.step.exit_node"),
             InstallStep("tailscale.step.login"),
         ]
 
