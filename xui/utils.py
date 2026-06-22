@@ -61,6 +61,8 @@ from xui.constants import (
     XUI_API_LOGIN_PATH,
     XUI_BINARY_COMMAND,
     XUI_COMMAND,
+    XUI_ARTIFACT_DIRS,
+    XUI_ARTIFACT_FILES,
     XUI_CONFIG_DIR,
     XUI_DATABASE_FILE,
     XUI_SETTING_PASSWORD_ARG,
@@ -449,3 +451,12 @@ def restart_service(service: str = XUI_SERVICE) -> None:
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
     subprocess.run([SYSTEMCTL_COMMAND, "stop", service], check=False, timeout=SERVICE_RESTART_TIMEOUT)
     subprocess.run([SYSTEMCTL_COMMAND, "disable", service], check=False, timeout=SERVICE_RESTART_TIMEOUT)
+
+
+def remove_xui_artifacts() -> None:
+    for path in XUI_ARTIFACT_DIRS:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+    for path in XUI_ARTIFACT_FILES:
+        path.unlink(missing_ok=True)
+    subprocess.run([SYSTEMCTL_COMMAND, "daemon-reload"], check=False, timeout=SERVICE_RESTART_TIMEOUT)

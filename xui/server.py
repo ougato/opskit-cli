@@ -65,6 +65,7 @@ from xui.utils import (
     is_service_active,
     load_state,
     redact_state,
+    remove_xui_artifacts,
     restart_service,
     stop_and_disable_service,
     write_secret_json,
@@ -344,8 +345,7 @@ def install_server() -> None:
 def uninstall_server() -> None:
     try:
         stop_and_disable_service()
-        if XUI_STATE_FILE.exists():
-            XUI_STATE_FILE.unlink()
+        remove_xui_artifacts()
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("xui.output.uninstall_done"))

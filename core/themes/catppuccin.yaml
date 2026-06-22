@@ -107,6 +107,7 @@ icons:
   xui_server: "\U0001F6E0"   # 🛠️
 
   # WireGuard
+  tailscale: "\U0001F500"     # 🔀
   wireguard: "\U0001F510"     # 🔐
   wg_server: "\U0001F30D"     # 🌍
   wg_client: "\U0001F3E0"     # 🏠

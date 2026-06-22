@@ -151,3 +151,37 @@ def test_enable_inbound_clients_updates_traffic_tables(tmp_path, monkeypatch) ->
     assert traffic[0] == 1
     assert traffic[1] > 0
     assert traffic[2] > 0
+
+
+def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -> None:
+    from xui import utils
+
+    install_dir = tmp_path / "usr-local-x-ui"
+    config_dir = tmp_path / "etc-x-ui"
+    service_file = tmp_path / "x-ui.service"
+    command_link = tmp_path / "x-ui"
+    install_dir.mkdir()
+    config_dir.mkdir()
+    service_file.write_text("service", encoding="utf-8")
+    command_link.write_text("cmd", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
+    monkeypatch.setattr(utils.subprocess, "run", fake_run)
+
+    utils.remove_xui_artifacts()
+
+    assert not install_dir.exists()
+    assert not config_dir.exists()
+    assert not service_file.exists()
+    assert not command_link.exists()
+    assert calls == [["systemctl", "daemon-reload"]]

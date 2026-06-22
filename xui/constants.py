@@ -21,6 +21,13 @@ XUI_CONFIG_DIR = Path("/etc/x-ui")
 XUI_DATABASE_FILE = XUI_CONFIG_DIR / "x-ui.db"
 XUI_STATE_FILE = XUI_CONFIG_DIR / "opskit-state.json"
 XUI_PENDING_INBOUNDS_FILE = XUI_CONFIG_DIR / "opskit-inbounds.json"
+XUI_INSTALL_DIR = Path("/usr/local/x-ui")
+XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR, XUI_CONFIG_DIR]
+XUI_ARTIFACT_FILES = [
+    Path("/etc/systemd/system/x-ui.service"),
+    Path("/usr/bin/x-ui"),
+    Path("/usr/local/bin/x-ui"),
+]
 XUI_LOG_LINES = "80"
 LOOPBACK_HOST = "127.0.0.1"
 HTTP_URL_TEMPLATE = "http://{host}:{port}{base_path}"

@@ -223,6 +223,7 @@ software:
     download_failed: "Java {version} 下载失败：{error}"
   xui: "x-ui"
   xui_server: "x-ui 服务端"
+  tailscale: "Tailscale"
   wireguard: "WireGuard"
   wireguard_linux_only: "WireGuard 仅支持 Linux"
   python: "Python"
@@ -325,6 +326,30 @@ xui:
     restart: "重启 x-ui"
     logs: "查看日志"
     restart_done: "x-ui 已重启"
+
+tailscale:
+  step:
+    check_os: "检系"
+    install: "安 Tailscale"
+    start: "启服"
+    login: "登录"
+  error:
+    unsupported_os: "仅持 Linux"
+  output:
+    install_done: "Tailscale 已安"
+    uninstall_done: "Tailscale 已载"
+    ip: "Tailscale IP"
+    down_done: "Tailscale 已断"
+    restart_done: "tailscaled 已启"
+  diagnose:
+    title: "Tailscale 诊"
+    installed: "已安"
+    service: "服运"
+  manage:
+    status: "查状"
+    login: "登录连接"
+    down: "断连接"
+    restart: "重服"
 
 wireguard:
   quick_install: "快速安装（推荐默认值）"

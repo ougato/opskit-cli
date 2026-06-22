@@ -238,6 +238,7 @@ software:
     download_failed: "Java {version} download failed: {error}"
   xui: "x-ui"
   xui_server: "x-ui Server"
+  tailscale: "Tailscale"
   wireguard: "WireGuard"
   wireguard_linux_only: "WireGuard only supports Linux"
   wg_server: "Public Server"
@@ -325,6 +326,30 @@ xui:
     restart: "Restart x-ui"
     logs: "Show logs"
     restart_done: "x-ui restarted"
+
+tailscale:
+  step:
+    check_os: "Check OS"
+    install: "Install Tailscale"
+    start: "Start service"
+    login: "Login"
+  error:
+    unsupported_os: "Linux only"
+  output:
+    install_done: "Tailscale installed"
+    uninstall_done: "Tailscale uninstalled"
+    ip: "Tailscale IP"
+    down_done: "Tailscale disconnected"
+    restart_done: "tailscaled restarted"
+  diagnose:
+    title: "Tailscale diagnostics"
+    installed: "Installed"
+    service: "Service active"
+  manage:
+    status: "Show status"
+    login: "Login / connect"
+    down: "Disconnect"
+    restart: "Restart service"
 
 wireguard:
   quick_install: "Quick Install (recommended defaults)"
