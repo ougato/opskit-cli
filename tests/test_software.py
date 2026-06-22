@@ -160,6 +160,38 @@ def test_nginx_detect_uses_driver(monkeypatch) -> None:
     assert nginx_recipe.NginxRecipe().detect() == "1.27.0"
 
 
+def test_java_and_node_progress_labels_match_golang_style() -> None:
+    import inspect
+    from software.recipes.golang.recipe import GoRecipe
+    from software.recipes.java.recipe import JavaRecipe
+    from software.recipes.nodejs.recipe import NodeRecipe
+
+    expected_install_keys = [
+        't("software.step.check")',
+        't("software.step.download")',
+        't("software.step.install")',
+        't("software.step.verify")',
+    ]
+    expected_uninstall_keys = [
+        't("software.step.remove_files")',
+        't("software.step.cleanup")',
+    ]
+
+    for recipe in (GoRecipe, JavaRecipe, NodeRecipe):
+        install_source = inspect.getsource(recipe.install)
+        uninstall_source = inspect.getsource(recipe.uninstall)
+        for key in expected_install_keys:
+            assert key in install_source
+        for key in expected_uninstall_keys:
+            assert key in uninstall_source
+        assert 'sp.step("check")' not in install_source
+        assert 'sp.step("download")' not in install_source
+        assert 'sp.step("install")' not in install_source
+        assert 'sp.step("verify")' not in install_source
+        assert 'sp.step("remove")' not in uninstall_source
+        assert 'sp.step("cleanup")' not in uninstall_source
+
+
 def test_nginx_install_steps_match_runtime_flow(tmp_path) -> None:
     cls = get_recipe("nginx")
     steps = [s.description_key for s in cls().steps("install")]

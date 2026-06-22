@@ -93,13 +93,18 @@ class NodeRecipe(Recipe):
         info = get_platform()
         driver = get_driver()
 
-        descs = ["check", "download", "install", "verify"]
+        descs = [
+            t("software.step.check"),
+            t("software.step.download"),
+            t("software.step.install"),
+            t("software.step.verify"),
+        ]
         with MultiStepProgress(descs) as sp:
-            sp.step("check")
+            sp.step(t("software.step.check"))
             if info.os_type not in self.platforms:
                 raise InstallError(t("software.nodejs_error.platform_not_supported", platform=info.os_type))
 
-            sp.step("download")
+            sp.step(t("software.step.download"))
             with tempfile.TemporaryDirectory(prefix="opskit-node-") as tmpdir:
                 if sys.platform == "win32":
                     ext = ".zip"
@@ -126,7 +131,7 @@ class NodeRecipe(Recipe):
                     _stop_pct.set()
                     t_pct.join(timeout=2)
 
-                sp.step("install")
+                sp.step(t("software.step.install"))
                 pre = driver.snapshot_pre_install()
                 snap = load_snapshot()
                 if not snap:
@@ -146,7 +151,7 @@ class NodeRecipe(Recipe):
             snap["node_bin_dir"] = bin_dir
             save_snapshot(snap)
 
-            sp.step("verify")
+            sp.step(t("software.step.verify"))
             fallback = shutil.which("node") or "node"
             try:
                 driver.install_shim(fallback)
@@ -201,9 +206,12 @@ class NodeRecipe(Recipe):
             if d.exists():
                 _shutil.rmtree(str(d), ignore_errors=True)
 
-        descs = ["remove", "cleanup"]
+        descs = [
+            t("software.step.remove_files"),
+            t("software.step.cleanup"),
+        ]
         with MultiStepProgress(descs) as sp:
-            sp.step("remove")
+            sp.step(t("software.step.remove_files"))
             installed = self.installed_versions()
 
             if version is None:
@@ -244,5 +252,5 @@ class NodeRecipe(Recipe):
                     snap["installed_versions"] = remaining
                     save_snapshot(snap)
 
-            sp.step("cleanup")
+            sp.step(t("software.step.cleanup"))
             sp.complete()
