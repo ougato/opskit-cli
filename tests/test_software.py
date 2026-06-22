@@ -25,6 +25,119 @@ def test_get_recipe_docker(tmp_path) -> None:
     assert cls.key == "docker"
 
 
+def test_docker_uses_system_package_install_flow() -> None:
+    from software.recipes.docker.constants import DOCKER_SYSTEM_PACKAGE_VERSION
+
+    cls = get_recipe("docker")
+    assert cls is not None
+    recipe = cls()
+
+    assert cls.has_upgrade is False
+    assert cls.has_install_version_selection is False
+    assert cls.confirm_before_install is False
+    assert recipe.versions() == [DOCKER_SYSTEM_PACKAGE_VERSION]
+
+
+def test_docker_apt_package_uses_distro_package(monkeypatch) -> None:
+    from software.recipes.docker.linux import LinuxDriver
+    from software.recipes.docker.constants import DOCKER_APT_PACKAGE
+
+    class FakePlatform:
+        pkg_manager = "apt"
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+
+    assert LinuxDriver().pkg_name("latest") == DOCKER_APT_PACKAGE
+
+
+def test_docker_detect_prefers_owned_apt_package(monkeypatch) -> None:
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+        pkg_manager = "apt"
+
+    class FakeDriver:
+        def detect_package_version(self) -> str:
+            return "24.0.7-0ubuntu1"
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr("software.recipes.docker.recipe.get_driver", lambda: FakeDriver())
+
+    assert DockerRecipe().detect() == "24.0.7-0ubuntu1"
+
+
+def test_docker_detect_ignores_external_cli_after_uninstall(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+        pkg_manager = "apt"
+
+    class FakeDriver:
+        def detect_package_version(self) -> None:
+            return None
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr("software.recipes.docker.recipe.get_driver", lambda: FakeDriver())
+    monkeypatch.setattr("core.runner.which", lambda command: "/usr/bin/docker")
+    monkeypatch.setattr("core.runner.run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="Docker version 26.1.4\n"))
+
+    assert DockerRecipe().detect() is None
+
+
+def test_docker_install_uses_localized_progress_labels(monkeypatch) -> None:
+    from software.recipes.docker import recipe as docker_recipe
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+
+    class FakeDriver:
+        def ensure_deps(self) -> None:
+            pass
+
+        def pkg_name(self, version: str) -> str:
+            return "docker.io"
+
+        def install_pkg(self, pkg: str) -> None:
+            pass
+
+        def enable_service(self) -> None:
+            pass
+
+    class FakeProgress:
+        def __init__(self, descs):
+            seen["descs"] = descs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def step(self, desc):
+            seen.setdefault("steps", []).append(desc)
+
+        def complete(self):
+            seen["complete"] = True
+
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr(docker_recipe, "get_driver", lambda: FakeDriver())
+    monkeypatch.setattr(docker_recipe, "t", lambda key, **kwargs: f"label:{key}")
+    monkeypatch.setattr("core.progress.MultiStepProgress", FakeProgress)
+    monkeypatch.setattr(DockerRecipe, "detect", lambda self: "24.0.7")
+
+    DockerRecipe().install("latest")
+
+    assert "software.step.check" not in seen["descs"]
+    assert "label:software.step.check" in seen["descs"]
+    assert seen["steps"][0] == seen["descs"][0]
+
+
 def test_get_recipe_nginx(tmp_path) -> None:
     cls = get_recipe("nginx")
     assert cls is not None
