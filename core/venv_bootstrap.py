@@ -266,7 +266,7 @@ def _create_venv(python_bin: str, venv_dir: Path, project_root: Path) -> None:
 
 def _exec_reenter(venv_python: Path) -> None:
     """exec 重入 venv，完整传递 sys.argv"""
-    python_str = str(venv_python.resolve())
+    python_str = str(venv_python)
     try:
         os.execv(python_str, [python_str] + sys.argv)
     except Exception as e:

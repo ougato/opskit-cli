@@ -294,3 +294,16 @@ class TestBootstrapUrls:
         from core.constants import BOOTSTRAP_URLS
         for url in BOOTSTRAP_URLS:
             assert url.startswith("https://"), f"URL 应以 https:// 开头：{url}"
+
+
+class TestVenvBootstrap:
+    def test_exec_reenter_uses_venv_launcher_path(self):
+        from core.venv_bootstrap import _exec_reenter
+
+        venv_python = Path("/tmp/opskit/.venv/bin/python")
+        with patch("os.execv") as mock_execv:
+            _exec_reenter(venv_python)
+
+        args = mock_execv.call_args[0]
+        assert args[0] == str(venv_python)
+        assert args[1][0] == str(venv_python)
