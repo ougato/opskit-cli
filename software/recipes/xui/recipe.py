@@ -48,7 +48,7 @@ class XuiServerRecipe(Recipe):
     category: ClassVar[str] = "devops"
     description: ClassVar[str] = "x-ui VLESS REALITY XHTTP / Trojan 服务端"
     platforms: ClassVar[list[str]] = ["linux"]
-    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}, "tailscale"]
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True

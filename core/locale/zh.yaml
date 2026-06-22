@@ -313,9 +313,12 @@ xui:
     panel_password: "面板密码"
     vless_link: "VLESS 链接"
     trojan_link: "Trojan 链接"
+    host_source: "分享主机"
+    public_host_warning: "未到 Tailscale IP；云 VM 的公网 IP 可能无法直连"
   diagnose:
     title: "x-ui 诊断"
     service: "服务运行"
+    tailscale_ip: "Tailscale IP"
     panel_port: "面板端口"
     vless_port: "VLESS 端口"
     trojan_port: "Trojan 端口"
@@ -345,6 +348,7 @@ tailscale:
     title: "Tailscale 诊"
     installed: "已安"
     service: "服运"
+    tailscale_ip: "Tailscale IP"
   manage:
     status: "查状"
     login: "登录连接"
