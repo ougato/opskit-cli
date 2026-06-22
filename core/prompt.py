@@ -260,7 +260,14 @@ def _render_header(labels: list[str]) -> None:
 
 def _pad_label(label: str) -> str:
     """在每个 \\uFE0F variation selector 后插入补偿空格，修复终端宽度错位"""
-    return label.replace('\uFE0F', '\uFE0F ')
+    chars: list[str] = []
+    for index, ch in enumerate(label):
+        chars.append(ch)
+        if ch == '\uFE0F':
+            next_ch = label[index + 1] if index + 1 < len(label) else ''
+            if next_ch and not next_ch.isspace():
+                chars.append(' ')
+    return ''.join(chars)
 
 
 def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:

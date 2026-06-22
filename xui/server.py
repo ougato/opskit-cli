@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -13,6 +14,11 @@ from core.prompt import UserCancel, confirm, pause, select, text_input
 from core.theme import print_error, print_info, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
+    APT_ASSUME_YES_ARG,
+    APT_INSTALL_COMMAND,
+    APT_UPDATE_COMMAND,
+    DEBIAN_FRONTEND_ENV,
+    DEBIAN_FRONTEND_NONINTERACTIVE,
     DEFAULT_PANEL_BASE_PATH,
     DEFAULT_PANEL_PORT,
     DEFAULT_PANEL_USER,
@@ -33,6 +39,7 @@ from xui.constants import (
     SQLITE3_COMMAND,
     SQLITE_YUM_PACKAGE,
     YUM_COMMAND,
+    YUM_INSTALL_COMMAND,
     XUI_COMMAND,
     XUI_LOG_LINES,
     XUI_PENDING_INBOUNDS_FILE,
@@ -45,6 +52,7 @@ from xui.templates import to_xui_api_payload, trojan_inbound, vless_reality_xhtt
 from xui.utils import (
     add_inbound,
     command_exists,
+    configure_panel_settings,
     detect_public_host,
     generate_reality_keypair,
     gen_password,
@@ -101,12 +109,31 @@ def _ensure_linux() -> None:
 def _install_base_packages() -> None:
     if command_exists(CURL_COMMAND) and command_exists(SQLITE3_COMMAND):
         return
+    env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
     if command_exists(APT_GET_COMMAND):
-        subprocess.run([APT_GET_COMMAND, "update"], check=True)
-        subprocess.run([APT_GET_COMMAND, "install", "-y", CURL_COMMAND, SQLITE3_COMMAND], check=True)
+        subprocess.run(
+            [APT_GET_COMMAND, APT_UPDATE_COMMAND],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        subprocess.run(
+            [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
         return
     if command_exists(YUM_COMMAND):
-        subprocess.run([YUM_COMMAND, "install", "-y", CURL_COMMAND, SQLITE_YUM_PACKAGE], check=True)
+        subprocess.run(
+            [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
         return
     raise InstallError(t("xui.error.package_manager_missing"))
 
@@ -192,6 +219,17 @@ def install_server() -> None:
         trojan_password = gen_password()
 
         sp.step(t("xui.step.configure_panel"))
+        if not configure_panel_settings(
+            port=panel_port,
+            username=panel_user,
+            password=panel_password,
+            base_path=panel_base_path,
+        ):
+            raise InstallError(t("xui.error.panel_config_failed"))
+        try:
+            restart_service()
+        except Exception:
+            pass
         vless = vless_reality_xhttp_inbound(
             port=vless_port,
             uuid=uuid,

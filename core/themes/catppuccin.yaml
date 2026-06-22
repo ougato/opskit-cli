@@ -104,7 +104,7 @@ icons:
   redis: "\U0001F534"         # 🔴
 
   xui: "\U0001F310"             # 🌐
-  xui_server: "\U0001F6E0\uFE0F"   # 🛠️
+  xui_server: "\U0001F6E0"   # 🛠️
 
   # WireGuard
   wireguard: "\U0001F510"     # 🔐

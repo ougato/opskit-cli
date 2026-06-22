@@ -41,3 +41,73 @@ def test_xui_state_redacts_sensitive_fields_and_uses_0600(tmp_path) -> None:
     assert isinstance(vless, dict)
     assert vless["private_key"] == "<redacted>"
     assert vless["public_key"] == "pub"
+
+
+def test_generate_reality_keypair_uses_3x_ui_xray_binary(tmp_path, monkeypatch) -> None:
+    xray = tmp_path / "xray-linux-amd64"
+    xray.write_text(
+        "#!/bin/sh\n"
+        "echo 'PrivateKey: private-key'\n"
+        "echo 'Password (PublicKey): public-key'\n",
+        encoding="utf-8",
+    )
+    xray.chmod(0o755)
+
+    from xui import utils
+
+    monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", [str(xray)])
+    assert utils.generate_reality_keypair() == ("private-key", "public-key")
+
+
+def test_panel_api_base_normalizes_trailing_slash() -> None:
+    from xui.utils import panel_api_base
+
+    assert panel_api_base(54321, "") == "http://127.0.0.1:54321"
+    assert panel_api_base(54321, "abc/") == "http://127.0.0.1:54321/abc"
+    assert panel_api_base(54321, "/abc/") == "http://127.0.0.1:54321/abc"
+
+
+def test_configure_panel_settings_uses_quiet_xui_binary(monkeypatch) -> None:
+    from xui import utils
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(utils, "command_exists", lambda name: True)
+    monkeypatch.setattr(utils.subprocess, "run", fake_run)
+
+    assert utils.configure_panel_settings(
+        port=54321,
+        username="opskit",
+        password="secret",
+        base_path="/panel/",
+    ) is True
+    call = calls[0]
+    assert call["command"] == [
+        "/usr/local/x-ui/x-ui",
+        "setting",
+        "-username",
+        "opskit",
+        "-password",
+        "secret",
+        "-port",
+        "54321",
+        "-webBasePath",
+        "/panel/",
+    ]
+    assert call["capture_output"] is True
+    assert call["text"] is True
+
+
+def test_extract_csrf_token_from_login_page() -> None:
+    from xui.utils import _extract_csrf_token
+
+    html = '<meta name="csrf-token" content="token-value">'
+    assert _extract_csrf_token(html) == "token-value"

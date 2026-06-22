@@ -1,11 +1,14 @@
 """x-ui 自动化工具函数。"""
 from __future__ import annotations
 
+import http.cookiejar
 import json
+import os
 import secrets
 import shutil
 import stat
 import subprocess
+import time
 import tempfile
 import urllib.parse
 import urllib.request
@@ -14,6 +17,13 @@ from pathlib import Path
 
 from core.constants import PUBLIC_IP_APIS
 from xui.constants import (
+    HTTP_CONTENT_TYPE_FORM,
+    HTTP_CONTENT_TYPE_JSON,
+    HTTP_HEADER_CONTENT_TYPE,
+    HTTP_HEADER_COOKIE,
+    HTTP_HEADER_USER_AGENT,
+    HTTP_HEADER_X_CSRF_TOKEN,
+    HTTP_HEADER_X_REQUESTED_WITH,
     HTTP_STATUS_OK,
     HTTP_STATUS_REDIRECT_MAX,
     HTTP_STATUS_REDIRECT_MIN,
@@ -21,6 +31,8 @@ from xui.constants import (
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
+    PANEL_API_RETRY_COUNT,
+    PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
     REDACTED_VALUE,
     SENSITIVE_STATE_KEYS,
@@ -30,15 +42,29 @@ from xui.constants import (
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
     HTTP_URL_TEMPLATE,
+    HTTP_VALUE_XMLHTTPREQUEST,
     XHTTP_PATH_SUFFIX_BYTES,
+    BASH_COMMAND,
+    DEBIAN_FRONTEND_ENV,
+    DEBIAN_FRONTEND_NONINTERACTIVE,
     XUI_API_ADD_INBOUND_PATH,
+    XUI_API_CSRF_PATH,
     XUI_API_LOGIN_PATH,
+    XUI_BINARY_COMMAND,
     XUI_COMMAND,
+    XUI_SETTING_PASSWORD_ARG,
+    XUI_SETTING_PORT_ARG,
+    XUI_SETTING_SUBCOMMAND,
+    XUI_SETTING_USERNAME_ARG,
+    XUI_SETTING_WEB_BASE_PATH_ARG,
     XUI_INSTALLED_VERSION,
     XUI_INSTALL_SCRIPT_URL,
+    XUI_INSTALL_SCRIPT_INPUT,
     XUI_SERVICE,
     XUI_STATE_FILE,
     XUI_XRAY_CANDIDATES,
+    XUI_COOKIE_SEPARATOR,
+    XUI_CSRF_META_MARKER,
 )
 
 
@@ -130,10 +156,12 @@ def install_xui_script() -> None:
             script_path.write_bytes(resp.read())
         script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         subprocess.run(
-            ["bash", str(script_path)],
-            input="\n",
+            [BASH_COMMAND, str(script_path)],
+            input=XUI_INSTALL_SCRIPT_INPUT,
             text=True,
             check=True,
+            capture_output=True,
+            env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
             timeout=INSTALL_SCRIPT_TIMEOUT,
         )
     finally:
@@ -210,18 +238,68 @@ def panel_api_base(port: int, base_path: str) -> str:
     normalized = base_path.strip()
     if normalized and not normalized.startswith("/"):
         normalized = f"/{normalized}"
+    normalized = normalized.rstrip("/")
     return HTTP_URL_TEMPLATE.format(host=LOOPBACK_HOST, port=port, base_path=normalized)
 
 
-def _post_json(url: str, payload: dict[str, object], cookie: str) -> bool:
+def configure_panel_settings(
+    *,
+    port: int,
+    username: str,
+    password: str,
+    base_path: str,
+) -> bool:
+    if not command_exists(XUI_BINARY_COMMAND):
+        return False
+    result = subprocess.run(
+        [
+            XUI_BINARY_COMMAND,
+            XUI_SETTING_SUBCOMMAND,
+            XUI_SETTING_USERNAME_ARG,
+            username,
+            XUI_SETTING_PASSWORD_ARG,
+            password,
+            XUI_SETTING_PORT_ARG,
+            str(port),
+            XUI_SETTING_WEB_BASE_PATH_ARG,
+            base_path.strip(),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
+    return result.returncode == 0
+
+
+def _extract_csrf_token(text: str) -> str:
+    marker = XUI_CSRF_META_MARKER
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    start += len(marker)
+    end = text.find('"', start)
+    if end < 0:
+        return ""
+    return text[start:end]
+
+
+def _cookie_header(jar: http.cookiejar.CookieJar) -> str:
+    return XUI_COOKIE_SEPARATOR.join(f"{cookie.name}={cookie.value}" for cookie in jar)
+
+
+def _post_json(url: str, payload: dict[str, object], cookie: str, csrf_token: str) -> bool:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
         headers={
-            "Content-Type": "application/json",
-            "Cookie": cookie,
-            "User-Agent": OPSKIT_USER_AGENT,
+            HTTP_HEADER_CONTENT_TYPE: HTTP_CONTENT_TYPE_JSON,
+            HTTP_HEADER_COOKIE: cookie,
+            HTTP_HEADER_USER_AGENT: OPSKIT_USER_AGENT,
+            HTTP_HEADER_X_REQUESTED_WITH: HTTP_VALUE_XMLHTTPREQUEST,
+            HTTP_HEADER_X_CSRF_TOKEN: csrf_token,
         },
         method="POST",
     )
@@ -229,31 +307,52 @@ def _post_json(url: str, payload: dict[str, object], cookie: str) -> bool:
         return resp.status == HTTP_STATUS_OK
 
 
-def login_panel(port: int, username: str, password: str, base_path: str) -> str:
+def login_panel(port: int, username: str, password: str, base_path: str) -> tuple[str, str]:
     base = panel_api_base(port, base_path)
-    body = urllib.parse.urlencode({"username": username, "password": password}).encode("utf-8")
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    with opener.open(f"{base}/", timeout=HTTP_TIMEOUT_SECONDS) as resp:
+        csrf_token = _extract_csrf_token(resp.read().decode("utf-8", errors="ignore"))
+    if not csrf_token:
+        with opener.open(f"{base}{XUI_API_CSRF_PATH}", timeout=HTTP_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            obj = data.get("obj") if isinstance(data, dict) else ""
+            csrf_token = obj if isinstance(obj, str) else ""
+    body = urllib.parse.urlencode({
+        "username": username,
+        "password": password,
+        "twoFactorCode": "",
+    }).encode("utf-8")
     req = urllib.request.Request(
         f"{base}{XUI_API_LOGIN_PATH}",
         data=body,
         headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": OPSKIT_USER_AGENT,
+            HTTP_HEADER_CONTENT_TYPE: HTTP_CONTENT_TYPE_FORM,
+            HTTP_HEADER_USER_AGENT: OPSKIT_USER_AGENT,
+            HTTP_HEADER_X_REQUESTED_WITH: HTTP_VALUE_XMLHTTPREQUEST,
+            HTTP_HEADER_X_CSRF_TOKEN: csrf_token,
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-        cookie = resp.headers.get("Set-Cookie", "")
+    with opener.open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
         if resp.status in range(HTTP_STATUS_REDIRECT_MIN, HTTP_STATUS_REDIRECT_MAX + 1) or resp.status == HTTP_STATUS_OK:
-            return cookie
-    return ""
+            return _cookie_header(jar), csrf_token
+    return "", ""
 
 
 def add_inbound(port: int, username: str, password: str, base_path: str, payload: dict[str, object]) -> bool:
-    cookie = login_panel(port, username, password, base_path)
-    if not cookie:
-        return False
-    base = panel_api_base(port, base_path)
-    return _post_json(f"{base}{XUI_API_ADD_INBOUND_PATH}", payload, cookie)
+    for attempt in range(PANEL_API_RETRY_COUNT):
+        try:
+            cookie, csrf_token = login_panel(port, username, password, base_path)
+            if cookie and csrf_token:
+                base = panel_api_base(port, base_path)
+                if _post_json(f"{base}{XUI_API_ADD_INBOUND_PATH}", payload, cookie, csrf_token):
+                    return True
+        except Exception:
+            pass
+        if attempt < PANEL_API_RETRY_COUNT - 1:
+            time.sleep(PANEL_API_RETRY_DELAY_SECONDS)
+    return False
 
 
 def restart_service(service: str = XUI_SERVICE) -> None:

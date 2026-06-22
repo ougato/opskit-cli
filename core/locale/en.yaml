@@ -300,6 +300,7 @@ xui:
     invalid_port: "Invalid port"
     unsupported_os: "Linux only"
     package_manager_missing: "No supported package manager found"
+    panel_config_failed: "Panel configuration failed"
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
   output:

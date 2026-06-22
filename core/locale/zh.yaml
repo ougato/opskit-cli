@@ -300,6 +300,7 @@ xui:
     invalid_port: "端口无效"
     unsupported_os: "仅支持 Linux"
     package_manager_missing: "未找到支持的包管理器"
+    panel_config_failed: "面板配置失败"
     reality_key_failed: "REALITY 密钥生成失败"
     panel_api_failed: "面板 API 调用失败：{error}"
   output:

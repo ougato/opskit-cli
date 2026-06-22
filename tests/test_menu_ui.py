@@ -391,3 +391,10 @@ class TestSubMenuUserCancelDoesNotPropagate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_pad_label_does_not_double_space_after_variation_selector() -> None:
+    from core.prompt import _pad_label
+
+    assert _pad_label("🛠️ x-ui") == "🛠️ x-ui"
+    assert _pad_label("🛠️x-ui") == "🛠️ x-ui"
