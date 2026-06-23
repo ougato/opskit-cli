@@ -70,6 +70,10 @@ from xui.constants import (
     XUI_SETTING_SUBCOMMAND,
     XUI_SETTING_USERNAME_ARG,
     XUI_SETTING_WEB_BASE_PATH_ARG,
+    XUI_SETTING_SHOW_ARG,
+    XUI_SETTING_PORT_KEY,
+    XUI_SETTING_WEB_BASE_PATH_KEY,
+    XUI_SETTING_KV_SEPARATOR,
     XUI_INSTALLED_VERSION,
     XUI_INSTALL_SCRIPT_URL,
     XUI_INSTALL_SCRIPT_INPUT,
@@ -315,6 +319,39 @@ def configure_panel_settings(
         timeout=HTTP_TIMEOUT_SECONDS,
     )
     return result.returncode == 0
+
+
+def get_panel_settings() -> dict[str, object]:
+    """读取 x-ui 实际生效的面板设置（port / webBasePath）。
+
+    3x-ui 会为面板生成随机 webBasePath；`x-ui setting -webBasePath ""`
+    不会将其重置为空，因此必须回读真实值用于后续 API 自动化与地址展示。
+    """
+    if not command_exists(XUI_BINARY_COMMAND):
+        return {}
+    result = subprocess.run(
+        [XUI_BINARY_COMMAND, XUI_SETTING_SUBCOMMAND, XUI_SETTING_SHOW_ARG],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
+    settings: dict[str, object] = {}
+    for line in result.stdout.splitlines():
+        if XUI_SETTING_KV_SEPARATOR not in line:
+            continue
+        key, _, value = line.partition(XUI_SETTING_KV_SEPARATOR)
+        key = key.strip()
+        value = value.strip()
+        if key == XUI_SETTING_PORT_KEY:
+            try:
+                settings["port"] = int(value)
+            except ValueError:
+                continue
+        elif key == XUI_SETTING_WEB_BASE_PATH_KEY:
+            settings["base_path"] = value
+    return settings
 
 
 def _extract_csrf_token(text: str) -> str:

@@ -10,8 +10,8 @@ from rich.console import Console
 
 from core.i18n import t
 from core.progress import MultiStepProgress
-from core.prompt import UserCancel, confirm, pause, select, text_input
-from core.theme import print_error, print_info, print_success, print_warning
+from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
+from core.theme import print_action_title, print_error, print_info, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
     APT_ASSUME_YES_ARG,
@@ -54,6 +54,7 @@ from xui.utils import (
     command_exists,
     configure_panel_settings,
     detect_public_host,
+    get_panel_settings,
     enable_inbound_clients,
     ensure_trojan_certificate,
     generate_reality_keypair,
@@ -204,6 +205,8 @@ def install_server() -> None:
         step_keys.insert(6, "xui.step.create_trojan")
     step_descs = [t(key) for key in step_keys]
 
+    clear_screen()
+    print_action_title(breadcrumb)
     with MultiStepProgress(step_descs) as sp:
         sp.step(t("xui.step.check_os"))
         _ensure_linux()
@@ -235,6 +238,11 @@ def install_server() -> None:
             restart_service()
         except Exception:
             pass
+        effective = get_panel_settings()
+        if isinstance(effective.get("port"), int):
+            panel_port = int(effective["port"])
+        if isinstance(effective.get("base_path"), str):
+            panel_base_path = str(effective["base_path"])
         vless = vless_reality_xhttp_inbound(
             port=vless_port,
             uuid=uuid,
@@ -332,7 +340,7 @@ def install_server() -> None:
     print_success(t("xui.output.install_done"))
     if not api_ok:
         print_warning(t("xui.output.pending_inbounds", path=str(XUI_PENDING_INBOUNDS_FILE)))
-    panel_url = HTTP_URL_TEMPLATE.format(host=LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
+    panel_url = HTTP_URL_TEMPLATE.format(host=host or LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
     console.print(f"{t('xui.output.panel')}: {panel_url}")
     console.print(f"{t('xui.output.panel_user')}: {panel_user}")
     console.print(f"{t('xui.output.panel_password')}: {panel_password}")
