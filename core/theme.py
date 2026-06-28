@@ -181,7 +181,7 @@ def print_info(msg: str) -> None:
     console.print(f"[{color}]{icon} {escape(msg)}[/{color}]")
 
 
-def print_action_title(breadcrumb: list[str]) -> None:
+def print_action_title(breadcrumb: list[str], trailing_blank: bool = True) -> None:
     """打印操作页面标题（Powerline 面包屑色块风格，与菜单标题完全一致）。
 
     用于安装、卸载、诊断等操作页面进度条开始前，让用户知道当前在做什么。
@@ -197,4 +197,5 @@ def print_action_title(breadcrumb: list[str]) -> None:
     """
     from core.prompt import _render_header
     _render_header(breadcrumb)
-    console.print()
+    if trailing_blank:
+        console.print()

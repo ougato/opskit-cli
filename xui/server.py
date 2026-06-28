@@ -456,7 +456,6 @@ def _show_traffic() -> None:
     if not stats:
         print_warning(t("xui.manage.no_state"))
         return
-    print_info(t("xui.traffic.title"))
     periods = [
         ("total", t("xui.traffic.total")),
         (TRAFFIC_PERIOD_TODAY, t("xui.traffic.today")),
@@ -465,8 +464,10 @@ def _show_traffic() -> None:
     ]
     up_label = t("xui.traffic.up")
     down_label = t("xui.traffic.down")
+    multi = len(stats) > 1
     for node in stats:
-        console.print(str(node.get("remark") or ""))
+        if multi:
+            console.print(str(node.get("remark") or ""))
         for period_key, period_label in periods:
             row = node.get(period_key) or {}
             up = human_bytes(row.get("up"))
@@ -503,28 +504,34 @@ def manage_nodes() -> None:
         if key is None:
             return
         clear_screen()
-        print_action_title(breadcrumb)
         if key == "1":
+            print_action_title(breadcrumb)
             _print_links(state)
             pause()
         elif key == "2":
+            print_action_title(breadcrumb)
             console.print(json.dumps(redact_state(state), indent=2, ensure_ascii=False))
             pause()
         elif key == "3":
+            print_action_title(breadcrumb, trailing_blank=False)
             start_service()
             print_success(t("xui.manage.start_done"))
             pause()
         elif key == "4":
+            print_action_title(breadcrumb, trailing_blank=False)
             stop_service()
             print_success(t("xui.manage.stop_done"))
             pause()
         elif key == "5":
+            print_action_title(breadcrumb, trailing_blank=False)
             restart_service()
             print_success(t("xui.manage.restart_done"))
             pause()
         elif key == "6":
+            print_action_title(breadcrumb)
             subprocess.run([JOURNALCTL_COMMAND, "-u", XUI_SERVICE, "-n", XUI_LOG_LINES, JOURNAL_NO_PAGER_ARG], check=False)
             pause()
         elif key == "7":
+            print_action_title(breadcrumb)
             _show_traffic()
             pause()
