@@ -65,6 +65,8 @@ WSL_CONF_FILE = Path("/etc/wsl.conf")
 WSL_BOOT_HEADER = "[boot]"
 WSL_SYSTEMD_LINE = "systemd=true"
 WSL_SYSTEMD_LINE_PATTERN = r"^\s*systemd\s*=.*$"
+WSL_EXE_COMMAND = "wsl.exe"
+WSL_SHUTDOWN_ARG = "--shutdown"
 SS_COMMAND = "ss"
 SS_TCP_LISTEN_ARGS = "-tln"
 JOURNALCTL_COMMAND = "journalctl"

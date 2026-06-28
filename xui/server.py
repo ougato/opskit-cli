@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -55,6 +56,8 @@ from xui.constants import (
     WSL_BOOT_HEADER,
     WSL_SYSTEMD_LINE,
     WSL_SYSTEMD_LINE_PATTERN,
+    WSL_EXE_COMMAND,
+    WSL_SHUTDOWN_ARG,
 )
 from xui.links import build_vless_link
 from xui.templates import to_xui_api_payload, vless_reality_tcp_inbound
@@ -199,15 +202,29 @@ def _enable_wsl_systemd() -> None:
     WSL_CONF_FILE.write_text(new_text, encoding="utf-8")
 
 
+def _restart_wsl() -> bool:
+    """通过 WSL interop 调用 wsl.exe --shutdown 重启。返回是否成功发起。"""
+    if not shutil.which(WSL_EXE_COMMAND):
+        return False
+    subprocess.run(
+        [WSL_EXE_COMMAND, WSL_SHUTDOWN_ARG],
+        check=False, capture_output=True, text=True,
+    )
+    return True
+
+
 def _precheck_systemd(breadcrumb: list[str]) -> bool:
     """安装前提前判断 systemd 是否可用。返回 False 表示中止安装。"""
     if systemd_available():
         return True
-    print_warning(t("xui.output.no_systemd"))
     if confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.enable_confirm")):
         _enable_wsl_systemd()
-        print_success(t("xui.wsl.enabled"))
-        pause()
+        if shutil.which(WSL_EXE_COMMAND):
+            print_success(t("xui.wsl.restarting"))
+            _restart_wsl()
+        else:
+            print_success(t("xui.wsl.enabled"))
+            pause()
         return False
     return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
 

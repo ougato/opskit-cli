@@ -311,9 +311,10 @@ xui:
   confirm:
     install: "Install and create X-UI nodes?"
   wsl:
-    enable_confirm: "WSL has no systemd; write /etc/wsl.conf to enable it?"
-    enabled: "Enabled systemd in /etc/wsl.conf\n↳ Run wsl --shutdown on Windows, restart WSL, then reinstall"
-    continue_confirm: "Without it the service can't start; continue install anyway?"
+    enable_confirm: "WSL has no systemd; enable and restart?"
+    restarting: "Enabled systemd; restarting WSL\n↳ Reopen the terminal and reinstall after restart"
+    enabled: "Enabled systemd\n↳ Run wsl --shutdown on Windows, restart WSL, then reinstall"
+    continue_confirm: "Service can't start without it; continue anyway?"
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
