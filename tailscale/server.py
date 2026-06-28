@@ -281,7 +281,6 @@ def uninstall_client() -> None:
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("tailscale.output.uninstall_done"))
-    pause()
 
 
 def remove_tailscale_artifacts() -> None:
