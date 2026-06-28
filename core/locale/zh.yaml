@@ -309,6 +309,10 @@ xui:
     dest: "REALITY dest（默认 {default}）"
   confirm:
     install: "确认安装并创建 X-UI 节点？"
+  wsl:
+    enable_confirm: "检测到 WSL 无 systemd，是否帮你写入 /etc/wsl.conf 开启？"
+    enabled: "已写入 /etc/wsl.conf 开启 systemd\n↳ 在 Windows 执行 wsl --shutdown 重启 WSL 后再重新安装"
+    continue_confirm: "不开启则服务无法启动，仍要继续安装？"
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"

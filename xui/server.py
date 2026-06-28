@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -50,6 +51,10 @@ from xui.constants import (
     XUI_STATE_FILE,
     XUI_SERVICE,
     XUI_VERSION_LATEST,
+    WSL_CONF_FILE,
+    WSL_BOOT_HEADER,
+    WSL_SYSTEMD_LINE,
+    WSL_SYSTEMD_LINE_PATTERN,
 )
 from xui.links import build_vless_link
 from xui.templates import to_xui_api_payload, vless_reality_tcp_inbound
@@ -181,6 +186,32 @@ def _create_inbounds(
     return ok
 
 
+def _enable_wsl_systemd() -> None:
+    text = WSL_CONF_FILE.read_text(encoding="utf-8") if WSL_CONF_FILE.exists() else ""
+    if re.search(WSL_SYSTEMD_LINE_PATTERN, text, flags=re.MULTILINE):
+        new_text = re.sub(WSL_SYSTEMD_LINE_PATTERN, WSL_SYSTEMD_LINE, text, flags=re.MULTILINE)
+    elif WSL_BOOT_HEADER in text:
+        new_text = text.replace(WSL_BOOT_HEADER, f"{WSL_BOOT_HEADER}\n{WSL_SYSTEMD_LINE}", 1)
+    else:
+        sep = "" if text == "" or text.endswith("\n") else "\n"
+        new_text = f"{text}{sep}{WSL_BOOT_HEADER}\n{WSL_SYSTEMD_LINE}\n"
+    WSL_CONF_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WSL_CONF_FILE.write_text(new_text, encoding="utf-8")
+
+
+def _precheck_systemd(breadcrumb: list[str]) -> bool:
+    """安装前提前判断 systemd 是否可用。返回 False 表示中止安装。"""
+    if systemd_available():
+        return True
+    print_warning(t("xui.output.no_systemd"))
+    if confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.enable_confirm")):
+        _enable_wsl_systemd()
+        print_success(t("xui.wsl.enabled"))
+        pause()
+        return False
+    return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
+
+
 def install_server() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
     host_default = detect_public_host()
@@ -194,6 +225,9 @@ def install_server() -> None:
     dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
 
     if not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
+        return
+
+    if not _precheck_systemd(breadcrumb):
         return
 
     step_keys = [
