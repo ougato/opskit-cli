@@ -353,6 +353,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         try:
             instance.install("latest")
+        except KeyboardInterrupt:
+            return
         except InstallError as e:
             _report(e, software=cls.key, action="install")
             print_error(t("install.failed", name=_name, error=str(e)))
@@ -418,6 +420,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         instance.install(version)
         installed_version = instance.detect() or version
         print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
+    except KeyboardInterrupt:
+        return
     except InstallError as e:
         _report(e, software=cls.key, version=version, action="install")
         print_error(t("install.failed", name=_name, error=str(e)))
@@ -617,6 +621,8 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         base_console.print()
     try:
         instance.uninstall()
+    except KeyboardInterrupt:
+        return
     except UninstallError as e:
         _report(e, software=cls.key, action="uninstall")
         print_error(t("uninstall.failed", name=_uname, error=str(e)))

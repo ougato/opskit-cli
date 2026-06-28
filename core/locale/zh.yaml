@@ -369,28 +369,28 @@ xui:
 
 tailscale:
   step:
-    check_os: "检系"
-    install: "安 Tailscale"
-    start: "启服"
-    exit_node: "Exit Node"
+    check_os: "检查系统"
+    install: "安装 Tailscale"
+    start: "启动服务"
+    exit_node: "配置出口节点"
     login: "登录"
   error:
-    unsupported_os: "仅持 Linux"
+    unsupported_os: "仅支持 Linux"
   output:
-    install_done: "Tailscale 已安"
-    uninstall_done: "Tailscale 已载"
+    install_done: "Tailscale 已安装"
+    uninstall_done: "Tailscale 已卸载"
     ip: "Tailscale IP"
-    down_done: "Tailscale 已断"
-    restart_done: "tailscaled 已启"
+    down_done: "Tailscale 已断开"
+    restart_done: "tailscaled 已重启"
   diagnose:
-    title: "Tailscale 诊"
-    installed: "已安"
-    service: "服运"
+    title: "Tailscale 诊断"
+    installed: "已安装"
+    service: "服务运行"
   manage:
-    status: "查状"
+    status: "查看状态"
     login: "登录连接"
-    down: "断连接"
-    restart: "重服"
+    down: "断开连接"
+    restart: "重启服务"
 
 wireguard:
   quick_install: "快速安装（推荐默认值）"

@@ -13,8 +13,8 @@ from rich.console import Console
 
 from core.i18n import t
 from core.progress import MultiStepProgress
-from core.prompt import UserCancel, pause, select
-from core.theme import print_error, print_info, print_success
+from core.prompt import UserCancel, clear_screen, pause, select
+from core.theme import get_color, get_icon, print_action_title, print_success
 from software.base import InstallError, UninstallError
 from tailscale.constants import (
     APT_ASSUME_YES_ARG,
@@ -213,6 +213,9 @@ def cleanup_exit_node() -> None:
 
 
 def install_client() -> None:
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.install")]
+    clear_screen()
+    print_action_title(breadcrumb)
     step_descs = [
         t("tailscale.step.check_os"),
         t("tailscale.step.install"),
@@ -247,22 +250,38 @@ def install_client() -> None:
 
 
 def uninstall_client() -> None:
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.uninstall")]
+    descs = [
+        t("software.step.stop_service"),
+        t("software.step.remove_files"),
+        t("software.step.cleanup"),
+    ]
+    clear_screen()
+    print_action_title(breadcrumb)
     try:
-        cleanup_exit_node()
-        if command_exists(TAILSCALE_COMMAND):
-            _run_root([TAILSCALE_COMMAND, "down"], check=False)
-        _run_root([SYSTEMCTL_COMMAND, "disable", "--now", TAILSCALED_SERVICE], check=False)
-        if command_exists(APT_GET_COMMAND):
-            env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
-            subprocess.run(
-                [APT_GET_COMMAND, APT_PURGE_COMMAND, APT_ASSUME_YES_ARG, *TAILSCALE_PACKAGES],
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
-            )
-        remove_tailscale_artifacts()
+        with MultiStepProgress(descs) as sp:
+            sp.step(descs[0])
+            cleanup_exit_node()
+            if command_exists(TAILSCALE_COMMAND):
+                _run_root([TAILSCALE_COMMAND, "down"], check=False)
+            _run_root([SYSTEMCTL_COMMAND, "disable", "--now", TAILSCALED_SERVICE], check=False)
+
+            sp.step(descs[1])
+            if command_exists(APT_GET_COMMAND):
+                env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
+                subprocess.run(
+                    [APT_GET_COMMAND, APT_PURGE_COMMAND, APT_ASSUME_YES_ARG, *TAILSCALE_PACKAGES],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
+                )
+            remove_tailscale_artifacts()
+
+            sp.step(descs[2])
+            _run_root([SYSTEMCTL_COMMAND, "daemon-reload"], check=False)
+            sp.complete()
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("tailscale.output.uninstall_done"))
@@ -277,48 +296,79 @@ def remove_tailscale_artifacts() -> None:
         path.unlink(missing_ok=True)
 
 
-def diagnose_client() -> None:
-    print_info(t("tailscale.diagnose.title"))
-    console.print(f"{t('tailscale.diagnose.installed')}: {detect_tailscale_version() or False}")
-    console.print(f"{t('tailscale.diagnose.service')}: {is_service_active()}")
-    ip = tailscale_ip()
-    console.print(f"{t('tailscale.output.ip')}: {ip or '-'}")
+def _render_status_panel() -> None:
+    """以面板表格输出 Tailscale 状态（参考 WireGuard 诊断展示）。"""
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    success = get_color("success")
+    value_style = get_color("text")
+
+    tbl = Table.grid(padding=(0, 1))
+    tbl.add_column(no_wrap=False)
+    tbl.add_row(Text(f"{t('tailscale.diagnose.installed')}: {detect_tailscale_version() or '-'}", style=value_style))
+    tbl.add_row(Text(f"{t('tailscale.diagnose.service')}: {is_service_active()}", style=value_style))
+    tbl.add_row(Text(f"{t('tailscale.output.ip')}: {tailscale_ip() or '-'}", style=value_style))
+    console.print(Panel(
+        tbl,
+        title=f"[{success}]{t('tailscale.diagnose.title')}[/{success}]",
+        border_style=success,
+        padding=(1, 2),
+        expand=False,
+    ))
     result = _run([TAILSCALE_COMMAND, "status"], check=False) if command_exists(TAILSCALE_COMMAND) else None
     if result and result.stdout:
+        console.print()
         console.print(result.stdout.strip())
+
+
+def diagnose_client() -> None:
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.diagnose")]
+    clear_screen()
+    print_action_title(breadcrumb)
+    _render_status_panel()
     pause()
 
 
 def manage_client() -> None:
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.manage")]
     while True:
         try:
             key = select(
-                breadcrumb=["OpsKit", t("menu.software"), t("software.tailscale"), t("software.manage")],
+                breadcrumb=breadcrumb,
                 subtitle=t("prompt.select"),
                 choices=[
-                    {"key": "1", "label": t("tailscale.manage.status")},
-                    {"key": "2", "label": t("tailscale.manage.login")},
-                    {"key": "3", "label": t("tailscale.manage.down")},
-                    {"key": "4", "label": t("tailscale.manage.restart")},
+                    {"key": "1", "label": f"{get_icon('state')} {t('tailscale.manage.status')}"},
+                    {"key": "2", "label": f"{get_icon('link')} {t('tailscale.manage.login')}"},
+                    {"key": "3", "label": f"{get_icon('stop')} {t('tailscale.manage.down')}"},
+                    {"key": "4", "label": f"{get_icon('restart')} {t('tailscale.manage.restart')}"},
                 ],
                 theme_key="software",
+                back_label=f"{get_icon('back')} {t('menu.back')}",
             )
         except UserCancel:
             return
         if key is None:
             return
+        clear_screen()
         if key == "1":
-            diagnose_client()
+            print_action_title(breadcrumb)
+            _render_status_panel()
+            pause()
         elif key == "2":
+            print_action_title(breadcrumb)
             output = start_login()
             if output:
                 console.print(output)
             pause()
         elif key == "3":
+            print_action_title(breadcrumb, trailing_blank=False)
             _run_root([TAILSCALE_COMMAND, "down"], check=False)
             print_success(t("tailscale.output.down_done"))
             pause()
         elif key == "4":
+            print_action_title(breadcrumb, trailing_blank=False)
             _run_root([SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE], check=False)
             print_success(t("tailscale.output.restart_done"))
             pause()
