@@ -328,14 +328,28 @@ def install_server() -> None:
 
 
 def uninstall_server() -> None:
+    from core.progress import MultiStepProgress
+
     print_action_title(["OpsKit", t("menu.software"), t("software.xui"), t("software.uninstall")])
+    descs = [
+        t("software.step.stop_service"),
+        t("software.step.remove_files"),
+        t("software.step.cleanup"),
+    ]
     try:
-        stop_and_disable_service()
-        remove_xui_artifacts()
-        BBR_SYSCTL_FILE.unlink(missing_ok=True)
-        from core.sysconfig import SysConfigManager
-        SysConfigManager.restore(XUI_SERVER_RECIPE_KEY)
-        SysConfigManager.remove(XUI_SERVER_RECIPE_KEY)
+        with MultiStepProgress(descs) as sp:
+            sp.step(descs[0])
+            stop_and_disable_service()
+
+            sp.step(descs[1])
+            remove_xui_artifacts()
+            BBR_SYSCTL_FILE.unlink(missing_ok=True)
+
+            sp.step(descs[2])
+            from core.sysconfig import SysConfigManager
+            SysConfigManager.restore(XUI_SERVER_RECIPE_KEY)
+            SysConfigManager.remove(XUI_SERVER_RECIPE_KEY)
+            sp.complete()
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("xui.output.uninstall_done"))
