@@ -351,9 +351,22 @@ xui:
     no_state: "No X-UI state found"
     print_links: "Show links"
     show_state: "Show redacted state"
+    start: "Start X-UI"
+    stop: "Stop X-UI"
     restart: "Restart X-UI"
     logs: "Show logs"
+    traffic: "Traffic stats"
+    start_done: "X-UI started"
+    stop_done: "X-UI stopped"
     restart_done: "X-UI restarted"
+  traffic:
+    title: "Traffic stats"
+    total: "Total"
+    today: "Today"
+    week: "Week"
+    month: "Month"
+    up: "↑"
+    down: "↓"
 
 tailscale:
   step:

@@ -42,6 +42,9 @@ from xui.constants import (
     JOURNAL_NO_PAGER_ARG,
     LINUX_PLATFORMS,
     LOOPBACK_HOST,
+    TRAFFIC_PERIOD_MONTH,
+    TRAFFIC_PERIOD_TODAY,
+    TRAFFIC_PERIOD_WEEK,
     SQLITE3_COMMAND,
     SQLITE_YUM_PACKAGE,
     YUM_COMMAND,
@@ -78,12 +81,18 @@ from xui.utils import (
     redact_state,
     remove_xui_artifacts,
     restart_service,
+    start_service,
+    stop_service,
+    enable_service,
+    install_traffic_timer,
+    uninstall_traffic_timer,
     stop_and_disable_service,
     systemd_available,
     is_wsl,
     write_secret_json,
     install_xui_script,
 )
+from xui.traffic import compute_stats, human_bytes
 
 console = Console()
 
@@ -343,9 +352,11 @@ def install_server() -> None:
 
         sp.step(t("xui.step.start_service"))
         try:
+            enable_service()
             restart_service()
         except Exception:
             pass
+        install_traffic_timer()
 
         sp.step(t("xui.step.verify"))
         state: dict[str, object] = {
@@ -401,6 +412,7 @@ def uninstall_server() -> None:
             stop_and_disable_service()
 
             sp.step(descs[1])
+            uninstall_traffic_timer()
             remove_xui_artifacts()
             BBR_SYSCTL_FILE.unlink(missing_ok=True)
 
@@ -439,6 +451,29 @@ def _print_links(state: dict[str, object]) -> None:
             console.print(f"{t('xui.output.vless_link')}: {link}")
 
 
+def _show_traffic() -> None:
+    stats = compute_stats()
+    if not stats:
+        print_warning(t("xui.manage.no_state"))
+        return
+    print_info(t("xui.traffic.title"))
+    periods = [
+        ("total", t("xui.traffic.total")),
+        (TRAFFIC_PERIOD_TODAY, t("xui.traffic.today")),
+        (TRAFFIC_PERIOD_WEEK, t("xui.traffic.week")),
+        (TRAFFIC_PERIOD_MONTH, t("xui.traffic.month")),
+    ]
+    up_label = t("xui.traffic.up")
+    down_label = t("xui.traffic.down")
+    for node in stats:
+        console.print(str(node.get("remark") or ""))
+        for period_key, period_label in periods:
+            row = node.get(period_key) or {}
+            up = human_bytes(row.get("up"))
+            down = human_bytes(row.get("down"))
+            console.print(f"  {period_label}  {up_label} {up}  {down_label} {down}")
+
+
 def manage_nodes() -> None:
     state = load_state()
     if not state:
@@ -454,8 +489,11 @@ def manage_nodes() -> None:
                 choices=[
                     {"key": "1", "label": t("xui.manage.print_links")},
                     {"key": "2", "label": t("xui.manage.show_state")},
-                    {"key": "3", "label": t("xui.manage.restart")},
-                    {"key": "4", "label": t("xui.manage.logs")},
+                    {"key": "3", "label": t("xui.manage.start")},
+                    {"key": "4", "label": t("xui.manage.stop")},
+                    {"key": "5", "label": t("xui.manage.restart")},
+                    {"key": "6", "label": t("xui.manage.logs")},
+                    {"key": "7", "label": t("xui.manage.traffic")},
                 ],
                 theme_key="software",
             )
@@ -472,9 +510,20 @@ def manage_nodes() -> None:
             console.print(json.dumps(redact_state(state), indent=2, ensure_ascii=False))
             pause()
         elif key == "3":
+            start_service()
+            print_success(t("xui.manage.start_done"))
+            pause()
+        elif key == "4":
+            stop_service()
+            print_success(t("xui.manage.stop_done"))
+            pause()
+        elif key == "5":
             restart_service()
             print_success(t("xui.manage.restart_done"))
             pause()
-        elif key == "4":
+        elif key == "6":
             subprocess.run([JOURNALCTL_COMMAND, "-u", XUI_SERVICE, "-n", XUI_LOG_LINES, JOURNAL_NO_PAGER_ARG], check=False)
+            pause()
+        elif key == "7":
+            _show_traffic()
             pause()

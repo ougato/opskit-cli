@@ -31,6 +31,85 @@ def test_is_wsl_true_via_env(monkeypatch) -> None:
     assert utils.is_wsl() is True
 
 
+def _make_xui_db(path, rows) -> None:
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "create table inbounds (id integer primary key, remark text, up integer, down integer)"
+        )
+        conn.executemany(
+            "insert into inbounds(id, remark, up, down) values (?, ?, ?, ?)", rows
+        )
+
+
+def test_human_bytes() -> None:
+    from xui.traffic import human_bytes
+
+    assert human_bytes(None) == "—"
+    assert human_bytes(0) == "0 B"
+    assert human_bytes(512) == "512 B"
+    assert human_bytes(1024) == "1.00 KB"
+    assert human_bytes(1536) == "1.50 KB"
+
+
+def test_traffic_snapshot_and_stats(monkeypatch, tmp_path) -> None:
+    import sqlite3
+
+    from xui import traffic
+
+    db = tmp_path / "x-ui.db"
+    hist = tmp_path / "hist.db"
+    _make_xui_db(db, [(1, "JP", 100, 200)])
+    monkeypatch.setattr(traffic, "XUI_DATABASE_FILE", db)
+    monkeypatch.setattr(traffic, "XUI_TRAFFIC_HISTORY_FILE", hist)
+
+    traffic.take_snapshot()
+    with sqlite3.connect(db) as conn:
+        conn.execute("update inbounds set up = 350, down = 600 where id = 1")
+
+    stats = traffic.compute_stats()
+    assert len(stats) == 1
+    node = stats[0]
+    assert node["remark"] == "JP"
+    assert node["total"] == {"up": 350, "down": 600}
+    assert node["today"] == {"up": 250, "down": 400}
+    assert node["week"] == {"up": 250, "down": 400}
+    assert node["month"] == {"up": 250, "down": 400}
+
+
+def test_traffic_stats_without_history(monkeypatch, tmp_path) -> None:
+    from xui import traffic
+
+    db = tmp_path / "x-ui.db"
+    _make_xui_db(db, [(1, "JP", 10, 20)])
+    monkeypatch.setattr(traffic, "XUI_DATABASE_FILE", db)
+    monkeypatch.setattr(traffic, "XUI_TRAFFIC_HISTORY_FILE", tmp_path / "missing.db")
+
+    stats = traffic.compute_stats()
+    assert stats[0]["total"] == {"up": 10, "down": 20}
+    assert stats[0]["today"] == {"up": None, "down": None}
+
+
+def test_traffic_stats_handles_counter_reset(monkeypatch, tmp_path) -> None:
+    import sqlite3
+
+    from xui import traffic
+
+    db = tmp_path / "x-ui.db"
+    hist = tmp_path / "hist.db"
+    _make_xui_db(db, [(1, "JP", 1000, 2000)])
+    monkeypatch.setattr(traffic, "XUI_DATABASE_FILE", db)
+    monkeypatch.setattr(traffic, "XUI_TRAFFIC_HISTORY_FILE", hist)
+
+    traffic.take_snapshot()
+    with sqlite3.connect(db) as conn:
+        conn.execute("update inbounds set up = 50, down = 80 where id = 1")
+
+    stats = traffic.compute_stats()
+    assert stats[0]["today"] == {"up": 0, "down": 0}
+
+
 def test_xui_recipe_is_registered_without_submenu() -> None:
     keys = {cls.key for cls in all_recipes()}
     assert "xui" in keys

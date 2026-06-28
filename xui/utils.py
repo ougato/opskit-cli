@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 import tempfile
 import urllib.parse
@@ -43,6 +44,18 @@ from xui.constants import (
     SS_COMMAND,
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
+    SYSTEMCTL_DAEMON_RELOAD_ARG,
+    SYSTEMCTL_ENABLE_ARG,
+    SYSTEMCTL_ENABLE_NOW_ARG,
+    SYSTEMCTL_START_ARG,
+    SYSTEMCTL_STOP_ARG,
+    TRAFFIC_SERVICE_UNIT_CONTENT,
+    TRAFFIC_SERVICE_UNIT_FILE,
+    TRAFFIC_SNAPSHOT_CLI_ARGS,
+    TRAFFIC_TIMER_UNIT,
+    TRAFFIC_TIMER_UNIT_CONTENT,
+    TRAFFIC_TIMER_UNIT_FILE,
+    XUI_TRAFFIC_HISTORY_FILE,
     WSL_DISTRO_NAME_ENV,
     WSL_MARKER,
     WSL_OSRELEASE_FILE,
@@ -463,6 +476,77 @@ def restart_service(service: str = XUI_SERVICE) -> None:
         [SYSTEMCTL_COMMAND, "restart", service],
         check=True, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
     )
+
+
+def start_service(service: str = XUI_SERVICE) -> None:
+    if not systemd_available():
+        return
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, SYSTEMCTL_START_ARG, service],
+        check=True, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+
+
+def stop_service(service: str = XUI_SERVICE) -> None:
+    if not systemd_available():
+        return
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, SYSTEMCTL_STOP_ARG, service],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+
+
+def enable_service(service: str = XUI_SERVICE) -> None:
+    if not systemd_available():
+        return
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, service],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+
+
+def _snapshot_exec_start() -> str:
+    """生成定时器 ExecStart：打包二进制直接调用自身，开发态用 python 跑 main.py。"""
+    prog = os.path.abspath(sys.argv[0])
+    if prog.endswith(".py"):
+        return f"{sys.executable} {prog} {TRAFFIC_SNAPSHOT_CLI_ARGS}"
+    return f"{prog} {TRAFFIC_SNAPSHOT_CLI_ARGS}"
+
+
+def install_traffic_timer() -> None:
+    """安装并启用每小时流量快照定时器；无 systemd 时跳过。"""
+    if not systemd_available():
+        return
+    TRAFFIC_SERVICE_UNIT_FILE.write_text(
+        TRAFFIC_SERVICE_UNIT_CONTENT.format(exec_start=_snapshot_exec_start()),
+        encoding="utf-8",
+    )
+    TRAFFIC_TIMER_UNIT_FILE.write_text(TRAFFIC_TIMER_UNIT_CONTENT, encoding="utf-8")
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+
+
+def uninstall_traffic_timer() -> None:
+    """停用并移除流量快照定时器、历史库；无 systemd 时仅清理文件。"""
+    if systemd_available():
+        subprocess.run(
+            [SYSTEMCTL_COMMAND, "disable", SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
+            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        )
+    TRAFFIC_TIMER_UNIT_FILE.unlink(missing_ok=True)
+    TRAFFIC_SERVICE_UNIT_FILE.unlink(missing_ok=True)
+    XUI_TRAFFIC_HISTORY_FILE.unlink(missing_ok=True)
+    if systemd_available():
+        subprocess.run(
+            [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
+            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        )
 
 
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:

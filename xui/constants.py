@@ -25,6 +25,7 @@ XUI_CONFIG_DIR = Path("/etc/x-ui")
 XUI_DATABASE_FILE = XUI_CONFIG_DIR / "x-ui.db"
 XUI_STATE_FILE = XUI_CONFIG_DIR / "opskit-state.json"
 XUI_PENDING_INBOUNDS_FILE = XUI_CONFIG_DIR / "opskit-inbounds.json"
+XUI_TRAFFIC_HISTORY_FILE = XUI_CONFIG_DIR / "opskit-traffic.db"
 XUI_INSTALL_DIR = Path("/usr/local/x-ui")
 XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR, XUI_CONFIG_DIR]
 XUI_ARTIFACT_FILES = [
@@ -70,6 +71,46 @@ WSL_SHUTDOWN_ARG = "--shutdown"
 WSL_OSRELEASE_FILE = Path("/proc/sys/kernel/osrelease")
 WSL_MARKER = "microsoft"
 WSL_DISTRO_NAME_ENV = "WSL_DISTRO_NAME"
+SYSTEMCTL_ENABLE_ARG = "enable"
+SYSTEMCTL_START_ARG = "start"
+SYSTEMCTL_STOP_ARG = "stop"
+SYSTEMCTL_DAEMON_RELOAD_ARG = "daemon-reload"
+SYSTEMCTL_ENABLE_NOW_ARG = "--now"
+
+SYSTEMD_UNIT_DIR = Path("/etc/systemd/system")
+TRAFFIC_TIMER_UNIT = "opskit-xui-traffic.timer"
+TRAFFIC_SERVICE_UNIT = "opskit-xui-traffic.service"
+TRAFFIC_SERVICE_UNIT_FILE = SYSTEMD_UNIT_DIR / TRAFFIC_SERVICE_UNIT
+TRAFFIC_TIMER_UNIT_FILE = SYSTEMD_UNIT_DIR / TRAFFIC_TIMER_UNIT
+TRAFFIC_SNAPSHOT_CLI_ARGS = "software xui-snapshot"
+TRAFFIC_SERVICE_UNIT_CONTENT = (
+    "[Unit]\n"
+    "Description=OpsKit x-ui traffic snapshot\n\n"
+    "[Service]\n"
+    "Type=oneshot\n"
+    "ExecStart={exec_start}\n"
+)
+TRAFFIC_TIMER_UNIT_CONTENT = (
+    "[Unit]\n"
+    "Description=OpsKit x-ui traffic snapshot timer\n\n"
+    "[Timer]\n"
+    "OnCalendar=hourly\n"
+    "Persistent=true\n\n"
+    "[Install]\n"
+    "WantedBy=timers.target\n"
+)
+
+TRAFFIC_HISTORY_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS traffic_snapshots ("
+    "ts INTEGER NOT NULL, inbound_id INTEGER NOT NULL, "
+    "remark TEXT, up INTEGER NOT NULL, down INTEGER NOT NULL)"
+)
+TRAFFIC_PERIOD_TODAY = "today"
+TRAFFIC_PERIOD_WEEK = "week"
+TRAFFIC_PERIOD_MONTH = "month"
+TRAFFIC_BYTE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
+TRAFFIC_BYTE_STEP = 1024.0
+
 SS_COMMAND = "ss"
 SS_TCP_LISTEN_ARGS = "-tln"
 JOURNALCTL_COMMAND = "journalctl"

@@ -350,9 +350,22 @@ xui:
     no_state: "未找到 X-UI 状态"
     print_links: "显示链接"
     show_state: "查看脱敏状态"
+    start: "启动 X-UI"
+    stop: "停止 X-UI"
     restart: "重启 X-UI"
     logs: "查看日志"
+    traffic: "流量统计"
+    start_done: "X-UI 已启动"
+    stop_done: "X-UI 已停止"
     restart_done: "X-UI 已重启"
+  traffic:
+    title: "流量统计"
+    total: "累计"
+    today: "今日"
+    week: "本周"
+    month: "本月"
+    up: "↑"
+    down: "↓"
 
 tailscale:
   step:
