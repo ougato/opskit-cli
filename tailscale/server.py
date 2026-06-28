@@ -240,12 +240,8 @@ def install_client() -> None:
         sp.step(t("tailscale.step.login"))
         login_output = start_login()
 
-    print_success(t("tailscale.output.install_done"))
-    if login_output:
-        console.print(login_output)
-    ip = tailscale_ip()
-    if ip:
-        console.print(f"{t('tailscale.output.ip')}: {ip}")
+    console.print()
+    _render_install_panel(login_output)
     pause()
 
 
@@ -294,6 +290,42 @@ def remove_tailscale_artifacts() -> None:
             shutil.rmtree(path, ignore_errors=True)
     for path in (TAILSCALE_REPO_FILE, TAILSCALE_KEYRING_FILE):
         path.unlink(missing_ok=True)
+
+
+def _extract_auth_url(output: str) -> str:
+    """从 tailscale up 输出里提取登录授权地址，忽略 UDP GRO 等无关警告。"""
+    import re
+
+    match = re.search(r"https?://login\.tailscale\.com/\S+", output or "")
+    return match.group(0) if match else ""
+
+
+def _render_install_panel(login_output: str) -> None:
+    """安装完成后用面板输出关键信息（参考 RustDesk）：Tailscale IP + 登录地址。"""
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    success = get_color("success")
+    value_style = get_color("text")
+    muted = get_color("muted")
+
+    tbl = Table.grid(padding=(0, 1))
+    tbl.add_column(no_wrap=False)
+    ip = tailscale_ip()
+    if ip:
+        tbl.add_row(Text(f"{t('tailscale.output.ip')}: {ip}", style=value_style))
+    auth_url = _extract_auth_url(login_output)
+    if auth_url:
+        tbl.add_row(Text(f"{t('tailscale.output.auth_url')}: {auth_url}", style=value_style))
+        tbl.add_row(Text(t("tailscale.output.auth_hint"), style=muted))
+    console.print(Panel(
+        tbl,
+        title=f"[{success}]{t('tailscale.output.install_done')}[/{success}]",
+        border_style=success,
+        padding=(1, 2),
+        expand=False,
+    ))
 
 
 def _render_status_panel() -> None:

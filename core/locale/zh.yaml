@@ -380,6 +380,8 @@ tailscale:
     install_done: "Tailscale 已安装"
     uninstall_done: "Tailscale 已卸载"
     ip: "Tailscale IP"
+    auth_url: "登录地址"
+    auth_hint: "浏览器打开上面链接完成登录"
     down_done: "Tailscale 已断开"
     restart_done: "tailscaled 已重启"
   diagnose:

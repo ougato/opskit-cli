@@ -134,6 +134,20 @@ def test_cleanup_exit_node_removes_persistent_rules(tmp_path, monkeypatch) -> No
     assert [server.RM_COMMAND, "-f", str(sysctl_file)] in calls
 
 
+def test_extract_auth_url_filters_noise() -> None:
+    from tailscale import server
+
+    output = (
+        "Warning: UDP GRO forwarding is suboptimally configured on eth0\n"
+        "See https://tailscale.com/s/ethtool-config-udp-gro\n\n"
+        "To authenticate, visit:\n\n"
+        "        https://login.tailscale.com/a/1dde563401e43d\n"
+    )
+    assert server._extract_auth_url(output) == "https://login.tailscale.com/a/1dde563401e43d"
+    assert server._extract_auth_url("") == ""
+    assert server._extract_auth_url("already logged in") == ""
+
+
 def test_start_login_returns_timeout_output(monkeypatch) -> None:
     from tailscale import server
 

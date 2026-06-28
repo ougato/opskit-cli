@@ -1,6 +1,8 @@
 """安装/卸载进度管理器（样式走主题 Token）"""
 from __future__ import annotations
 
+import signal
+import sys
 import time
 from contextlib import contextmanager
 from typing import Iterator
@@ -183,6 +185,9 @@ class MultiStepProgress:
         self._step_start: float = 0.0
         self._current_desc: str = ""
         self._start_time: float = 0.0
+        self._interrupted: bool = False
+        self._old_sigint = None
+        self._win_handler_ref = None
         if descriptions:
             self._desc_width = max(_display_width(d) for d in descriptions) + 2
         else:
@@ -190,15 +195,70 @@ class MultiStepProgress:
 
     def __enter__(self) -> "MultiStepProgress":
         self._start_time = time.monotonic()
+        self._install_sigint_shield()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._restore_sigint()
         if self._live is not None:
-            if exc_type is not None:
-                self._finish_current(failed=True)
-            else:
-                self._finish_current(failed=False)
+            self._finish_current(failed=exc_type is not None)
+        # 屏蔽期间收到过 Ctrl+C：正常退出时转为 KeyboardInterrupt，让上层中止并返回菜单
+        if self._interrupted and exc_type is None:
+            raise KeyboardInterrupt
         return False
+
+    def _install_sigint_shield(self) -> None:
+        """安装 SIGINT 屏蔽：Ctrl+C 只记录标志位，不在子进程读管道时崩溃渲染线程。
+
+        前台进程组里的子进程仍会收到 SIGINT 而退出，因此 subprocess 会很快返回，
+        随后在下一个 step()/complete() 边界抛出 KeyboardInterrupt，实现快速返回。
+        """
+        try:
+            self._old_sigint = signal.getsignal(signal.SIGINT)
+        except (OSError, ValueError):
+            self._old_sigint = None
+            return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
+                def _win_handler(event: int) -> int:
+                    if event == 0:
+                        self._interrupted = True
+                        return 1
+                    return 0
+
+                self._win_handler_ref = _win_handler
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(_win_handler, True)
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
+            except Exception:
+                pass
+        else:
+            def _unix_handler(signum: int, frame: object) -> None:
+                self._interrupted = True
+
+            try:
+                signal.signal(signal.SIGINT, _unix_handler)
+            except (OSError, ValueError):
+                pass
+
+    def _restore_sigint(self) -> None:
+        if sys.platform == "win32" and self._win_handler_ref is not None:
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(self._win_handler_ref, False)
+            except Exception:
+                pass
+        if self._old_sigint is not None:
+            try:
+                signal.signal(signal.SIGINT, self._old_sigint)
+            except (OSError, ValueError):
+                pass
+
+    def _check_interrupt(self) -> None:
+        if self._interrupted:
+            raise KeyboardInterrupt
 
     def _start_live(self, desc: str) -> None:
         """启动当前步骤的 Live + 后台 ticker"""
@@ -234,6 +294,7 @@ class MultiStepProgress:
 
     def step(self, desc: str) -> None:
         """开始新一步：将上一步标绿，启动新步骤 Live"""
+        self._check_interrupt()
         if self._live is not None:
             self._finish_current(failed=False)
         self._start_live(desc)
@@ -247,6 +308,7 @@ class MultiStepProgress:
         """手动标记当前步骤完成（__exit__ 正常退出时也会自动调用）"""
         if self._live is not None:
             self._finish_current(failed=False)
+        self._check_interrupt()
 
     @property
     def elapsed(self) -> float:
