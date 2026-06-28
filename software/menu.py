@@ -604,7 +604,7 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    if not getattr(cls, "has_wizard", False):
+    if not getattr(cls, "has_wizard", False) and getattr(cls, "confirm_before_uninstall", True):
         try:
             if not confirm(breadcrumb=breadcrumb, prompt=t("uninstall.confirm", name=_uname)):
                 return

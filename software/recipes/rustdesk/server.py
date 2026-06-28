@@ -16,7 +16,7 @@ from core.constants import PUBLIC_IP_APIS
 from core.i18n import t
 from core.privilege import run_as_root
 from core.service import systemd_is_available
-from core.theme import print_info, print_success, print_warning
+from core.theme import console, get_color, print_action_title, print_warning
 from software.base import InstallError
 from .constants import (
     RUSTDESK_ARCH_ASSETS,
@@ -97,7 +97,6 @@ def install_server(version: str = RUSTDESK_VERSION_LATEST) -> None:
         t("rustdesk.step.configure_service"),
         t("rustdesk.step.start_service"),
         t("rustdesk.step.verify"),
-        t("rustdesk.step.print_info"),
     ]
     with MultiStepProgress(descs) as sp:
         sp.step(descs[0])
@@ -127,10 +126,10 @@ def install_server(version: str = RUSTDESK_VERSION_LATEST) -> None:
         save_state(state)
         if not verify_running():
             raise InstallError(t("rustdesk.error.verify_failed"))
-
-        sp.step(descs[6])
-        print_connection_info(state)
         sp.complete()
+
+    # 连接信息在进度条结束后单独输出（避免与进度条交错）
+    print_connection_info(state)
 
 
 def uninstall_server() -> None:
@@ -154,19 +153,29 @@ def uninstall_server() -> None:
 
 
 def diagnose_server() -> None:
+    from core.prompt import clear_screen, pause
+
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.rustdesk"), t("software.diagnose")]
+    clear_screen()
+    print_action_title(breadcrumb)
+
     version = detect_version()
     if not version:
         print_warning(t("software.not_installed_hint", name=t("software.rustdesk")))
+        pause()
         return
     state = load_state()
     key = read_key()
     if key:
         state = {**state, **build_state(version, str(state.get("host") or detect_public_host()), key)}
         save_state(state)
-    print_info(t("rustdesk.info.version", version=version))
-    print_info(t("rustdesk.info.hbbs", active=str(is_process_active(RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE))))
-    print_info(t("rustdesk.info.hbbr", active=str(is_process_active(RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE))))
-    print_connection_info(state)
+    rows = [
+        t("rustdesk.info.version", version=version),
+        t("rustdesk.info.hbbs", active=str(is_process_active(RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE))),
+        t("rustdesk.info.hbbr", active=str(is_process_active(RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE))),
+    ]
+    _render_info_panel(state, extra_rows=rows)
+    pause()
 
 
 def download_release(version: str) -> Path:
@@ -342,11 +351,33 @@ def build_state(version: str, host: str, key: str) -> dict[str, Any]:
 def print_connection_info(state: dict[str, Any]) -> None:
     if not state:
         return
-    print_success(t("rustdesk.info.done"))
-    print_info(t("rustdesk.info.id_server", value=state.get("id_server", "")))
-    print_info(t("rustdesk.info.relay_server", value=state.get("relay_server", "")))
-    print_info(t("rustdesk.info.key", value=state.get("key", "")))
-    print_info(t("rustdesk.info.client_hint"))
+    _render_info_panel(state)
+
+
+def _render_info_panel(state: dict[str, Any], extra_rows: list[str] | None = None) -> None:
+    """以面板表格输出连接信息（参考 WireGuard 安装结果展示）。"""
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    success = get_color("success")
+    muted = get_color("muted")
+    value_style = get_color("text")
+
+    tbl = Table.grid(padding=(0, 1))
+    tbl.add_column(no_wrap=False)
+    for line in extra_rows or []:
+        tbl.add_row(Text(line, style=value_style))
+    tbl.add_row(Text(t("rustdesk.info.id_server", value=state.get("id_server", "")), style=value_style))
+    tbl.add_row(Text(t("rustdesk.info.relay_server", value=state.get("relay_server", "")), style=value_style))
+    tbl.add_row(Text(t("rustdesk.info.key", value=state.get("key", "")), style=value_style))
+    tbl.add_row(Text(t("rustdesk.info.client_hint"), style=muted))
+    console.print(Panel(
+        tbl,
+        title=f"[{success}]{t('rustdesk.info.done')}[/{success}]",
+        border_style=success,
+        padding=(1, 2),
+    ))
 
 
 def save_state(state: dict[str, Any]) -> None:

@@ -20,6 +20,8 @@ class RustDeskRecipe(Recipe):
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
     has_install_version_selection: ClassVar[bool] = False
+    confirm_before_install: ClassVar[bool] = False
+    confirm_before_uninstall: ClassVar[bool] = False
 
     def detect(self) -> str | None:
         return detect_version()
@@ -41,7 +43,6 @@ class RustDeskRecipe(Recipe):
             InstallStep("rustdesk.step.configure_service"),
             InstallStep("rustdesk.step.start_service"),
             InstallStep("rustdesk.step.verify"),
-            InstallStep("rustdesk.step.print_info"),
         ]
 
     def install(self, version: str) -> None:

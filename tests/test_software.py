@@ -563,7 +563,6 @@ def test_rustdesk_steps_and_connection_state() -> None:
         "rustdesk.step.configure_service",
         "rustdesk.step.start_service",
         "rustdesk.step.verify",
-        "rustdesk.step.print_info",
     ]
     assert [s.description_key for s in recipe.steps("uninstall")] == [
         "software.step.stop_service",
