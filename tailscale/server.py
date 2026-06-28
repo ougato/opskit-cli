@@ -311,59 +311,60 @@ def _extract_auth_url(output: str) -> str:
     return match.group(0) if match else ""
 
 
-def _render_install_panel(login_output: str) -> None:
-    """安装完成后用面板输出关键信息（参考 RustDesk）：Tailscale IP + 登录地址。"""
+def _render_panel(title: str, rows: list[str]) -> None:
+    """统一的信息面板（参考 RustDesk）：标题 + 若干行内容。"""
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
     success = get_color("success")
     value_style = get_color("text")
-    muted = get_color("muted")
 
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(no_wrap=False)
-    ip = tailscale_ip()
-    if ip:
-        tbl.add_row(Text(f"{t('tailscale.output.ip')}: {ip}", style=value_style))
-    auth_url = _extract_auth_url(login_output)
-    if auth_url:
-        tbl.add_row(Text(f"{t('tailscale.output.auth_url')}: {auth_url}", style=value_style))
-        tbl.add_row(Text(t("tailscale.output.auth_hint"), style=muted))
+    for row in rows:
+        tbl.add_row(Text(row, style=value_style))
     console.print(Panel(
         tbl,
-        title=f"[{success}]{t('tailscale.output.install_done')}[/{success}]",
+        title=f"[{success}]{title}[/{success}]",
         border_style=success,
         padding=(1, 2),
         expand=False,
     ))
+
+
+def _render_install_panel(login_output: str) -> None:
+    """安装完成后用面板输出关键信息：Tailscale IP + 登录地址。"""
+    rows: list[str] = []
+    ip = tailscale_ip()
+    if ip:
+        rows.append(f"{t('tailscale.output.ip')}: {ip}")
+    auth_url = _extract_auth_url(login_output)
+    if auth_url:
+        rows.append(f"{t('tailscale.output.auth_url')}: {auth_url}")
+    _render_panel(t("tailscale.output.install_done"), rows)
+
+
+def _render_login_panel(auth_url: str) -> None:
+    """登录授权地址用面板展示，过滤 UDP GRO 等无关输出。"""
+    _render_panel(t("tailscale.output.login_title"), [f"{t('tailscale.output.auth_url')}: {auth_url}"])
 
 
 def _render_status_panel() -> None:
     """以面板表格输出 Tailscale 状态（参考 WireGuard 诊断展示）。"""
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
-
-    success = get_color("success")
-    value_style = get_color("text")
-
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(no_wrap=False)
-    tbl.add_row(Text(f"{t('tailscale.diagnose.installed')}: {detect_tailscale_version() or '-'}", style=value_style))
-    tbl.add_row(Text(f"{t('tailscale.diagnose.service')}: {is_service_active()}", style=value_style))
-    tbl.add_row(Text(f"{t('tailscale.output.ip')}: {tailscale_ip() or '-'}", style=value_style))
-    console.print(Panel(
-        tbl,
-        title=f"[{success}]{t('tailscale.diagnose.title')}[/{success}]",
-        border_style=success,
-        padding=(1, 2),
-        expand=False,
-    ))
+    _render_panel(t("tailscale.diagnose.title"), [
+        f"{t('tailscale.diagnose.installed')}: {detect_tailscale_version() or '-'}",
+        f"{t('tailscale.diagnose.service')}: {is_service_active()}",
+        f"{t('tailscale.output.ip')}: {tailscale_ip() or '-'}",
+    ])
     result = _run([TAILSCALE_COMMAND, "status"], check=False) if command_exists(TAILSCALE_COMMAND) else None
     if result and result.stdout:
+        auth_url = _extract_auth_url(result.stdout)
         console.print()
-        console.print(result.stdout.strip())
+        if auth_url:
+            _render_login_panel(auth_url)
+        else:
+            console.print(result.stdout.strip())
 
 
 def diagnose_client() -> None:
@@ -406,10 +407,14 @@ def manage_client() -> None:
             _render_status_panel()
             pause()
         elif key == "2":
-            print_action_title(breadcrumb)
             output = start_login()
-            if output:
-                console.print(output)
+            auth_url = _extract_auth_url(output)
+            if auth_url:
+                print_action_title(breadcrumb)
+                _render_login_panel(auth_url)
+            else:
+                print_action_title(breadcrumb, trailing_blank=False)
+                print_success(t("tailscale.output.login_done"))
             pause()
         elif key == "3":
             print_action_title(breadcrumb, trailing_blank=False)

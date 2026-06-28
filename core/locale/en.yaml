@@ -382,7 +382,8 @@ tailscale:
     uninstall_done: "Tailscale uninstalled"
     ip: "Tailscale IP"
     auth_url: "Login URL"
-    auth_hint: "Open the URL above in a browser to finish login"
+    login_title: "Tailscale login"
+    login_done: "Logged in"
     down_done: "Tailscale disconnected"
     restart_done: "tailscaled restarted"
   diagnose:
