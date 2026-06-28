@@ -13,7 +13,7 @@ from rich.console import Console
 from core.i18n import t
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
-from core.theme import get_icon, print_action_title, print_error, print_info, print_success, print_warning
+from core.theme import get_icon, print_action_title, print_error, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
     APT_ASSUME_YES_ARG,
@@ -428,8 +428,9 @@ def uninstall_server() -> None:
 
 def diagnose_server() -> None:
     state = load_state()
-    redacted = redact_state(state)
-    print_info(t("xui.diagnose.title"))
+    breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.diagnose")]
+    clear_screen()
+    print_action_title(breadcrumb)
     console.print(f"{t('xui.diagnose.service')}: {is_service_active()}")
     panel_port = state.get("panel_port")
     if isinstance(panel_port, int):
@@ -439,7 +440,7 @@ def diagnose_server() -> None:
         port = vless_state.get("local_port", vless_state.get("port"))
         if isinstance(port, int):
             console.print(f"{t('xui.diagnose.vless_port')}: {is_port_listening(port)}")
-    console.print(json.dumps(redacted, indent=2, ensure_ascii=False))
+    console.print(json.dumps(state, indent=2, ensure_ascii=False))
     pause()
 
 
