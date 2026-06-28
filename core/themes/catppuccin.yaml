@@ -103,7 +103,16 @@ icons:
   mongodb: "\U0001F343"       # 🍃
   redis: "\U0001F534"         # 🔴
 
+  xui: "\U0001F4E1"          # 📡
+  xui_server: "\U0001F4E1"   # 📡️
+  link: "\U0001F517"         # 🔗
+  state: "\U0001F50D"        # 🔍
+  logs: "\U0001F4C4"         # 📄
+  traffic: "\U0001F4CA"      # 📊
+
   # WireGuard
+  rustdesk: "\U0001F4BB"     # 💻
+  tailscale: "\U0001F517"     # 🔗
   wireguard: "\U0001F510"     # 🔐
   wg_server: "\U0001F30D"     # 🌍
   wg_client: "\U0001F3E0"     # 🏠

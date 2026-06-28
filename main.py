@@ -458,6 +458,13 @@ def sw_installed() -> None:
     _print_software_table(installed_only=True, include_hidden=True)
 
 
+@sw_app.command("xui-snapshot", hidden=True)
+def sw_xui_snapshot() -> None:
+    """供 systemd 定时器调用：把 x-ui 累计流量计数器写入历史库。"""
+    from xui.traffic import take_snapshot
+    take_snapshot()
+
+
 @sw_app.command("versions", help=_ct("sw_versions"))
 def sw_versions(
     name: str = typer.Argument(..., help=_ct("sw_name")),

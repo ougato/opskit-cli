@@ -391,3 +391,31 @@ class TestSubMenuUserCancelDoesNotPropagate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_pad_label_does_not_double_space_after_variation_selector() -> None:
+    from core.prompt import _pad_label
+
+    assert _pad_label("🛠️ x-ui") == "🛠️ x-ui"
+    assert _pad_label("🛠️x-ui") == "🛠️ x-ui"
+
+
+def test_select_returns_none_on_eof_without_busy_loop(monkeypatch) -> None:
+    """非 TTY / EOF 时 _read_key 返回空串，select 必须立即返回 None 而非空转占满 CPU。"""
+    from core import prompt
+
+    monkeypatch.setattr(prompt, "_read_key", lambda: "")
+    result = prompt.select(
+        breadcrumb=["x"],
+        subtitle="s",
+        choices=[{"key": "1", "label": "a"}],
+        theme_key="root",
+    )
+    assert result is None
+
+
+def test_confirm_returns_false_on_eof_without_busy_loop(monkeypatch) -> None:
+    from core import prompt
+
+    monkeypatch.setattr(prompt, "_read_key", lambda: "")
+    assert prompt.confirm(breadcrumb=["x"], prompt="ok?") is False

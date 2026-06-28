@@ -6,7 +6,7 @@ from typing import ClassVar
 from software.base import InstallError, InstallStep, Recipe
 from software.registry import register
 from core.i18n import t
-from .constants import DOCKER_VERSIONS_FALLBACK
+from .constants import DOCKER_SYSTEM_PACKAGE_VERSION
 from .driver import get_driver
 
 
@@ -17,8 +17,22 @@ class DockerRecipe(Recipe):
     description: ClassVar[str] = "Docker 容器引擎"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    has_upgrade: ClassVar[bool] = False
+    has_install_version_selection: ClassVar[bool] = False
+    confirm_before_install: ClassVar[bool] = False
 
     def detect(self) -> str | None:
+        from core.platform import get_platform
+
+        info = get_platform()
+        if info.os_type not in self.platforms:
+            return None
+        driver = get_driver()
+        package_version = driver.detect_package_version() if hasattr(driver, "detect_package_version") else None
+        if package_version:
+            return package_version
+        if info.pkg_manager == "apt":
+            return None
         from core.runner import which, run
         if not which("docker"):
             return None
@@ -34,19 +48,7 @@ class DockerRecipe(Recipe):
         return None
 
     def versions(self) -> list[str]:
-        from core.constants import TIMEOUT_VERSION_FETCH
-        from .constants import DOCKER_GITHUB_API
-        try:
-            import httpx
-            resp = httpx.get(DOCKER_GITHUB_API, timeout=TIMEOUT_VERSION_FETCH)
-            if resp.status_code == 200:
-                tags = [r["tag_name"].lstrip("v") for r in resp.json()
-                        if not r.get("prerelease")]
-                if tags:
-                    return tags[:8]
-        except Exception:
-            pass
-        return list(DOCKER_VERSIONS_FALLBACK)
+        return [DOCKER_SYSTEM_PACKAGE_VERSION]
 
     def steps(self, action: str = "install") -> list[InstallStep]:
         if action == "uninstall":
@@ -71,26 +73,32 @@ class DockerRecipe(Recipe):
         info = get_platform()
         driver = get_driver()
 
-        descs = ["software.step.check", "software.step.add_repo", "software.step.download",
-                 "software.step.install", "software.step.enable_service", "software.step.verify"]
+        descs = [
+            t("software.step.check"),
+            t("software.step.add_repo"),
+            t("software.step.download"),
+            t("software.step.install"),
+            t("software.step.enable_service"),
+            t("software.step.verify"),
+        ]
         with MultiStepProgress(descs) as sp:
-            sp.step("software.step.check")
+            sp.step(descs[0])
             if info.os_type not in self.platforms:
                 raise InstallError(t("software.docker_error.platform_not_supported", platform=info.os_type))
 
-            sp.step("software.step.add_repo")
+            sp.step(descs[1])
             driver.ensure_deps()
 
-            sp.step("software.step.download")
+            sp.step(descs[2])
             pkg = driver.pkg_name(version)
 
-            sp.step("software.step.install")
+            sp.step(descs[3])
             driver.install_pkg(pkg)
 
-            sp.step("software.step.enable_service")
+            sp.step(descs[4])
             driver.enable_service()
 
-            sp.step("software.step.verify")
+            sp.step(descs[5])
             if not self.detect():
                 raise InstallError(t("software.docker_error.verify_failed"))
             sp.complete()
@@ -101,13 +109,17 @@ class DockerRecipe(Recipe):
 
         driver = get_driver()
 
-        descs = ["software.step.stop_service", "software.step.remove_files", "software.step.cleanup"]
+        descs = [
+            t("software.step.stop_service"),
+            t("software.step.remove_files"),
+            t("software.step.cleanup"),
+        ]
         with MultiStepProgress(descs) as sp:
-            sp.step("software.step.stop_service")
+            sp.step(descs[0])
             driver.disable_service()
 
-            sp.step("software.step.remove_files")
+            sp.step(descs[1])
             driver.remove_pkg()
 
-            sp.step("software.step.cleanup")
+            sp.step(descs[2])
             sp.complete()

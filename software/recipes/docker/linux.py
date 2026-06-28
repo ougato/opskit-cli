@@ -1,9 +1,18 @@
 """Docker Linux 平台驱动"""
 from __future__ import annotations
 
+import subprocess
+
 from software.base import InstallError
 from .driver import PlatformDriver
-from .constants import DOCKER_PACKAGES, DOCKER_SERVICE
+from .constants import (
+    DOCKER_APT_PACKAGE,
+    DOCKER_CE_PACKAGE,
+    DOCKER_PACKAGES,
+    DOCKER_SERVICE,
+    DPKG_QUERY_COMMAND,
+    DPKG_STATUS_INSTALLED,
+)
 
 
 class LinuxDriver(PlatformDriver):
@@ -19,10 +28,26 @@ class LinuxDriver(PlatformDriver):
         from core.platform import get_platform
         pm = get_platform().pkg_manager
         if pm == "apt":
-            return f"docker-ce={version}*"
+            return DOCKER_APT_PACKAGE
         elif pm in ("yum", "dnf"):
-            return f"docker-ce-{version}"
-        return "docker-ce"
+            return DOCKER_CE_PACKAGE
+        return DOCKER_CE_PACKAGE
+
+    def detect_package_version(self) -> str | None:
+        from core.platform import get_platform
+        if get_platform().pkg_manager != "apt":
+            return None
+        for package in DOCKER_PACKAGES:
+            result = subprocess.run(
+                [DPKG_QUERY_COMMAND, "-W", "-f=${Status} ${Version}", package],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.startswith(DPKG_STATUS_INSTALLED):
+                parts = result.stdout.split()
+                return parts[-1] if parts else None
+        return None
 
     def install_pkg(self, pkg: str) -> None:
         from core.pkg_runner import get_runner
@@ -39,17 +64,15 @@ class LinuxDriver(PlatformDriver):
             pass
 
     def enable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import enable_now
         try:
-            run_as_root(["systemctl", "enable", "--now", DOCKER_SERVICE],
-                        capture_output=True)
+            enable_now(DOCKER_SERVICE)
         except Exception:
             pass
 
     def disable_service(self) -> None:
-        from core.privilege import run_as_root
+        from core.service import disable_now
         try:
-            run_as_root(["systemctl", "disable", "--now", DOCKER_SERVICE],
-                        capture_output=True)
+            disable_now(DOCKER_SERVICE)
         except Exception:
             pass

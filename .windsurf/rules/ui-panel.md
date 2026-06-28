@@ -4,8 +4,13 @@
 
 ## 强制规则
 
+0. **标题与其下方内容之间，永远只能有且仅有 1 个空行**（硬性规则，任何操作页面都不得违反）。
+   - `print_action_title` 默认在标题下方输出 1 个空行；`print_success/print_warning/print_error/print_info` 各自在消息**前**自带 1 个空行；`Panel` 自身不带前置空行。
+   - 因此当标题下方紧跟一个 `print_*` 消息时，必须用 `print_action_title(breadcrumb, trailing_blank=False)`，由 `print_*` 提供那唯一的 1 个空行（两者叠加会变成 2 个空行）。
+   - 当标题下方紧跟 `Panel`/普通 `console.print` 内容时，用 `print_action_title(breadcrumb)`（默认 `trailing_blank=True`）提供那唯一的 1 个空行，或 `trailing_blank=False` + 手动 `console.print()` 一次。
+   - 自检：标题行与第一行实际内容之间，目视只能有 1 行空白。
 1. **所有操作页面必须在进度条或 Panel 前调用 `print_action_title`**
-2. **`print_action_title` 上方 1 个空行，下方 1 个空行**（函数内部已包含，调用方不额外打印）
+2. **`print_action_title` 上方 1 个空行，下方 1 个空行**（函数内部已包含，调用方不额外打印；若下方内容自带前置空行则改用 `trailing_blank=False`，见规则 0）
 3. **Panel 后不加 `_con.print()`**，`pause()` 自带 `\n` 前缀，已提供 1 个空行
 4. **成功消息前必须有 1 个空行**：使用 `console.print()` 先打空行，再调 `print_success()`，禁止用 `f"\n{msg}"` 方式（Rich markup 会把 `\n` 截断）
 

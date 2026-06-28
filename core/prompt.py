@@ -218,6 +218,36 @@ def _kbhit() -> bool:
         return bool(_select.select([sys.stdin], [], [], 0)[0])
 
 
+def _drain_input() -> None:
+    """清空 stdin 中残留的待读字节，跨平台。
+
+    单键确认（如 confirm 的 y/n）只读取一个字节，用户随手按下的回车等
+    残留字节会留在缓冲区里，污染随后的"按任意键"等待，导致返回需要多按
+    一次。这里在等待前先丢弃残留输入，保证只消费一次用户主动按键。
+    """
+    if os.name == 'nt':
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    else:
+        import select as _select
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        if not os.isatty(fd):
+            return
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while _select.select([sys.stdin], [], [], 0)[0]:
+                if not sys.stdin.read(1):
+                    break
+        except Exception:
+            pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSANOW, old)
+
+
 # ─── 渲染原语 ─────────────────────────────────────────────────────────────────
 
 def _seg_text(text: str, s: Seg) -> Text:
@@ -260,7 +290,14 @@ def _render_header(labels: list[str]) -> None:
 
 def _pad_label(label: str) -> str:
     """在每个 \\uFE0F variation selector 后插入补偿空格，修复终端宽度错位"""
-    return label.replace('\uFE0F', '\uFE0F ')
+    chars: list[str] = []
+    for index, ch in enumerate(label):
+        chars.append(ch)
+        if ch == '\uFE0F':
+            next_ch = label[index + 1] if index + 1 < len(label) else ''
+            if next_ch and not next_ch.isspace():
+                chars.append(' ')
+    return ''.join(chars)
 
 
 def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
@@ -344,6 +381,9 @@ def select(
 
     while True:
         ch = _read_key()
+        if not ch:
+            console.print()
+            return None
         if ch == '0':
             console.print()
             return None
@@ -376,6 +416,9 @@ def confirm(
 
     while True:
         ch = _read_key().lower()
+        if not ch:
+            console.print('n')
+            return False
         if ch == 'y':
             console.print('y')
             return True
@@ -519,6 +562,7 @@ def pause(msg: str = '') -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     try:
+        _drain_input()
         sys.stdout.write(f'\n\033[{_PIPE_COLOR_ANSI}m{msg}\033[0m ')
         sys.stdout.flush()
         try:

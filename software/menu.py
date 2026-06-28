@@ -137,33 +137,57 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
             ver = cls().detect()
             hints[cls.key] = ver or ""
 
-    choices = [
-        {
-            "key": str(i + 1),
-            "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}') if _has_i18n(f'software.{cls.key}') else cls.key}",
-            "hint": hints.get(cls.key, ""),
-        }
-        for i, cls in enumerate(recipes)
-    ]
+    total = len(recipes)
+    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
+    page = 0
 
-    try:
-        key = select(
-            breadcrumb=breadcrumb,
-            subtitle=t("prompt.select"),
-            choices=choices,
-            theme_key=_THEME_KEY,
-            back_label=f"{get_icon('back')} {t('menu.back')}",
+    while True:
+        start = page * _PAGE_SIZE
+        end = min(start + _PAGE_SIZE, total)
+        page_items = recipes[start:end]
+        choices = [
+            {
+                "key": str(i + 1),
+                "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}') if _has_i18n(f'software.{cls.key}') else cls.key}",
+                "hint": hints.get(cls.key, ""),
+            }
+            for i, cls in enumerate(page_items)
+        ]
+        if page > 0:
+            choices.append({"key": "p", "label": t("software.prev_page")})
+        if page < total_pages - 1:
+            choices.append({"key": "n", "label": t("software.next_page")})
+
+        subtitle = (
+            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
+            if total_pages > 1
+            else t("prompt.select")
         )
-    except UserCancel:
-        return
-    if key is None:
-        return
+        try:
+            key = select(
+                breadcrumb=breadcrumb,
+                subtitle=subtitle,
+                choices=choices,
+                theme_key=_THEME_KEY,
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            return
+        if key is None:
+            return
+        if key == "n":
+            page += 1
+            continue
+        if key == "p":
+            page -= 1
+            continue
 
-    cls = recipes[int(key) - 1]
-    if getattr(cls, "has_submenu", False):
-        _show_submenu(breadcrumb=breadcrumb, cls=cls)
-    else:
-        show_actions(breadcrumb=breadcrumb, cls=cls)
+        cls = page_items[int(key) - 1]
+        if getattr(cls, "has_submenu", False):
+            _show_submenu(breadcrumb=breadcrumb, cls=cls)
+        else:
+            show_actions(breadcrumb=breadcrumb, cls=cls)
+        continue
 
 
 def _show_submenu(breadcrumb: list[str], cls: type) -> None:
@@ -329,6 +353,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         try:
             instance.install("latest")
+        except KeyboardInterrupt:
+            return
         except InstallError as e:
             _report(e, software=cls.key, action="install")
             print_error(t("install.failed", name=_name, error=str(e)))
@@ -394,6 +420,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         instance.install(version)
         installed_version = instance.detect() or version
         print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
+    except KeyboardInterrupt:
+        return
     except InstallError as e:
         _report(e, software=cls.key, version=version, action="install")
         print_error(t("install.failed", name=_name, error=str(e)))
@@ -580,7 +608,7 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    if not getattr(cls, "has_wizard", False):
+    if not getattr(cls, "has_wizard", False) and getattr(cls, "confirm_before_uninstall", True):
         try:
             if not confirm(breadcrumb=breadcrumb, prompt=t("uninstall.confirm", name=_uname)):
                 return
@@ -593,6 +621,8 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         base_console.print()
     try:
         instance.uninstall()
+    except KeyboardInterrupt:
+        return
     except UninstallError as e:
         _report(e, software=cls.key, action="uninstall")
         print_error(t("uninstall.failed", name=_uname, error=str(e)))

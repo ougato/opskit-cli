@@ -25,6 +25,119 @@ def test_get_recipe_docker(tmp_path) -> None:
     assert cls.key == "docker"
 
 
+def test_docker_uses_system_package_install_flow() -> None:
+    from software.recipes.docker.constants import DOCKER_SYSTEM_PACKAGE_VERSION
+
+    cls = get_recipe("docker")
+    assert cls is not None
+    recipe = cls()
+
+    assert cls.has_upgrade is False
+    assert cls.has_install_version_selection is False
+    assert cls.confirm_before_install is False
+    assert recipe.versions() == [DOCKER_SYSTEM_PACKAGE_VERSION]
+
+
+def test_docker_apt_package_uses_distro_package(monkeypatch) -> None:
+    from software.recipes.docker.linux import LinuxDriver
+    from software.recipes.docker.constants import DOCKER_APT_PACKAGE
+
+    class FakePlatform:
+        pkg_manager = "apt"
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+
+    assert LinuxDriver().pkg_name("latest") == DOCKER_APT_PACKAGE
+
+
+def test_docker_detect_prefers_owned_apt_package(monkeypatch) -> None:
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+        pkg_manager = "apt"
+
+    class FakeDriver:
+        def detect_package_version(self) -> str:
+            return "24.0.7-0ubuntu1"
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr("software.recipes.docker.recipe.get_driver", lambda: FakeDriver())
+
+    assert DockerRecipe().detect() == "24.0.7-0ubuntu1"
+
+
+def test_docker_detect_ignores_external_cli_after_uninstall(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+        pkg_manager = "apt"
+
+    class FakeDriver:
+        def detect_package_version(self) -> None:
+            return None
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr("software.recipes.docker.recipe.get_driver", lambda: FakeDriver())
+    monkeypatch.setattr("core.runner.which", lambda command: "/usr/bin/docker")
+    monkeypatch.setattr("core.runner.run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="Docker version 26.1.4\n"))
+
+    assert DockerRecipe().detect() is None
+
+
+def test_docker_install_uses_localized_progress_labels(monkeypatch) -> None:
+    from software.recipes.docker import recipe as docker_recipe
+    from software.recipes.docker.recipe import DockerRecipe
+
+    class FakePlatform:
+        os_type = "linux"
+
+    class FakeDriver:
+        def ensure_deps(self) -> None:
+            pass
+
+        def pkg_name(self, version: str) -> str:
+            return "docker.io"
+
+        def install_pkg(self, pkg: str) -> None:
+            pass
+
+        def enable_service(self) -> None:
+            pass
+
+    class FakeProgress:
+        def __init__(self, descs):
+            seen["descs"] = descs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def step(self, desc):
+            seen.setdefault("steps", []).append(desc)
+
+        def complete(self):
+            seen["complete"] = True
+
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("core.platform.get_platform", lambda: FakePlatform())
+    monkeypatch.setattr(docker_recipe, "get_driver", lambda: FakeDriver())
+    monkeypatch.setattr(docker_recipe, "t", lambda key, **kwargs: f"label:{key}")
+    monkeypatch.setattr("core.progress.MultiStepProgress", FakeProgress)
+    monkeypatch.setattr(DockerRecipe, "detect", lambda self: "24.0.7")
+
+    DockerRecipe().install("latest")
+
+    assert "software.step.check" not in seen["descs"]
+    assert "label:software.step.check" in seen["descs"]
+    assert seen["steps"][0] == seen["descs"][0]
+
+
 def test_get_recipe_nginx(tmp_path) -> None:
     cls = get_recipe("nginx")
     assert cls is not None
@@ -45,6 +158,38 @@ def test_nginx_detect_uses_driver(monkeypatch) -> None:
     monkeypatch.setattr(nginx_recipe, "get_driver", lambda: FakeDriver())
 
     assert nginx_recipe.NginxRecipe().detect() == "1.27.0"
+
+
+def test_java_and_node_progress_labels_match_golang_style() -> None:
+    import inspect
+    from software.recipes.golang.recipe import GoRecipe
+    from software.recipes.java.recipe import JavaRecipe
+    from software.recipes.nodejs.recipe import NodeRecipe
+
+    expected_install_keys = [
+        't("software.step.check")',
+        't("software.step.download")',
+        't("software.step.install")',
+        't("software.step.verify")',
+    ]
+    expected_uninstall_keys = [
+        't("software.step.remove_files")',
+        't("software.step.cleanup")',
+    ]
+
+    for recipe in (GoRecipe, JavaRecipe, NodeRecipe):
+        install_source = inspect.getsource(recipe.install)
+        uninstall_source = inspect.getsource(recipe.uninstall)
+        for key in expected_install_keys:
+            assert key in install_source
+        for key in expected_uninstall_keys:
+            assert key in uninstall_source
+        assert 'sp.step("check")' not in install_source
+        assert 'sp.step("download")' not in install_source
+        assert 'sp.step("install")' not in install_source
+        assert 'sp.step("verify")' not in install_source
+        assert 'sp.step("remove")' not in uninstall_source
+        assert 'sp.step("cleanup")' not in uninstall_source
 
 
 def test_nginx_install_steps_match_runtime_flow(tmp_path) -> None:
@@ -159,6 +304,18 @@ def test_nginx_extra_stream_package_is_apt_only() -> None:
 
     assert "libnginx-mod-stream" in driver._packages_for_runner("apt")
     assert driver._packages_for_runner("dnf") == ["nginx"]
+
+
+def test_nginx_enable_service_uses_service_compat_layer(monkeypatch) -> None:
+    from software.recipes.nginx.linux import LinuxDriver
+    from software.recipes.nginx.constants import NGINX_SERVICE
+
+    calls: list[str] = []
+    monkeypatch.setattr("core.service.enable_now", lambda service_name: calls.append(service_name))
+
+    LinuxDriver().enable_service()
+
+    assert calls == [NGINX_SERVICE]
 
 
 def test_python_install_steps_are_decoupled(tmp_path) -> None:
@@ -383,3 +540,97 @@ def test_register_returns_module_info(tmp_path) -> None:
     assert isinstance(info, ModuleInfo)
     assert info.key == "software"
     assert info.order > 0
+
+
+def test_get_recipe_rustdesk() -> None:
+    cls = get_recipe("rustdesk")
+    assert cls is not None
+    assert cls.key == "rustdesk"
+    assert cls.category == "devops"
+    assert cls.has_diagnose is True
+    assert cls.has_install_version_selection is False
+
+
+def test_rustdesk_steps_and_connection_state() -> None:
+    from software.recipes.rustdesk.recipe import RustDeskRecipe
+    from software.recipes.rustdesk.server import build_state
+
+    recipe = RustDeskRecipe()
+    assert [s.description_key for s in recipe.steps("install")] == [
+        "software.step.check",
+        "rustdesk.step.download",
+        "rustdesk.step.install_binaries",
+        "rustdesk.step.configure_service",
+        "rustdesk.step.start_service",
+        "rustdesk.step.verify",
+    ]
+    assert [s.description_key for s in recipe.steps("uninstall")] == [
+        "software.step.stop_service",
+        "software.step.remove_files",
+        "software.step.cleanup",
+    ]
+
+    state = build_state("1.1.15", "203.0.113.10", "pubkey")
+    assert state["id_server"] == "203.0.113.10"
+    assert state["relay_server"] == "203.0.113.10:21117"
+    assert state["key"] == "pubkey"
+
+
+def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
+    import software.menu as menu
+
+    class Spinner:
+        def __init__(self, label: str):
+            self.label = label
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def make_recipe(index: int):
+        class FakeRecipe:
+            key = f"fake{index}"
+            platforms = ["linux"]
+            has_submenu = False
+
+            def detect(self) -> None:
+                return None
+
+        return FakeRecipe
+
+    recipes = [make_recipe(i) for i in range(10)]
+    selected: list[str] = []
+    calls: list[dict] = []
+    keys = iter(["n", "1", None])
+
+    def fake_select(**kwargs):
+        calls.append(kwargs)
+        return next(keys)
+
+    monkeypatch.setattr("core.progress.spinner", lambda label: Spinner(label))
+    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr(menu, "show_actions", lambda breadcrumb, cls: selected.append(cls.key))
+
+    menu._pick_and_act(["OpsKit"], recipes)
+
+    assert len(calls[0]["choices"]) == 10
+    assert calls[0]["choices"][-1]["key"] == "n"
+    assert calls[1]["choices"][-1]["key"] == "p"
+    assert selected == ["fake9"]
+
+
+def test_rustdesk_xui_tailscale_labels_and_icons() -> None:
+    from core.i18n import init as i18n_init, t
+    from core.theme import get_icon, init as theme_init
+
+    i18n_init()
+    theme_init()
+    assert t("software.xui") == "X-UI"
+    assert t("software.xui_server").startswith("X-UI")
+    assert t("software.rustdesk") == "RustDesk"
+    assert get_icon("xui") != "•"
+    assert get_icon("xui_server") != "•"
+    assert get_icon("tailscale") != "•"
+    assert get_icon("rustdesk") != "•"
