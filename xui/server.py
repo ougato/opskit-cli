@@ -463,6 +463,8 @@ def manage_nodes() -> None:
             return
         if key is None:
             return
+        clear_screen()
+        print_action_title(breadcrumb)
         if key == "1":
             _print_links(state)
             pause()

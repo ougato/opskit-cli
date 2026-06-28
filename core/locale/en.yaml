@@ -349,7 +349,7 @@ xui:
     vless_port: "VLESS port"
   manage:
     no_state: "No X-UI state found"
-    print_links: "Print links"
+    print_links: "Show links"
     show_state: "Show redacted state"
     restart: "Restart X-UI"
     logs: "Show logs"

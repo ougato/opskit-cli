@@ -348,7 +348,7 @@ xui:
     vless_port: "VLESS 端口"
   manage:
     no_state: "未找到 X-UI 状态"
-    print_links: "打印链接"
+    print_links: "显示链接"
     show_state: "查看脱敏状态"
     restart: "重启 X-UI"
     logs: "查看日志"
