@@ -17,6 +17,14 @@ from xui.constants import (
     APT_ASSUME_YES_ARG,
     APT_INSTALL_COMMAND,
     APT_UPDATE_COMMAND,
+    BBR_KERNEL_MODULE,
+    BBR_SYSCTL_FILE,
+    BBR_SYSCTL_FILE_CONTENT,
+    BBR_SYSPARAMS,
+    MODPROBE_COMMAND,
+    SYSCTL_COMMAND,
+    SYSCTL_WRITE_ARG,
+    XUI_SERVER_RECIPE_KEY,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
     DEFAULT_PANEL_BASE_PATH,
@@ -130,6 +138,20 @@ def _install_base_packages() -> None:
     raise InstallError(t("xui.error.package_manager_missing"))
 
 
+def _enable_bbr() -> None:
+    subprocess.run(
+        [MODPROBE_COMMAND, BBR_KERNEL_MODULE],
+        check=False, capture_output=True, text=True,
+    )
+    for param, value in BBR_SYSPARAMS.items():
+        subprocess.run(
+            [SYSCTL_COMMAND, SYSCTL_WRITE_ARG, f"{param}={value}"],
+            check=False, capture_output=True, text=True,
+        )
+    BBR_SYSCTL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    BBR_SYSCTL_FILE.write_text(BBR_SYSCTL_FILE_CONTENT, encoding="utf-8")
+
+
 def _save_pending_inbounds(inbounds: list[dict[str, object]]) -> None:
     XUI_PENDING_INBOUNDS_FILE.parent.mkdir(parents=True, exist_ok=True)
     XUI_PENDING_INBOUNDS_FILE.write_text(
@@ -176,6 +198,7 @@ def install_server() -> None:
     step_keys = [
         "xui.step.check_os",
         "xui.step.install_deps",
+        "xui.step.enable_bbr",
         "xui.step.install_xui",
         "xui.step.generate_credentials",
         "xui.step.configure_panel",
@@ -191,9 +214,14 @@ def install_server() -> None:
     with MultiStepProgress(step_descs) as sp:
         sp.step(t("xui.step.check_os"))
         _ensure_linux()
+        from core.sysconfig import SysConfigManager
+        SysConfigManager.save(XUI_SERVER_RECIPE_KEY, sysparams=BBR_SYSPARAMS)
 
         sp.step(t("xui.step.install_deps"))
         _install_base_packages()
+
+        sp.step(t("xui.step.enable_bbr"))
+        _enable_bbr()
 
         sp.step(t("xui.step.install_xui"))
         if not command_exists(XUI_COMMAND):
@@ -281,6 +309,7 @@ def install_server() -> None:
             },
         }
         write_secret_json(XUI_STATE_FILE, state)
+        SysConfigManager.mark_installed(XUI_SERVER_RECIPE_KEY)
 
         sp.step(t("xui.step.print_links"))
 
@@ -300,6 +329,10 @@ def uninstall_server() -> None:
     try:
         stop_and_disable_service()
         remove_xui_artifacts()
+        BBR_SYSCTL_FILE.unlink(missing_ok=True)
+        from core.sysconfig import SysConfigManager
+        SysConfigManager.restore(XUI_SERVER_RECIPE_KEY)
+        SysConfigManager.remove(XUI_SERVER_RECIPE_KEY)
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("xui.output.uninstall_done"))

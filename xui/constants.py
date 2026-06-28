@@ -111,6 +111,18 @@ FREEDOM_PROTOCOL = "freedom"
 VLESS_DECRYPTION = "none"
 SNIFFING_DEST_OVERRIDE = ["http", "tls", "quic"]
 
+XUI_SERVER_RECIPE_KEY = "xui_server"
+SYSCTL_COMMAND = "sysctl"
+SYSCTL_WRITE_ARG = "-w"
+MODPROBE_COMMAND = "modprobe"
+BBR_KERNEL_MODULE = "tcp_bbr"
+BBR_SYSPARAMS = {
+    "net.core.default_qdisc": "fq",
+    "net.ipv4.tcp_congestion_control": "bbr",
+}
+BBR_SYSCTL_FILE = Path("/etc/sysctl.d/99-xui-bbr.conf")
+BBR_SYSCTL_FILE_CONTENT = "".join(f"{key} = {value}\n" for key, value in BBR_SYSPARAMS.items())
+
 SENSITIVE_STATE_KEYS = frozenset(
     {
         "password",
