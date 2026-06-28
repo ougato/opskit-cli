@@ -77,6 +77,7 @@ SysConfigManager.remove("wg_server")
 |---|---|---|
 | `wg_server` | `net.ipv4.ip_forward` | `nginx_installed_by_opskit` |
 | `wg_client` | 无 | 无（客户端不修改系统参数） |
+| `xui_server` | `net.core.default_qdisc`、`net.ipv4.tcp_congestion_control` | 无 |
 
 ## 禁止事项
 

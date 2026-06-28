@@ -74,6 +74,7 @@ class XuiServerRecipe(Recipe):
         return [
             InstallStep("xui.step.check_os"),
             InstallStep("xui.step.install_deps"),
+            InstallStep("xui.step.enable_bbr"),
             InstallStep("xui.step.install_xui"),
             InstallStep("xui.step.generate_credentials"),
             InstallStep("xui.step.configure_panel"),

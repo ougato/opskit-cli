@@ -313,6 +313,7 @@ xui:
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
+    enable_bbr: "Enable BBR"
     install_xui: "Install X-UI"
     generate_credentials: "Generate credentials"
     configure_panel: "Configure panel"

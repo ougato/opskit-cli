@@ -312,6 +312,7 @@ xui:
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"
+    enable_bbr: "开启 BBR"
     install_xui: "安装 X-UI"
     generate_credentials: "生成凭据"
     configure_panel: "配置面板"
