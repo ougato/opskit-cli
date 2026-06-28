@@ -14,7 +14,7 @@ from rich.console import Console
 from core.i18n import t
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, pause, select
-from core.theme import get_color, get_icon, print_action_title, print_success
+from core.theme import get_color, get_icon, print_action_title, print_success, print_warning
 from software.base import InstallError, UninstallError
 from tailscale.constants import (
     APT_ASSUME_YES_ARG,
@@ -25,6 +25,7 @@ from tailscale.constants import (
     DEBIAN_FRONTEND_NONINTERACTIVE,
     INSTALL_COMMAND,
     RM_COMMAND,
+    TAILSCALE_INSTALL_ERROR_TAIL_LINES,
     SYSTEMCTL_COMMAND,
     SYSCTL_COMMAND,
     TAILSCALE_COMMAND,
@@ -162,10 +163,21 @@ def _install_script() -> None:
         with urllib.request.urlopen(TAILSCALE_INSTALL_SCRIPT_URL, timeout=TAILSCALE_COMMAND_TIMEOUT_SECONDS) as resp:
             script_path.write_bytes(resp.read())
         script_path.chmod(0o700)
-        _run_root(
+        from core.privilege import run_as_root
+
+        env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
+        result = run_as_root(
             [BASH_COMMAND, str(script_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
             timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            tail = "\n".join(detail.splitlines()[-TAILSCALE_INSTALL_ERROR_TAIL_LINES:])
+            raise InstallError(tail or f"exit {result.returncode}")
     finally:
         script_path.unlink(missing_ok=True)
 
@@ -364,6 +376,12 @@ def diagnose_client() -> None:
 
 def manage_client() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.manage")]
+    if not command_exists(TAILSCALE_COMMAND):
+        clear_screen()
+        print_action_title(breadcrumb, trailing_blank=False)
+        print_warning(t("software.not_installed_hint", name=t("software.tailscale")))
+        pause()
+        return
     while True:
         try:
             key = select(

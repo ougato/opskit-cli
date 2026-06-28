@@ -148,6 +148,36 @@ def test_extract_auth_url_filters_noise() -> None:
     assert server._extract_auth_url("already logged in") == ""
 
 
+def test_install_script_raises_install_error_with_stderr_tail(monkeypatch) -> None:
+    from software.base import InstallError
+    from tailscale import server
+
+    class FakeResp:
+        def read(self):
+            return b"#!/bin/bash\ntrue\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(server.urllib.request, "urlopen", lambda *a, **k: FakeResp())
+
+    class Result:
+        returncode = 100
+        stdout = ""
+        stderr = "E: Could not get lock /var/lib/dpkg/lock-frontend"
+
+    monkeypatch.setattr("core.privilege.run_as_root", lambda *a, **k: Result())
+
+    try:
+        server._install_script()
+        assert False, "expected InstallError"
+    except InstallError as exc:
+        assert "Could not get lock" in str(exc)
+
+
 def test_start_login_returns_timeout_output(monkeypatch) -> None:
     from tailscale import server
 
