@@ -128,7 +128,8 @@ def install_server(version: str = RUSTDESK_VERSION_LATEST) -> None:
             raise InstallError(t("rustdesk.error.verify_failed"))
         sp.complete()
 
-    # 连接信息在进度条结束后单独输出（避免与进度条交错）
+    # 连接信息在进度条结束后单独输出（避免与进度条交错），与进度之间空 1 行
+    console.print()
     print_connection_info(state)
 
 
@@ -157,10 +158,11 @@ def diagnose_server() -> None:
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.rustdesk"), t("software.diagnose")]
     clear_screen()
-    print_action_title(breadcrumb)
+    print_action_title(breadcrumb, trailing_blank=False)
 
     version = detect_version()
     if not version:
+        # print_warning 自带 1 行前置空行，标题与内容之间正好 1 行
         print_warning(t("software.not_installed_hint", name=t("software.rustdesk")))
         pause()
         return
@@ -174,6 +176,7 @@ def diagnose_server() -> None:
         t("rustdesk.info.hbbs", active=str(is_process_active(RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE))),
         t("rustdesk.info.hbbr", active=str(is_process_active(RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE))),
     ]
+    console.print()
     _render_info_panel(state, extra_rows=rows)
     pause()
 
@@ -361,7 +364,6 @@ def _render_info_panel(state: dict[str, Any], extra_rows: list[str] | None = Non
     from rich.text import Text
 
     success = get_color("success")
-    muted = get_color("muted")
     value_style = get_color("text")
 
     tbl = Table.grid(padding=(0, 1))
@@ -371,12 +373,12 @@ def _render_info_panel(state: dict[str, Any], extra_rows: list[str] | None = Non
     tbl.add_row(Text(t("rustdesk.info.id_server", value=state.get("id_server", "")), style=value_style))
     tbl.add_row(Text(t("rustdesk.info.relay_server", value=state.get("relay_server", "")), style=value_style))
     tbl.add_row(Text(t("rustdesk.info.key", value=state.get("key", "")), style=value_style))
-    tbl.add_row(Text(t("rustdesk.info.client_hint"), style=muted))
     console.print(Panel(
         tbl,
         title=f"[{success}]{t('rustdesk.info.done')}[/{success}]",
         border_style=success,
         padding=(1, 2),
+        expand=False,
     ))
 
 
