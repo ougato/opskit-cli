@@ -381,6 +381,9 @@ def select(
 
     while True:
         ch = _read_key()
+        if not ch:
+            console.print()
+            return None
         if ch == '0':
             console.print()
             return None
@@ -413,6 +416,9 @@ def confirm(
 
     while True:
         ch = _read_key().lower()
+        if not ch:
+            console.print('n')
+            return False
         if ch == 'y':
             console.print('y')
             return True
