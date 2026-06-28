@@ -110,6 +110,29 @@ def test_traffic_stats_handles_counter_reset(monkeypatch, tmp_path) -> None:
     assert stats[0]["today"] == {"up": 0, "down": 0}
 
 
+def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> None:
+    from xui import utils
+
+    service_unit = tmp_path / "opskit-xui-traffic.service"
+    timer_unit = tmp_path / "opskit-xui-traffic.timer"
+    history = tmp_path / "opskit-traffic.db"
+    monkeypatch.setattr(utils, "TRAFFIC_SERVICE_UNIT_FILE", service_unit)
+    monkeypatch.setattr(utils, "TRAFFIC_TIMER_UNIT_FILE", timer_unit)
+    monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history)
+    monkeypatch.setattr(utils, "systemd_available", lambda: True)
+    monkeypatch.setattr(utils.subprocess, "run", lambda *a, **k: None)
+
+    utils.install_traffic_timer()
+    assert service_unit.exists()
+    assert timer_unit.exists()
+    history.write_text("x", encoding="utf-8")
+
+    utils.uninstall_traffic_timer()
+    assert not service_unit.exists()
+    assert not timer_unit.exists()
+    assert not history.exists()
+
+
 def test_xui_recipe_is_registered_without_submenu() -> None:
     keys = {cls.key for cls in all_recipes()}
     assert "xui" in keys
