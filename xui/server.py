@@ -13,7 +13,7 @@ from rich.console import Console
 from core.i18n import t
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
-from core.theme import print_action_title, print_error, print_info, print_success, print_warning
+from core.theme import get_icon, print_action_title, print_error, print_info, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
     APT_ASSUME_YES_ARG,
@@ -487,15 +487,16 @@ def manage_nodes() -> None:
                 breadcrumb=breadcrumb,
                 subtitle=t("prompt.select"),
                 choices=[
-                    {"key": "1", "label": t("xui.manage.print_links")},
-                    {"key": "2", "label": t("xui.manage.show_state")},
-                    {"key": "3", "label": t("xui.manage.start")},
-                    {"key": "4", "label": t("xui.manage.stop")},
-                    {"key": "5", "label": t("xui.manage.restart")},
-                    {"key": "6", "label": t("xui.manage.logs")},
-                    {"key": "7", "label": t("xui.manage.traffic")},
+                    {"key": "1", "label": f"{get_icon('link')} {t('xui.manage.print_links')}"},
+                    {"key": "2", "label": f"{get_icon('state')} {t('xui.manage.show_state')}"},
+                    {"key": "3", "label": f"{get_icon('start')} {t('xui.manage.start')}"},
+                    {"key": "4", "label": f"{get_icon('stop')} {t('xui.manage.stop')}"},
+                    {"key": "5", "label": f"{get_icon('restart')} {t('xui.manage.restart')}"},
+                    {"key": "6", "label": f"{get_icon('logs')} {t('xui.manage.logs')}"},
+                    {"key": "7", "label": f"{get_icon('traffic')} {t('xui.manage.traffic')}"},
                 ],
                 theme_key="software",
+                back_label=f"{get_icon('back')} {t('menu.back')}",
             )
         except UserCancel:
             return
