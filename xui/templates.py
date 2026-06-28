@@ -5,18 +5,13 @@ import json
 
 from xui.constants import (
     CLIENT_TOTAL_GB,
-    DEFAULT_TROJAN_REMARK,
     DEFAULT_VLESS_REMARK,
-    DEFAULT_XHTTP_MODE,
     REALITY_SECURITY,
     SNIFFING_DEST_OVERRIDE,
     TCP_NETWORK,
-    TLS_SECURITY,
-    TROJAN_SNIFFING_DEST_OVERRIDE,
-    TROJAN_PROTOCOL,
+    VLESS_FLOW,
     VLESS_PROTOCOL,
     VLESS_DECRYPTION,
-    XHTTP_NETWORK,
 )
 
 
@@ -34,7 +29,7 @@ def _client_defaults(email: str) -> dict[str, object]:
     }
 
 
-def vless_reality_xhttp_inbound(
+def vless_reality_tcp_inbound(
     *,
     port: int,
     uuid: str,
@@ -42,20 +37,18 @@ def vless_reality_xhttp_inbound(
     short_id: str,
     sni: str,
     dest: str,
-    path: str,
     remark: str = DEFAULT_VLESS_REMARK,
-    mode: str = DEFAULT_XHTTP_MODE,
 ) -> dict[str, object]:
     return {
         "remark": remark,
         "protocol": VLESS_PROTOCOL,
         "port": port,
         "settings": {
-            "clients": [{"id": uuid, **_client_defaults(remark)}],
+            "clients": [{"id": uuid, "flow": VLESS_FLOW, **_client_defaults(remark)}],
             "decryption": VLESS_DECRYPTION,
         },
         "streamSettings": {
-            "network": XHTTP_NETWORK,
+            "network": TCP_NETWORK,
             "security": REALITY_SECURITY,
             "realitySettings": {
                 "show": False,
@@ -65,46 +58,10 @@ def vless_reality_xhttp_inbound(
                 "privateKey": private_key,
                 "shortIds": [short_id],
             },
-            "xhttpSettings": {
-                "path": path,
-                "mode": mode,
-            },
         },
         "sniffing": {
             "enabled": True,
             "destOverride": SNIFFING_DEST_OVERRIDE,
-        },
-    }
-
-
-def trojan_inbound(
-    *,
-    port: int,
-    password: str,
-    sni: str,
-    remark: str = DEFAULT_TROJAN_REMARK,
-    certificate_file: str = "",
-    key_file: str = "",
-) -> dict[str, object]:
-    tls_settings: dict[str, object] = {"serverName": sni}
-    if certificate_file and key_file:
-        tls_settings["certificates"] = [{"certificateFile": certificate_file, "keyFile": key_file}]
-    return {
-        "remark": remark,
-        "protocol": TROJAN_PROTOCOL,
-        "port": port,
-        "settings": {
-            "clients": [{"password": password, **_client_defaults(remark)}],
-            "fallbacks": [],
-        },
-        "streamSettings": {
-            "network": TCP_NETWORK,
-            "security": TLS_SECURITY,
-            "tlsSettings": tls_settings,
-        },
-        "sniffing": {
-            "enabled": True,
-            "destOverride": TROJAN_SNIFFING_DEST_OVERRIDE,
         },
     }
 

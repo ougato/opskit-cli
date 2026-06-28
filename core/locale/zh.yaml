@@ -307,9 +307,6 @@ xui:
     vless_port: "VLESS 端口（默认 {default}）"
     sni: "REALITY SNI（默认 {default}）"
     dest: "REALITY dest（默认 {default}）"
-    xhttp_path: "XHTTP 路径（默认 {default}）"
-    enable_trojan: "是否创建 Trojan 备用节点？"
-    trojan_port: "Trojan 端口（默认 {default}）"
   confirm:
     install: "确认安装并创建 X-UI 节点？"
   step:
@@ -318,8 +315,7 @@ xui:
     install_xui: "安装 X-UI"
     generate_credentials: "生成凭据"
     configure_panel: "配置面板"
-    create_vless_xhttp: "创建 VLESS XHTTP"
-    create_trojan: "创建 Trojan"
+    create_vless_tcp: "创建 VLESS TCP"
     start_service: "启动服务"
     verify: "验证安装"
     print_links: "输出链接"
@@ -338,13 +334,11 @@ xui:
     panel_user: "面板用户"
     panel_password: "面板密码"
     vless_link: "VLESS 链接"
-    trojan_link: "Trojan 链接"
   diagnose:
     title: "X-UI 诊断"
     service: "服务运行"
     panel_port: "面板端口"
     vless_port: "VLESS 端口"
-    trojan_port: "Trojan 端口"
   manage:
     no_state: "未找到 X-UI 状态"
     print_links: "打印链接"

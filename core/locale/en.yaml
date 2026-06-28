@@ -308,9 +308,6 @@ xui:
     vless_port: "VLESS port (default {default})"
     sni: "REALITY SNI (default {default})"
     dest: "REALITY dest (default {default})"
-    xhttp_path: "XHTTP path (default {default})"
-    enable_trojan: "Create Trojan fallback node?"
-    trojan_port: "Trojan port (default {default})"
   confirm:
     install: "Install and create X-UI nodes?"
   step:
@@ -319,8 +316,7 @@ xui:
     install_xui: "Install X-UI"
     generate_credentials: "Generate credentials"
     configure_panel: "Configure panel"
-    create_vless_xhttp: "Create VLESS XHTTP"
-    create_trojan: "Create Trojan"
+    create_vless_tcp: "Create VLESS TCP"
     start_service: "Start service"
     verify: "Verify installation"
     print_links: "Print links"
@@ -339,13 +335,11 @@ xui:
     panel_user: "Panel user"
     panel_password: "Panel password"
     vless_link: "VLESS link"
-    trojan_link: "Trojan link"
   diagnose:
     title: "X-UI diagnostics"
     service: "Service active"
     panel_port: "Panel port"
     vless_port: "VLESS port"
-    trojan_port: "Trojan port"
   manage:
     no_state: "No X-UI state found"
     print_links: "Print links"

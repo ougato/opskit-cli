@@ -46,7 +46,7 @@ class XuiRecipe(Recipe):
 class XuiServerRecipe(Recipe):
     key: ClassVar[str] = "xui_server"
     category: ClassVar[str] = "devops"
-    description: ClassVar[str] = "x-ui VLESS REALITY XHTTP / Trojan 服务端"
+    description: ClassVar[str] = "x-ui VLESS REALITY TCP 服务端"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
 
@@ -77,8 +77,7 @@ class XuiServerRecipe(Recipe):
             InstallStep("xui.step.install_xui"),
             InstallStep("xui.step.generate_credentials"),
             InstallStep("xui.step.configure_panel"),
-            InstallStep("xui.step.create_vless_xhttp"),
-            InstallStep("xui.step.create_trojan"),
+            InstallStep("xui.step.create_vless_tcp"),
             InstallStep("xui.step.start_service"),
             InstallStep("xui.step.verify"),
             InstallStep("xui.step.print_links"),

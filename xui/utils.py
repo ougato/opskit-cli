@@ -32,7 +32,6 @@ from xui.constants import (
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
-    OPENSSL_COMMAND,
     PANEL_API_RETRY_COUNT,
     PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
@@ -44,13 +43,8 @@ from xui.constants import (
     SS_COMMAND,
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
-    TROJAN_CERT_DAYS,
-    TROJAN_CERT_FILE,
-    TROJAN_CERT_RSA_BITS,
-    TROJAN_KEY_FILE,
     HTTP_URL_TEMPLATE,
     HTTP_VALUE_XMLHTTPREQUEST,
-    XHTTP_PATH_SUFFIX_BYTES,
     BASH_COMMAND,
     CLIENT_EXPIRY_DAYS,
     CLIENT_TOTAL_GB,
@@ -63,7 +57,6 @@ from xui.constants import (
     XUI_COMMAND,
     XUI_ARTIFACT_DIRS,
     XUI_ARTIFACT_FILES,
-    XUI_CONFIG_DIR,
     XUI_DATABASE_FILE,
     XUI_SETTING_PASSWORD_ARG,
     XUI_SETTING_PORT_ARG,
@@ -99,10 +92,6 @@ def gen_short_id() -> str:
 
 def gen_password() -> str:
     return secrets.token_urlsafe(PASSWORD_BYTES)
-
-
-def gen_xhttp_path(prefix: str) -> str:
-    return f"{prefix}{secrets.token_hex(XHTTP_PATH_SUFFIX_BYTES)}"
 
 
 def detect_public_host() -> str:
@@ -183,37 +172,6 @@ def install_xui_script() -> None:
         )
     finally:
         script_path.unlink(missing_ok=True)
-
-
-def ensure_trojan_certificate(sni: str) -> tuple[str, str]:
-    if TROJAN_CERT_FILE.exists() and TROJAN_KEY_FILE.exists():
-        return str(TROJAN_CERT_FILE), str(TROJAN_KEY_FILE)
-    XUI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            OPENSSL_COMMAND,
-            "req",
-            "-x509",
-            "-newkey",
-            f"rsa:{TROJAN_CERT_RSA_BITS}",
-            "-nodes",
-            "-days",
-            str(TROJAN_CERT_DAYS),
-            "-subj",
-            f"/CN={sni}",
-            "-keyout",
-            str(TROJAN_KEY_FILE),
-            "-out",
-            str(TROJAN_CERT_FILE),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=HTTP_TIMEOUT_SECONDS,
-    )
-    TROJAN_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    TROJAN_CERT_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    return str(TROJAN_CERT_FILE), str(TROJAN_KEY_FILE)
 
 
 def generate_reality_keypair() -> tuple[str, str]:

@@ -30,7 +30,6 @@ def test_xui_state_redacts_sensitive_fields_and_uses_0600(tmp_path) -> None:
     state: dict[str, object] = {
         "panel_password": "panel-secret",
         "vless": {"private_key": "reality-private", "public_key": "pub"},
-        "trojan": {"password": "trojan-secret"},
     }
     write_secret_json(target, state)
     assert oct(target.stat().st_mode & 0o777) == "0o600"
@@ -129,15 +128,15 @@ def test_enable_inbound_clients_updates_traffic_tables(tmp_path, monkeypatch) ->
         conn.execute(
             "insert into inbounds values (1, ?, ?)",
             (
-                "opskit-vless-reality-xhttp",
-                json.dumps({"clients": [{"email": "opskit-vless-reality-xhttp", "enable": False}]}),
+                "opskit-vless-reality-tcp",
+                json.dumps({"clients": [{"email": "opskit-vless-reality-tcp", "enable": False}]}),
             ),
         )
-        conn.execute("insert into clients values (?, 0, 0, 0)", ("opskit-vless-reality-xhttp",))
-        conn.execute("insert into client_traffics values (1, ?, 0, 0, 0)", ("opskit-vless-reality-xhttp",))
+        conn.execute("insert into clients values (?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
+        conn.execute("insert into client_traffics values (1, ?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
 
     monkeypatch.setattr(utils, "XUI_DATABASE_FILE", db)
-    utils.enable_inbound_clients(["opskit-vless-reality-xhttp"])
+    utils.enable_inbound_clients(["opskit-vless-reality-tcp"])
 
     with sqlite3.connect(db) as conn:
         settings = json.loads(conn.execute("select settings from inbounds where id = 1").fetchone()[0])
