@@ -4,6 +4,33 @@ from software.registry import all_recipes, get
 from xui.utils import redact_state, write_secret_json
 
 
+def test_is_wsl_detects_microsoft_marker(monkeypatch, tmp_path) -> None:
+    from xui import utils
+
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    osrelease = tmp_path / "osrelease"
+    osrelease.write_text("5.15.167.4-microsoft-standard-WSL2\n", encoding="utf-8")
+    monkeypatch.setattr(utils, "WSL_OSRELEASE_FILE", osrelease)
+    assert utils.is_wsl() is True
+
+
+def test_is_wsl_false_on_plain_linux(monkeypatch, tmp_path) -> None:
+    from xui import utils
+
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    osrelease = tmp_path / "osrelease"
+    osrelease.write_text("5.15.200\n", encoding="utf-8")
+    monkeypatch.setattr(utils, "WSL_OSRELEASE_FILE", osrelease)
+    assert utils.is_wsl() is False
+
+
+def test_is_wsl_true_via_env(monkeypatch) -> None:
+    from xui import utils
+
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    assert utils.is_wsl() is True
+
+
 def test_xui_recipe_is_registered_without_submenu() -> None:
     keys = {cls.key for cls in all_recipes()}
     assert "xui" in keys

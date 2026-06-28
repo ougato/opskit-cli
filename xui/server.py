@@ -80,6 +80,7 @@ from xui.utils import (
     restart_service,
     stop_and_disable_service,
     systemd_available,
+    is_wsl,
     write_secret_json,
     install_xui_script,
 )
@@ -214,9 +215,16 @@ def _restart_wsl() -> bool:
 
 
 def _precheck_systemd(breadcrumb: list[str]) -> bool:
-    """安装前提前判断 systemd 是否可用。返回 False 表示中止安装。"""
+    """安装前提前判断 systemd 是否可用。返回 False 表示中止安装。
+
+    仅在确实为 WSL 时才提供自动写入 /etc/wsl.conf + 重启 WSL；其它无 systemd
+    环境（容器、SysV 等）只提示并询问是否继续，不触碰 wsl.conf 或 wsl.exe。
+    """
     if systemd_available():
         return True
+    print_warning(t("xui.output.no_systemd"))
+    if not is_wsl():
+        return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
     if confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.enable_confirm")):
         _enable_wsl_systemd()
         if shutil.which(WSL_EXE_COMMAND):

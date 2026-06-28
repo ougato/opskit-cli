@@ -43,6 +43,9 @@ from xui.constants import (
     SS_COMMAND,
     SS_TCP_LISTEN_ARGS,
     SYSTEMCTL_COMMAND,
+    WSL_DISTRO_NAME_ENV,
+    WSL_MARKER,
+    WSL_OSRELEASE_FILE,
     HTTP_URL_TEMPLATE,
     HTTP_VALUE_XMLHTTPREQUEST,
     BASH_COMMAND,
@@ -442,6 +445,15 @@ def add_inbound(port: int, username: str, password: str, base_path: str, payload
 def systemd_available() -> bool:
     from core.service import SYSTEMD_RUNTIME_DIR
     return SYSTEMD_RUNTIME_DIR.exists()
+
+
+def is_wsl() -> bool:
+    if os.environ.get(WSL_DISTRO_NAME_ENV):
+        return True
+    try:
+        return WSL_MARKER in WSL_OSRELEASE_FILE.read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
 
 
 def restart_service(service: str = XUI_SERVICE) -> None:
