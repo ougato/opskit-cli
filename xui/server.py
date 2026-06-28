@@ -296,13 +296,13 @@ def install_server() -> None:
 
 
 def uninstall_server() -> None:
+    print_action_title(["OpsKit", t("menu.software"), t("software.xui"), t("software.uninstall")])
     try:
         stop_and_disable_service()
         remove_xui_artifacts()
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
     print_success(t("xui.output.uninstall_done"))
-    pause()
 
 
 def diagnose_server() -> None:
