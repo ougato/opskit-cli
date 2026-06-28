@@ -439,13 +439,31 @@ def add_inbound(port: int, username: str, password: str, base_path: str, payload
     return False
 
 
+def systemd_available() -> bool:
+    from core.service import SYSTEMD_RUNTIME_DIR
+    return SYSTEMD_RUNTIME_DIR.exists()
+
+
 def restart_service(service: str = XUI_SERVICE) -> None:
-    subprocess.run([SYSTEMCTL_COMMAND, "restart", service], check=True, timeout=SERVICE_RESTART_TIMEOUT)
+    if not systemd_available():
+        return
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, "restart", service],
+        check=True, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
 
 
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
-    subprocess.run([SYSTEMCTL_COMMAND, "stop", service], check=False, timeout=SERVICE_RESTART_TIMEOUT)
-    subprocess.run([SYSTEMCTL_COMMAND, "disable", service], check=False, timeout=SERVICE_RESTART_TIMEOUT)
+    if not systemd_available():
+        return
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, "stop", service],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
+    subprocess.run(
+        [SYSTEMCTL_COMMAND, "disable", service],
+        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+    )
 
 
 def remove_xui_artifacts() -> None:
@@ -454,4 +472,8 @@ def remove_xui_artifacts() -> None:
             shutil.rmtree(path, ignore_errors=True)
     for path in XUI_ARTIFACT_FILES:
         path.unlink(missing_ok=True)
-    subprocess.run([SYSTEMCTL_COMMAND, "daemon-reload"], check=False, timeout=SERVICE_RESTART_TIMEOUT)
+    if systemd_available():
+        subprocess.run(
+            [SYSTEMCTL_COMMAND, "daemon-reload"],
+            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        )

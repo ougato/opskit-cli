@@ -1,4 +1,4 @@
 """x-ui Recipe 包。"""
-from .recipe import XuiRecipe, XuiServerRecipe
+from .recipe import XuiRecipe
 
-__all__ = ["XuiRecipe", "XuiServerRecipe"]
+__all__ = ["XuiRecipe"]

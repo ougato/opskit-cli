@@ -330,6 +330,7 @@ xui:
     panel_api_failed: "Panel API failed: {error}"
   output:
     install_done: "X-UI configured"
+    no_systemd: "No systemd; service not started (WSL)\n↳ Enable systemd=true in /etc/wsl.conf, then restart WSL"
     uninstall_done: "X-UI uninstalled"
     pending_inbounds: "Panel API did not finish; inbounds written to {path}"
     panel: "Panel URL"

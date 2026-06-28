@@ -329,6 +329,7 @@ xui:
     panel_api_failed: "面板 API 调用失败：{error}"
   output:
     install_done: "X-UI 配置完成"
+    no_systemd: "无 systemd，服务未启动（WSL）\n↳ 在 /etc/wsl.conf 开启 systemd=true 后重启 WSL"
     uninstall_done: "X-UI 已卸载"
     pending_inbounds: "面板 API 未完成，入站已写入 {path}"
     panel: "面板地址"

@@ -71,6 +71,7 @@ from xui.utils import (
     remove_xui_artifacts,
     restart_service,
     stop_and_disable_service,
+    systemd_available,
     write_secret_json,
     install_xui_script,
 )
@@ -314,6 +315,8 @@ def install_server() -> None:
         sp.step(t("xui.step.print_links"))
 
     print_success(t("xui.output.install_done"))
+    if not systemd_available():
+        print_warning(t("xui.output.no_systemd"))
     if not api_ok:
         print_warning(t("xui.output.pending_inbounds", path=str(XUI_PENDING_INBOUNDS_FILE)))
     panel_url = HTTP_URL_TEMPLATE.format(host=host or LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
