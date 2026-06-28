@@ -187,7 +187,7 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
             show_actions(breadcrumb=breadcrumb, cls=cls)
-        return
+        continue
 
 
 def _show_submenu(breadcrumb: list[str], cls: type) -> None:

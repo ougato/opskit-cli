@@ -604,7 +604,7 @@ def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
     recipes = [make_recipe(i) for i in range(10)]
     selected: list[str] = []
     calls: list[dict] = []
-    keys = iter(["n", "1"])
+    keys = iter(["n", "1", None])
 
     def fake_select(**kwargs):
         calls.append(kwargs)
