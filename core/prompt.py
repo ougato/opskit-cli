@@ -5,7 +5,7 @@ import os
 import signal
 import sys
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from rich.console import Console
 from rich.text import Text
@@ -405,6 +405,78 @@ def select(
         if ch in valid:
             console.print(ch)
             return ch
+
+
+def paged_select(
+    *,
+    breadcrumb: list[str],
+    items: list[Any],
+    choice_of: Callable[[Any, int], dict[str, Any]],
+    subtitle_of: Callable[[int, int], str],
+    back_label: str,
+    nav_labels: tuple[str, str],
+    theme_key: str = 'root',
+    page_size: int = 9,
+    on_select: Callable[[Any], None] | None = None,
+) -> Any | None:
+    """分页单选 — 统一「列表分页 + p/n 翻页 + 选中」交互。
+
+    各菜单此前各自重复一套 page/total_pages/n/p 循环（5 处），此处收敛为一：
+
+    Args:
+        items: 待选原始对象列表（任意类型）。
+        choice_of: ``(item, idx_on_page) -> choice dict``；返回的 dict 若缺
+            ``key`` 字段会自动补为页内序号（从 1 起）。
+        subtitle_of: ``(page, total_pages) -> str``，由调用方决定副标题文案。
+        nav_labels: ``(上一页文案, 下一页文案)``，由调用方传入避免耦合命名空间。
+        on_select: 为 None → 选中即返回该 item（pick 模式）；否则对选中 item
+            调用此回调并继续停留在列表（browse 模式，翻页状态保持）。
+
+    Returns:
+        pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
+    """
+    prev_label, next_label = nav_labels
+    total = len(items)
+    total_pages = (total + page_size - 1) // page_size
+    page = 0
+
+    while True:
+        start = page * page_size
+        page_items = items[start:min(start + page_size, total)]
+
+        choices: list[dict[str, Any]] = []
+        for i, item in enumerate(page_items):
+            ch = choice_of(item, i)
+            ch.setdefault('key', str(i + 1))
+            choices.append(ch)
+        if page > 0:
+            choices.append({'key': 'p', 'label': prev_label})
+        if page < total_pages - 1:
+            choices.append({'key': 'n', 'label': next_label})
+
+        try:
+            key = select(
+                breadcrumb=breadcrumb,
+                subtitle=subtitle_of(page, total_pages),
+                choices=choices,
+                theme_key=theme_key,
+                back_label=back_label,
+            )
+        except UserCancel:
+            return None
+        if key is None:
+            return None
+        if key == 'n':
+            page += 1
+            continue
+        if key == 'p':
+            page -= 1
+            continue
+
+        selected = page_items[int(key) - 1]
+        if on_select is None:
+            return selected
+        on_select(selected)
 
 
 def confirm(

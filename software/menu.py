@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.prompt import select, paged_select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 
@@ -138,57 +138,30 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
             ver = cls().detect()
             hints[cls.key] = ver or ""
 
-    total = len(recipes)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-
-    while True:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = recipes[start:end]
-        choices = [
-            {
-                "key": str(i + 1),
-                "label": f"{get_icon(cls.key)} {recipe_display_name(cls)}",
-                "hint": hints.get(cls.key, ""),
-            }
-            for i, cls in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        subtitle = (
-            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
-            if total_pages > 1
-            else t("prompt.select")
-        )
-        try:
-            key = select(
-                breadcrumb=breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if key is None:
-            return
-        if key == "n":
-            page += 1
-            continue
-        if key == "p":
-            page -= 1
-            continue
-
-        cls = page_items[int(key) - 1]
+    def _dispatch(cls: type) -> None:
         if getattr(cls, "has_submenu", False):
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
             show_actions(breadcrumb=breadcrumb, cls=cls)
-        continue
+
+    paged_select(
+        breadcrumb=breadcrumb,
+        items=recipes,
+        choice_of=lambda cls, i: {
+            "label": f"{get_icon(cls.key)} {recipe_display_name(cls)}",
+            "hint": hints.get(cls.key, ""),
+        },
+        subtitle_of=lambda page, total_pages: (
+            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
+            if total_pages > 1
+            else t("prompt.select")
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+        on_select=_dispatch,
+    )
 
 
 def _show_submenu(breadcrumb: list[str], cls: type) -> None:
@@ -459,52 +432,22 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         pause()
         return
 
-    total = len(versions)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    version: str | None = None
-
-    while version is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = versions[start:end]
-
-        subtitle = (
+    version = paged_select(
+        breadcrumb=breadcrumb,
+        items=versions,
+        choice_of=lambda v, i: {"label": f"[dim]{v}[/dim]" if v in installed_set else v},
+        subtitle_of=lambda page, total_pages: (
             f"{t('software.installed')}: {existing}  [{page + 1}/{total_pages}]"
             if existing
             else f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-        )
-
-        choices = [
-            {"key": str(i + 1), "label": f"[dim]{v}[/dim]" if v in installed_set else v}
-            for i, v in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        version = page_items[int(ver_key) - 1]
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if version is None:
+        return
 
     # 已安装版本选中时弹确认
     if version in installed_set:
@@ -665,53 +608,24 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    total = len(all_items)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    selected_item: dict | None = None
     switch_breadcrumb = [*breadcrumb, t("software.switch")]
 
-    while selected_item is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = all_items[start:end]
-
-        subtitle = (
+    selected_item = paged_select(
+        breadcrumb=switch_breadcrumb,
+        items=all_items,
+        choice_of=lambda item, i: {"label": item["label"], "hint": item["hint"]},
+        subtitle_of=lambda page, total_pages: (
             f"{t('software.current_version')}: {active}  [{page + 1}/{total_pages}]"
             if active
             else f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-        )
-
-        choices = [
-            {"key": str(i + 1), "label": item["label"], "hint": item["hint"]}
-            for i, item in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=switch_breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        selected_item = page_items[int(ver_key) - 1]
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if selected_item is None:
+        return
 
     selected_version = selected_item["version"]
 
@@ -787,10 +701,6 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    total = len(versions)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    new_version: str | None = None
     upg_breadcrumb = [*breadcrumb, t("software.upgrade")]
     upg_installed_set: set[str] = (
         set(instance.installed_versions())
@@ -798,43 +708,18 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         else ({existing} if existing else set())
     )
 
-    while new_version is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = versions[start:end]
-
-        subtitle = f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-
-        choices = [
-            {"key": str(i + 1), "label": f"[dim]{v}[/dim]" if v in upg_installed_set else v}
-            for i, v in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=upg_breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        new_version = page_items[int(ver_key) - 1]
+    new_version = paged_select(
+        breadcrumb=upg_breadcrumb,
+        items=versions,
+        choice_of=lambda v, i: {"label": f"[dim]{v}[/dim]" if v in upg_installed_set else v},
+        subtitle_of=lambda page, total_pages: f"{t('software.select_version')}  [{page + 1}/{total_pages}]",
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if new_version is None:
+        return
 
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
@@ -1103,52 +988,28 @@ def show_installed() -> None:
         return
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.installed_list")]
-    page = 0
-    total = len(installed)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
 
-    while True:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = installed[start:end]
-
-        choices = [
-            {"key": str(i + 1),
-             "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}')}",
-             "hint": ver}
-            for i, (cls, _, ver) in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            key = select(
-                breadcrumb=breadcrumb,
-                subtitle=t("prompt.select"),
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if key is None:
-            return
-
-        if key == "n":
-            page += 1
-            continue
-        if key == "p":
-            page -= 1
-            continue
-
-        idx = int(key) - 1
-        cls, instance, ver = page_items[idx]
+    def _dispatch(item: tuple) -> None:
+        cls, _instance, _ver = item
         if getattr(cls, "has_submenu", False):
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
             show_actions(breadcrumb=breadcrumb, cls=cls)
+
+    paged_select(
+        breadcrumb=breadcrumb,
+        items=installed,
+        choice_of=lambda item, i: {
+            "label": f"{get_icon(item[0].key)} {recipe_display_name(item[0])}",
+            "hint": item[2],
+        },
+        subtitle_of=lambda page, total_pages: t("prompt.select"),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+        on_select=_dispatch,
+    )
 
 
 # ─── 卸载 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
