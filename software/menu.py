@@ -8,6 +8,7 @@ from rich.table import Table
 from core.i18n import t
 from core.prompt import select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
+from core.recipe_utils import recipe_display_name
 
 console = Console()
 
@@ -148,7 +149,7 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
         choices = [
             {
                 "key": str(i + 1),
-                "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}') if _has_i18n(f'software.{cls.key}') else cls.key}",
+                "label": f"{get_icon(cls.key)} {recipe_display_name(cls)}",
                 "hint": hints.get(cls.key, ""),
             }
             for i, cls in enumerate(page_items)
@@ -193,7 +194,7 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
 def _show_submenu(breadcrumb: list[str], cls: type) -> None:
     """显示子菜单（如 WireGuard → 公网服务端 / 内网客户端）"""
     from software.registry import get as get_recipe
-    name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.key
+    name = recipe_display_name(cls)
     sub_breadcrumb = [*breadcrumb, name]
     instance = cls()
     items = instance.submenu_items()
@@ -246,7 +247,7 @@ def _has_i18n(key: str) -> bool:
 
 def show_actions(breadcrumb: list[str], cls: type) -> None:
     """软件操作菜单：安装(1) / 卸载(2) / 升级(3) + 扩展操作"""
-    name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.key
+    name = recipe_display_name(cls)
     sub_breadcrumb = [*breadcrumb, name]
     instance = cls()
     muted = get_color("muted")
@@ -321,7 +322,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     from software.base import InstallError
     from software.resolver import resolve_deps
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     try:
         resolve_deps(instance, breadcrumb)
@@ -438,7 +439,7 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     from software.base import InstallError
     from core.progress import spinner
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     existing = instance.detect()
     installed_set: set[str] = (
@@ -540,7 +541,7 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     from software.base import UninstallError
     from core.progress import spinner
 
-    _uname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _uname = recipe_display_name(cls)
 
     # 检查是否支持多版本（has_switch 的 recipe 有 installed_versions 方法）
     if getattr(cls, "has_switch", False) and hasattr(instance, "installed_versions"):
@@ -637,7 +638,7 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     from software.base import InstallError
     from core.progress import spinner
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     if not hasattr(instance, "installed_versions"):
         print_info(t("software.not_supported"))
@@ -739,7 +740,7 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     from core.progress import spinner
     from software.resolver import resolve_deps
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     try:
         resolve_deps(instance, breadcrumb)
@@ -963,7 +964,7 @@ def show_install() -> None:
     cls = recipes[int(key) - 1]
     instance = cls()
 
-    _sname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _sname = recipe_display_name(cls)
 
     # 检查是否已安装
     existing = instance.detect()
@@ -1030,7 +1031,7 @@ def show_install() -> None:
 
     # 执行安装
     clear_screen()
-    _iname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _iname = recipe_display_name(cls)
     print_header(["OpsKit", t("menu.software"), t("software.install")])
     base_console.print()
     import time as _time
@@ -1194,7 +1195,7 @@ def show_uninstall() -> None:
 
     cls, instance, ver = installed[int(key) - 1]
 
-    _usname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _usname = recipe_display_name(cls)
 
     try:
         if not confirm(
@@ -1262,7 +1263,7 @@ def show_upgrade() -> None:
         return
 
     cls, instance, current_ver = installed[int(key) - 1]
-    _upgname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _upgname = recipe_display_name(cls)
 
     with spinner(t("software.fetching_versions")):
         try:

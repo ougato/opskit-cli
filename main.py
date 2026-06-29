@@ -636,9 +636,8 @@ def _direct_fail(message: str, code: int = _EXIT_RUNTIME) -> None:
 
 
 def _recipe_name(cls: type) -> str:
-    key = f"software.{cls.key}"
-    value = t(key)
-    return value if value != key else (getattr(cls, "description", "") or cls.key)
+    from core.recipe_utils import recipe_display_name
+    return recipe_display_name(cls)
 
 
 def _get_recipe_for_direct(name: str):
