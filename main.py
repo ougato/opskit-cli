@@ -219,7 +219,11 @@ def _app_callback(
 
 
 def _boot() -> dict:
-    """启动初始化：配置 → 日志 → 清理 → 主题 → i18n → 预检 → 后台线程"""
+    """启动初始化：配置 → 日志 → 清理 → 主题 → i18n → 预检 → pending 更新检测。
+
+    联网/重型后台任务（测速 / 版本刷新 / 自更新 / 遥测）不在此启动，
+    而是延迟到主菜单首屏渲染后由 _start_background_workers() 触发。
+    """
     cfg = ensure_config()
 
     import core.logger as _logger
@@ -251,8 +255,27 @@ def _boot() -> dict:
     except Exception:
         pass
 
-    # ── 后台线程 1：源管理层初始化（IP 检测 + 测速）──
+    return cfg
+
+
+_bg_started = False
+
+
+def _start_background_workers(cfg: dict) -> None:
+    """启动所有联网/重型后台任务（测速 / 版本刷新 / 自更新 / 遥测）。
+
+    这些任务全部延迟到主菜单首屏渲染完成后再启动：先把菜单画出来，
+    再让网络探测和重型 import 在后台进行，避免它们在单核 + 慢网下与
+    主线程抢占 CPU/GIL，拖慢"进入主界面"的时间。
+    """
+    global _bg_started
+    if _bg_started:
+        return
+    _bg_started = True
+
     import threading
+
+    # ── 后台线程 1：源管理层初始化（IP 检测 + 测速）──
     def _mirror_init_worker():
         try:
             from core.mirror import init as mirror_init
@@ -277,19 +300,25 @@ def _boot() -> dict:
     except Exception:
         pass
 
-    # ── 遥测初始化（错误上报，DSN 为空则静默）──
-    try:
-        import core.telemetry as _telemetry
-        _telemetry.init(cfg)
-    except Exception:
-        pass
-
-    return cfg
+    # ── 后台线程 4：遥测初始化（错误上报，DSN 为空则静默）──
+    # 必须放后台线程：SentryProvider.init() 会同步探测 github 可达性
+    # （httpx.head 带数秒超时），放主线程会卡住菜单交互。
+    def _telemetry_worker():
+        try:
+            import core.telemetry as _telemetry
+            _telemetry.init(cfg)
+        except Exception:
+            pass
+    threading.Thread(target=_telemetry_worker, daemon=True, name="opskit-telemetry").start()
 
 
 def _main_menu(cfg: dict) -> None:
     """主菜单循环"""
     modules = discover_modules(cfg)
+
+    # 首屏菜单渲染完成后再启动联网/重型后台任务（测速 / 版本刷新 / 自更新 /
+    # 遥测），保证"进入主界面"接近瞬时；只在第一次循环触发一次。
+    _first_render = True
 
     while True:
         choices = [
@@ -305,6 +334,9 @@ def _main_menu(cfg: dict) -> None:
             "label": f"{get_icon('preferences')} {t('menu.preferences')}",
         })
 
+        _on_ready = (lambda: _start_background_workers(cfg)) if _first_render else None
+        _first_render = False
+
         try:
             key = select(
                 breadcrumb=["OpsKit"],
@@ -312,6 +344,7 @@ def _main_menu(cfg: dict) -> None:
                 choices=choices,
                 theme_key="root",
                 back_label=f"{get_icon('exit')} {t('menu.exit')}",
+                on_ready=_on_ready,
             )
         except UserCancel:
             _on_exit(cfg)

@@ -350,12 +350,15 @@ def select(
     theme_key: str = 'root',
     show_shortcuts: list[tuple[str, str, str]] | None = None,
     back_label: str = '',
+    on_ready=None,
 ) -> str | None:
     """
     Powerline 风格选择菜单（单键无回车）。
 
     choices 格式：[{"key": "1", "label": "📦 软件管理"}]
     show_shortcuts 格式：[("t", "🎨 切换主题", "theme"), ...]
+    on_ready：菜单完全渲染、即将开始等待按键前回调一次（用于在首屏渲染
+              完成后再启动联网/重型后台任务，保证"进菜单"接近瞬时）。
 
     返回选中的 key 字符串；用户按 0 返回 None；Ctrl+C 抛 UserCancel。
     """
@@ -378,6 +381,12 @@ def select(
         console.print(f'\n {pipe}[/] ' + '  '.join(parts))
 
     valid: set[str] = {c['key'] for c in choices} | shortcut_keys
+
+    if on_ready is not None:
+        try:
+            on_ready()
+        except Exception:
+            pass
 
     while True:
         ch = _read_key()

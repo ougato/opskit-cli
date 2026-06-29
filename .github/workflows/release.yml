@@ -82,18 +82,6 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: install UPX (linux non-manylinux)
-        if: runner.os == 'Linux' && !matrix.manylinux
-        run: sudo apt-get install -y upx-ucl
-
-      - name: install UPX (macos)
-        if: runner.os == 'macOS'
-        run: brew install upx
-
-      - name: install UPX (windows)
-        if: runner.os == 'Windows'
-        run: choco install upx -y
-
       - name: install deps (non-manylinux)
         if: ${{ !matrix.manylinux }}
         run: pip install -r requirements.txt nuitka zstandard
@@ -108,15 +96,14 @@ jobs:
             bash -c "
               set -e
               cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && cd /work
-              yum install -y upx
               /opt/python/cp312-cp312/bin/pip install -r requirements.txt nuitka zstandard
-              /opt/python/cp312-cp312/bin/python build.py build --backend nuitka --upx
+              /opt/python/cp312-cp312/bin/python build.py build --backend nuitka
               chown -R \$(stat -c '%u:%g' /work) /work/dist/
             "
 
       - name: build (non-manylinux)
         if: ${{ !matrix.manylinux }}
-        run: python build.py build --backend nuitka --upx
+        run: python build.py build --backend nuitka
 
       - name: smoke test (unix)
         if: runner.os != 'Windows'
