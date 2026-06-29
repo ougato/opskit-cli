@@ -1,9 +1,11 @@
 """跨平台共用工具：路径、快照、版本查找、tarball 下载（对齐 golang/common.py）"""
 from __future__ import annotations
 
-import json
 import platform
 from pathlib import Path
+
+from software._shared.snapshot import SnapshotStore
+from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MONGODB_FILE
 
 
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
@@ -49,31 +51,23 @@ def shim_dir() -> Path:
 
 # ─── 快照管理 ─────────────────────────────────────────────────────────────────
 
+_store = SnapshotStore(SNAPSHOT_SUBDIR, SNAPSHOT_MONGODB_FILE)
+
+
 def snapshot_path() -> Path:
-    from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MONGODB_FILE
-    return Path.home() / SNAPSHOT_SUBDIR / SNAPSHOT_MONGODB_FILE
+    return _store.path
 
 
 def load_snapshot() -> dict:
-    p = snapshot_path()
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    return _store.load()
 
 
 def save_snapshot(data: dict) -> None:
-    p = snapshot_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _store.save(data)
 
 
 def delete_snapshot() -> None:
-    p = snapshot_path()
-    if p.exists():
-        p.unlink()
+    _store.delete()
 
 
 # ─── tarball 下载 ─────────────────────────────────────────────────────────────

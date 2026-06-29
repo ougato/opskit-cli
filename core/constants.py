@@ -97,6 +97,7 @@ MIRROR_CACHE_TTL = 86400
 # ─── 版本缓存 ────────────────────────────────────────────────────────────────
 FILE_INSTALL_SNAPSHOTS = "install_snapshots.json"
 FILE_VERSION_CACHE = "version_cache.yaml"
+SNAPSHOT_JSON_INDENT = 2            # 多版本安装快照 JSON 缩进
 VERSION_CACHE_TTL = 3600            # 1h 内不重新获取
 VERSION_CACHE_STALE_TTL = 86400     # 超过 24h 视为完全过期
 VERSION_FETCH_TIMEOUT = 10          # 后台获取超时（宽松）

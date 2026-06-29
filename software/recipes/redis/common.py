@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import gzip
-import json
 import platform
 from pathlib import Path
+
+from software._shared.snapshot import SnapshotStore
+from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE
 
 
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
@@ -50,34 +52,23 @@ def shim_dir() -> Path:
 
 # ─── 快照管理 ─────────────────────────────────────────────────────────────────
 
+_store = SnapshotStore(SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE)
+
+
 def _snapshot_path() -> Path:
-    from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE
-    return Path.home() / SNAPSHOT_SUBDIR / SNAPSHOT_REDIS_FILE
+    return _store.path
 
 
 def load_snapshot() -> dict:
-    p = _snapshot_path()
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return _store.load()
 
 
 def save_snapshot(data: dict) -> None:
-    p = _snapshot_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _store.save(data)
 
 
 def delete_snapshot() -> None:
-    p = _snapshot_path()
-    if p.exists():
-        try:
-            p.unlink()
-        except Exception:
-            pass
+    _store.delete()
 
 
 # ─── Linux deb 包查询与下载 ───────────────────────────────────────────────────
