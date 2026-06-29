@@ -9,19 +9,11 @@ from core.i18n import t
 from core.prompt import select, paged_select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
+from core.feedback import capture as _report, report_failure
 
 console = Console()
 
 _THEME_KEY = "software"
-
-
-def _report(exc: Exception, **ctx) -> None:
-    """上报异常到遥测系统，失败静默"""
-    try:
-        import core.telemetry as _tel
-        _tel.capture_error(exc, **ctx)
-    except Exception:
-        pass
 
 
 def entry() -> None:
@@ -292,21 +284,14 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     """执行安装流程"""
     from core.platform import check_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
-    from software.base import InstallError
     from software.resolver import resolve_deps
 
     _name = recipe_display_name(cls)
 
     try:
         resolve_deps(instance, breadcrumb)
-    except InstallError as e:
-        _report(e, software=cls.key, action="install.resolve_deps")
-        print_error(t("install.failed", name=_name, error=str(e)))
-        pause()
-        return
     except Exception as e:
-        _report(e, software=cls.key, action="install.resolve_deps")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install.resolve_deps")
         pause()
         return
 
@@ -329,13 +314,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
             instance.install("latest")
         except KeyboardInterrupt:
             return
-        except InstallError as e:
-            _report(e, software=cls.key, action="install")
-            print_error(t("install.failed", name=_name, error=str(e)))
-            pause()
         except Exception as e:
-            _report(e, software=cls.key, action="install")
-            print_error(t("error.unknown", error=str(e)))
+            report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install")
             pause()
         return
 
@@ -396,12 +376,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
     except KeyboardInterrupt:
         return
-    except InstallError as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("install.failed", name=_name, error=str(e)))
     except Exception as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
@@ -409,7 +385,6 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
     from core.platform import check_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
-    from software.base import InstallError
     from core.progress import spinner
 
     _name = recipe_display_name(cls)
@@ -470,18 +445,13 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     try:
         instance.install(version)
         print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
-    except InstallError as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("install.failed", name=_name, error=str(e)))
     except Exception as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
 def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     """执行卸载流程：支持多版本选择卸载"""
-    from software.base import UninstallError
     from core.progress import spinner
 
     _uname = recipe_display_name(cls)
@@ -536,12 +506,8 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         try:
             instance.uninstall(version_to_remove)
             print_success(t("uninstall.success", name=_uname))
-        except UninstallError as e:
-            _report(e, software=cls.key, version=str(version_to_remove), action="uninstall")
-            print_error(t("uninstall.failed", name=_uname, error=str(e)))
         except Exception as e:
-            _report(e, software=cls.key, version=str(version_to_remove), action="uninstall")
-            print_error(t("error.unknown", error=str(e)))
+            report_failure(e, fail_key="uninstall.failed", name=_uname, software=cls.key, version=str(version_to_remove), action="uninstall")
         pause()
         return
 
@@ -567,18 +533,13 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         instance.uninstall()
     except KeyboardInterrupt:
         return
-    except UninstallError as e:
-        _report(e, software=cls.key, action="uninstall")
-        print_error(t("uninstall.failed", name=_uname, error=str(e)))
     except Exception as e:
-        _report(e, software=cls.key, action="uninstall")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
     pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     """执行版本切换流程"""
-    from software.base import InstallError
     from core.progress import spinner
 
     _name = recipe_display_name(cls)
@@ -639,18 +600,13 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     try:
         instance.switch(selected_version)
         print_success(t("software.switch_success", name=_name, version=selected_version))
-    except InstallError as e:
-        _report(e, software=cls.key, version=selected_version, action="switch")
-        print_error(t("install.failed", name=_name, error=str(e)))
     except Exception as e:
-        _report(e, software=cls.key, version=selected_version, action="switch")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=selected_version, action="switch")
     pause()
 
 
 def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     """执行升级流程"""
-    from software.base import InstallError
     from core.progress import spinner
     from software.resolver import resolve_deps
 
@@ -658,14 +614,8 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
 
     try:
         resolve_deps(instance, breadcrumb)
-    except InstallError as e:
-        _report(e, software=cls.key, action="upgrade.resolve_deps")
-        print_error(t("install.failed", name=_name, error=str(e)))
-        pause()
-        return
     except Exception as e:
-        _report(e, software=cls.key, action="upgrade.resolve_deps")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="upgrade.resolve_deps")
         pause()
         return
 
@@ -735,12 +685,8 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
             base_console.print()
             instance.upgrade(new_version)
             print_success(t("upgrade.success", name=_name, elapsed=_time.monotonic() - _t0))
-    except InstallError as e:
-        _report(e, software=cls.key, version=new_version, action="upgrade")
-        print_error(t("upgrade.failed", name=_name, error=str(e)))
     except Exception as e:
-        _report(e, software=cls.key, version=new_version, action="upgrade")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="upgrade.failed", name=_name, software=cls.key, version=new_version, action="upgrade")
     pause()
 
 
