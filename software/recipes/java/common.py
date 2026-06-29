@@ -97,85 +97,74 @@ def version_list() -> list[str]:
     4. 硬编码 fallback
     返回版本号字符串列表（如 '21.0.11+10'），降序排列（大版本优先）。
     """
-    from core.version_cache import get_cached_versions, get_cached_versions_stale, update_cache
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from core.constants import TIMEOUT_VERSION_FETCH
+    from software._shared.version_resolver import resolve_versions
     from .constants import JAVA_RELEASES_API, JAVA_ASSETS_API, JAVA_VERSIONS_FALLBACK
-
-    _KEY = "java"
-    cached = get_cached_versions(_KEY)
-    if cached and any(v[0].isdigit() for v in cached if v):
-        return cached
-
-    os_str = _java_os()
-    arch   = _java_arch()
-    raw: list[str] = []
-
-    try:
-        import httpx
-
-        # Step 1: 获取 LTS 列表
-        resp = httpx.get(JAVA_RELEASES_API, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
-        lts_list: list[int] = []
-        if resp.status_code == 200:
-            lts_list = resp.json().get("available_lts_releases", [])
-
-        if lts_list:
-            # Step 2: 并发查询每个 LTS major
-            def _fetch_major(major: int) -> str:
-                try:
-                    url = JAVA_ASSETS_API.format(major=major, os=os_str, arch=arch)
-                    r2 = httpx.get(url, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
-                    if r2.status_code == 200:
-                        data = r2.json()
-                        if data:
-                            semver = data[0].get("version", {}).get("openjdk_version", "")
-                            semver = semver.replace("-LTS", "").replace("-EA", "")
-                            return semver
-                except Exception:
-                    pass
-                return ""
-
-            with ThreadPoolExecutor(max_workers=min(len(lts_list), 8)) as pool:
-                futures = {pool.submit(_fetch_major, m): m for m in lts_list}
-                for f in as_completed(futures, timeout=TIMEOUT_VERSION_FETCH + 2):
-                    ver = f.result()
-                    if ver:
-                        raw.append(ver)
-    except Exception:
-        pass
-
-    if not raw:
-        try:
-            import httpx
-            resp = httpx.get(
-                "https://endoflife.date/api/java.json",
-                timeout=TIMEOUT_VERSION_FETCH,
-            )
-            if resp.status_code == 200:
-                for item in resp.json():
-                    v = item.get("latest", "")
-                    if v:
-                        raw.append(v)
-        except Exception:
-            pass
 
     def _ver_key(v: str) -> list[int]:
         base = v.split("+")[0]
         return [int(x) for x in base.split(".") if x.isdigit()]
 
-    if raw:
+    def _fetch() -> list[str]:
+        os_str = _java_os()
+        arch   = _java_arch()
+        raw: list[str] = []
+
+        try:
+            import httpx
+
+            # Step 1: 获取 LTS 列表
+            resp = httpx.get(JAVA_RELEASES_API, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
+            lts_list: list[int] = []
+            if resp.status_code == 200:
+                lts_list = resp.json().get("available_lts_releases", [])
+
+            if lts_list:
+                # Step 2: 并发查询每个 LTS major
+                def _fetch_major(major: int) -> str:
+                    try:
+                        url = JAVA_ASSETS_API.format(major=major, os=os_str, arch=arch)
+                        r2 = httpx.get(url, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
+                        if r2.status_code == 200:
+                            data = r2.json()
+                            if data:
+                                semver = data[0].get("version", {}).get("openjdk_version", "")
+                                semver = semver.replace("-LTS", "").replace("-EA", "")
+                                return semver
+                    except Exception:
+                        pass
+                    return ""
+
+                with ThreadPoolExecutor(max_workers=min(len(lts_list), 8)) as pool:
+                    futures = {pool.submit(_fetch_major, m): m for m in lts_list}
+                    for f in as_completed(futures, timeout=TIMEOUT_VERSION_FETCH + 2):
+                        ver = f.result()
+                        if ver:
+                            raw.append(ver)
+        except Exception:
+            pass
+
+        if not raw:
+            try:
+                import httpx
+                resp = httpx.get(
+                    "https://endoflife.date/api/java.json",
+                    timeout=TIMEOUT_VERSION_FETCH,
+                )
+                if resp.status_code == 200:
+                    for item in resp.json():
+                        v = item.get("latest", "")
+                        if v:
+                            raw.append(v)
+            except Exception:
+                pass
+
         raw.sort(key=_ver_key, reverse=True)
-        update_cache(_KEY, raw)
         return raw
 
-    stale = get_cached_versions_stale(_KEY)
-    if stale and any(v[0].isdigit() for v in stale if v):
-        return stale
-
-    raw = list(JAVA_VERSIONS_FALLBACK)
-    raw.sort(key=_ver_key, reverse=True)
-    return raw
+    fallback = sorted(JAVA_VERSIONS_FALLBACK, key=_ver_key, reverse=True)
+    return resolve_versions("java", _fetch, fallback)
 
 
 # ─── 获取版本下载 URL（Adoptium API 直接返回，ghproxy 加速）────────────────────

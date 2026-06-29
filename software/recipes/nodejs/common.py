@@ -84,69 +84,57 @@ def version_list() -> list[str]:
     4. 硬编码 fallback
     返回版本号字符串列表，降序排列。
     """
-    from core.version_cache import get_cached_versions, get_cached_versions_stale, update_cache
     from core.constants import TIMEOUT_VERSION_FETCH
+    from software._shared.version_resolver import resolve_versions
     from .constants import NODEJS_VERSIONS_API, NODEJS_EOL_API, NODEJS_VERSIONS_FALLBACK
-
-    _KEY = "nodejs"
-    cached = get_cached_versions(_KEY)
-    if cached and any(v[0].isdigit() for v in cached if v):
-        return cached
-
-    raw: list[str] = []
-
-    try:
-        import httpx
-        resp = httpx.get(NODEJS_VERSIONS_API, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
-        if resp.status_code == 200:
-            data = resp.json()
-            seen: set[str] = set()
-            for entry in data:
-                v = entry.get("version", "")
-                if v.startswith("v"):
-                    v = v[1:]
-                # 只保留 LTS 版本（偶数主版本）或最新稳定版
-                try:
-                    major = int(v.split(".")[0])
-                    is_lts = entry.get("lts", False) not in (False, None, "")
-                    if not is_lts and major % 2 != 0:
-                        continue
-                except Exception:
-                    pass
-                if v and v not in seen:
-                    seen.add(v)
-                    raw.append(v)
-    except Exception:
-        pass
-
-    if not raw:
-        try:
-            import httpx
-            resp = httpx.get(NODEJS_EOL_API, timeout=TIMEOUT_VERSION_FETCH)
-            if resp.status_code == 200:
-                data = resp.json()
-                for item in data:
-                    v = item.get("latest", "")
-                    if v:
-                        raw.append(v)
-        except Exception:
-            pass
 
     def _ver_key(v: str) -> list[int]:
         return [int(x) for x in v.split(".") if x.isdigit()]
 
-    if raw:
+    def _fetch() -> list[str]:
+        raw: list[str] = []
+        try:
+            import httpx
+            resp = httpx.get(NODEJS_VERSIONS_API, timeout=TIMEOUT_VERSION_FETCH, follow_redirects=True)
+            if resp.status_code == 200:
+                data = resp.json()
+                seen: set[str] = set()
+                for entry in data:
+                    v = entry.get("version", "")
+                    if v.startswith("v"):
+                        v = v[1:]
+                    # 只保留 LTS 版本（偶数主版本）或最新稳定版
+                    try:
+                        major = int(v.split(".")[0])
+                        is_lts = entry.get("lts", False) not in (False, None, "")
+                        if not is_lts and major % 2 != 0:
+                            continue
+                    except Exception:
+                        pass
+                    if v and v not in seen:
+                        seen.add(v)
+                        raw.append(v)
+        except Exception:
+            pass
+
+        if not raw:
+            try:
+                import httpx
+                resp = httpx.get(NODEJS_EOL_API, timeout=TIMEOUT_VERSION_FETCH)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data:
+                        v = item.get("latest", "")
+                        if v:
+                            raw.append(v)
+            except Exception:
+                pass
+
         raw.sort(key=_ver_key, reverse=True)
-        update_cache(_KEY, raw)
         return raw
 
-    stale = get_cached_versions_stale(_KEY)
-    if stale and any(v[0].isdigit() for v in stale if v):
-        return stale
-
-    raw = list(NODEJS_VERSIONS_FALLBACK)
-    raw.sort(key=_ver_key, reverse=True)
-    return raw
+    fallback = sorted(NODEJS_VERSIONS_FALLBACK, key=_ver_key, reverse=True)
+    return resolve_versions("nodejs", _fetch, fallback)
 
 
 # ─── 赛马下载 Node.js tarball ─────────────────────────────────────────────────
