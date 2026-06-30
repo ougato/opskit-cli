@@ -280,8 +280,10 @@ def uninstall_client() -> None:
 
             sp.step(descs[1])
             if command_exists(APT_GET_COMMAND):
+                from core.privilege import run_as_root
+
                 env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
-                subprocess.run(
+                run_as_root(
                     [APT_GET_COMMAND, APT_PURGE_COMMAND, APT_ASSUME_YES_ARG, *TAILSCALE_PACKAGES],
                     check=False,
                     capture_output=True,
