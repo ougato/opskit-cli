@@ -38,7 +38,7 @@ curl -fsSL https://file.icerror.top/d/install/opskit.sh | bash
 
 **Linux / macOS（境外 / GitHub）：**
 ```bash
-curl -fsSL https://github.com/ougato/opskit-cli/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/master/install.sh | bash
 ```
 
 **Windows PowerShell（大陆优化）：**
@@ -48,7 +48,7 @@ irm https://file.icerror.top/d/install/opskit.ps1 | iex
 
 **Windows PowerShell（境外 / GitHub）：**
 ```powershell
-irm https://github.com/ougato/opskit-cli/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/ougato/opskit-cli/master/install.ps1 | iex
 ```
 
 ```cmd
