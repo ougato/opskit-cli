@@ -10,6 +10,12 @@ from core.prompt import select, paged_select, confirm, pause, clear_screen, prin
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 from core.feedback import capture as _report, report_failure
+from software.actions import (
+    execute_install,
+    execute_switch,
+    execute_upgrade,
+    execute_uninstall,
+)
 
 console = Console()
 
@@ -368,16 +374,14 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
     base_console.print()
-    import time as _time
-    _t0 = _time.monotonic()
     try:
-        instance.install(version)
-        installed_version = instance.detect() or version
-        print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
+        r = execute_install(instance, version)
     except KeyboardInterrupt:
         return
-    except Exception as e:
-        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
+    if r.ok:
+        print_success(t("install.success", name=_name, version=r.version, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
@@ -440,13 +444,11 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
     base_console.print()
-    import time as _time
-    _t0 = _time.monotonic()
-    try:
-        instance.install(version)
-        print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
-    except Exception as e:
-        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
+    r = execute_install(instance, version)
+    if r.ok:
+        print_success(t("install.success", name=_name, version=version, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
@@ -503,11 +505,11 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
-        try:
-            instance.uninstall(version_to_remove)
+        r = execute_uninstall(instance, version_to_remove)
+        if r.ok:
             print_success(t("uninstall.success", name=_uname))
-        except Exception as e:
-            report_failure(e, fail_key="uninstall.failed", name=_uname, software=cls.key, version=str(version_to_remove), action="uninstall")
+        else:
+            report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, version=str(version_to_remove), action="uninstall")
         pause()
         return
 
@@ -530,11 +532,11 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
     try:
-        instance.uninstall()
+        r = execute_uninstall(instance)
     except KeyboardInterrupt:
         return
-    except Exception as e:
-        report_failure(e, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
+    if not r.ok:
+        report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
     pause()
 
 
@@ -597,11 +599,11 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
 
     clear_screen()
     print_header([*breadcrumb, t("software.switch")])
-    try:
-        instance.switch(selected_version)
+    r = execute_switch(instance, selected_version)
+    if r.ok:
         print_success(t("software.switch_success", name=_name, version=selected_version))
-    except Exception as e:
-        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, version=selected_version, action="switch")
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=selected_version, action="switch")
     pause()
 
 
@@ -673,20 +675,18 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
 
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
-    import time as _time
-    _t0 = _time.monotonic()
-    try:
-        if new_version in upg_installed_set:
-            # 已安装 → 直接切换，无需重新下载
-            instance.switch(new_version)
+    already = new_version in upg_installed_set
+    if not already:
+        # 未安装 → 走安装升级流程
+        base_console.print()
+    r = execute_upgrade(instance, new_version, already_installed=already)
+    if r.ok:
+        if r.switched:
             print_success(t("software.switch_success", name=_name, version=new_version))
         else:
-            # 未安装 → 走安装升级流程
-            base_console.print()
-            instance.upgrade(new_version)
-            print_success(t("upgrade.success", name=_name, elapsed=_time.monotonic() - _t0))
-    except Exception as e:
-        report_failure(e, fail_key="upgrade.failed", name=_name, software=cls.key, version=new_version, action="upgrade")
+            print_success(t("upgrade.success", name=_name, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="upgrade.failed", name=_name, software=cls.key, version=new_version, action="upgrade")
     pause()
 
 

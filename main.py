@@ -775,16 +775,14 @@ def _install_direct(
     _resolve_deps_or_exit(instance, breadcrumb)
     _check_disk_or_exit()
 
-    import time as _time
-    start = _time.monotonic()
-    try:
-        instance.install(version)
-        installed_version = instance.detect() or version
-        print_success(t("install.success", name=name, version=installed_version, elapsed=_time.monotonic() - start))
-    except InstallError as e:
-        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    from software.actions import execute_install
+    r = execute_install(instance, version)
+    if r.ok:
+        print_success(t("install.success", name=name, version=r.version, elapsed=r.elapsed))
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("install.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _uninstall_direct(
@@ -802,29 +800,30 @@ def _uninstall_direct(
     if version and all_versions:
         _direct_fail(t("cli.error.version_all_conflict"), _EXIT_USAGE)
 
-    try:
-        if _is_multi_version(cls, instance):
-            installed = instance.installed_versions()
-            if not installed:
-                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
-            if not version and not all_versions:
-                _direct_fail(t("cli.error.uninstall_version_required", name=name), _EXIT_USAGE)
-            if version and version not in installed:
-                _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
-            instance.uninstall(None if all_versions else version)
-        else:
-            if version or all_versions:
-                _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
-            if not instance.detect():
-                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
-            instance.uninstall()
+    if _is_multi_version(cls, instance):
+        installed = instance.installed_versions()
+        if not installed:
+            _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+        if not version and not all_versions:
+            _direct_fail(t("cli.error.uninstall_version_required", name=name), _EXIT_USAGE)
+        if version and version not in installed:
+            _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
+        target = None if all_versions else version
+    else:
+        if version or all_versions:
+            _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
+        if not instance.detect():
+            _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+        target = None
+
+    from software.actions import execute_uninstall
+    r = execute_uninstall(instance, target)
+    if r.ok:
         print_success(t("uninstall.success", name=name))
-    except UninstallError as e:
-        _direct_fail(t("uninstall.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    elif isinstance(r.error, UninstallError):
+        _direct_fail(t("uninstall.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _upgrade_direct(
@@ -846,19 +845,18 @@ def _upgrade_direct(
 
     _resolve_deps_or_exit(instance, breadcrumb)
 
-    import time as _time
-    start = _time.monotonic()
-    try:
-        if _is_multi_version(cls, instance) and version in instance.installed_versions() and hasattr(instance, "switch"):
-            instance.switch(version)
+    from software.actions import execute_upgrade
+    already = _is_multi_version(cls, instance) and version in instance.installed_versions()
+    r = execute_upgrade(instance, version, already_installed=already)
+    if r.ok:
+        if r.switched:
             print_success(t("software.switch_success", name=name, version=version))
         else:
-            instance.upgrade(version)
-            print_success(t("upgrade.success", name=name, elapsed=_time.monotonic() - start))
-    except InstallError as e:
-        _direct_fail(t("upgrade.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+            print_success(t("upgrade.success", name=name, elapsed=r.elapsed))
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("upgrade.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _switch_direct(cls: type, instance, version: str | None) -> None:
@@ -873,13 +871,14 @@ def _switch_direct(cls: type, instance, version: str | None) -> None:
     installed = instance.installed_versions() if hasattr(instance, "installed_versions") else []
     if version not in installed:
         _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
-    try:
-        instance.switch(version)
+    from software.actions import execute_switch
+    r = execute_switch(instance, version)
+    if r.ok:
         print_success(t("software.switch_success", name=name, version=version))
-    except InstallError as e:
-        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("install.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _diagnose_direct(cls: type, instance) -> None:
