@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OpsKit installer - Linux / macOS
-# Usage: curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/master/install.sh | bash
 set -euo pipefail
 
 BIN_NAME="opskit"

@@ -160,11 +160,6 @@ jobs:
             echo "[gh] uploading $(basename $f)"
             gh release upload "${TAG}" "$f" --clobber
           done
-          for script in install.sh install.ps1; do
-            [ -f "$script" ] || continue
-            echo "[gh] uploading $script"
-            gh release upload "${TAG}" "$script" --clobber
-          done
 
       - name: generate SHA256 checksums
         run: |
