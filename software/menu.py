@@ -965,6 +965,7 @@ def show_uninstall() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
     from core.progress import spinner
+    from software.base import UninstallError
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
