@@ -10,7 +10,8 @@
 - 下载完成后不打断当前操作，退出时静默替换
 - 网络不可达时优雅降级，不影响正常使用
 - Windows 四层防御确保更新必然完成
-- 崩溃回滚：新版本首次启动失败时自动回滚
+- 控制面（bootstrap manifest）：急停 kill_switch / 强制升级 min_build / 灰度 rollout%
+- 崩溃回滚：新版本反复启动未确认健康时自动回滚（健康探针）
 - 所有失败点接入 telemetry 上报，可追溯诊断
 
 ---
@@ -21,8 +22,8 @@
 flowchart TD
     subgraph 启动阶段
         S0[cleanup .old.exe 残留]
-        S0 --> S1[startup_ok.json 崩溃回滚检测]
-        S1 -->|last_ver > APP_VERSION| ROLLBACK[rollback 回滚到上一备份]
+        S0 --> S1[update_health.json 健康探针检测]
+        S1 -->|未确认 + fails≥MAX_HEALTH_FAILS| ROLLBACK[rollback 回滚到上一备份 + 重启]
         S1 --> S2[update_pending_path.json 兜底处理]
         S2 -->|有标记| S2a[rename pending → self_path]
         S2 --> S3[check_and_apply_pending]
@@ -38,9 +39,12 @@ flowchart TD
         C1 --> C2{距上次检查 > check_interval?}
         C2 -->|否| C2a{已有 pending?}
         C2a -->|有| C2b[恢复 _pending_version]
-        C2 -->|是| C3[fetch_bootstrap 并发拉取动态源]
-        C3 --> C4[_fetch_latest GitHub Releases API]
-        C4 --> C5{remote_ver > APP_VERSION?}
+        C2 -->|是| C3[_resolve_update_target]
+        C3 --> C3a{控制面 manifest 可用?}
+        C3a -->|是| C3b[_evaluate_manifest<br/>kill_switch / min_build / rollout 灰度]
+        C3a -->|否 降级| C4[_fetch_latest GitHub Releases API]
+        C3b --> C5{应更新?}
+        C4 --> C5
         C5 -->|否| C6[更新 last_check 时间戳]
         C5 -->|是| C7[_download_update<br/>多源 + 断点续传 + SHA256 双源校验]
         C7 -->|成功| C8[atomic rename → opskit.pending<br/>写 pending_version 到缓存]
@@ -78,40 +82,57 @@ flowchart TD
 
 ## 3. 核心组件
 
-### 3.1 Bootstrap 动态源
+### 3.1 控制面（Bootstrap manifest）
 
-**文件**：`bootstrap.json`（远程） / `bootstrap_cache.json`（本地缓存）
+**文件**：`bootstrap.json`（远程，CDN 优先 + GitHub raw 兜底） / `bootstrap_cache.json`（本地缓存）
 
 ```json
 {
-  "schema_version": 1,
-  "latest": {
-    "stable": { "build": 1, "display": "1.0.0", "min_build": 1 }
-  },
+  "schema_version": 2,
+  "channel": "stable",
+  "latest_build": 2,
+  "display": "v2",
+  "min_build": 1,
+  "rollout": 100,
+  "kill_switch": false,
+  "notes": "",
   "update_mirrors": [
     "https://mirror.ghproxy.com/https://github.com/ougato/opskit-cli/releases/download",
     "https://github.com/ougato/opskit-cli/releases/download"
-  ],
-  "force_update_below": 0,
-  "announcement": ""
+  ]
 }
 ```
 
-**拉取策略**：
-- `ThreadPoolExecutor` 并发请求所有 `BOOTSTRAP_URLS`，取最快返回的结果
-- 成功 → 写入本地缓存 `bootstrap_cache.json`
-- 全部失败 → 读本地缓存兜底
-- 本地缓存也没有 → 返回 None，使用 `DEFAULT_CONFIG.update.mirrors` 硬编码 mirrors
+**字段语义**：
+| 字段 | 含义 |
+|------|------|
+| `latest_build` | 最新整数 build；`> APP_VERSION` 才更新 |
+| `min_build` | 低于此 build 强制升级（忽略灰度比例） |
+| `rollout` | 灰度放量百分比 0-100，按机器指纹哈希分桶 |
+| `kill_switch` | 紧急熔断，置 true 时全网停止自更新 |
+| `display` / `notes` | 展示版本串 / 更新说明 |
 
-### 3.2 版本检测
+**拉取策略**（`fetch_bootstrap`）：
+- `ThreadPoolExecutor` 并发请求所有 `BOOTSTRAP_URLS`（CDN 优先），取最快返回的结果
+- 成功 → 写入本地缓存 `bootstrap_cache.json`
+- 全部失败 → 读本地缓存兜底；仍无 → 返回 None
+
+**评估**（`_evaluate_manifest`）：
+1. `kill_switch` → 直接放弃本次更新
+2. `latest_build <= APP_VERSION` → 不更新
+3. `APP_VERSION < min_build` → 强制更新（跳过灰度）
+4. 否则按 `_machine_bucket()`（机器指纹 SHA256 % 100）与 `rollout` 比较，未命中则跳过
+
+### 3.2 版本检测（控制面优先 + GitHub 降级）
 
 **触发条件**：`time.time() - last_check >= check_interval`（默认 86400s）
 
-**API 调用**：
-- URL：`GITHUB_API_RELEASES = "https://api.github.com/repos/{repo}/releases/latest"`
-- 速率限制：`X-RateLimit-Remaining < GITHUB_RATELIMIT_SAFE(5)` 时记录退避时间戳
-- 403 / 429 响应 → telemetry 上报 `fetch_latest_rate_limited` + 静默跳过
-- 其他 HTTP 错误 → telemetry 上报 `fetch_latest_http_error`
+`_resolve_update_target()` 决策顺序：
+1. **控制面优先**：`fetch_bootstrap()` 拿到含 `latest_build` 的 manifest → `_evaluate_manifest` → 命中则构造下载 URL `{GITHUB_BASE}/{repo}/releases/download/v{build}/{filename}`（SHA256 走 `.sha256` 旁车）
+2. **降级**：manifest 不可用 → `_fetch_latest` 调 GitHub Releases API
+   - URL：`GITHUB_API_RELEASES = "https://api.github.com/repos/{repo}/releases/latest"`
+   - 速率限制：`X-RateLimit-Remaining < GITHUB_RATELIMIT_SAFE(5)` 时记录退避时间戳
+   - 403 / 429 → telemetry 上报 `fetch_latest_rate_limited` + 静默跳过
 
 ### 3.3 下载与校验
 
@@ -156,14 +177,17 @@ self_path.chmod(old_stat.st_mode)        # 还原 mode
 os.chown(self_path, old_stat.st_uid, old_stat.st_gid)  # 还原 uid/gid
 ```
 
-### 3.6 崩溃回滚
+### 3.6 崩溃回滚（健康探针）
 
 ```python
-def _check_startup_ok() -> None:
-    # 每次成功启动写入 startup_ok.json = {"version": APP_VERSION, "time": ...}
-    # 若 last_ok_ver > APP_VERSION → 说明新版本从未成功启动过
-    # → 调用 rollback() 从 backups/ 恢复最近备份
+# 替换成功 → mark_update_applied(build): 写 {build, confirmed:False, fails:0}
+# 新版本平稳运行 HEALTH_CONFIRM_DELAY(15s) 后 → confirm_health(): confirmed:True
+# 每次未确认健康的启动 → _check_health() 将 fails+1
+#   fails >= MAX_HEALTH_FAILS(2) 且仍未确认 → rollback() 回滚 + 重启
+#   探针 build 与当前 APP_VERSION 不一致（已回滚/残留）→ 清理探针
 ```
+
+相比旧的 `startup_ok.json`「起不来才回滚」，健康探针能兜住「能起来但很快崩溃 / 反复重启」的坏版本。
 
 ### 3.7 回滚
 
@@ -180,6 +204,34 @@ def rollback() -> bool:
 
 所有失败点通过统一的 `_report(event_id, exc=None, level="error", **ctx)` 上报，  
 自动携带：`component=updater`、`app_version`、`platform`。
+
+---
+
+## 3.9 发布自动化（CI · 打 tag = 全网灰度发布）
+
+工作流：`.github/workflows/release.yml`，`push: tags: v*` 触发。
+
+```mermaid
+flowchart LR
+    T[打 tag v{N}] --> A[notify-start hook]
+    A --> B[test: release_bump v{N} + pytest]
+    B --> C[build 矩阵<br/>linux-x64/arm64 · win · mac<br/>每个 runner 先 release_bump 再 nuitka]
+    C --> D[release: 上传产物到 GitHub Release]
+    D --> E[publish bootstrap: 把 build 写回默认分支<br/>constants.py + bootstrap.json + push]
+    E --> F[artifact-pull hook → CDN file.icerror.top]
+```
+
+**关键：版本同步脚本** `scripts/release_bump.py`
+- `v{N}` → 整数 build N，写回两处单一事实源：
+  1. `core/constants.py` 的 `APP_VERSION = N`（决定**编译进二进制的自报版本**）
+  2. `bootstrap.json` 的 `latest_build / display / min_build / rollout / notes`
+- **必须在 build 前执行**：`build.py` 仅用 tag 做产物文件名，二进制自报版本来自 `constants.py`。若不同步，tag v7 构建出的二进制仍自报 2 → 客户端永远认为"有新版本"→ 更新自锁。
+- `--check` 校验一致性（latest_build==APP_VERSION、min_build≤latest_build、rollout∈0-100），CI release 阶段做兜底校验。
+- `--min-build` / `--rollout` / `--notes` 可在发版时覆盖控制面字段，实现强制升级 / 灰度放量 / 公告。
+
+**控制面发布路径**：
+- GitHub raw 兜底源：`publish bootstrap` 步骤把 bumped `bootstrap.json` commit 回默认分支
+- CDN 优先源 `file.icerror.top`：由 `artifact-pull` hook 同步
 
 ---
 
@@ -218,5 +270,6 @@ update:
 | Bootstrap 缓存 | `{data}/cache/bootstrap_cache.json` | 远程 bootstrap.json 的本地副本 |
 | 版本备份 | `{data}/backups/opskit.v{N}.{ts}.bak` | 替换前备份（时间戳命名，保留最近 3 个） |
 | PowerShell 脚本 | `{data}/cache/opskit_update.ps1` | Windows Rename-Then-Copy 一次性脚本 |
-| 启动成功标记 | `{data}/cache/startup_ok.json` | 崩溃回滚检测（记录上次成功启动版本） |
+| 健康探针 | `{data}/cache/update_health.json` | 崩溃回滚（build / confirmed / fails） |
+| 机器指纹 | `{data}/cache/machine_id` | 灰度 rollout 分桶用的稳定随机 ID |
 | 兜底标记 | `{data}/cache/update_pending_path.json` | Windows 四层均失败后写入，下次启动重试 |

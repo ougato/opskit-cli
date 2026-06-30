@@ -281,8 +281,10 @@ class TestWindowsDataDir:
 class TestBootstrapUrls:
     def test_bootstrap_urls_point_to_opskit_cli(self):
         from core.constants import BOOTSTRAP_URLS
+        # GitHub 源必须指向 opskit-cli 仓库；自有 CDN 源（不含 github）不强制
         for url in BOOTSTRAP_URLS:
-            assert "opskit-cli" in url, f"BOOTSTRAP_URL 应含 opskit-cli：{url}"
+            if "github" in url:
+                assert "opskit-cli" in url, f"BOOTSTRAP_URL 应含 opskit-cli：{url}"
 
     def test_bootstrap_urls_no_old_repo(self):
         from core.constants import BOOTSTRAP_URLS

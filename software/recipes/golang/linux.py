@@ -1,7 +1,6 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入"""
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tarfile
@@ -9,6 +8,7 @@ from pathlib import Path
 
 from software.base import InstallError
 from core.i18n import t
+from software._shared import shell_path
 from .driver import PlatformDriver
 from .constants import (
     GOLANG_INSTALL_DIR_LINUX,
@@ -72,34 +72,10 @@ class LinuxDriver(PlatformDriver):
             shim.chmod(0o755)
 
         # 立即注入当前进程 PATH，让 opskit 内部子进程调用 go 立即生效
-        cur_path = os.environ.get("PATH", "")
-        if shims_path not in cur_path.split(":"):
-            os.environ["PATH"] = shims_path + ":" + cur_path
-
-        block = (
-            f"\n{GOPATH_MARKER_BEGIN}\n"
-            f'export PATH="{shims_path}:$PATH"\n'
-            f"{GOPATH_MARKER_END}\n"
+        shell_path.prepend_process_path(shims_path)
+        shell_path.inject_rc_path(
+            shims_path, GOPATH_MARKER_BEGIN, GOPATH_MARKER_END, PROFILE_D_GO_FILE
         )
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            text = rc.read_text(encoding="utf-8")
-            if GOPATH_MARKER_BEGIN not in text:
-                rc.write_text(text + block, encoding="utf-8")
-
-        try:
-            if hasattr(os, "getuid") and os.getuid() == 0:
-                pd = Path(PROFILE_D_GO_FILE)
-                pd.write_text(f'export PATH="{shims_path}:$PATH"\n', encoding="utf-8")
-                pd.chmod(0o644)
-        except Exception:
-            pass
 
     def remove_shim(self) -> None:
         from .common import shim_dir
@@ -114,39 +90,11 @@ class LinuxDriver(PlatformDriver):
         except Exception:
             pass
 
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            try:
-                lines = rc.read_text(encoding="utf-8").splitlines(keepends=True)
-                out, skip = [], False
-                for line in lines:
-                    if line.strip() == GOPATH_MARKER_BEGIN:
-                        skip = True
-                    if not skip:
-                        out.append(line)
-                    if line.strip() == GOPATH_MARKER_END:
-                        skip = False
-                rc.write_text("".join(out), encoding="utf-8")
-            except Exception:
-                pass
-
-        try:
-            pd = Path(PROFILE_D_GO_FILE)
-            if pd.exists():
-                pd.unlink()
-        except Exception:
-            pass
+        shell_path.remove_rc_path(GOPATH_MARKER_BEGIN, GOPATH_MARKER_END, PROFILE_D_GO_FILE)
 
     def shim_active(self) -> bool:
         from .common import shim_dir
-        shims = str(shim_dir())
-        return any(p == shims for p in os.environ.get("PATH", "").split(":"))
+        return shell_path.process_path_contains(str(shim_dir()))
 
     # ─── version link ─────────────────────────────────────────────────────────
 
@@ -155,43 +103,17 @@ class LinuxDriver(PlatformDriver):
         优先在 /usr/local/bin 创建/更新 go/gofmt symlink（root 时立即全局生效）。
         非 root 时依赖 shim，同时注入当前进程 PATH 让 opskit 子进程立即可用。
         """
-        bin_path = Path(bin_dir)
         # root 环境：创建/更新 /usr/local/bin 下的 symlink，立即全局生效
-        if hasattr(os, "getuid") and os.getuid() == 0:
-            for name in ("go", "gofmt"):
-                src = bin_path / name
-                if not src.exists():
-                    continue
-                dest = Path("/usr/local/bin") / name
-                try:
-                    if dest.is_symlink() or dest.exists():
-                        dest.unlink()
-                    dest.symlink_to(src)
-                except Exception:
-                    pass
+        shell_path.link_into_system_bin(bin_dir, ("go", "gofmt"))
         # 无论是否 root，都把 shim 目录注入当前 Python 进程的 PATH
         # 这样 opskit 内部的子进程调用 go 可以立即路由到正确版本
         from .common import shim_dir as _shim_dir
-        shims = str(_shim_dir())
-        cur_path = os.environ.get("PATH", "")
-        if shims not in cur_path.split(":"):
-            os.environ["PATH"] = shims + ":" + cur_path
+        shell_path.prepend_process_path(str(_shim_dir()))
 
     def restore_original(self) -> None:
         """卸载时删除 /usr/local/bin 下 opskit 创建的 symlink"""
-        if not (hasattr(os, "getuid") and os.getuid() == 0):
-            return
-        for name in ("go", "gofmt"):
-            dest = Path("/usr/local/bin") / name
-            try:
-                if dest.is_symlink():
-                    from .common import go_versions_dir as _gvd
-                    target = dest.resolve()
-                    # 只删除指向 opskit 管理目录的 symlink
-                    if str(_gvd()) in str(target):
-                        dest.unlink()
-            except Exception:
-                pass
+        from .common import go_versions_dir as _gvd
+        shell_path.unlink_system_bin(("go", "gofmt"), _gvd())
 
     def snapshot_pre_install(self) -> dict:
         return {}

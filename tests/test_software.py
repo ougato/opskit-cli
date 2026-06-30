@@ -610,7 +610,7 @@ def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
         return next(keys)
 
     monkeypatch.setattr("core.progress.spinner", lambda label: Spinner(label))
-    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr("core.prompt.select", fake_select)
     monkeypatch.setattr(menu, "show_actions", lambda breadcrumb, cls: selected.append(cls.key))
 
     menu._pick_and_act(["OpsKit"], recipes)

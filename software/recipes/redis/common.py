@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import gzip
-import json
 import platform
 from pathlib import Path
+
+from software._shared.snapshot import SnapshotStore
+from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE
 
 
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
@@ -50,34 +52,23 @@ def shim_dir() -> Path:
 
 # ─── 快照管理 ─────────────────────────────────────────────────────────────────
 
+_store = SnapshotStore(SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE)
+
+
 def _snapshot_path() -> Path:
-    from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE
-    return Path.home() / SNAPSHOT_SUBDIR / SNAPSHOT_REDIS_FILE
+    return _store.path
 
 
 def load_snapshot() -> dict:
-    p = _snapshot_path()
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return _store.load()
 
 
 def save_snapshot(data: dict) -> None:
-    p = _snapshot_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _store.save(data)
 
 
 def delete_snapshot() -> None:
-    p = _snapshot_path()
-    if p.exists():
-        try:
-            p.unlink()
-        except Exception:
-            pass
+    _store.delete()
 
 
 # ─── Linux deb 包查询与下载 ───────────────────────────────────────────────────
@@ -339,34 +330,16 @@ def download_redis_macos(version: str, dest: Path) -> Path:
 # ─── 版本列表 ─────────────────────────────────────────────────────────────────
 
 def version_list() -> list[str]:
-    from core.version_cache import get_cached_versions, get_cached_versions_stale, update_cache
     from core.constants import TIMEOUT_VERSION_FETCH
+    from software._shared.version_resolver import resolve_versions
     from .constants import REDIS_VERSIONS_API_URL, REDIS_VERSIONS_FALLBACK
 
-    _KEY = "redis"
-
-    # 1. 缓存未过期直接返回（过滤无效占位数据 ['latest']）
-    cached = get_cached_versions(_KEY)
-    if cached and any(v[0].isdigit() for v in cached if v):
-        return cached
-
-    # 2. 在线获取
-    try:
+    def _fetch() -> list[str]:
         import httpx
         resp = httpx.get(REDIS_VERSIONS_API_URL, timeout=TIMEOUT_VERSION_FETCH)
-        if resp.status_code == 200:
-            vers = [item.get("latest", "") for item in resp.json() if item.get("latest", "")]
-            vers = [v for v in vers if v and v[0].isdigit()]
-            if vers:
-                update_cache(_KEY, vers)
-                return vers
-    except Exception:
-        pass
+        if resp.status_code != 200:
+            return []
+        vers = [item.get("latest", "") for item in resp.json() if item.get("latest", "")]
+        return [v for v in vers if v and v[0].isdigit()]
 
-    # 3. API 失败：用过期缓存兜底（比 fallback 更新，过滤无效占位数据）
-    stale = get_cached_versions_stale(_KEY)
-    if stale and any(v[0].isdigit() for v in stale if v):
-        return stale
-
-    # 4. 彻底无缓存：用内置 fallback
-    return list(REDIS_VERSIONS_FALLBACK)
+    return resolve_versions("redis", _fetch, list(REDIS_VERSIONS_FALLBACK))

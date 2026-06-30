@@ -702,40 +702,42 @@ class TestVersionCheckExceptions:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPostUpdateExceptions:
-    def test_T24_crash_rollback_on_startup_ok_mismatch(self, tmp_data, monkeypatch):
-        """T24: startup_ok.json 版本比当前高时，自动回滚"""
+    def test_T24_crash_rollback_on_repeated_health_fail(self, tmp_data, monkeypatch):
+        """T24: 新版本反复启动未确认健康，达到阈值时自动回滚"""
         import core.updater as upd
-        from core.constants import APP_VERSION
+        from core.constants import APP_VERSION, MAX_HEALTH_FAILS
 
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        ok_file = tmp_data / "cache" / "startup_ok.json"
-        with ok_file.open("w") as f:
-            json.dump({"version": APP_VERSION + 5, "time": time.time()}, f)
+        health = tmp_data / "cache" / "update_health.json"
+        health.parent.mkdir(parents=True, exist_ok=True)
+        with health.open("w") as f:
+            json.dump({"build": APP_VERSION, "confirmed": False,
+                       "fails": MAX_HEALTH_FAILS - 1, "time": time.time()}, f)
 
         rollback_called = []
 
-        with patch("core.updater.rollback", side_effect=lambda: rollback_called.append(1)):
-            upd._check_startup_ok()
+        with patch("core.updater.rollback", side_effect=lambda: rollback_called.append(1) or True):
+            rolled = upd._check_health()
 
-        assert rollback_called, "检测到版本倒退时应调用 rollback()"
+        assert rolled is True
+        assert rollback_called, "反复未确认健康时应调用 rollback()"
 
-    def test_T25_startup_ok_written_on_normal_boot(self, tmp_data, monkeypatch):
-        """T25: 正常启动时写入 startup_ok.json"""
+    def test_T25_health_confirmed_no_rollback(self, tmp_data, monkeypatch):
+        """T25: 健康探针已确认时不回滚、不递增失败计数"""
         import core.updater as upd
         from core.constants import APP_VERSION
 
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        ok_file = tmp_data / "cache" / "startup_ok.json"
-        assert not ok_file.exists()
+        health = tmp_data / "cache" / "update_health.json"
+        health.parent.mkdir(parents=True, exist_ok=True)
+        with health.open("w") as f:
+            json.dump({"build": APP_VERSION, "confirmed": True, "fails": 0}, f)
 
-        upd._check_startup_ok()
-
-        assert ok_file.exists()
-        with ok_file.open() as f:
-            data = json.load(f)
-        assert data["version"] == APP_VERSION
+        with patch("core.updater.rollback") as rb:
+            assert upd._check_health() is False
+            rb.assert_not_called()
 
     def test_T26_old_exe_cleaned_on_check_and_apply_pending(self, tmp_data, monkeypatch):
         """T26: check_and_apply_pending 调用时清理 .old.exe 残留"""
@@ -1023,7 +1025,8 @@ class TestGapCoverage:
             }
         }
 
-        with patch("core.updater._fetch_latest", return_value=api_data), \
+        with patch("core.updater.fetch_bootstrap", return_value=None), \
+             patch("core.updater._fetch_latest", return_value=api_data), \
              patch("core.updater._should_check", return_value=True), \
              patch("core.updater._download_update",
                    side_effect=lambda url, sha: download_called.append(url) or None), \

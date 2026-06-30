@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +93,33 @@ def _probe_url(url: str, probe_path: str) -> tuple[str, float]:
     return url, float("inf")
 
 
+def _probe_concurrent(items: list, worker, total_timeout: float | None = None) -> list:
+    """在 daemon 线程上并发执行 worker(item)，收集已完成结果。
+
+    不用 ThreadPoolExecutor：其在解释器退出时会无条件 join 所有工作线程，
+    一旦某次 HEAD 探针卡在慢网络上，atexit 就会拖住进程退出（退出 hang）。
+    改用 daemon 线程后进程可立即退出；total_timeout 再给总探测预算上限，
+    超时未返回的探针被直接放弃，保证测速绝不阻塞退出。
+    """
+    results: list = []
+    lock = threading.Lock()
+
+    def _run(it) -> None:
+        r = worker(it)
+        with lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=_run, args=(it,), daemon=True) for it in items]
+    for th in threads:
+        th.start()
+    deadline = None if total_timeout is None else time.monotonic() + total_timeout
+    for th in threads:
+        timeout = None if deadline is None else max(0.0, deadline - time.monotonic())
+        th.join(timeout=timeout)
+    with lock:
+        return list(results)
+
+
 def rank_sources(category: str, region: str, sources: dict[str, Any]) -> list[str]:
     """
     对指定分类的所有源并发测速，返回按延迟排序的 URL 列表。
@@ -111,11 +137,11 @@ def rank_sources(category: str, region: str, sources: dict[str, Any]) -> list[st
             if u and u not in urls:
                 urls.append(u)
 
-    results: list[tuple[str, float]] = []
-    with ThreadPoolExecutor(max_workers=min(len(urls), 8)) as pool:
-        futures = {pool.submit(_probe_url, u, probe_path): u for u in urls}
-        for f in as_completed(futures):
-            results.append(f.result())
+    results: list[tuple[str, float]] = _probe_concurrent(
+        urls,
+        lambda u: _probe_url(u, probe_path),
+        total_timeout=TIMEOUT_MIRROR_PROBE + 1,
+    )
 
     results.sort(key=lambda x: x[1])
     ranked = [u for u, _ in results if _ < float("inf")]
@@ -424,12 +450,10 @@ def download(
 
     if direct_urls:
         # direct_urls 模式：完整 URL 列表，直接探针排序
-        with ThreadPoolExecutor(max_workers=min(len(direct_urls), 8)) as pool:
-            futures = {pool.submit(_probe_reachable, u): u for u in direct_urls}
-            probe_results: list[tuple[str, float]] = []
-            for f in as_completed(futures):
-                full_url, latency = f.result()
-                probe_results.append((full_url, latency))
+        probe_results: list[tuple[str, float]] = _probe_concurrent(
+            list(direct_urls), _probe_reachable,
+            total_timeout=TIMEOUT_MIRROR_PROBE + 1,
+        )
         probe_results.sort(key=lambda x: x[1])
         candidates = [u for u, lat in probe_results if lat < float("inf")]
         if not candidates:
@@ -441,13 +465,16 @@ def download(
                 (url_template.format(mirror=m.rstrip("/")), m)
                 for m in sources
             ]
-            with ThreadPoolExecutor(max_workers=min(len(probe_urls), 8)) as pool:
-                futures = {pool.submit(_probe_reachable, pu): m for pu, m in probe_urls}
-                results: list[tuple[str, float, str]] = []
-                for f in as_completed(futures):
-                    mirror = futures[f]
-                    full_url, latency = f.result()
-                    results.append((full_url, latency, mirror))
+
+            def _probe_with_mirror(pair: tuple[str, str]) -> tuple[str, float, str]:
+                pu, m = pair
+                full_url, latency = _probe_reachable(pu)
+                return full_url, latency, m
+
+            results: list[tuple[str, float, str]] = _probe_concurrent(
+                probe_urls, _probe_with_mirror,
+                total_timeout=TIMEOUT_MIRROR_PROBE + 1,
+            )
             results.sort(key=lambda x: x[1])
             candidates = [
                 url_template.format(mirror=m.rstrip("/"))
@@ -600,8 +627,10 @@ def download_file(
         raise IOError("下载失败：URL 列表为空")
 
     # 阶段一：并发 HEAD 探针，按延迟排序
-    with ThreadPoolExecutor(max_workers=min(len(urls), 8)) as pool:
-        probe_results = list(pool.map(_probe_reachable, urls))
+    probe_results = _probe_concurrent(
+        list(urls), _probe_reachable,
+        total_timeout=TIMEOUT_MIRROR_PROBE + 1,
+    )
     probe_results.sort(key=lambda x: x[1])
     ordered = [u for u, lat in probe_results if lat < float("inf")]
     if not ordered:

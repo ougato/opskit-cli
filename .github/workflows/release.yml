@@ -50,6 +50,9 @@ jobs:
       - name: install deps
         run: pip install -r requirements.txt pytest-timeout
 
+      - name: sync version from tag
+        run: python scripts/release_bump.py "${GITHUB_REF_NAME}"
+
       - name: run tests
         run: python -m pytest tests/ -v --tb=short --timeout=30
 
@@ -76,23 +79,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # tag → APP_VERSION / bootstrap，确保编译进二进制的自报版本与 tag 一致（防版本漂移导致更新自锁）
+      - name: sync version from tag
+        shell: python
+        run: |
+            import os, subprocess, sys
+            sys.exit(subprocess.call([sys.executable, "scripts/release_bump.py", os.environ["GITHUB_REF_NAME"]]))
+
       - uses: actions/setup-python@v5
         if: ${{ !matrix.manylinux }}
         with:
           python-version: '3.12'
           cache: 'pip'
-
-      - name: install UPX (linux non-manylinux)
-        if: runner.os == 'Linux' && !matrix.manylinux
-        run: sudo apt-get install -y upx-ucl
-
-      - name: install UPX (macos)
-        if: runner.os == 'macOS'
-        run: brew install upx
-
-      - name: install UPX (windows)
-        if: runner.os == 'Windows'
-        run: choco install upx -y
 
       - name: install deps (non-manylinux)
         if: ${{ !matrix.manylinux }}
@@ -108,15 +106,14 @@ jobs:
             bash -c "
               set -e
               cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && cd /work
-              yum install -y upx
               /opt/python/cp312-cp312/bin/pip install -r requirements.txt nuitka zstandard
-              /opt/python/cp312-cp312/bin/python build.py build --backend nuitka --upx
+              /opt/python/cp312-cp312/bin/python build.py build --backend nuitka
               chown -R \$(stat -c '%u:%g' /work) /work/dist/
             "
 
       - name: build (non-manylinux)
         if: ${{ !matrix.manylinux }}
-        run: python build.py build --backend nuitka --upx
+        run: python build.py build --backend nuitka
 
       - name: smoke test (unix)
         if: runner.os != 'Windows'
@@ -143,6 +140,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: download all artifacts
         uses: actions/download-artifact@v6
@@ -173,6 +173,23 @@ jobs:
             [[ "$f" == *.sha256 ]] && continue
             sha256sum "$f" | awk '{print $1, $2}'
           done
+
+      # 发布控制面：把 tag 对应的 build 写回默认分支的 constants.py + bootstrap.json，
+      # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本（CDN 源由 hook 同步）
+      - name: publish bootstrap manifest
+        run: |
+          set -euo pipefail
+          python scripts/release_bump.py "${GITHUB_REF_NAME}"
+          python scripts/release_bump.py "${GITHUB_REF_NAME}" --check
+          if git diff --quiet -- core/constants.py bootstrap.json; then
+            echo "[bootstrap] 无变更，跳过提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add core/constants.py bootstrap.json
+          git commit -m "chore(release): bump to ${GITHUB_REF_NAME} [skip ci]"
+          git push origin HEAD:"${{ github.event.repository.default_branch }}"
 
       - name: trigger artifact pull
         continue-on-error: true
