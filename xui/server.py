@@ -467,7 +467,7 @@ def diagnose_server() -> None:
             return Text("—", style=_LABEL)
         ok = is_port_listening(port)
         label = t(f"{dk}.port_listening") if ok else t(f"{dk}.port_not_listening")
-        return Text(f"{port}  {label}", style=f"bold {_OK if ok else _BAD}")
+        return Text(f"{port:<5}  {label}", style=f"bold {_OK if ok else _BAD}")
 
     tbl = Table.grid(padding=(0, 2))
     tbl.add_column(no_wrap=True)

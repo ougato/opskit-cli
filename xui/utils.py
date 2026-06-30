@@ -4,6 +4,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import os
+import re
 import concurrent.futures
 import secrets
 import shutil
@@ -177,7 +178,13 @@ def detect_xui_version() -> str | None:
             )
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
-                return output.splitlines()[0]
+                for line in output.splitlines():
+                    low = line.lower()
+                    if "os release" in low or "release is" in low:
+                        continue
+                    match = re.search(r"v?\d+\.\d+(?:\.\d+)?", line)
+                    if match:
+                        return match.group(0)
         except Exception:
             pass
         return XUI_INSTALLED_VERSION
