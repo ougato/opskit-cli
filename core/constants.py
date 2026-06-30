@@ -103,13 +103,25 @@ VERSION_CACHE_STALE_TTL = 86400     # 超过 24h 视为完全过期
 VERSION_FETCH_TIMEOUT = 10          # 后台获取超时（宽松）
 VERSION_FETCH_INTERVAL = 500        # 后台串行获取间隔 ms
 
-# ─── Bootstrap（OpsKit 自更新动态源）────────────────────────────────────────
+# ─── Bootstrap（OpsKit 自更新动态控制面 / version manifest）─────────────────
+# 并发拉取，取最快返回；CDN 优先，GitHub raw 作可靠兜底
 BOOTSTRAP_URLS = [
+    "https://file.icerror.top/d/install/bootstrap.json",
     "https://raw.githubusercontent.com/ougato/opskit-cli/main/bootstrap.json",
     "https://mirror.ghproxy.com/https://raw.githubusercontent.com/ougato/opskit-cli/main/bootstrap.json",
 ]
 BOOTSTRAP_TIMEOUT = 5
 FILE_BOOTSTRAP_CACHE = "bootstrap_cache.json"
+BOOTSTRAP_SCHEMA_VERSION = 2        # 控制面 manifest schema 版本
+
+# ─── 灰度发布（rollout）─────────────────────────────────────────────────────
+UPDATE_ROLLOUT_FULL = 100           # 100 表示全量放量
+FILE_MACHINE_ID = "machine_id"      # 灰度分桶用的稳定机器指纹
+
+# ─── 崩溃回滚健康探针 ────────────────────────────────────────────────────────
+FILE_UPDATE_HEALTH = "update_health.json"
+HEALTH_CONFIRM_DELAY = 15           # 新版本启动 N 秒内未崩溃则确认健康（秒）
+MAX_HEALTH_FAILS = 2                # 未确认健康的启动达到此次数则回滚
 
 # ─── GitHub ──────────────────────────────────────────────────────────────────
 GITHUB_BASE = "https://github.com"

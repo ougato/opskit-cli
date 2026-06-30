@@ -311,6 +311,18 @@ def _start_background_workers(cfg: dict) -> None:
             pass
     threading.Thread(target=_telemetry_worker, daemon=True, name="opskit-telemetry").start()
 
+    # ── 后台线程 5：健康确认（平稳运行一段时间后确认新版本健康，否则下次启动回滚）──
+    def _health_confirm_worker():
+        try:
+            from core.constants import HEALTH_CONFIRM_DELAY
+            from core.updater import confirm_health
+            import time as _time
+            _time.sleep(HEALTH_CONFIRM_DELAY)
+            confirm_health()
+        except Exception:
+            pass
+    threading.Thread(target=_health_confirm_worker, daemon=True, name="opskit-health").start()
+
 
 def _main_menu(cfg: dict) -> None:
     """主菜单循环"""
@@ -449,7 +461,10 @@ def _handle_language(cfg: dict) -> None:
 def _on_exit(cfg: dict) -> None:
     """退出前检查是否有待应用的更新"""
     try:
-        from core.updater import apply_pending_update
+        from core.updater import apply_pending_update, has_pending_update, pending_version
+        if has_pending_update():
+            ver = pending_version()
+            print_info(t("update.pending_ready", version=f"v{ver}" if ver else ""))
         apply_pending_update()
     except Exception:
         pass

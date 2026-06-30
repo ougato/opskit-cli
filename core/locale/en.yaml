@@ -49,6 +49,7 @@ upgrade:
 update:
   available: "v{version} downloaded, will apply on exit"
   applying: "Updating to v{version}..."
+  pending_ready: "{version} ready, applying on exit"
   success: "Updated to v{version}"
   failed: "Update failed: {error}"
   rollback: "Rolled back to v{version}"
