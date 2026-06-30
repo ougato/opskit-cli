@@ -207,6 +207,34 @@ def rollback() -> bool:
 
 ---
 
+## 3.9 发布自动化（CI · 打 tag = 全网灰度发布）
+
+工作流：`.github/workflows/release.yml`，`push: tags: v*` 触发。
+
+```mermaid
+flowchart LR
+    T[打 tag v{N}] --> A[notify-start hook]
+    A --> B[test: release_bump v{N} + pytest]
+    B --> C[build 矩阵<br/>linux-x64/arm64 · win · mac<br/>每个 runner 先 release_bump 再 nuitka]
+    C --> D[release: 上传产物到 GitHub Release]
+    D --> E[publish bootstrap: 把 build 写回默认分支<br/>constants.py + bootstrap.json + push]
+    E --> F[artifact-pull hook → CDN file.icerror.top]
+```
+
+**关键：版本同步脚本** `scripts/release_bump.py`
+- `v{N}` → 整数 build N，写回两处单一事实源：
+  1. `core/constants.py` 的 `APP_VERSION = N`（决定**编译进二进制的自报版本**）
+  2. `bootstrap.json` 的 `latest_build / display / min_build / rollout / notes`
+- **必须在 build 前执行**：`build.py` 仅用 tag 做产物文件名，二进制自报版本来自 `constants.py`。若不同步，tag v7 构建出的二进制仍自报 2 → 客户端永远认为"有新版本"→ 更新自锁。
+- `--check` 校验一致性（latest_build==APP_VERSION、min_build≤latest_build、rollout∈0-100），CI release 阶段做兜底校验。
+- `--min-build` / `--rollout` / `--notes` 可在发版时覆盖控制面字段，实现强制升级 / 灰度放量 / 公告。
+
+**控制面发布路径**：
+- GitHub raw 兜底源：`publish bootstrap` 步骤把 bumped `bootstrap.json` commit 回默认分支
+- CDN 优先源 `file.icerror.top`：由 `artifact-pull` hook 同步
+
+---
+
 ## 4. 防重启循环
 
 - 下载成功后写入 `pending_version` 到 `update_check.json`
