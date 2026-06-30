@@ -48,7 +48,7 @@ class TailscaleRecipe(Recipe):
     def install(self, version: str) -> None:
         install_client()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         uninstall_client()
 
     def diagnose(self) -> None:

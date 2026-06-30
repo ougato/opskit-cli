@@ -103,7 +103,7 @@ class DockerRecipe(Recipe):
                 raise InstallError(t("software.docker_error.verify_failed"))
             sp.complete()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from core.platform import get_platform
         from core.progress import MultiStepProgress
 

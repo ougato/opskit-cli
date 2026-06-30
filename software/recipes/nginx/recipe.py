@@ -70,7 +70,7 @@ class NginxRecipe(Recipe):
             self._do_install(on_progress=sp.set_step_pct)
             sp.complete()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from core.progress import MultiStepProgress
 
         driver = get_driver()

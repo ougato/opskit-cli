@@ -29,7 +29,7 @@ class WireGuardRecipe(Recipe):
     def install(self, version: str) -> None:
         pass
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         pass
 
     def submenu_items(self) -> list[dict]:
@@ -103,7 +103,7 @@ class WgServerRecipe(Recipe):
         from wireguard.server import install_server
         install_server()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from wireguard.server import uninstall_server
         uninstall_server()
 
@@ -184,7 +184,7 @@ class WgClientRecipe(Recipe):
         from wireguard.client import install_client
         install_client()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from wireguard.client import uninstall_client
         uninstall_client()
 

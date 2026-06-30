@@ -48,7 +48,7 @@ class RustDeskRecipe(Recipe):
     def install(self, version: str) -> None:
         install_server(version)
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         uninstall_server()
 
     def diagnose(self) -> None:

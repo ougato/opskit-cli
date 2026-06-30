@@ -60,8 +60,11 @@ class Recipe(ABC):
         """
 
     @abstractmethod
-    def uninstall(self) -> None:
-        """执行卸载，抛出异常表示失败"""
+    def uninstall(self, version: str | None = None) -> None:
+        """执行卸载，抛出异常表示失败。
+
+        version 为 None 表示卸载全部；单版本类配方可忽略该参数。
+        """
 
     def system_version(self) -> str | None:
         """

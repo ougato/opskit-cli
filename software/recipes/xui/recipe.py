@@ -54,7 +54,7 @@ class XuiRecipe(Recipe):
     def install(self, version: str) -> None:
         install_server()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         uninstall_server()
 
     def diagnose(self) -> None:
