@@ -191,7 +191,17 @@ main() {
     _green "=== 安装完成 ==="
     echo ""
     _info "如命令未找到，请执行：export PATH=\"${install_dir}:\$PATH\""
-    exec "${install_dir}/${BIN_NAME}"
+
+    # 通过 `curl | bash` 安装时，本脚本的 stdin 是 curl 管道（非 TTY，已到 EOF），
+    # 直接 exec 会让 opskit 继承这根管道、菜单读键瞬间读到 EOF 而秒退。
+    # 有真实终端则把 stdin 接回 /dev/tty 再启动；无终端则只提示手动运行，不自动启动。
+    if [ -t 0 ]; then
+        exec "${install_dir}/${BIN_NAME}"
+    elif [ -r /dev/tty ]; then
+        exec "${install_dir}/${BIN_NAME}" < /dev/tty
+    else
+        _info "请运行 ${BIN_NAME} 启动 OpsKit"
+    fi
 }
 
 main "$@"

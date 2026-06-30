@@ -1,7 +1,6 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入（对齐 golang/linux.py）"""
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tarfile
@@ -9,6 +8,7 @@ from pathlib import Path
 
 from software.base import InstallError
 from core.i18n import t
+from software._shared import shell_path
 from .driver import PlatformDriver
 from .constants import (
     MONGO_PATH_MARKER_BEGIN,
@@ -69,34 +69,10 @@ class LinuxDriver(PlatformDriver):
             shim.write_text(content, encoding="utf-8")
             shim.chmod(0o755)
 
-        cur_path = os.environ.get("PATH", "")
-        if shims_path not in cur_path.split(":"):
-            os.environ["PATH"] = shims_path + ":" + cur_path
-
-        block = (
-            f"\n{MONGO_PATH_MARKER_BEGIN}\n"
-            f'export PATH="{shims_path}:$PATH"\n'
-            f"{MONGO_PATH_MARKER_END}\n"
+        shell_path.prepend_process_path(shims_path)
+        shell_path.inject_rc_path(
+            shims_path, MONGO_PATH_MARKER_BEGIN, MONGO_PATH_MARKER_END, PROFILE_D_MONGO_FILE
         )
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            text = rc.read_text(encoding="utf-8")
-            if MONGO_PATH_MARKER_BEGIN not in text:
-                rc.write_text(text + block, encoding="utf-8")
-
-        try:
-            if hasattr(os, "getuid") and os.getuid() == 0:
-                pd = Path(PROFILE_D_MONGO_FILE)
-                pd.write_text(f'export PATH="{shims_path}:$PATH"\n', encoding="utf-8")
-                pd.chmod(0o644)
-        except Exception:
-            pass
 
     def remove_shim(self) -> None:
         from .common import shim_dir
@@ -111,39 +87,11 @@ class LinuxDriver(PlatformDriver):
         except Exception:
             pass
 
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            try:
-                lines = rc.read_text(encoding="utf-8").splitlines(keepends=True)
-                out, skip = [], False
-                for line in lines:
-                    if line.strip() == MONGO_PATH_MARKER_BEGIN:
-                        skip = True
-                    if not skip:
-                        out.append(line)
-                    if line.strip() == MONGO_PATH_MARKER_END:
-                        skip = False
-                rc.write_text("".join(out), encoding="utf-8")
-            except Exception:
-                pass
-
-        try:
-            pd = Path(PROFILE_D_MONGO_FILE)
-            if pd.exists():
-                pd.unlink()
-        except Exception:
-            pass
+        shell_path.remove_rc_path(MONGO_PATH_MARKER_BEGIN, MONGO_PATH_MARKER_END, PROFILE_D_MONGO_FILE)
 
     def shim_active(self) -> bool:
         from .common import shim_dir
-        shims = str(shim_dir())
-        return any(p == shims for p in os.environ.get("PATH", "").split(":"))
+        return shell_path.process_path_contains(str(shim_dir()))
 
     # ─── version link ─────────────────────────────────────────────────────────
 
@@ -152,39 +100,14 @@ class LinuxDriver(PlatformDriver):
         root 时在 /usr/local/bin 创建/更新 mongod/mongos symlink，立即全局生效。
         非 root 时依赖 shim，注入当前进程 PATH。
         """
-        bin_path = Path(bin_dir)
-        if hasattr(os, "getuid") and os.getuid() == 0:
-            for name in ("mongod", "mongos"):
-                src = bin_path / name
-                if not src.exists():
-                    continue
-                dest = Path("/usr/local/bin") / name
-                try:
-                    if dest.is_symlink() or dest.exists():
-                        dest.unlink()
-                    dest.symlink_to(src)
-                except Exception:
-                    pass
+        shell_path.link_into_system_bin(bin_dir, ("mongod", "mongos"))
         from .common import shim_dir as _shim_dir
-        shims = str(_shim_dir())
-        cur_path = os.environ.get("PATH", "")
-        if shims not in cur_path.split(":"):
-            os.environ["PATH"] = shims + ":" + cur_path
+        shell_path.prepend_process_path(str(_shim_dir()))
 
     def restore_original(self) -> None:
         """卸载时删除 /usr/local/bin 下 opskit 创建的 symlink"""
-        if not (hasattr(os, "getuid") and os.getuid() == 0):
-            return
         from .common import mongo_versions_dir as _mvd
-        for name in ("mongod", "mongos"):
-            dest = Path("/usr/local/bin") / name
-            try:
-                if dest.is_symlink():
-                    target = dest.resolve()
-                    if str(_mvd()) in str(target):
-                        dest.unlink()
-            except Exception:
-                pass
+        shell_path.unlink_system_bin(("mongod", "mongos"), _mvd())
 
     def snapshot_pre_install(self) -> dict:
         return {}

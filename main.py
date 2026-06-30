@@ -219,7 +219,11 @@ def _app_callback(
 
 
 def _boot() -> dict:
-    """启动初始化：配置 → 日志 → 清理 → 主题 → i18n → 预检 → 后台线程"""
+    """启动初始化：配置 → 日志 → 清理 → 主题 → i18n → 预检 → pending 更新检测。
+
+    联网/重型后台任务（测速 / 版本刷新 / 自更新 / 遥测）不在此启动，
+    而是延迟到主菜单首屏渲染后由 _start_background_workers() 触发。
+    """
     cfg = ensure_config()
 
     import core.logger as _logger
@@ -251,8 +255,27 @@ def _boot() -> dict:
     except Exception:
         pass
 
-    # ── 后台线程 1：源管理层初始化（IP 检测 + 测速）──
+    return cfg
+
+
+_bg_started = False
+
+
+def _start_background_workers(cfg: dict) -> None:
+    """启动所有联网/重型后台任务（测速 / 版本刷新 / 自更新 / 遥测）。
+
+    这些任务全部延迟到主菜单首屏渲染完成后再启动：先把菜单画出来，
+    再让网络探测和重型 import 在后台进行，避免它们在单核 + 慢网下与
+    主线程抢占 CPU/GIL，拖慢"进入主界面"的时间。
+    """
+    global _bg_started
+    if _bg_started:
+        return
+    _bg_started = True
+
     import threading
+
+    # ── 后台线程 1：源管理层初始化（IP 检测 + 测速）──
     def _mirror_init_worker():
         try:
             from core.mirror import init as mirror_init
@@ -277,19 +300,37 @@ def _boot() -> dict:
     except Exception:
         pass
 
-    # ── 遥测初始化（错误上报，DSN 为空则静默）──
-    try:
-        import core.telemetry as _telemetry
-        _telemetry.init(cfg)
-    except Exception:
-        pass
+    # ── 后台线程 4：遥测初始化（错误上报，DSN 为空则静默）──
+    # 必须放后台线程：SentryProvider.init() 会同步探测 github 可达性
+    # （httpx.head 带数秒超时），放主线程会卡住菜单交互。
+    def _telemetry_worker():
+        try:
+            import core.telemetry as _telemetry
+            _telemetry.init(cfg)
+        except Exception:
+            pass
+    threading.Thread(target=_telemetry_worker, daemon=True, name="opskit-telemetry").start()
 
-    return cfg
+    # ── 后台线程 5：健康确认（平稳运行一段时间后确认新版本健康，否则下次启动回滚）──
+    def _health_confirm_worker():
+        try:
+            from core.constants import HEALTH_CONFIRM_DELAY
+            from core.updater import confirm_health
+            import time as _time
+            _time.sleep(HEALTH_CONFIRM_DELAY)
+            confirm_health()
+        except Exception:
+            pass
+    threading.Thread(target=_health_confirm_worker, daemon=True, name="opskit-health").start()
 
 
 def _main_menu(cfg: dict) -> None:
     """主菜单循环"""
     modules = discover_modules(cfg)
+
+    # 首屏菜单渲染完成后再启动联网/重型后台任务（测速 / 版本刷新 / 自更新 /
+    # 遥测），保证"进入主界面"接近瞬时；只在第一次循环触发一次。
+    _first_render = True
 
     while True:
         choices = [
@@ -305,6 +346,9 @@ def _main_menu(cfg: dict) -> None:
             "label": f"{get_icon('preferences')} {t('menu.preferences')}",
         })
 
+        _on_ready = (lambda: _start_background_workers(cfg)) if _first_render else None
+        _first_render = False
+
         try:
             key = select(
                 breadcrumb=["OpsKit"],
@@ -312,6 +356,7 @@ def _main_menu(cfg: dict) -> None:
                 choices=choices,
                 theme_key="root",
                 back_label=f"{get_icon('exit')} {t('menu.exit')}",
+                on_ready=_on_ready,
             )
         except UserCancel:
             _on_exit(cfg)
@@ -416,7 +461,10 @@ def _handle_language(cfg: dict) -> None:
 def _on_exit(cfg: dict) -> None:
     """退出前检查是否有待应用的更新"""
     try:
-        from core.updater import apply_pending_update
+        from core.updater import apply_pending_update, has_pending_update, pending_version
+        if has_pending_update():
+            ver = pending_version()
+            print_info(t("update.pending_ready", version=f"v{ver}" if ver else ""))
         apply_pending_update()
     except Exception:
         pass
@@ -603,9 +651,8 @@ def _direct_fail(message: str, code: int = _EXIT_RUNTIME) -> None:
 
 
 def _recipe_name(cls: type) -> str:
-    key = f"software.{cls.key}"
-    value = t(key)
-    return value if value != key else (getattr(cls, "description", "") or cls.key)
+    from core.recipe_utils import recipe_display_name
+    return recipe_display_name(cls)
 
 
 def _get_recipe_for_direct(name: str):
@@ -743,16 +790,14 @@ def _install_direct(
     _resolve_deps_or_exit(instance, breadcrumb)
     _check_disk_or_exit()
 
-    import time as _time
-    start = _time.monotonic()
-    try:
-        instance.install(version)
-        installed_version = instance.detect() or version
-        print_success(t("install.success", name=name, version=installed_version, elapsed=_time.monotonic() - start))
-    except InstallError as e:
-        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    from software.actions import execute_install
+    r = execute_install(instance, version)
+    if r.ok:
+        print_success(t("install.success", name=name, version=r.version, elapsed=r.elapsed))
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("install.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _uninstall_direct(
@@ -770,29 +815,30 @@ def _uninstall_direct(
     if version and all_versions:
         _direct_fail(t("cli.error.version_all_conflict"), _EXIT_USAGE)
 
-    try:
-        if _is_multi_version(cls, instance):
-            installed = instance.installed_versions()
-            if not installed:
-                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
-            if not version and not all_versions:
-                _direct_fail(t("cli.error.uninstall_version_required", name=name), _EXIT_USAGE)
-            if version and version not in installed:
-                _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
-            instance.uninstall(None if all_versions else version)
-        else:
-            if version or all_versions:
-                _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
-            if not instance.detect():
-                _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
-            instance.uninstall()
+    if _is_multi_version(cls, instance):
+        installed = instance.installed_versions()
+        if not installed:
+            _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+        if not version and not all_versions:
+            _direct_fail(t("cli.error.uninstall_version_required", name=name), _EXIT_USAGE)
+        if version and version not in installed:
+            _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
+        target = None if all_versions else version
+    else:
+        if version or all_versions:
+            _direct_fail(t("cli.error.version_not_supported", name=name), _EXIT_USAGE)
+        if not instance.detect():
+            _direct_fail(t("software.not_installed_hint", name=name), _EXIT_RUNTIME)
+        target = None
+
+    from software.actions import execute_uninstall
+    r = execute_uninstall(instance, target)
+    if r.ok:
         print_success(t("uninstall.success", name=name))
-    except UninstallError as e:
-        _direct_fail(t("uninstall.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    elif isinstance(r.error, UninstallError):
+        _direct_fail(t("uninstall.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _upgrade_direct(
@@ -814,19 +860,18 @@ def _upgrade_direct(
 
     _resolve_deps_or_exit(instance, breadcrumb)
 
-    import time as _time
-    start = _time.monotonic()
-    try:
-        if _is_multi_version(cls, instance) and version in instance.installed_versions() and hasattr(instance, "switch"):
-            instance.switch(version)
+    from software.actions import execute_upgrade
+    already = _is_multi_version(cls, instance) and version in instance.installed_versions()
+    r = execute_upgrade(instance, version, already_installed=already)
+    if r.ok:
+        if r.switched:
             print_success(t("software.switch_success", name=name, version=version))
         else:
-            instance.upgrade(version)
-            print_success(t("upgrade.success", name=name, elapsed=_time.monotonic() - start))
-    except InstallError as e:
-        _direct_fail(t("upgrade.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+            print_success(t("upgrade.success", name=name, elapsed=r.elapsed))
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("upgrade.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _switch_direct(cls: type, instance, version: str | None) -> None:
@@ -841,13 +886,14 @@ def _switch_direct(cls: type, instance, version: str | None) -> None:
     installed = instance.installed_versions() if hasattr(instance, "installed_versions") else []
     if version not in installed:
         _direct_fail(t("software.not_installed_hint", name=f"{name} {version}"), _EXIT_RUNTIME)
-    try:
-        instance.switch(version)
+    from software.actions import execute_switch
+    r = execute_switch(instance, version)
+    if r.ok:
         print_success(t("software.switch_success", name=name, version=version))
-    except InstallError as e:
-        _direct_fail(t("install.failed", name=name, error=str(e)), _EXIT_RUNTIME)
-    except Exception as e:
-        _direct_fail(t("error.unknown", error=str(e)), _EXIT_RUNTIME)
+    elif isinstance(r.error, InstallError):
+        _direct_fail(t("install.failed", name=name, error=str(r.error)), _EXIT_RUNTIME)
+    else:
+        _direct_fail(t("error.unknown", error=str(r.error)), _EXIT_RUNTIME)
 
 
 def _diagnose_direct(cls: type, instance) -> None:

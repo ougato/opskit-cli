@@ -597,10 +597,142 @@ class TestBootstrapJsonFile:
         bp = Path(__file__).resolve().parent.parent / "bootstrap.json"
         with bp.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        assert data["schema_version"] == 1
-        assert "latest" in data
+        assert data["schema_version"] == 2
+        assert "latest_build" in data
+        assert "min_build" in data
+        assert "rollout" in data
+        assert "kill_switch" in data
         assert "update_mirrors" in data
         assert len(data["update_mirrors"]) >= 2
+
+    def test_bootstrap_latest_matches_app_version(self):
+        """manifest latest_build 不应小于代码内 APP_VERSION（防发布漂移）"""
+        from core.constants import APP_VERSION
+        bp = Path(__file__).resolve().parent.parent / "bootstrap.json"
+        with bp.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert int(data["latest_build"]) >= APP_VERSION
+
+
+class TestControlPlane:
+    """控制面 manifest 评估：kill_switch / min_build / rollout 灰度"""
+
+    def _manifest(self, **kw):
+        base = {"latest_build": 999, "min_build": 0, "rollout": 100, "kill_switch": False}
+        base.update(kw)
+        return base
+
+    def test_kill_switch_blocks(self):
+        from core.updater import _evaluate_manifest
+        with patch("core.updater._save_check_cache"):
+            assert _evaluate_manifest(self._manifest(kill_switch=True)) is None
+
+    def test_not_newer_skips(self):
+        from core.updater import _evaluate_manifest
+        from core.constants import APP_VERSION
+        with patch("core.updater._save_check_cache"):
+            assert _evaluate_manifest(self._manifest(latest_build=APP_VERSION)) is None
+
+    def test_newer_full_rollout_returns_build(self):
+        from core.updater import _evaluate_manifest
+        with patch("core.updater._save_check_cache"):
+            assert _evaluate_manifest(self._manifest(latest_build=999, rollout=100)) == 999
+
+    def test_rollout_zero_skips_non_forced(self):
+        from core.updater import _evaluate_manifest
+        with patch("core.updater._save_check_cache"), \
+             patch("core.updater._machine_bucket", return_value=50):
+            assert _evaluate_manifest(self._manifest(latest_build=999, rollout=0)) is None
+
+    def test_rollout_gate_in_cohort(self):
+        from core.updater import _evaluate_manifest
+        with patch("core.updater._save_check_cache"), \
+             patch("core.updater._machine_bucket", return_value=10):
+            assert _evaluate_manifest(self._manifest(latest_build=999, rollout=30)) == 999
+
+    def test_min_build_forces_ignoring_rollout(self):
+        from core.updater import _evaluate_manifest
+        from core.constants import APP_VERSION
+        with patch("core.updater._save_check_cache"), \
+             patch("core.updater._machine_bucket", return_value=99):
+            # rollout=0 本应跳过，但 min_build 高于当前版本 → 强制更新
+            assert _evaluate_manifest(
+                self._manifest(latest_build=999, rollout=0, min_build=APP_VERSION + 1)
+            ) == 999
+
+    def test_machine_bucket_stable_and_in_range(self):
+        from core import updater
+        with patch("core.updater._get_machine_id", return_value="fixed-id"):
+            b1 = updater._machine_bucket()
+            b2 = updater._machine_bucket()
+        assert b1 == b2
+        assert 0 <= b1 < 100
+
+
+class TestHealthRollback:
+    """健康探针崩溃回滚"""
+
+    def _patch_health(self, hpath):
+        return patch("core.updater._get_health_path", return_value=hpath)
+
+    def test_no_health_file_noop(self, tmp_path):
+        from core.updater import _check_health
+        with self._patch_health(tmp_path / "update_health.json"):
+            assert _check_health() is False
+
+    def test_confirmed_noop(self, tmp_path):
+        from core.updater import _check_health
+        from core.constants import APP_VERSION
+        hpath = tmp_path / "update_health.json"
+        hpath.write_text(
+            json.dumps({"build": APP_VERSION, "confirmed": True, "fails": 0}), encoding="utf-8")
+        with self._patch_health(hpath):
+            assert _check_health() is False
+
+    def test_first_unconfirmed_boot_no_rollback(self, tmp_path):
+        from core.updater import _check_health
+        from core.constants import APP_VERSION
+        hpath = tmp_path / "update_health.json"
+        hpath.write_text(
+            json.dumps({"build": APP_VERSION, "confirmed": False, "fails": 0}), encoding="utf-8")
+        with self._patch_health(hpath), patch("core.updater.rollback") as rb:
+            assert _check_health() is False
+            rb.assert_not_called()
+        data = json.loads(hpath.read_text(encoding="utf-8"))
+        assert data["fails"] == 1
+
+    def test_repeated_failures_trigger_rollback(self, tmp_path):
+        from core.updater import _check_health
+        from core.constants import APP_VERSION, MAX_HEALTH_FAILS
+        hpath = tmp_path / "update_health.json"
+        hpath.write_text(
+            json.dumps({"build": APP_VERSION, "confirmed": False, "fails": MAX_HEALTH_FAILS - 1}),
+            encoding="utf-8")
+        with self._patch_health(hpath), patch("core.updater.rollback", return_value=True) as rb:
+            assert _check_health() is True
+            rb.assert_called_once()
+        assert not hpath.exists()
+
+    def test_stale_build_cleared(self, tmp_path):
+        from core.updater import _check_health
+        from core.constants import APP_VERSION
+        hpath = tmp_path / "update_health.json"
+        hpath.write_text(
+            json.dumps({"build": APP_VERSION - 1, "confirmed": False, "fails": 5}), encoding="utf-8")
+        with self._patch_health(hpath), patch("core.updater.rollback") as rb:
+            assert _check_health() is False
+            rb.assert_not_called()
+        assert not hpath.exists()
+
+    def test_confirm_health_sets_flag(self, tmp_path):
+        from core.updater import confirm_health, mark_update_applied
+        from core.constants import APP_VERSION
+        hpath = tmp_path / "update_health.json"
+        with self._patch_health(hpath):
+            mark_update_applied(APP_VERSION)
+            confirm_health()
+        data = json.loads(hpath.read_text(encoding="utf-8"))
+        assert data["confirmed"] is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

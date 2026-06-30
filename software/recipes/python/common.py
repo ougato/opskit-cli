@@ -1,7 +1,6 @@
 """跨平台共用工具：uv 路径、快照、版本查找、版本列表数据"""
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -10,7 +9,8 @@ from pathlib import Path
 
 from software.base import InstallError
 from core.i18n import t
-from .constants import PYTHON_VERSIONS_FALLBACK
+from .constants import PYTHON_VERSIONS_FALLBACK, SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE
+from software._shared.snapshot import SnapshotStore
 
 # ─── 各发行版包管理器可直接安装的 Python minor 版本 ────────────────────────────
 _APT_VERSIONS: dict[str, list[str]] = {
@@ -131,31 +131,23 @@ def shim_dir() -> Path:
 
 # ─── 快照管理 ─────────────────────────────────────────────────────────────────
 
+_store = SnapshotStore(SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE)
+
+
 def snapshot_path() -> Path:
-    from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE
-    return Path.home() / SNAPSHOT_SUBDIR / SNAPSHOT_PYTHON_FILE
+    return _store.path
 
 
 def load_snapshot() -> dict:
-    p = snapshot_path()
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    return _store.load()
 
 
 def save_snapshot(data: dict) -> None:
-    p = snapshot_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _store.save(data)
 
 
 def delete_snapshot() -> None:
-    p = snapshot_path()
-    if p.exists():
-        p.unlink()
+    _store.delete()
 
 
 # ─── Python 可执行路径查找 ────────────────────────────────────────────────────

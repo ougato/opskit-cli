@@ -121,9 +121,16 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
+    # onefile 固定解压目录：默认每次启动都把整包解压到随机 /tmp/onefile_<pid>_xxx，
+    # 低配机/慢盘上这步要数秒且每次重来。按版本号固定到用户缓存目录后，
+    # 首次解压后续启动直接复用，跳过重复解压 —— 低配启动提速的关键。
+    version = _get_version()
+    tempdir_spec = "{CACHE_DIR}/" + f"opskit/v{version}"
+
     cmd = [
         sys.executable, "-m", "nuitka",
         "--onefile",
+        f"--onefile-tempdir-spec={tempdir_spec}",
         "--python-flag=no_site",
         "--python-flag=no_docstrings",
         "--python-flag=-OO",

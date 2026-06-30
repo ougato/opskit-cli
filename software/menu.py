@@ -6,21 +6,20 @@ from rich.console import Console
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.prompt import select, paged_select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
+from core.recipe_utils import recipe_display_name
+from core.feedback import capture as _report, report_failure
+from software.actions import (
+    execute_install,
+    execute_switch,
+    execute_upgrade,
+    execute_uninstall,
+)
 
 console = Console()
 
 _THEME_KEY = "software"
-
-
-def _report(exc: Exception, **ctx) -> None:
-    """上报异常到遥测系统，失败静默"""
-    try:
-        import core.telemetry as _tel
-        _tel.capture_error(exc, **ctx)
-    except Exception:
-        pass
 
 
 def entry() -> None:
@@ -137,63 +136,36 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
             ver = cls().detect()
             hints[cls.key] = ver or ""
 
-    total = len(recipes)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-
-    while True:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = recipes[start:end]
-        choices = [
-            {
-                "key": str(i + 1),
-                "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}') if _has_i18n(f'software.{cls.key}') else cls.key}",
-                "hint": hints.get(cls.key, ""),
-            }
-            for i, cls in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        subtitle = (
-            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
-            if total_pages > 1
-            else t("prompt.select")
-        )
-        try:
-            key = select(
-                breadcrumb=breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if key is None:
-            return
-        if key == "n":
-            page += 1
-            continue
-        if key == "p":
-            page -= 1
-            continue
-
-        cls = page_items[int(key) - 1]
+    def _dispatch(cls: type) -> None:
         if getattr(cls, "has_submenu", False):
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
             show_actions(breadcrumb=breadcrumb, cls=cls)
-        continue
+
+    paged_select(
+        breadcrumb=breadcrumb,
+        items=recipes,
+        choice_of=lambda cls, i: {
+            "label": f"{get_icon(cls.key)} {recipe_display_name(cls)}",
+            "hint": hints.get(cls.key, ""),
+        },
+        subtitle_of=lambda page, total_pages: (
+            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
+            if total_pages > 1
+            else t("prompt.select")
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+        on_select=_dispatch,
+    )
 
 
 def _show_submenu(breadcrumb: list[str], cls: type) -> None:
     """显示子菜单（如 WireGuard → 公网服务端 / 内网客户端）"""
     from software.registry import get as get_recipe
-    name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.key
+    name = recipe_display_name(cls)
     sub_breadcrumb = [*breadcrumb, name]
     instance = cls()
     items = instance.submenu_items()
@@ -246,7 +218,7 @@ def _has_i18n(key: str) -> bool:
 
 def show_actions(breadcrumb: list[str], cls: type) -> None:
     """软件操作菜单：安装(1) / 卸载(2) / 升级(3) + 扩展操作"""
-    name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.key
+    name = recipe_display_name(cls)
     sub_breadcrumb = [*breadcrumb, name]
     instance = cls()
     muted = get_color("muted")
@@ -318,21 +290,14 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     """执行安装流程"""
     from core.platform import check_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
-    from software.base import InstallError
     from software.resolver import resolve_deps
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     try:
         resolve_deps(instance, breadcrumb)
-    except InstallError as e:
-        _report(e, software=cls.key, action="install.resolve_deps")
-        print_error(t("install.failed", name=_name, error=str(e)))
-        pause()
-        return
     except Exception as e:
-        _report(e, software=cls.key, action="install.resolve_deps")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install.resolve_deps")
         pause()
         return
 
@@ -355,13 +320,8 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
             instance.install("latest")
         except KeyboardInterrupt:
             return
-        except InstallError as e:
-            _report(e, software=cls.key, action="install")
-            print_error(t("install.failed", name=_name, error=str(e)))
-            pause()
         except Exception as e:
-            _report(e, software=cls.key, action="install")
-            print_error(t("error.unknown", error=str(e)))
+            report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install")
             pause()
         return
 
@@ -414,20 +374,14 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
     base_console.print()
-    import time as _time
-    _t0 = _time.monotonic()
     try:
-        instance.install(version)
-        installed_version = instance.detect() or version
-        print_success(t("install.success", name=_name, version=installed_version, elapsed=_time.monotonic() - _t0))
+        r = execute_install(instance, version)
     except KeyboardInterrupt:
         return
-    except InstallError as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("install.failed", name=_name, error=str(e)))
-    except Exception as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("error.unknown", error=str(e)))
+    if r.ok:
+        print_success(t("install.success", name=_name, version=r.version, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
@@ -435,10 +389,9 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
     from core.platform import check_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
-    from software.base import InstallError
     from core.progress import spinner
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     existing = instance.detect()
     installed_set: set[str] = (
@@ -458,52 +411,22 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         pause()
         return
 
-    total = len(versions)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    version: str | None = None
-
-    while version is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = versions[start:end]
-
-        subtitle = (
+    version = paged_select(
+        breadcrumb=breadcrumb,
+        items=versions,
+        choice_of=lambda v, i: {"label": f"[dim]{v}[/dim]" if v in installed_set else v},
+        subtitle_of=lambda page, total_pages: (
             f"{t('software.installed')}: {existing}  [{page + 1}/{total_pages}]"
             if existing
             else f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-        )
-
-        choices = [
-            {"key": str(i + 1), "label": f"[dim]{v}[/dim]" if v in installed_set else v}
-            for i, v in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        version = page_items[int(ver_key) - 1]
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if version is None:
+        return
 
     # 已安装版本选中时弹确认
     if version in installed_set:
@@ -521,26 +444,19 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
     base_console.print()
-    import time as _time
-    _t0 = _time.monotonic()
-    try:
-        instance.install(version)
-        print_success(t("install.success", name=_name, version=version, elapsed=_time.monotonic() - _t0))
-    except InstallError as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("install.failed", name=_name, error=str(e)))
-    except Exception as e:
-        _report(e, software=cls.key, version=version, action="install")
-        print_error(t("error.unknown", error=str(e)))
+    r = execute_install(instance, version)
+    if r.ok:
+        print_success(t("install.success", name=_name, version=version, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=version, action="install")
     pause()
 
 
 def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     """执行卸载流程：支持多版本选择卸载"""
-    from software.base import UninstallError
     from core.progress import spinner
 
-    _uname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _uname = recipe_display_name(cls)
 
     # 检查是否支持多版本（has_switch 的 recipe 有 installed_versions 方法）
     if getattr(cls, "has_switch", False) and hasattr(instance, "installed_versions"):
@@ -589,15 +505,11 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
-        try:
-            instance.uninstall(version_to_remove)
+        r = execute_uninstall(instance, version_to_remove)
+        if r.ok:
             print_success(t("uninstall.success", name=_uname))
-        except UninstallError as e:
-            _report(e, software=cls.key, version=str(version_to_remove), action="uninstall")
-            print_error(t("uninstall.failed", name=_uname, error=str(e)))
-        except Exception as e:
-            _report(e, software=cls.key, version=str(version_to_remove), action="uninstall")
-            print_error(t("error.unknown", error=str(e)))
+        else:
+            report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, version=str(version_to_remove), action="uninstall")
         pause()
         return
 
@@ -620,24 +532,19 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
     try:
-        instance.uninstall()
+        r = execute_uninstall(instance)
     except KeyboardInterrupt:
         return
-    except UninstallError as e:
-        _report(e, software=cls.key, action="uninstall")
-        print_error(t("uninstall.failed", name=_uname, error=str(e)))
-    except Exception as e:
-        _report(e, software=cls.key, action="uninstall")
-        print_error(t("error.unknown", error=str(e)))
+    if not r.ok:
+        report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
     pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     """执行版本切换流程"""
-    from software.base import InstallError
     from core.progress import spinner
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     if not hasattr(instance, "installed_versions"):
         print_info(t("software.not_supported"))
@@ -664,53 +571,24 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    total = len(all_items)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    selected_item: dict | None = None
     switch_breadcrumb = [*breadcrumb, t("software.switch")]
 
-    while selected_item is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = all_items[start:end]
-
-        subtitle = (
+    selected_item = paged_select(
+        breadcrumb=switch_breadcrumb,
+        items=all_items,
+        choice_of=lambda item, i: {"label": item["label"], "hint": item["hint"]},
+        subtitle_of=lambda page, total_pages: (
             f"{t('software.current_version')}: {active}  [{page + 1}/{total_pages}]"
             if active
             else f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-        )
-
-        choices = [
-            {"key": str(i + 1), "label": item["label"], "hint": item["hint"]}
-            for i, item in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=switch_breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        selected_item = page_items[int(ver_key) - 1]
+        ),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if selected_item is None:
+        return
 
     selected_version = selected_item["version"]
 
@@ -721,36 +599,25 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
 
     clear_screen()
     print_header([*breadcrumb, t("software.switch")])
-    try:
-        instance.switch(selected_version)
+    r = execute_switch(instance, selected_version)
+    if r.ok:
         print_success(t("software.switch_success", name=_name, version=selected_version))
-    except InstallError as e:
-        _report(e, software=cls.key, version=selected_version, action="switch")
-        print_error(t("install.failed", name=_name, error=str(e)))
-    except Exception as e:
-        _report(e, software=cls.key, version=selected_version, action="switch")
-        print_error(t("error.unknown", error=str(e)))
+    else:
+        report_failure(r.error, fail_key="install.failed", name=_name, software=cls.key, version=selected_version, action="switch")
     pause()
 
 
 def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     """执行升级流程"""
-    from software.base import InstallError
     from core.progress import spinner
     from software.resolver import resolve_deps
 
-    _name = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _name = recipe_display_name(cls)
 
     try:
         resolve_deps(instance, breadcrumb)
-    except InstallError as e:
-        _report(e, software=cls.key, action="upgrade.resolve_deps")
-        print_error(t("install.failed", name=_name, error=str(e)))
-        pause()
-        return
     except Exception as e:
-        _report(e, software=cls.key, action="upgrade.resolve_deps")
-        print_error(t("error.unknown", error=str(e)))
+        report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="upgrade.resolve_deps")
         pause()
         return
 
@@ -786,10 +653,6 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    total = len(versions)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
-    page = 0
-    new_version: str | None = None
     upg_breadcrumb = [*breadcrumb, t("software.upgrade")]
     upg_installed_set: set[str] = (
         set(instance.installed_versions())
@@ -797,64 +660,33 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         else ({existing} if existing else set())
     )
 
-    while new_version is None:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = versions[start:end]
-
-        subtitle = f"{t('software.select_version')}  [{page + 1}/{total_pages}]"
-
-        choices = [
-            {"key": str(i + 1), "label": f"[dim]{v}[/dim]" if v in upg_installed_set else v}
-            for i, v in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            ver_key = select(
-                breadcrumb=upg_breadcrumb,
-                subtitle=subtitle,
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if not ver_key:
-            return
-
-        if ver_key == "n":
-            page += 1
-            continue
-        if ver_key == "p":
-            page -= 1
-            continue
-
-        new_version = page_items[int(ver_key) - 1]
+    new_version = paged_select(
+        breadcrumb=upg_breadcrumb,
+        items=versions,
+        choice_of=lambda v, i: {"label": f"[dim]{v}[/dim]" if v in upg_installed_set else v},
+        subtitle_of=lambda page, total_pages: f"{t('software.select_version')}  [{page + 1}/{total_pages}]",
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+    )
+    if new_version is None:
+        return
 
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
-    import time as _time
-    _t0 = _time.monotonic()
-    try:
-        if new_version in upg_installed_set:
-            # 已安装 → 直接切换，无需重新下载
-            instance.switch(new_version)
+    already = new_version in upg_installed_set
+    if not already:
+        # 未安装 → 走安装升级流程
+        base_console.print()
+    r = execute_upgrade(instance, new_version, already_installed=already)
+    if r.ok:
+        if r.switched:
             print_success(t("software.switch_success", name=_name, version=new_version))
         else:
-            # 未安装 → 走安装升级流程
-            base_console.print()
-            instance.upgrade(new_version)
-            print_success(t("upgrade.success", name=_name, elapsed=_time.monotonic() - _t0))
-    except InstallError as e:
-        _report(e, software=cls.key, version=new_version, action="upgrade")
-        print_error(t("upgrade.failed", name=_name, error=str(e)))
-    except Exception as e:
-        _report(e, software=cls.key, version=new_version, action="upgrade")
-        print_error(t("error.unknown", error=str(e)))
+            print_success(t("upgrade.success", name=_name, elapsed=r.elapsed))
+    else:
+        report_failure(r.error, fail_key="upgrade.failed", name=_name, software=cls.key, version=new_version, action="upgrade")
     pause()
 
 
@@ -963,7 +795,7 @@ def show_install() -> None:
     cls = recipes[int(key) - 1]
     instance = cls()
 
-    _sname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _sname = recipe_display_name(cls)
 
     # 检查是否已安装
     existing = instance.detect()
@@ -1030,7 +862,7 @@ def show_install() -> None:
 
     # 执行安装
     clear_screen()
-    _iname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _iname = recipe_display_name(cls)
     print_header(["OpsKit", t("menu.software"), t("software.install")])
     base_console.print()
     import time as _time
@@ -1102,52 +934,28 @@ def show_installed() -> None:
         return
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.installed_list")]
-    page = 0
-    total = len(installed)
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
 
-    while True:
-        start = page * _PAGE_SIZE
-        end = min(start + _PAGE_SIZE, total)
-        page_items = installed[start:end]
-
-        choices = [
-            {"key": str(i + 1),
-             "label": f"{get_icon(cls.key)} {t(f'software.{cls.key}')}",
-             "hint": ver}
-            for i, (cls, _, ver) in enumerate(page_items)
-        ]
-        if page > 0:
-            choices.append({"key": "p", "label": t("software.prev_page")})
-        if page < total_pages - 1:
-            choices.append({"key": "n", "label": t("software.next_page")})
-
-        try:
-            key = select(
-                breadcrumb=breadcrumb,
-                subtitle=t("prompt.select"),
-                choices=choices,
-                theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            return
-        if key is None:
-            return
-
-        if key == "n":
-            page += 1
-            continue
-        if key == "p":
-            page -= 1
-            continue
-
-        idx = int(key) - 1
-        cls, instance, ver = page_items[idx]
+    def _dispatch(item: tuple) -> None:
+        cls, _instance, _ver = item
         if getattr(cls, "has_submenu", False):
             _show_submenu(breadcrumb=breadcrumb, cls=cls)
         else:
             show_actions(breadcrumb=breadcrumb, cls=cls)
+
+    paged_select(
+        breadcrumb=breadcrumb,
+        items=installed,
+        choice_of=lambda item, i: {
+            "label": f"{get_icon(item[0].key)} {recipe_display_name(item[0])}",
+            "hint": item[2],
+        },
+        subtitle_of=lambda page, total_pages: t("prompt.select"),
+        back_label=f"{get_icon('back')} {t('menu.back')}",
+        nav_labels=(t("software.prev_page"), t("software.next_page")),
+        theme_key=_THEME_KEY,
+        page_size=_PAGE_SIZE,
+        on_select=_dispatch,
+    )
 
 
 # ─── 卸载 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1157,6 +965,7 @@ def show_uninstall() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
     from core.progress import spinner
+    from software.base import UninstallError
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
@@ -1194,7 +1003,7 @@ def show_uninstall() -> None:
 
     cls, instance, ver = installed[int(key) - 1]
 
-    _usname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _usname = recipe_display_name(cls)
 
     try:
         if not confirm(
@@ -1262,7 +1071,7 @@ def show_upgrade() -> None:
         return
 
     cls, instance, current_ver = installed[int(key) - 1]
-    _upgname = t(f"software.{cls.key}") if _has_i18n(f"software.{cls.key}") else cls.description
+    _upgname = recipe_display_name(cls)
 
     with spinner(t("software.fetching_versions")):
         try:

@@ -20,12 +20,17 @@ from core.constants import (
     BOOTSTRAP_URLS,
     DOWNLOAD_RETRY_BASE_DELAY,
     FILE_BOOTSTRAP_CACHE,
+    FILE_MACHINE_ID,
     FILE_UPDATE_CACHE,
+    FILE_UPDATE_HEALTH,
     GITHUB_API_RELEASES,
+    GITHUB_BASE,
     GITHUB_RATELIMIT_SAFE,
+    MAX_HEALTH_FAILS,
     TIMEOUT_DOWNLOAD_READ,
     TIMEOUT_UPDATE_CHECK,
     UPDATE_RATELIMIT_BACKOFF,
+    UPDATE_ROLLOUT_FULL,
 )
 
 _log = logging.getLogger("opskit.updater")
@@ -114,6 +119,74 @@ def fetch_bootstrap() -> dict[str, Any] | None:
     return None
 
 
+# ─── 控制面（manifest）评估：kill_switch / min_build / rollout 灰度 ──────────
+
+def _get_machine_id() -> str:
+    """稳定的机器指纹（首次随机生成并持久化），用于灰度分桶。"""
+    from core.config import get_data_dir
+    path = get_data_dir() / "cache" / FILE_MACHINE_ID
+    try:
+        if path.exists():
+            mid = path.read_text(encoding="utf-8").strip()
+            if mid:
+                return mid
+    except Exception:
+        pass
+    import uuid
+    mid = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(mid, encoding="utf-8")
+    except Exception:
+        pass
+    return mid
+
+
+def _machine_bucket() -> int:
+    """把机器指纹哈希到 0..99 的稳定分桶值，用于 rollout 百分比灰度判定。"""
+    digest = hashlib.sha256(_get_machine_id().encode("utf-8")).hexdigest()
+    return int(digest, 16) % UPDATE_ROLLOUT_FULL
+
+
+def _evaluate_manifest(manifest: dict[str, Any]) -> int | None:
+    """根据控制面 manifest 决定是否更新。
+
+    返回目标 build（应更新）或 None（不更新：急停 / 非更新 / 未命中灰度）。
+    急停、未命中灰度时写入 last_check，避免频繁重判。
+    """
+    from core.version import is_newer
+    if manifest.get("kill_switch"):
+        _log.info("manifest: kill_switch on, skipping update")
+        _save_check_cache({"last_check": time.time()})
+        return None
+
+    try:
+        latest = int(manifest.get("latest_build", 0))
+    except (TypeError, ValueError):
+        return None
+    if not is_newer(latest):
+        _save_check_cache({"last_check": time.time(), "latest": latest})
+        return None
+
+    try:
+        min_build = int(manifest.get("min_build", 0))
+    except (TypeError, ValueError):
+        min_build = 0
+    forced = APP_VERSION < min_build
+    if not forced:
+        try:
+            rollout = int(manifest.get("rollout", UPDATE_ROLLOUT_FULL))
+        except (TypeError, ValueError):
+            rollout = UPDATE_ROLLOUT_FULL
+        if _machine_bucket() >= rollout:
+            _log.info("manifest: not in rollout cohort (bucket>=%d), skipping", rollout)
+            _save_check_cache({"last_check": time.time(), "latest": latest})
+            return None
+    else:
+        _log.info("manifest: forced update (APP_VERSION %d < min_build %d)", APP_VERSION, min_build)
+    return latest
+
+
 # ─── 启动时 pending 检测 ──────────────────────────────────────────────────────
 
 def _verify_binary(path: Path) -> bool:
@@ -141,33 +214,82 @@ def _cleanup_old_exe(self_path: Path) -> None:
         _log.warning("startup: failed to clean .old.exe: %s", e)
 
 
-def _check_startup_ok() -> None:
-    """崩溃回滚：检测上次更新后新版本是否成功启动过。
+def _get_health_path() -> Path:
+    from core.config import get_data_dir
+    return get_data_dir() / "cache" / FILE_UPDATE_HEALTH
+
+
+def mark_update_applied(build: int) -> None:
+    """更新替换成功后写入健康探针：标记 build 刚升级、尚未确认健康。"""
+    try:
+        path = _get_health_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump({"build": build, "confirmed": False, "fails": 0, "time": time.time()}, f)
+    except Exception as e:
+        _log.warning("mark_update_applied: %s", e)
+
+
+def confirm_health() -> None:
+    """新版本平稳运行 HEALTH_CONFIRM_DELAY 秒后调用：确认当前 build 健康。"""
+    try:
+        path = _get_health_path()
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("confirmed") or int(data.get("build", 0)) != APP_VERSION:
+            return
+        data["confirmed"] = True
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(data, f)
+        _log.info("confirm_health: build %d confirmed healthy", APP_VERSION)
+        _report("update_confirmed", level="info", build=str(APP_VERSION))
+    except Exception as e:
+        _log.warning("confirm_health: %s", e)
+
+
+def _check_health() -> bool:
+    """崩溃回滚：基于健康探针判断新版本是否反复启动失败。
 
     机制：
-    - 每次正常启动写入 startup_ok.json（含当前版本号）
-    - 若启动时发现 startup_ok.json 中版本 < APP_VERSION，
-      说明新版本从未成功启动（可能持续崩溃），自动回滚
+    - 更新替换成功 → mark_update_applied 写 {build, confirmed:False, fails:0}
+    - 新版本平稳运行后 → confirm_health 置 confirmed:True
+    - 每次未确认健康的启动 fails+1；达到 MAX_HEALTH_FAILS 仍未确认 → 回滚
+
+    返回 True 表示已执行回滚（调用方应 exec 重启进入回滚后的旧版本）。
     """
-    from core.config import get_data_dir
-    ok_file = get_data_dir() / "cache" / "startup_ok.json"
+    path = _get_health_path()
+    if not path.exists():
+        return False
     try:
-        if ok_file.exists():
-            with ok_file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            last_ok_ver = data.get("version", APP_VERSION)
-            if last_ok_ver > APP_VERSION:
-                _log.warning(
-                    "startup_ok check: last successful version was %d, current is %d — rolling back",
-                    last_ok_ver, APP_VERSION,
-                )
-                rollback()
-                return
-        ok_file.parent.mkdir(parents=True, exist_ok=True)
-        with ok_file.open("w", encoding="utf-8") as f:
-            json.dump({"version": APP_VERSION, "time": time.time()}, f)
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        path.unlink(missing_ok=True)
+        return False
+
+    if data.get("confirmed"):
+        return False
+    # 探针对应的 build 与当前运行版本不一致（已回滚 / 残留），清理
+    if int(data.get("build", 0)) != APP_VERSION:
+        path.unlink(missing_ok=True)
+        return False
+
+    fails = int(data.get("fails", 0)) + 1
+    if fails >= MAX_HEALTH_FAILS:
+        _log.warning("_check_health: build %d unconfirmed after %d boots — rolling back", APP_VERSION, fails)
+        _report("update_rolled_back", level="error", build=str(APP_VERSION), fails=str(fails))
+        ok = rollback()
+        path.unlink(missing_ok=True)
+        return ok
+    try:
+        data["fails"] = fails
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(data, f)
     except Exception as e:
-        _log.warning("_check_startup_ok: %s", e)
+        _log.warning("_check_health: %s", e)
+    return False
 
 
 def _apply_update_pending_path() -> bool:
@@ -208,11 +330,12 @@ def check_and_apply_pending() -> bool:
     完整流程：
     1. --post-update 防循环检测
     2. .old.exe 残留清理
-    3. startup_ok.json 崩溃回滚检测
+    3. 健康探针崩溃回滚检测
     4. update_pending_path.json 兜底标记处理
     5. pending/cache 同步（pending 被手动删除时清理 cache）
     6. 常规 pending 检测与应用
     """
+    global _pending_version
     if "--post-update" in sys.argv:
         _get_pending_path().unlink(missing_ok=True)
         _get_pending_tmp_path().unlink(missing_ok=True)
@@ -224,12 +347,13 @@ def check_and_apply_pending() -> bool:
     # 清理 .old.exe 残留
     _cleanup_old_exe(self_path)
 
-    # 崩溃回滚检测
-    _check_startup_ok()
+    # 崩溃回滚检测：新版本反复启动失败则回滚到旧版本并重启
+    if _check_health():
+        _pending_version = APP_VERSION
+        return True
 
     # 兜底标记处理（上次 _apply_windows 所有策略失败后写入的标记）
     if _apply_update_pending_path():
-        global _pending_version
         cache = _load_check_cache()
         _pending_version = cache.get("latest")
         return True
@@ -592,65 +716,88 @@ def check_update_background(cfg: dict) -> None:
     """
     def _worker():
         global _pending_version
-        update_cfg = cfg.get("update", {})
-        if not update_cfg.get("enabled", True):
-            return
+        try:
+            update_cfg = cfg.get("update", {})
+            if not update_cfg.get("enabled", True):
+                return
 
-        check_interval: int = update_cfg.get("check_interval", 86400)
-        if not _should_check(check_interval):
-            # 检查是否有已下载但未应用的版本
-            pending = _get_pending_path()
-            if pending.exists():
-                cache = _load_check_cache()
-                _pending_version = cache.get("pending_version")
-            return
+            check_interval: int = update_cfg.get("check_interval", 86400)
+            if not _should_check(check_interval):
+                # 检查是否有已下载但未应用的版本
+                pending = _get_pending_path()
+                if pending.exists():
+                    cache = _load_check_cache()
+                    _pending_version = cache.get("pending_version")
+                return
 
-        repo: str = update_cfg.get("repo", "ougato/opskit-cli")
-        token: str = update_cfg.get("github_token", "")
+            target = _resolve_update_target(update_cfg)
+            if target is None:
+                return
+            remote_ver, asset_url, sha256 = target
 
-        data = _fetch_latest(repo, token)
-        if data is None:
-            return
-
-        from core.version import parse_version, is_newer
-        tag = data.get("tag_name", "")
-        remote_ver = parse_version(tag)
-        if not is_newer(remote_ver):
-            _save_check_cache({"last_check": time.time(), "latest": remote_ver})
-            return
-
-        # 发现新版本 → 下载
-        filename = _asset_filename()
-        body = data.get("body", "")
-        sha256 = _parse_sha256(body, filename)
-
-        assets = data.get("assets", [])
-        asset_url = ""
-        for a in assets:
-            if a.get("name") == filename:
-                asset_url = a.get("browser_download_url", "")
-                break
-
-        if not asset_url:
-            _report("update_no_matching_asset", level="warning",
-                    filename=filename, tag=tag,
-                    available_assets=",".join(a.get("name", "") for a in assets))
-            return
-
-        pending = _download_update(asset_url, sha256)
-        if pending:
-            _pending_version = remote_ver
-            _save_check_cache({
-                "last_check": time.time(),
-                "latest": remote_ver,
-                "pending_version": remote_ver,
-            })
-        else:
-            _report("update_download_failed", level="error",
-                    tag=tag, remote_ver=str(remote_ver), asset_url=asset_url)
+            pending = _download_update(asset_url, sha256)
+            if pending:
+                _pending_version = remote_ver
+                _save_check_cache({
+                    "last_check": time.time(),
+                    "latest": remote_ver,
+                    "pending_version": remote_ver,
+                })
+            else:
+                _report("update_download_failed", level="error",
+                        remote_ver=str(remote_ver), asset_url=asset_url)
+        except Exception as e:
+            _log.warning("update worker failed: %s", e)
+            _report("update_worker_exception", exc=e, level="warning")
 
     t = threading.Thread(target=_worker, daemon=True, name="opskit-updater")
     t.start()
+
+
+def _resolve_update_target(update_cfg: dict) -> tuple[int, str, str] | None:
+    """决定更新目标：(目标 build, 资产下载 URL, SHA256)。
+
+    优先读控制面 manifest（CDN/GitHub raw，含 kill_switch/min_build/rollout）；
+    manifest 不可用时降级到 GitHub Releases API 直连。返回 None 表示无需更新。
+    """
+    repo: str = update_cfg.get("repo", "ougato/opskit-cli")
+    token: str = update_cfg.get("github_token", "")
+    filename = _asset_filename()
+
+    # 控制面优先
+    manifest = fetch_bootstrap()
+    if manifest and isinstance(manifest, dict) and "latest_build" in manifest:
+        build = _evaluate_manifest(manifest)
+        if build is None:
+            return None
+        asset_url = f"{GITHUB_BASE}/{repo}/releases/download/v{build}/{filename}"
+        return build, asset_url, ""  # SHA256 走 {asset_url}.sha256 旁车
+
+    # 降级：GitHub Releases API
+    from core.version import parse_version, is_newer
+    data = _fetch_latest(repo, token)
+    if data is None:
+        return None
+    tag = data.get("tag_name", "")
+    remote_ver = parse_version(tag)
+    if not is_newer(remote_ver):
+        _save_check_cache({"last_check": time.time(), "latest": remote_ver})
+        return None
+
+    body = data.get("body", "")
+    sha256 = _parse_sha256(body, filename)
+    assets = data.get("assets", [])
+    asset_url = ""
+    for a in assets:
+        if a.get("name") == filename:
+            asset_url = a.get("browser_download_url", "")
+            break
+    if not asset_url:
+        _report("update_no_matching_asset", level="warning",
+                filename=filename, tag=tag,
+                available_assets=",".join(a.get("name", "") for a in assets))
+        return None
+    return remote_ver, asset_url, sha256
 
 
 # ─── 热替换（退出时应用）─────────────────────────────────────────────────────
@@ -713,6 +860,9 @@ def _do_apply(pending: Path, remote_ver: int) -> bool:
         else:
             _apply_unix(pending, self_path, remote_ver)
         _cleanup_old_backups()
+        mark_update_applied(remote_ver)
+        _report("update_applied", level="info",
+                from_version=str(APP_VERSION), to_version=str(remote_ver))
         return True
     except Exception as e:
         _log.error("_do_apply: apply failed: %s", e)
