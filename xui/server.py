@@ -85,8 +85,6 @@ from xui.utils import (
     redact_state,
     remove_xui_artifacts,
     restart_service,
-    start_service,
-    stop_service,
     enable_service,
     install_traffic_timer,
     uninstall_traffic_timer,
@@ -574,11 +572,8 @@ def manage_nodes() -> None:
                 choices=[
                     {"key": "1", "label": f"{get_icon('link')} {t('xui.manage.print_links')}"},
                     {"key": "2", "label": f"{get_icon('state')} {t('xui.manage.show_state')}"},
-                    {"key": "3", "label": f"{get_icon('start')} {t('xui.manage.start')}"},
-                    {"key": "4", "label": f"{get_icon('stop')} {t('xui.manage.stop')}"},
-                    {"key": "5", "label": f"{get_icon('restart')} {t('xui.manage.restart')}"},
-                    {"key": "6", "label": f"{get_icon('logs')} {t('xui.manage.logs')}"},
-                    {"key": "7", "label": f"{get_icon('traffic')} {t('xui.manage.traffic')}"},
+                    {"key": "3", "label": f"{get_icon('logs')} {t('xui.manage.logs')}"},
+                    {"key": "4", "label": f"{get_icon('traffic')} {t('xui.manage.traffic')}"},
                 ],
                 theme_key="software",
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -597,25 +592,10 @@ def manage_nodes() -> None:
             console.print(json.dumps(redact_state(state), indent=2, ensure_ascii=False))
             pause()
         elif key == "3":
-            print_action_title(breadcrumb, trailing_blank=False)
-            start_service()
-            print_success(t("xui.manage.start_done"))
-            pause()
-        elif key == "4":
-            print_action_title(breadcrumb, trailing_blank=False)
-            stop_service()
-            print_success(t("xui.manage.stop_done"))
-            pause()
-        elif key == "5":
-            print_action_title(breadcrumb, trailing_blank=False)
-            restart_service()
-            print_success(t("xui.manage.restart_done"))
-            pause()
-        elif key == "6":
             print_action_title(breadcrumb)
             subprocess.run([JOURNALCTL_COMMAND, "-u", XUI_SERVICE, "-n", XUI_LOG_LINES, JOURNAL_NO_PAGER_ARG], check=False)
             pause()
-        elif key == "7":
+        elif key == "4":
             print_action_title(breadcrumb)
             _show_traffic()
             pause()
