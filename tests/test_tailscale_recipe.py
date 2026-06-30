@@ -152,17 +152,7 @@ def test_install_script_raises_install_error_with_stderr_tail(monkeypatch) -> No
     from software.base import InstallError
     from tailscale import server
 
-    class FakeResp:
-        def read(self):
-            return b"#!/bin/bash\ntrue\n"
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    monkeypatch.setattr(server.urllib.request, "urlopen", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(server, "get_bytes", lambda *a, **k: b"#!/bin/bash\ntrue\n")
 
     class Result:
         returncode = 100

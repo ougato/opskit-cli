@@ -397,6 +397,7 @@ tailscale:
     login: "Login"
   error:
     unsupported_os: "Linux only"
+    download_failed: "Failed to download the Tailscale install script. Check your network and try again."
   output:
     install_done: "Tailscale installed"
     uninstall_done: "Tailscale uninstalled"

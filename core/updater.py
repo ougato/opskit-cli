@@ -451,8 +451,8 @@ def _fetch_latest(repo: str, token: str = "") -> dict[str, Any] | None:
 
         if resp.status_code in (403, 429):
             _save_check_cache({"last_check": time.time() + UPDATE_RATELIMIT_BACKOFF - 86400})
-            _log.warning("_fetch_latest: rate limited (%s), backing off %ss", resp.status_code, UPDATE_RATELIMIT_BACKOFF)
-            _report("fetch_latest_rate_limited", level="warning",
+            _log.info("_fetch_latest: rate limited (%s), backing off %ss", resp.status_code, UPDATE_RATELIMIT_BACKOFF)
+            _report("fetch_latest_rate_limited", level="info",
                     http_status=str(resp.status_code), repo=repo,
                     rate_limit_remaining=str(remaining))
             return None
