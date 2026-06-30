@@ -827,19 +827,20 @@ class TestPostUpdateExceptions:
         cache = upd._load_check_cache()
         assert cache.get("pending_version") is None, "cache 中 pending_version 应被清除"
 
-    def test_T28_clock_jump_back_forces_check(self, tmp_data, monkeypatch):
-        """T28: 时钟倒退（NTP 同步后 last_check > now）时强制重新检查"""
+    def test_T28_backoff_until_skips_check(self, tmp_data, monkeypatch):
+        """T28: 限流退避期内 _update_allowed 返回 False，过期后恢复"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
-        future_time = time.time() + 9999
-        with cache_path.open("w") as f:
-            json.dump({"last_check": future_time}, f)
-
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
 
-        result = upd._should_check(86400)
-        assert result is True, "时钟倒退时 _should_check 应返回 True"
+        with cache_path.open("w") as f:
+            json.dump({"backoff_until": time.time() + 3600}, f)
+        assert upd._update_allowed() is False, "退避期内应跳过检查"
+
+        with cache_path.open("w") as f:
+            json.dump({"backoff_until": time.time() - 1}, f)
+        assert upd._update_allowed() is True, "退避过期后应恢复检查"
 
     def test_T29_post_update_flag_prevents_loop(self, tmp_data, monkeypatch):
         """T29: --post-update 标志时跳过 pending 检测，防止重启循环"""
@@ -910,23 +911,23 @@ class TestEnvironment:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestHelpers:
-    def test_should_check_normal(self, tmp_data, monkeypatch):
-        """check_interval 未到期时返回 False"""
+    def test_update_allowed_normal(self, tmp_data, monkeypatch):
+        """无退避时允许检查（每次启动）"""
         import core.updater as upd
         cache_path = tmp_data / "cache" / "update_check.json"
         with cache_path.open("w") as f:
-            json.dump({"last_check": time.time()}, f)
+            json.dump({}, f)
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
-        assert upd._should_check(86400) is False
+        assert upd._update_allowed() is True
 
-    def test_should_check_expired(self, tmp_data, monkeypatch):
-        """check_interval 已过期时返回 True"""
+    def test_update_allowed_during_backoff(self, tmp_data, monkeypatch):
+        """退避期内不允许检查"""
         import core.updater as upd
         cache_path = tmp_data / "cache" / "update_check.json"
         with cache_path.open("w") as f:
-            json.dump({"last_check": time.time() - 90000}, f)
+            json.dump({"backoff_until": time.time() + 3600}, f)
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
-        assert upd._should_check(86400) is True
+        assert upd._update_allowed() is False
 
     def test_verify_binary_mz_header(self, tmp_data):
         """MZ 头的文件通过 _verify_binary 检测"""
@@ -1069,7 +1070,7 @@ class TestGapCoverage:
 
         with patch("core.updater.fetch_bootstrap", return_value=None), \
              patch("core.updater._fetch_latest", return_value=api_data), \
-             patch("core.updater._should_check", return_value=True), \
+             patch("core.updater._update_allowed", return_value=True), \
              patch("core.updater._download_update",
                    side_effect=lambda url, sha: download_called.append(url) or None), \
              patch("core.updater._save_check_cache"), \
