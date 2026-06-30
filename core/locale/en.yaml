@@ -253,6 +253,7 @@ software:
   search: "Search Software"
   search_prompt: "Enter software name or keyword"
   search_no_result: "No match found: {keyword}"
+  search_empty: "Please enter a software name or keyword to search"
   category:
     devtools: "Dev Tools"
     devops: "DevOps Tools"

@@ -253,6 +253,7 @@ software:
   search: "搜索软件"
   search_prompt: "输入软件名称或关键词"
   search_no_result: "未找到匹配软件：{keyword}"
+  search_empty: "请输入软件名称或关键词后再搜索"
   category:
     devtools: "开发工具"
     devops: "运维工具"

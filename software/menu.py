@@ -80,7 +80,9 @@ def show_search() -> None:
         )
     except UserCancel:
         return
-    if not keyword:
+    if not keyword or not keyword.strip():
+        print_warning(t("software.search_empty"))
+        pause()
         return
 
     kw = keyword.strip().lower()
@@ -642,8 +644,12 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
+    import re as _re
+
     def _ver_tuple(v: str) -> tuple:
-        return tuple(int(x) for x in v.split(".") if x.isdigit())
+        # 提取所有数字段（兼容 build metadata，如 "21.0.11+10" → (21,0,11,10)），
+        # 与安装列表使用同一份会话缓存的版本字符串，避免「升级说没有、安装却有」。
+        return tuple(int(x) for x in _re.findall(r"\d+", v or ""))
 
     # 只保留比当前版本更新的版本
     try:

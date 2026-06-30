@@ -65,13 +65,13 @@ def _ensure_linux() -> None:
 
 
 def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=check, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _run_root(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
     from core.privilege import run_as_root
 
-    return run_as_root(command, check=check, capture_output=True, text=True, timeout=timeout)
+    return run_as_root(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _write_root_file(path: Path, content: str, mode: str) -> None:
@@ -173,6 +173,8 @@ def _install_script() -> None:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
         )
@@ -284,6 +286,8 @@ def uninstall_client() -> None:
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
                 )

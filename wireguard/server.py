@@ -185,20 +185,22 @@ def install_server() -> None:
     _saved_label  = _wg_cfg.get("tunnel_label") or ""
 
     # ── 收集输入 ─────────────────────────────────────────────────────────────
-    try:
-        sni = text_input(
-            breadcrumb=breadcrumb,
-            prompt=t("wireguard.input_domain"),
-            default=_saved_domain,
-            theme_key="software",
-        )
-    except UserCancel:
-        return
-    if not sni or not sni.strip():
-        from core.theme import print_error
-        print_error(t("wireguard.domain_required"))
+    from core.theme import print_warning
+    while True:
+        try:
+            sni = text_input(
+                breadcrumb=breadcrumb,
+                prompt=t("wireguard.input_domain"),
+                default=_saved_domain,
+                theme_key="software",
+            )
+        except UserCancel:
+            return
+        if sni and sni.strip():
+            break
+        # 输入为空时停留在当前步骤重新提示，不返回上一层。
+        print_warning(t("wireguard.domain_required"))
         pause()
-        return
     sni = sni.strip()
     if sni != _saved_domain:
         _cfg = set_config_value(_cfg, "wireguard.domain", sni)
