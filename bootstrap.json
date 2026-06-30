@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "channel": "stable",
-  "latest_build": 2,
-  "display": "v2",
+  "latest_build": 3,
+  "display": "v3",
   "min_build": 1,
   "rollout": 100,
   "kill_switch": false,
