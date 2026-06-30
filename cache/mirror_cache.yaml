@@ -1,31 +1,31 @@
 ranked:
   apt:
-  - http://archive.ubuntu.com
-  - https://mirrors.ustc.edu.cn
+  - https://mirrors.tuna.tsinghua.edu.cn
   - https://mirrors.aliyun.com
+  - https://mirrors.ustc.edu.cn
   brew:
   - https://mirrors.aliyun.com/homebrew/homebrew-core.git
-  - https://github.com/Homebrew/homebrew-core
   - https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git
+  - https://github.com/Homebrew/homebrew-core
   docker:
-  - https://registry-1.docker.io
   - https://registry.cn-hangzhou.aliyuncs.com
+  - https://registry-1.docker.io
   github_releases:
-  - https://github.com
   - https://gh.con.sh
+  - https://github.com
   - https://ghproxy.net
   pip:
-  - https://pypi.org/simple/
   - https://pypi.doubanio.com/simple/
-  - https://mirrors.aliyun.com/pypi/simple/
+  - https://mirrors.ustc.edu.cn/pypi/simple/
+  - https://pypi.tuna.tsinghua.edu.cn/simple/
   version_api.endoflife:
   - https://endoflife.date/api
   version_api.github:
   - https://api.github.com
   - https://mirror.ghproxy.com/https://api.github.com
   yum:
-  - https://vault.centos.org
-  - https://mirrors.ustc.edu.cn/centos
+  - https://mirrors.tuna.tsinghua.edu.cn/centos
   - https://mirrors.aliyun.com/centos
+  - https://mirrors.ustc.edu.cn/centos
 region: global
-timestamp: 1782836016.5659244
+timestamp: 1778078165.9443548
