@@ -28,7 +28,9 @@ def init(level: str = "WARNING") -> None:
 
     - 文件 handler：DEBUG 级别，RotatingFileHandler
       - 单文件 5MB 上限，保留 3 个备份
-    - 控制台 handler：由 level 参数控制（默认 WARNING），通过 config 可调
+    - 控制台 handler：仅当 level 设为 DEBUG/INFO（用户显式开启详细日志）时才挂载。
+      默认 WARNING 不挂控制台 handler，避免后台线程（如自动更新）的 WARNING/ERROR
+      日志直接打印到交互菜单里，污染 TUI；用户可见提示统一走 print_error/print_warning。
     - 格式：[{timestamp}] [{level}] [{module}] {message}
     """
     global _logger, _initialized
@@ -53,14 +55,17 @@ def init(level: str = "WARNING") -> None:
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(fmt)
 
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, level.upper(), logging.WARNING))
-    console_handler.setFormatter(fmt)
-
     _logger = logging.getLogger("opskit")
     _logger.setLevel(logging.DEBUG)
     _logger.addHandler(file_handler)
-    _logger.addHandler(console_handler)
+
+    console_level = getattr(logging, level.upper(), logging.WARNING)
+    if console_level <= logging.INFO:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(console_level)
+        console_handler.setFormatter(fmt)
+        _logger.addHandler(console_handler)
+
     _logger.propagate = False
 
     _initialized = True
