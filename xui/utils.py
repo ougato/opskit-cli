@@ -170,7 +170,7 @@ def detect_xui_version() -> str | None:
     if is_service_active() or command_exists(XUI_COMMAND):
         try:
             result = subprocess.run(
-                [XUI_COMMAND, "version"],
+                [XUI_BINARY_COMMAND, "-v"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -178,13 +178,9 @@ def detect_xui_version() -> str | None:
             )
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
-                for line in output.splitlines():
-                    low = line.lower()
-                    if "os release" in low or "release is" in low:
-                        continue
-                    match = re.search(r"v?\d+\.\d+(?:\.\d+)?", line)
-                    if match:
-                        return match.group(0)
+                match = re.search(r"v?\d+\.\d+(?:\.\d+)?", output)
+                if match:
+                    return match.group(0)
         except Exception:
             pass
         return XUI_INSTALLED_VERSION
