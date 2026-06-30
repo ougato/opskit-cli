@@ -396,6 +396,7 @@ tailscale:
     login: "登录"
   error:
     unsupported_os: "仅支持 Linux"
+    download_failed: "下载 Tailscale 安装脚本失败，请检查网络后重试。"
   output:
     install_done: "Tailscale 已安装"
     uninstall_done: "Tailscale 已卸载"

@@ -16,6 +16,15 @@ import time
 from dataclasses import dataclass
 
 
+def _invalidate_installed(instance) -> None:
+    """安装/卸载/升级/切换成功后失效该 recipe 的安装状态缓存，下次浏览按需重探。"""
+    try:
+        from core.installed_cache import invalidate
+        invalidate(instance.key)
+    except Exception:
+        pass
+
+
 @dataclass(frozen=True)
 class ActionResult:
     """一次软件操作的执行结果。
@@ -41,6 +50,7 @@ def execute_install(instance, version: str) -> ActionResult:
     try:
         instance.install(version)
         detected = instance.detect() or version
+        _invalidate_installed(instance)
         return ActionResult(ok=True, version=detected, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001 — 统一交给调用方的反馈出口处理
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
@@ -51,6 +61,7 @@ def execute_switch(instance, version: str) -> ActionResult:
     start = time.monotonic()
     try:
         instance.switch(version)
+        _invalidate_installed(instance)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
@@ -66,8 +77,10 @@ def execute_upgrade(instance, version: str, already_installed: bool) -> ActionRe
     try:
         if already_installed and hasattr(instance, "switch"):
             instance.switch(version)
+            _invalidate_installed(instance)
             return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start, switched=True)
         instance.upgrade(version)
+        _invalidate_installed(instance)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
@@ -78,6 +91,7 @@ def execute_uninstall(instance, version: str | None = None) -> ActionResult:
     start = time.monotonic()
     try:
         instance.uninstall(version)
+        _invalidate_installed(instance)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)

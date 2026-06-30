@@ -25,7 +25,6 @@ from core.constants import (
     FILE_UPDATE_HEALTH,
     GITHUB_API_RELEASES,
     GITHUB_BASE,
-    GITHUB_RATELIMIT_SAFE,
     MAX_HEALTH_FAILS,
     TIMEOUT_DOWNLOAD_READ,
     TIMEOUT_UPDATE_CHECK,
@@ -34,6 +33,8 @@ from core.constants import (
 )
 
 _log = logging.getLogger("opskit.updater")
+
+_cache_lock = threading.Lock()
 
 
 # ─── 路径辅助 ─────────────────────────────────────────────────────────────────
@@ -152,12 +153,10 @@ def _evaluate_manifest(manifest: dict[str, Any]) -> int | None:
     """根据控制面 manifest 决定是否更新。
 
     返回目标 build（应更新）或 None（不更新：急停 / 非更新 / 未命中灰度）。
-    急停、未命中灰度时写入 last_check，避免频繁重判。
     """
     from core.version import is_newer
     if manifest.get("kill_switch"):
         _log.info("manifest: kill_switch on, skipping update")
-        _save_check_cache({"last_check": time.time()})
         return None
 
     try:
@@ -165,7 +164,7 @@ def _evaluate_manifest(manifest: dict[str, Any]) -> int | None:
     except (TypeError, ValueError):
         return None
     if not is_newer(latest):
-        _save_check_cache({"last_check": time.time(), "latest": latest})
+        _save_check_cache({"latest": latest})
         return None
 
     try:
@@ -180,7 +179,7 @@ def _evaluate_manifest(manifest: dict[str, Any]) -> int | None:
             rollout = UPDATE_ROLLOUT_FULL
         if _machine_bucket() >= rollout:
             _log.info("manifest: not in rollout cohort (bucket>=%d), skipping", rollout)
-            _save_check_cache({"last_check": time.time(), "latest": latest})
+            _save_check_cache({"latest": latest})
             return None
     else:
         _log.info("manifest: forced update (APP_VERSION %d < min_build %d)", APP_VERSION, min_build)
@@ -316,7 +315,7 @@ def _apply_update_pending_path() -> bool:
         pending.rename(target)
         old_path.unlink(missing_ok=True)
         marker.unlink(missing_ok=True)
-        _save_check_cache({"last_check": time.time(), "latest": version})
+        _save_check_cache({"latest": version})
         _log.info("update_pending_path: rename succeeded for v%d", version)
         return True
     except Exception as e:
@@ -390,6 +389,7 @@ def check_and_apply_pending() -> bool:
 # ─── 版本检测 ─────────────────────────────────────────────────────────────────
 
 def _load_check_cache() -> dict[str, Any]:
+    """读取更新缓存。schema: {pending_version, latest, etag, download_version, backoff_until}"""
     path = _get_cache_path()
     if not path.exists():
         return {}
@@ -401,40 +401,40 @@ def _load_check_cache() -> dict[str, Any]:
 
 
 def _save_check_cache(data: dict[str, Any]) -> None:
-    """Merge 写入 cache，永不丢失已有字段（关键：保留 pending_version）"""
-    path = _get_cache_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _load_check_cache()
-    existing.update(data)
-    try:
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(existing, f)
-    except Exception as e:
-        _log.warning("save_check_cache failed: %s", e)
+    """Merge 写入 cache（线程安全 + 原子落盘），永不丢失已有字段。
 
-
-def _should_check(check_interval: int) -> bool:
-    """判断是否需要检查更新（基于上次检查时间戳）
-
-    额外处理时钟跳变（NTP 同步后倒退）：若 last_check 比当前时间还大，
-    说明时钟已倒退，强制重新检查。
+    后台检测线程与主线程/退出钩子可能并发写同一缓存，用进程内锁串行化；
+    先写临时文件再 os.replace，避免写入中途被打断导致 JSON 损坏。
     """
-    cache = _load_check_cache()
-    last = cache.get("last_check", 0)
-    now = time.time()
-    if last > now:
-        _log.info("_should_check: clock jumped back (last=%s now=%s), forcing check", last, now)
-        return True
-    return (now - last) >= check_interval
+    path = _get_cache_path()
+    with _cache_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _load_check_cache()
+        existing.update(data)
+        try:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(existing, f)
+            os.replace(tmp, path)
+        except Exception as e:
+            _log.warning("save_check_cache failed: %s", e)
+
+
+def _update_allowed() -> bool:
+    """是否允许本次启动联网检查更新。
+
+    高频场景下每次启动都检查，唯一约束是 GitHub 限流退避：
+    命中 403/429 后写入 backoff_until，退避期内跳过，到期自动恢复。
+    """
+    backoff_until = _load_check_cache().get("backoff_until", 0)
+    return not (backoff_until and time.time() < backoff_until)
 
 
 def _fetch_latest(repo: str, token: str = "") -> dict[str, Any] | None:
     """
     调用 GitHub Releases API 获取最新版本信息。
 
-    处理速率限制：
-    - 收到 403 / 429 → 返回 None（静默跳过）
-    - X-RateLimit-Remaining < GITHUB_RATELIMIT_SAFE → 记录，下次延迟检查
+    处理速率限制：收到 403 / 429 → 写入 backoff_until 退避并返回 None（静默跳过）。
     """
     url = GITHUB_API_RELEASES.format(repo=repo)
     headers: dict[str, str] = {"Accept": "application/vnd.github.v3+json"}
@@ -446,13 +446,10 @@ def _fetch_latest(repo: str, token: str = "") -> dict[str, Any] | None:
             resp = client.get(url, headers=headers)
 
         remaining = int(resp.headers.get("X-RateLimit-Remaining", 99))
-        if remaining < GITHUB_RATELIMIT_SAFE:
-            _save_check_cache({"rate_limit_hit": True})
-
         if resp.status_code in (403, 429):
-            _save_check_cache({"last_check": time.time() + UPDATE_RATELIMIT_BACKOFF - 86400})
-            _log.warning("_fetch_latest: rate limited (%s), backing off %ss", resp.status_code, UPDATE_RATELIMIT_BACKOFF)
-            _report("fetch_latest_rate_limited", level="warning",
+            _save_check_cache({"backoff_until": time.time() + UPDATE_RATELIMIT_BACKOFF})
+            _log.info("_fetch_latest: rate limited (%s), backing off %ss", resp.status_code, UPDATE_RATELIMIT_BACKOFF)
+            _report("fetch_latest_rate_limited", level="info",
                     http_status=str(resp.status_code), repo=repo,
                     rate_limit_remaining=str(remaining))
             return None
@@ -540,7 +537,7 @@ def _report(msg: str, exc: Exception | None = None, level: str = "warning", **ct
         pass
 
 
-def _download_update(asset_url: str, sha256_expected: str) -> Path | None:
+def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) -> Path | None:
     """
     下载新版本到临时文件，校验 SHA256 后原子 rename 为 pending。
 
@@ -575,6 +572,18 @@ def _download_update(asset_url: str, sha256_expected: str) -> Path | None:
             return Path(tempfile.gettempdir()) / "opskit.pending.tmp"
 
     actual_tmp = _ensure_tmp_dir()
+
+    # 版本感知断点续传：若 .tmp 残包属于旧目标版本，丢弃重下，
+    # 避免把旧版本（如 v2）的半包接到新版本（如 v4）的下载上导致损坏
+    if remote_ver:
+        _dl_cache = _load_check_cache()
+        if _dl_cache.get("download_version") not in (None, remote_ver):
+            _log.info("download: target changed to v%s, discarding stale partial (was v%s)",
+                      remote_ver, _dl_cache.get("download_version"))
+            actual_tmp.unlink(missing_ok=True)
+            _save_check_cache({"download_version": remote_ver, "etag": ""})
+        else:
+            _save_check_cache({"download_version": remote_ver})
 
     mirrors = get_sources("github_releases")
     urls: list[str] = []
@@ -721,8 +730,8 @@ def check_update_background(cfg: dict) -> None:
             if not update_cfg.get("enabled", True):
                 return
 
-            check_interval: int = update_cfg.get("check_interval", 86400)
-            if not _should_check(check_interval):
+            # 高频启动场景：每次启动都检测更新，仅受限流退避（backoff_until）约束
+            if not _update_allowed():
                 # 检查是否有已下载但未应用的版本
                 pending = _get_pending_path()
                 if pending.exists():
@@ -735,11 +744,10 @@ def check_update_background(cfg: dict) -> None:
                 return
             remote_ver, asset_url, sha256 = target
 
-            pending = _download_update(asset_url, sha256)
+            pending = _download_update(asset_url, sha256, remote_ver)
             if pending:
                 _pending_version = remote_ver
                 _save_check_cache({
-                    "last_check": time.time(),
                     "latest": remote_ver,
                     "pending_version": remote_ver,
                 })
@@ -781,7 +789,7 @@ def _resolve_update_target(update_cfg: dict) -> tuple[int, str, str] | None:
     tag = data.get("tag_name", "")
     remote_ver = parse_version(tag)
     if not is_newer(remote_ver):
-        _save_check_cache({"last_check": time.time(), "latest": remote_ver})
+        _save_check_cache({"latest": remote_ver})
         return None
 
     body = data.get("body", "")
@@ -899,7 +907,7 @@ def _apply_unix(pending: Path, self_path: Path, new_version: int) -> None:
         except PermissionError:
             pass
 
-    _save_check_cache({"last_check": time.time(), "latest": new_version})
+    _save_check_cache({"latest": new_version})
 
 
 def _apply_windows(pending: Path, self_path: Path, new_version: int) -> None:
@@ -991,7 +999,7 @@ try {{
             [ps_exe, "-ExecutionPolicy", "Bypass", "-NonInteractive", "-File", str(ps_path)],
             **extra,
         )
-        _save_check_cache({"last_check": time.time(), "latest": new_version})
+        _save_check_cache({"latest": new_version})
         _log.info("_apply_windows: update script launched (pid=%d)", pid)
         return
     except Exception as e:
@@ -1012,7 +1020,7 @@ try {{
             )
             if ret:
                 _log.info("_apply_windows: MoveFileEx scheduled on reboot")
-                _save_check_cache({"last_check": time.time(), "latest": new_version})
+                _save_check_cache({"latest": new_version})
                 return
             else:
                 err = ctypes.GetLastError()  # type: ignore[attr-defined]

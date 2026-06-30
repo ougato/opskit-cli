@@ -190,6 +190,48 @@ class TestDownloadExceptions:
         assert any("Range" in h for h in range_headers_sent), "Range header should be sent"
         assert range_headers_sent[0].get("Range") == f"bytes={len(initial_data)}-"
 
+    def test_T05b_stale_partial_discarded_on_version_change(self, tmp_data, monkeypatch):
+        """T05b: 残留 .tmp 属于旧版本(v2)、目标已是 v4 时，丢弃旧半包从头下载，不发 Range"""
+        import core.updater as upd
+
+        fake_pending = tmp_data / "cache" / "opskit.pending"
+        fake_tmp = tmp_data / "cache" / "opskit.pending.tmp"
+        cache_path = tmp_data / "cache" / "update_check.json"
+
+        monkeypatch.setattr("core.updater._get_pending_path", lambda: fake_pending)
+        monkeypatch.setattr("core.updater._get_pending_tmp_path", lambda: fake_tmp)
+        monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
+
+        fake_tmp.write_bytes(b"MZ" + b"\x00" * (256 * 1024 - 2))
+        with cache_path.open("w") as f:
+            json.dump({"download_version": 2, "etag": '"old"'}, f)
+
+        range_headers_sent = []
+
+        class FakeResp:
+            status_code = 200
+            headers = {"ETag": ""}
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def iter_bytes(self, chunk_size):
+                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+
+        def fake_stream(method, url, timeout, follow_redirects, headers=None):
+            range_headers_sent.append(headers or {})
+            return FakeResp()
+
+        with patch("httpx.stream", side_effect=fake_stream), \
+             patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
+             patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater._sha256_file", return_value=""), \
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
+            upd._download_update(
+                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", "", 4)
+
+        assert all("Range" not in h for h in range_headers_sent), "旧版本残包应被丢弃，不应发 Range"
+        assert all("If-None-Match" not in h for h in range_headers_sent), "版本变化后应清空 ETag"
+        assert upd._load_check_cache().get("download_version") == 4
+
     def test_T06_stall_timeout_uses_read_timeout(self, tmp_data, monkeypatch):
         """T06: 下载使用 TIMEOUT_DOWNLOAD_READ 而非 read=None"""
         import core.updater as upd
@@ -634,8 +676,8 @@ class TestWindowsReplacement:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestVersionCheckExceptions:
-    def test_T21_rate_limit_writes_last_check_with_backoff(self, tmp_data, monkeypatch):
-        """T21: GitHub Rate Limit 403 后写入 last_check，延迟 1h 再检查"""
+    def test_T21_rate_limit_writes_backoff_until(self, tmp_data, monkeypatch):
+        """T21: GitHub Rate Limit 403 后写入 backoff_until，延迟 1h 再检查"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -656,11 +698,11 @@ class TestVersionCheckExceptions:
             result = upd._fetch_latest("ougato/opskit-cli")
 
         assert result is None
-        assert mock_save.called, "Rate Limit 后应写入 last_check"
+        assert mock_save.called, "Rate Limit 后应写入 backoff_until"
         saved_data = mock_save.call_args[0][0]
-        assert "last_check" in saved_data, "应写入 last_check 字段"
+        assert "backoff_until" in saved_data, "应写入 backoff_until 字段"
         from core.constants import UPDATE_RATELIMIT_BACKOFF
-        assert saved_data["last_check"] > time.time() + UPDATE_RATELIMIT_BACKOFF - 86401
+        assert saved_data["backoff_until"] >= time.time() + UPDATE_RATELIMIT_BACKOFF - 1
 
     def test_T22_api_field_missing_no_key_error(self, tmp_data, monkeypatch):
         """T22: GitHub API 返回缺字段时，防御性处理不抛 KeyError"""
@@ -785,19 +827,20 @@ class TestPostUpdateExceptions:
         cache = upd._load_check_cache()
         assert cache.get("pending_version") is None, "cache 中 pending_version 应被清除"
 
-    def test_T28_clock_jump_back_forces_check(self, tmp_data, monkeypatch):
-        """T28: 时钟倒退（NTP 同步后 last_check > now）时强制重新检查"""
+    def test_T28_backoff_until_skips_check(self, tmp_data, monkeypatch):
+        """T28: 限流退避期内 _update_allowed 返回 False，过期后恢复"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
-        future_time = time.time() + 9999
-        with cache_path.open("w") as f:
-            json.dump({"last_check": future_time}, f)
-
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
 
-        result = upd._should_check(86400)
-        assert result is True, "时钟倒退时 _should_check 应返回 True"
+        with cache_path.open("w") as f:
+            json.dump({"backoff_until": time.time() + 3600}, f)
+        assert upd._update_allowed() is False, "退避期内应跳过检查"
+
+        with cache_path.open("w") as f:
+            json.dump({"backoff_until": time.time() - 1}, f)
+        assert upd._update_allowed() is True, "退避过期后应恢复检查"
 
     def test_T29_post_update_flag_prevents_loop(self, tmp_data, monkeypatch):
         """T29: --post-update 标志时跳过 pending 检测，防止重启循环"""
@@ -868,23 +911,23 @@ class TestEnvironment:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestHelpers:
-    def test_should_check_normal(self, tmp_data, monkeypatch):
-        """check_interval 未到期时返回 False"""
+    def test_update_allowed_normal(self, tmp_data, monkeypatch):
+        """无退避时允许检查（每次启动）"""
         import core.updater as upd
         cache_path = tmp_data / "cache" / "update_check.json"
         with cache_path.open("w") as f:
-            json.dump({"last_check": time.time()}, f)
+            json.dump({}, f)
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
-        assert upd._should_check(86400) is False
+        assert upd._update_allowed() is True
 
-    def test_should_check_expired(self, tmp_data, monkeypatch):
-        """check_interval 已过期时返回 True"""
+    def test_update_allowed_during_backoff(self, tmp_data, monkeypatch):
+        """退避期内不允许检查"""
         import core.updater as upd
         cache_path = tmp_data / "cache" / "update_check.json"
         with cache_path.open("w") as f:
-            json.dump({"last_check": time.time() - 90000}, f)
+            json.dump({"backoff_until": time.time() + 3600}, f)
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
-        assert upd._should_check(86400) is True
+        assert upd._update_allowed() is False
 
     def test_verify_binary_mz_header(self, tmp_data):
         """MZ 头的文件通过 _verify_binary 检测"""
@@ -1027,7 +1070,7 @@ class TestGapCoverage:
 
         with patch("core.updater.fetch_bootstrap", return_value=None), \
              patch("core.updater._fetch_latest", return_value=api_data), \
-             patch("core.updater._should_check", return_value=True), \
+             patch("core.updater._update_allowed", return_value=True), \
              patch("core.updater._download_update",
                    side_effect=lambda url, sha: download_called.append(url) or None), \
              patch("core.updater._save_check_cache"), \

@@ -6,11 +6,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
 
 from rich.console import Console
 
+from core.http import get_bytes
 from core.i18n import t
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, pause, select
@@ -160,8 +160,10 @@ def _install_script() -> None:
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as script:
         script_path = Path(script.name)
     try:
-        with urllib.request.urlopen(TAILSCALE_INSTALL_SCRIPT_URL, timeout=TAILSCALE_COMMAND_TIMEOUT_SECONDS) as resp:
-            script_path.write_bytes(resp.read())
+        content = get_bytes(TAILSCALE_INSTALL_SCRIPT_URL, timeout=TAILSCALE_COMMAND_TIMEOUT_SECONDS)
+        if content is None:
+            raise InstallError(t("tailscale.error.download_failed"))
+        script_path.write_bytes(content)
         script_path.chmod(0o700)
         from core.privilege import run_as_root
 

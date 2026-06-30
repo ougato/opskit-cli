@@ -232,3 +232,65 @@ def test_monitor_disk_cli_disables_pause(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert seen == {"pause_after": False}
+
+
+# ─── CLI 参数大小写兼容 + 单字符别名 ──────────────────────────────────────────
+
+@pytest.mark.parametrize("flag", ["-V", "-v", "--version", "--VERSION"])
+def test_version_flag_case_insensitive(flag) -> None:
+    import main
+
+    result = runner.invoke(main.app, [flag])
+
+    assert result.exit_code == 0
+    assert "v" in result.stdout
+
+
+@pytest.mark.parametrize("flag", ["-h", "-H", "--help", "--HELP"])
+def test_help_flag_case_insensitive(flag) -> None:
+    import main
+
+    result = runner.invoke(main.app, [flag])
+
+    assert result.exit_code == 0
+    assert "Usage" in result.stdout
+
+
+@pytest.mark.parametrize("cmd", ["software", "SOFTWARE", "Software"])
+def test_command_name_case_insensitive(monkeypatch, cmd) -> None:
+    import main
+
+    _patch_boot(monkeypatch, main)
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(main, "_print_software_table", lambda **kwargs: seen.update(kwargs))
+
+    result = runner.invoke(main.app, [cmd, "search", "python"])
+
+    assert result.exit_code == 0
+    assert seen == {"query": "python"}
+
+
+def test_install_version_short_flag(monkeypatch) -> None:
+    import main
+
+    _patch_boot(monkeypatch, main)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(main, "_sw_action_by_name", lambda *a, **kw: captured.update(name=a[0], action=a[1], **kw))
+
+    result = runner.invoke(main.app, ["software", "install", "python", "-v", "3.12.3"])
+
+    assert result.exit_code == 0
+    assert captured["version"] == "3.12.3"
+
+
+def test_uninstall_all_short_flag(monkeypatch) -> None:
+    import main
+
+    _patch_boot(monkeypatch, main)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(main, "_sw_action_by_name", lambda *a, **kw: captured.update(name=a[0], action=a[1], **kw))
+
+    result = runner.invoke(main.app, ["software", "uninstall", "python", "-a"])
+
+    assert result.exit_code == 0
+    assert captured["all_versions"] is True

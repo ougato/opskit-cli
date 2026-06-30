@@ -117,18 +117,6 @@ class TestConstantsRepo:
         repo = DEFAULT_CONFIG["update"]["repo"]
         assert repo == "ougato/opskit-cli", f"repo 应为 ougato/opskit-cli，实际：{repo}"
 
-    def test_mirrors_have_opskit_cli(self):
-        from core.constants import DEFAULT_CONFIG
-        mirrors = DEFAULT_CONFIG["update"]["mirrors"]
-        for m in mirrors:
-            assert "opskit-cli" in m, f"mirror URL 应包含 opskit-cli：{m}"
-
-    def test_mirrors_have_valid_https_prefix(self):
-        from core.constants import DEFAULT_CONFIG
-        mirrors = DEFAULT_CONFIG["update"]["mirrors"]
-        for m in mirrors:
-            assert m.startswith("https://"), f"mirror URL 应以 https:// 开头：{m}"
-
     def test_github_api_releases_template(self):
         from core.constants import GITHUB_API_RELEASES
         assert "{repo}" in GITHUB_API_RELEASES, "GITHUB_API_RELEASES 应包含 {repo} 占位符"
