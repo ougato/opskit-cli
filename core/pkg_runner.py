@@ -24,6 +24,11 @@ class PkgRunner:
     """包管理器基类，子类按需覆盖方法"""
 
     name: str = ""
+    # 是否需要 root 权限执行（Linux 系统级包管理器为 True）。
+    # 为 True 时，命令统一经 core.privilege.run_as_root 执行：
+    # 非 root 自动加 sudo，已是 root 直接执行。这样普通用户也能
+    # 正常安装/卸载/升级，避免装时提权、卸时不提权的不对称问题。
+    needs_root: bool = False
 
     def update_index(self) -> None:
         """更新软件源索引（apt update / yum makecache 等）"""
@@ -43,8 +48,10 @@ class PkgRunner:
         """
 
     # ── 内部工具 ──────────────────────────────────────────────────────────────
-    @staticmethod
-    def _run(cmd: list[str], check: bool = True, **kw: Any) -> subprocess.CompletedProcess:
+    def _run(self, cmd: list[str], check: bool = True, **kw: Any) -> subprocess.CompletedProcess:
+        if self.needs_root:
+            from core.privilege import run_as_root
+            return run_as_root(cmd, check=check, capture_output=True, text=True, **kw)
         return subprocess.run(cmd, check=check, capture_output=True, text=True, **kw)
 
 
@@ -52,6 +59,7 @@ class PkgRunner:
 
 class AptRunner(PkgRunner):
     name = "apt"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["apt-get", "update", "-qq"], check=False)
@@ -87,6 +95,7 @@ class AptRunner(PkgRunner):
 
 class YumRunner(PkgRunner):
     name = "yum"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["yum", "makecache", "-q"], check=False)
@@ -113,6 +122,7 @@ class YumRunner(PkgRunner):
 
 class DnfRunner(PkgRunner):
     name = "dnf"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["dnf", "makecache", "-q"], check=False)
@@ -139,6 +149,7 @@ class DnfRunner(PkgRunner):
 
 class ApkRunner(PkgRunner):
     name = "apk"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["apk", "update"], check=False)
@@ -162,6 +173,7 @@ class ApkRunner(PkgRunner):
 
 class PacmanRunner(PkgRunner):
     name = "pacman"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["pacman", "-Sy", "--noconfirm"], check=False)
@@ -184,6 +196,7 @@ class PacmanRunner(PkgRunner):
 
 class ZypperRunner(PkgRunner):
     name = "zypper"
+    needs_root = True
 
     def update_index(self) -> None:
         self._run(["zypper", "refresh"], check=False)
