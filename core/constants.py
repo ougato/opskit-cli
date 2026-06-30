@@ -28,14 +28,7 @@ DEFAULT_CONFIG: dict = {
     "modules": {},
     "update": {
         "enabled": True,
-        "channel": "stable",
-        "check_interval": 86400,
-        "auto_apply": True,
         "repo": "ougato/opskit-cli",
-        "mirrors": [
-            "https://mirror.ghproxy.com/https://github.com/ougato/opskit-cli/releases/download",
-            "https://github.com/ougato/opskit-cli/releases/download",
-        ],
     },
     "mirror": {
         "region": "auto",
@@ -129,7 +122,6 @@ GITHUB_API_RELEASES = "https://api.github.com/repos/{repo}/releases/latest"
 GITHUB_API_RELEASES_LIST = "https://api.github.com/repos/{repo}/releases?per_page=10"
 GITHUB_API_TAGS = "https://api.github.com/repos/{repo}/tags?per_page=10"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
-GITHUB_RATELIMIT_SAFE = 5
 
 # ─── ghproxy 镜像加速 ────────────────────────────────────────────────────────
 GHPROXY_BASE = "https://mirror.ghproxy.com"

@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
 _loaded = False
+# 本会话内已成功刷新过的 recipe（前台或后台任一刷新成功即标记）。
+# 会话内每个 recipe 只联网拉一次：标记后 install / upgrade 共用同一份新鲜列表，
+# 既不重复拉取（避免「二次拉」），也不每次都拉（避免「每次拉」）。
+_session_refreshed: set[str] = set()
 
 
 # ─── 缓存文件读写 ─────────────────────────────────────────────────────────────
@@ -68,33 +72,25 @@ def _ensure_loaded() -> None:
 # ─── 对外接口 ─────────────────────────────────────────────────────────────────
 
 def get_cached_versions(recipe_key: str) -> list[str] | None:
-    """获取缓存的版本列表，未缓存或已过期返回 None
+    """获取「本会话已刷新」的缓存版本列表，否则返回 None。
 
-    三级过期策略：
-    - < 1h：直接返回缓存
-    - 1h ~ 24h：返回缓存（旧数据），后台刷新
-    - > 24h：返回 None（触发前台获取）
+    会话级新鲜策略（替代旧的 1h/24h 时间过期）：
+    - 本会话已成功刷新过该 recipe（前台或后台任一）→ 返回缓存，install /
+      upgrade 复用同一份，保证一致且不重复联网。
+    - 本会话尚未刷新 → 返回 None，由 ``resolve_versions`` 触发一次前台联网获取
+      （成功后即标记 session_refreshed，后续不再拉）。
     """
-    from core.constants import VERSION_CACHE_TTL, VERSION_CACHE_STALE_TTL
     _ensure_loaded()
+
+    if recipe_key not in _session_refreshed:
+        return None
 
     entry = _cache.get(recipe_key)
     if entry is None:
         return None
 
-    age = time.time() - entry.get("timestamp", 0)
     versions = entry.get("versions", [])
-
-    if not versions:
-        return None
-
-    if age < VERSION_CACHE_TTL:
-        return versions
-
-    if age < VERSION_CACHE_STALE_TTL:
-        return versions
-
-    return None
+    return versions if versions else None
 
 
 def get_cached_versions_stale(recipe_key: str) -> list[str] | None:
@@ -108,13 +104,14 @@ def get_cached_versions_stale(recipe_key: str) -> list[str] | None:
 
 
 def update_cache(recipe_key: str, versions: list[str]) -> None:
-    """更新单个 recipe 的版本缓存"""
+    """更新单个 recipe 的版本缓存，并标记本会话已刷新（不再重复联网）"""
     _ensure_loaded()
     with _lock:
         _cache[recipe_key] = {
             "versions": versions,
             "timestamp": time.time(),
         }
+        _session_refreshed.add(recipe_key)
         _save_cache(_cache)
 
 
@@ -227,7 +224,7 @@ def refresh_all_background() -> None:
 
     等待源管理层初始化完成（最多 15s），然后串行刷新每个 Recipe。
     """
-    from core.constants import VERSION_CACHE_TTL, VERSION_FETCH_INTERVAL
+    from core.constants import VERSION_FETCH_INTERVAL
 
     if not _refresh_event.wait(timeout=15):
         logger.debug("源管理层初始化超时，使用默认源继续")
@@ -240,11 +237,9 @@ def refresh_all_background() -> None:
     for cls in recipes:
         try:
             recipe_key = cls.key
-            entry = _cache.get(recipe_key)
-            if entry:
-                age = time.time() - entry.get("timestamp", 0)
-                if age < VERSION_CACHE_TTL:
-                    continue
+            # 本会话已刷新过（如前台 install/upgrade 抢先拉过）则跳过，避免重复联网。
+            if recipe_key in _session_refreshed:
+                continue
 
             instance = cls()
             versions = fetch_versions_online(instance)

@@ -24,6 +24,14 @@ _THEME_KEY = "software"
 
 def entry() -> None:
     """软件管理模块入口 — 搜索 + 两个分类"""
+    from software.registry import all_recipes
+    from core.platform import get_platform
+    from core.installed_cache import prime_async
+
+    info = get_platform()
+    # 进入软件管理时静默预热一次安装状态缓存，后续浏览全部复用，不再每次探测。
+    prime_async([r for r in all_recipes() if info.os_type in r.platforms])
+
     while True:
         choices = [
             {"key": "1", "label": f"{get_icon('search')} {t('software.search')}"},
@@ -125,16 +133,12 @@ def show_category(category: str) -> None:
 
 def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
     """从 recipes 列表中让用户选择一个，再进入操作子菜单"""
-    from core.progress import spinner
+    from core.installed_cache import get_detected
 
     muted = get_color("muted")
     success_c = get_color("success")
 
-    hints: dict[str, str] = {}
-    with spinner(t("software.detecting")):
-        for cls in recipes:
-            ver = cls().detect()
-            hints[cls.key] = ver or ""
+    hints: dict[str, str] = {cls.key: get_detected(cls) for cls in recipes}
 
     def _dispatch(cls: type) -> None:
         if getattr(cls, "has_submenu", False):
@@ -718,7 +722,7 @@ def show_list() -> None:
     clear_screen()
     from software.registry import all_recipes
     from core.platform import get_platform
-    from core.progress import spinner
+    from core.installed_cache import get_detected
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     muted = get_color("muted")
@@ -739,24 +743,22 @@ def show_list() -> None:
     tbl.add_column(t("software.version"), width=12)
     tbl.add_column(t("software.platforms"), width=28)
 
-    with spinner(t("software.detecting")):
-        for cls in recipes:
-            instance = cls()
-            ver = instance.detect()
-            if ver:
-                status_str = f"[{success}]{get_icon('success')} {t('software.installed')}[/{success}]"
-                ver_str = f"[{success}]{ver}[/{success}]"
-            else:
-                status_str = f"[{muted}]─ {t('software.not_installed')}[/{muted}]"
-                ver_str = f"[{muted}]─[/{muted}]"
+    for cls in recipes:
+        ver = get_detected(cls)
+        if ver:
+            status_str = f"[{success}]{get_icon('success')} {t('software.installed')}[/{success}]"
+            ver_str = f"[{success}]{ver}[/{success}]"
+        else:
+            status_str = f"[{muted}]─ {t('software.not_installed')}[/{muted}]"
+            ver_str = f"[{muted}]─[/{muted}]"
 
-            platforms_str = " / ".join(cls.platforms)
-            tbl.add_row(
-                f"{get_icon(cls.key)} {cls.key}",
-                status_str,
-                ver_str,
-                f"[{muted}]{platforms_str}[/{muted}]",
-            )
+        platforms_str = " / ".join(cls.platforms)
+        tbl.add_row(
+            f"{get_icon(cls.key)} {cls.key}",
+            status_str,
+            ver_str,
+            f"[{muted}]{platforms_str}[/{muted}]",
+        )
 
     console.print(tbl)
     pause()
@@ -774,9 +776,10 @@ def show_install() -> None:
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
 
+    from core.installed_cache import get_detected
     choices = [
         {"key": str(i + 1), "label": f"{get_icon(cls.key)} {cls.key}",
-         "hint": cls().detect() or ""}
+         "hint": get_detected(cls)}
         for i, cls in enumerate(recipes)
     ]
     try:
@@ -904,29 +907,27 @@ def show_installed() -> None:
     """
     from software.registry import all_recipes
     from core.platform import get_platform
-    from core.progress import spinner
+    from core.installed_cache import get_detected
 
     info = get_platform()
     all_cls = [r for r in all_recipes() if info.os_type in r.platforms]
 
     installed: list[tuple] = []
     seen_keys: set[str] = set()
-    with spinner(t("software.detecting")):
-        for cls in all_cls:
-            instance = cls()
-            ver = instance.detect()
-            if not ver:
+    for cls in all_cls:
+        ver = get_detected(cls)
+        if not ver:
+            continue
+        if getattr(cls, "hidden", False):
+            parent_cls = _parent_of(cls.key, all_cls)
+            if parent_cls is not None:
+                if parent_cls.key not in seen_keys:
+                    seen_keys.add(parent_cls.key)
+                    installed.append((parent_cls, parent_cls(), ver))
                 continue
-            if getattr(cls, "hidden", False):
-                parent_cls = _parent_of(cls.key, all_cls)
-                if parent_cls is not None:
-                    if parent_cls.key not in seen_keys:
-                        seen_keys.add(parent_cls.key)
-                        installed.append((parent_cls, parent_cls(), ver))
-                    continue
-            if cls.key not in seen_keys:
-                seen_keys.add(cls.key)
-                installed.append((cls, instance, ver))
+        if cls.key not in seen_keys:
+            seen_keys.add(cls.key)
+            installed.append((cls, cls(), ver))
 
     if not installed:
         print_warning(t("software.none_installed"))
@@ -964,19 +965,17 @@ def show_uninstall() -> None:
     """选择已安装软件 → 确认 → 卸载"""
     from software.registry import all_recipes
     from core.platform import get_platform
-    from core.progress import spinner
+    from core.installed_cache import get_detected
     from software.base import UninstallError
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
 
     installed: list[tuple] = []
-    with spinner(t("software.detecting")):
-        for cls in recipes:
-            instance = cls()
-            ver = instance.detect()
-            if ver:
-                installed.append((cls, instance, ver))
+    for cls in recipes:
+        ver = get_detected(cls)
+        if ver:
+            installed.append((cls, cls(), ver))
 
     if not installed:
         print_warning(t("software.none_installed"))
@@ -1019,6 +1018,8 @@ def show_uninstall() -> None:
     base_console.print()
     try:
         instance.uninstall()
+        from core.installed_cache import invalidate
+        invalidate(cls.key)
     except UninstallError as e:
         print_error(t("uninstall.failed", name=_usname, error=str(e)))
     except Exception as e:
@@ -1035,17 +1036,16 @@ def show_upgrade() -> None:
     from core.platform import get_platform
     from software.base import InstallError
     from core.progress import spinner
+    from core.installed_cache import get_detected
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
 
     installed: list[tuple] = []
-    with spinner(t("software.detecting")):
-        for cls in recipes:
-            instance = cls()
-            ver = instance.detect()
-            if ver:
-                installed.append((cls, instance, ver))
+    for cls in recipes:
+        ver = get_detected(cls)
+        if ver:
+            installed.append((cls, cls(), ver))
 
     if not installed:
         print_warning(t("software.none_installed"))
@@ -1118,6 +1118,8 @@ def show_upgrade() -> None:
     base_console.print()
     try:
         instance.upgrade(new_version)
+        from core.installed_cache import invalidate
+        invalidate(cls.key)
         print_success(t("upgrade.success", name=_upgname, elapsed=0))
     except InstallError as e:
         print_error(t("upgrade.failed", name=_upgname, error=str(e)))
