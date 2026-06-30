@@ -26,9 +26,11 @@ from xui.constants import (
     MODPROBE_COMMAND,
     SYSCTL_COMMAND,
     SYSCTL_WRITE_ARG,
+    SYSTEMCTL_COMMAND,
     XUI_SERVER_RECIPE_KEY,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
+    DEFAULT_FINGERPRINT,
     DEFAULT_PANEL_BASE_PATH,
     DEFAULT_PANEL_PORT,
     DEFAULT_PANEL_USER,
@@ -50,6 +52,7 @@ from xui.constants import (
     YUM_COMMAND,
     YUM_INSTALL_COMMAND,
     XUI_COMMAND,
+    XUI_DATABASE_FILE,
     XUI_LOG_LINES,
     XUI_PENDING_INBOUNDS_FILE,
     XUI_STATE_FILE,
@@ -69,6 +72,7 @@ from xui.utils import (
     command_exists,
     configure_panel_settings,
     detect_public_host,
+    detect_xui_version,
     get_panel_settings,
     enable_inbound_clients,
     generate_reality_keypair,
@@ -426,20 +430,100 @@ def uninstall_server() -> None:
 
 
 def diagnose_server() -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
     state = load_state()
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.diagnose")]
     clear_screen()
     print_action_title(breadcrumb)
-    console.print(f"{t('xui.diagnose.service')}: {is_service_active()}")
+
+    dk = "xui.diagnose"
+    _LABEL = "#7f849c"
+    _VALUE = "bold #cdd6f4"
+    _SEC = "bold #89b4fa"
+    _OK = "#a6e3a1"
+    _BAD = "#f38ba8"
+
+    def _lbl(s: str) -> Text:
+        return Text(s, style=_LABEL)
+
+    def _val(s: object) -> Text:
+        return Text(str(s), style=_VALUE)
+
+    def _sec(s: str) -> Text:
+        return Text(f"── {s} ──", style=_SEC)
+
+    def _dot(ok: bool) -> Text:
+        key = f"{dk}.active" if ok else f"{dk}.inactive"
+        return Text(f"● {t(key)}", style=_OK if ok else _BAD)
+
+    def _yesno(ok: bool, yes_key: str, no_key: str) -> Text:
+        return Text(t(yes_key) if ok else t(no_key), style=f"bold {_OK if ok else _BAD}")
+
+    def _port_cell(port: object) -> Text:
+        if not isinstance(port, int):
+            return Text("—", style=_LABEL)
+        ok = is_port_listening(port)
+        label = t(f"{dk}.port_listening") if ok else t(f"{dk}.port_not_listening")
+        return Text(f"{port}  {label}", style=f"bold {_OK if ok else _BAD}")
+
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(no_wrap=True)
+    tbl.add_column(no_wrap=False)
+
+    # ── 1. 服务状态 ──
+    tbl.add_row(_sec(t(f"{dk}.section_service")), Text(""))
+    tbl.add_row(_lbl(t(f"{dk}.service")), _dot(is_service_active()))
+    enabled = False
+    try:
+        r = subprocess.run(
+            [SYSTEMCTL_COMMAND, "is-enabled", XUI_SERVICE],
+            capture_output=True, text=True, check=False,
+        )
+        enabled = r.stdout.strip() == "enabled"
+    except Exception:
+        pass
+    tbl.add_row(_lbl(t(f"{dk}.autostart")), _yesno(enabled, f"{dk}.enabled", f"{dk}.disabled"))
+    tbl.add_row(_lbl(t(f"{dk}.command")), _yesno(command_exists(XUI_COMMAND), f"{dk}.available", f"{dk}.missing"))
+    tbl.add_row(_lbl(t(f"{dk}.version")), _val(detect_xui_version() or "—"))
+    tbl.add_row(_lbl(t(f"{dk}.database")), _yesno(XUI_DATABASE_FILE.exists(), f"{dk}.exists", f"{dk}.missing"))
+    tbl.add_row(Text(""), Text(""))
+
+    # ── 2. 端口与网络 ──
+    tbl.add_row(_sec(t(f"{dk}.section_network")), Text(""))
     panel_port = state.get("panel_port")
+    tbl.add_row(_lbl(t(f"{dk}.panel_port")), _port_cell(panel_port))
+    vless_state = state.get("vless") if isinstance(state.get("vless"), dict) else {}
+    vless_port = vless_state.get("local_port", vless_state.get("port"))
+    tbl.add_row(_lbl(t(f"{dk}.vless_port")), _port_cell(vless_port))
     if isinstance(panel_port, int):
-        console.print(f"{t('xui.diagnose.panel_port')}: {is_port_listening(panel_port)}")
-    vless_state = state.get("vless")
-    if isinstance(vless_state, dict):
-        port = vless_state.get("local_port", vless_state.get("port"))
-        if isinstance(port, int):
-            console.print(f"{t('xui.diagnose.vless_port')}: {is_port_listening(port)}")
-    console.print(json.dumps(state, indent=2, ensure_ascii=False))
+        host = vless_state.get("host") or LOOPBACK_HOST
+        base_path = state.get("panel_base_path") or ""
+        url = HTTP_URL_TEMPLATE.format(host=host, port=panel_port, base_path=base_path)
+        tbl.add_row(_lbl(t(f"{dk}.panel_url")), _val(url))
+    tbl.add_row(Text(""), Text(""))
+
+    # ── 3. 节点参数（非敏感）──
+    if vless_state:
+        tbl.add_row(_sec(t(f"{dk}.section_node")), Text(""))
+        tbl.add_row(_lbl(t(f"{dk}.node_host")), _val(vless_state.get("host", "—")))
+        tbl.add_row(_lbl(t(f"{dk}.node_sni")), _val(vless_state.get("sni", "—")))
+        tbl.add_row(_lbl(t(f"{dk}.node_dest")), _val(vless_state.get("dest", "—")))
+        tbl.add_row(_lbl(t(f"{dk}.node_security")), _val("reality"))
+        tbl.add_row(_lbl(t(f"{dk}.node_fingerprint")), _val(DEFAULT_FINGERPRINT))
+        tbl.add_row(
+            _lbl(t(f"{dk}.api_configured")),
+            _yesno(bool(state.get("api_configured")), f"{dk}.configured", f"{dk}.not_configured"),
+        )
+
+    console.print(Panel(
+        tbl,
+        title=f"[bold]{t(f'{dk}.title')}[/bold]",
+        border_style="#89b4fa",
+        padding=(1, 2),
+    ))
     pause()
 
 
