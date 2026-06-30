@@ -262,49 +262,35 @@ class TestVersionCache:
         from core import version_cache as vc
         vc._cache = {}
         vc._loaded = False
+        vc._session_refreshed = set()
 
     def test_cache_roundtrip(self, tmp_path):
         from core import version_cache as vc
         self._reset()
         with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
+            # update_cache 视为一次成功刷新，标记 session_refreshed → 后续可读
             vc.update_cache("docker", ["27.0", "26.1"])
             cached = vc.get_cached_versions("docker")
         assert cached == ["27.0", "26.1"]
 
-    def test_cache_ttl_fresh(self, tmp_path):
+    def test_session_refreshed_served(self, tmp_path):
         from core import version_cache as vc
         self._reset()
         with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
             vc._ensure_loaded()
-            vc._cache["nginx"] = {
-                "versions": ["1.27", "1.26"],
-                "timestamp": time.time(),  # 刚写入
-            }
+            # 本会话已刷新 → 直接返回缓存（无视写入时间）
+            vc._cache["nginx"] = {"versions": ["1.27", "1.26"], "timestamp": time.time() - 100000}
+            vc._session_refreshed.add("nginx")
             result = vc.get_cached_versions("nginx")
         assert result == ["1.27", "1.26"]
 
-    def test_cache_ttl_stale(self, tmp_path):
+    def test_not_session_refreshed_returns_none(self, tmp_path):
         from core import version_cache as vc
         self._reset()
         with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
             vc._ensure_loaded()
-            vc._cache["nginx"] = {
-                "versions": ["1.27"],
-                "timestamp": time.time() - 7200,  # 2h 前
-            }
-            result = vc.get_cached_versions("nginx")
-        # 1h~24h 范围仍返回缓存
-        assert result == ["1.27"]
-
-    def test_cache_ttl_expired(self, tmp_path):
-        from core import version_cache as vc
-        self._reset()
-        with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
-            vc._ensure_loaded()
-            vc._cache["nginx"] = {
-                "versions": ["1.27"],
-                "timestamp": time.time() - 100000,  # >24h
-            }
+            # 有缓存且刚写入，但本会话未刷新 → 返回 None，触发一次前台联网
+            vc._cache["nginx"] = {"versions": ["1.27"], "timestamp": time.time()}
             result = vc.get_cached_versions("nginx")
         assert result is None
 
