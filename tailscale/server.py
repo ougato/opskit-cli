@@ -302,11 +302,10 @@ def uninstall_client() -> None:
 
 
 def remove_tailscale_artifacts() -> None:
-    for path in (TAILSCALE_STATE_DIR, TAILSCALE_RUN_DIR):
-        if path.exists():
-            shutil.rmtree(path, ignore_errors=True)
-    for path in (TAILSCALE_REPO_FILE, TAILSCALE_KEYRING_FILE):
-        path.unlink(missing_ok=True)
+    # 这些路径均为 root 所有（/var/lib、/etc/apt/sources.list.d 等），
+    # 必须以 root 删除，否则普通用户会触发 PermissionError。
+    paths = (TAILSCALE_STATE_DIR, TAILSCALE_RUN_DIR, TAILSCALE_REPO_FILE, TAILSCALE_KEYRING_FILE)
+    _run_root([RM_COMMAND, "-rf", *(str(p) for p in paths)], check=False)
 
 
 def _extract_auth_url(output: str) -> str:
