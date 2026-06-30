@@ -19,6 +19,13 @@ import re
 import sys
 from pathlib import Path
 
+# Windows CI 控制台默认非 UTF-8（cp1252/gbk），打印 → 或中文会 UnicodeEncodeError。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 CONSTANTS = ROOT / "core" / "constants.py"
 BOOTSTRAP = ROOT / "bootstrap.json"
