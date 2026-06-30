@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# OpsKit 一键安装脚本 — Linux / macOS
-# 用法：curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
+# OpsKit installer - Linux / macOS
+# Usage: curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/main/install.sh | bash
 set -euo pipefail
 
 BIN_NAME="opskit"
 DOWNLOAD_BASE_CN="https://file.icerror.top/d/mirror/soft"
 DOWNLOAD_BASE_GLOBAL="https://github.com/ougato/opskit-cli/releases/latest/download"
 
-# ── 颜色输出 ──────────────────────────────────────────────────────────────────
-_green()  { printf '\033[32m%s\033[0m\n' "$*"; }
-_yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
-_red()    { printf '\033[31m%s\033[0m\n' "$*"; }
-_info()   { printf '  [info] %s\n' "$*"; }
-_ok()     { printf '  [ ok ] %s\n' "$*"; }
-_err()    { printf '  [fail] %s\n' "$*" >&2; }
+# -- output helpers ------------------------------------------------------------
+_title() { printf '\033[36m%s\033[0m\n' "$*"; }
+_field() { printf '  %-12s%s\n' "$1" "$2"; }
+_ok()    { printf '  \033[32m[OK]\033[0m    %s\n' "$*"; }
+_warn()  { printf '  \033[33m[WARN]\033[0m  %s\n' "$*"; }
+_err()   { printf '  \033[31m[FAIL]\033[0m  %s\n' "$*" >&2; }
 
-# ── 地区检测 ──────────────────────────────────────────────────────────────────
+# -- region detection ----------------------------------------------------------
 detect_region() {
     case "${OPSKIT_SOURCE:-auto}" in
         cn)     echo "cn";     return ;;
@@ -27,7 +26,7 @@ detect_region() {
     [ "$loc" = "CN" ] && echo "cn" || echo "global"
 }
 
-# ── 平台检测 ──────────────────────────────────────────────────────────────────
+# -- platform detection --------------------------------------------------------
 detect_platform() {
     local os arch
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -37,7 +36,7 @@ detect_platform() {
         linux)  os="linux" ;;
         darwin) os="darwin" ;;
         *)
-            _err "不支持的操作系统：$os"
+            _err "Unsupported OS: $os"
             exit 1
             ;;
     esac
@@ -47,7 +46,7 @@ detect_platform() {
         aarch64|arm64) arch="arm64" ;;
         armv7l) arch="armv7" ;;
         *)
-            _err "不支持的架构：$arch"
+            _err "Unsupported architecture: $arch"
             exit 1
             ;;
     esac
@@ -55,7 +54,7 @@ detect_platform() {
     echo "${os}-${arch}"
 }
 
-# ── 下载文件 ──────────────────────────────────────────────────────────────────
+# -- download ------------------------------------------------------------------
 download_file() {
     local url="$1" dest="$2"
     if command -v curl >/dev/null 2>&1; then
@@ -65,11 +64,11 @@ download_file() {
     fi
 }
 
-# ── SHA256 校验 ───────────────────────────────────────────────────────────────
+# -- SHA256 verification -------------------------------------------------------
 verify_sha256() {
     local file="$1" expected="$2"
     if [ -z "$expected" ]; then
-        _yellow "  [warn] 未找到 SHA256 校验值，跳过校验"
+        _warn "No SHA256 checksum found, skipping verification"
         return 0
     fi
     local actual
@@ -78,19 +77,19 @@ verify_sha256() {
     elif command -v shasum >/dev/null 2>&1; then
         actual="$(shasum -a 256 "$file" | awk '{print $1}')"
     else
-        _yellow "  [warn] 未找到 sha256sum / shasum，跳过校验"
+        _warn "Neither sha256sum nor shasum found, skipping verification"
         return 0
     fi
     if [ "$actual" != "$expected" ]; then
-        _err "SHA256 校验失败"
-        _err "  期望：$expected"
-        _err "  实际：$actual"
+        _err "SHA256 mismatch"
+        _err "  expected: $expected"
+        _err "  actual:   $actual"
         return 1
     fi
-    _ok "SHA256 校验通过"
+    _ok "SHA256 verified"
 }
 
-# ── 确定安装路径 ───────────────────────────────────────────────────────────────
+# -- resolve install dir -------------------------------------------------------
 get_install_dir() {
     if [ "$(id -u)" = "0" ]; then
         echo "/usr/local/bin"
@@ -99,10 +98,11 @@ get_install_dir() {
     fi
 }
 
-# ── 确保 PATH 包含安装目录 ────────────────────────────────────────────────────
+# -- ensure install dir is on PATH ---------------------------------------------
 ensure_in_path() {
     local install_dir="$1"
     if echo "$PATH" | grep -q "$install_dir"; then
+        _ok "Already on PATH"
         return 0
     fi
 
@@ -121,31 +121,41 @@ ensure_in_path() {
             echo "" >> "$shell_rc"
             echo "# OpsKit" >> "$shell_rc"
             echo "$export_line" >> "$shell_rc"
-            _ok "已将 ${install_dir} 写入 ${shell_rc}"
+            _ok "Added to PATH (${shell_rc/#$HOME/~})"
         fi
     fi
-
-    _yellow "  请执行以下命令使 PATH 立即生效："
-    _yellow "    export PATH=\"${install_dir}:\$PATH\""
 }
 
-# ── 主流程 ────────────────────────────────────────────────────────────────────
+# -- main ----------------------------------------------------------------------
 main() {
-    _green "=== OpsKit 安装程序 ==="
-    echo ""
-
     local platform os_dir filename download_url sha256_url tmp_dir region
+    local source_label install_dir target_display
+
     platform="$(detect_platform)"
-    _info "检测到平台：$platform"
 
     case "$platform" in
         linux-*)  os_dir="linux" ;;
         darwin-*) os_dir="macos" ;;
-        *) _err "不支持的平台：$platform"; exit 1 ;;
+        *) _err "Unsupported platform: $platform"; exit 1 ;;
     esac
 
     region="$(detect_region)"
-    _info "下载源：$region"
+    if [ "$region" = "cn" ]; then
+        source_label="cn (file.icerror.top)"
+    else
+        source_label="global (GitHub)"
+    fi
+
+    install_dir="$(get_install_dir)"
+    target_display="${install_dir/#$HOME/~}/${BIN_NAME}"
+
+    echo ""
+    _title "  OpsKit  Installer"
+    echo ""
+    _field "Platform" "$platform"
+    _field "Source"   "$source_label"
+    _field "Target"   "$target_display"
+    echo ""
 
     filename="${BIN_NAME}-${platform}"
     if [ "$region" = "cn" ]; then
@@ -155,19 +165,17 @@ main() {
     fi
     sha256_url="${download_url}.sha256"
 
-    _info "下载地址：$download_url"
-
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "$tmp_dir"' EXIT
 
     local tmp_bin="${tmp_dir}/${filename}"
     local tmp_sha="${tmp_dir}/${filename}.sha256"
 
-    _info "正在下载 ${filename}..."
     download_file "$download_url" "$tmp_bin" || {
-        _err "下载失败：$download_url"
+        _err "Download failed: $download_url"
         exit 1
     }
+    _ok "Downloaded   $filename"
 
     local expected_sha=""
     if download_file "$sha256_url" "$tmp_sha" 2>/dev/null; then
@@ -176,31 +184,25 @@ main() {
 
     verify_sha256 "$tmp_bin" "$expected_sha" || exit 1
 
-    local install_dir
-    install_dir="$(get_install_dir)"
     mkdir -p "$install_dir"
-
     chmod +x "$tmp_bin"
     mv "$tmp_bin" "${install_dir}/${BIN_NAME}"
-
-    _ok "已安装到：${install_dir}/${BIN_NAME}"
+    _ok "Installed"
 
     ensure_in_path "$install_dir"
 
     echo ""
-    _green "=== 安装完成 ==="
+    _title "  Done!  Open a new terminal, then run:  opskit"
     echo ""
-    _info "如命令未找到，请执行：export PATH=\"${install_dir}:\$PATH\""
 
-    # 通过 `curl | bash` 安装时，本脚本的 stdin 是 curl 管道（非 TTY，已到 EOF），
-    # 直接 exec 会让 opskit 继承这根管道、菜单读键瞬间读到 EOF 而秒退。
-    # 有真实终端则把 stdin 接回 /dev/tty 再启动；无终端则只提示手动运行，不自动启动。
+    # Installed via `curl | bash`: this script's stdin is the curl pipe (non-TTY,
+    # already at EOF), so a bare exec would make opskit inherit it and quit the
+    # moment the menu reads a key. Reconnect stdin to /dev/tty when a real
+    # terminal exists; otherwise just leave the run hint above.
     if [ -t 0 ]; then
         exec "${install_dir}/${BIN_NAME}"
     elif [ -r /dev/tty ]; then
         exec "${install_dir}/${BIN_NAME}" < /dev/tty
-    else
-        _info "请运行 ${BIN_NAME} 启动 OpsKit"
     fi
 }
 
