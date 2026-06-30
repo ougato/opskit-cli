@@ -29,9 +29,6 @@ DEFAULT_CONFIG: dict = {
     "modules": {},
     "update": {
         "enabled": True,
-        "channel": "stable",
-        "check_interval": 86400,
-        "auto_apply": True,
         "repo": "ougato/opskit-cli",
         "mirrors": [
             "https://mirror.ghproxy.com/https://github.com/ougato/opskit-cli/releases/download",

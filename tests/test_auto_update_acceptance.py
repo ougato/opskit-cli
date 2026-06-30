@@ -190,6 +190,48 @@ class TestDownloadExceptions:
         assert any("Range" in h for h in range_headers_sent), "Range header should be sent"
         assert range_headers_sent[0].get("Range") == f"bytes={len(initial_data)}-"
 
+    def test_T05b_stale_partial_discarded_on_version_change(self, tmp_data, monkeypatch):
+        """T05b: 残留 .tmp 属于旧版本(v2)、目标已是 v4 时，丢弃旧半包从头下载，不发 Range"""
+        import core.updater as upd
+
+        fake_pending = tmp_data / "cache" / "opskit.pending"
+        fake_tmp = tmp_data / "cache" / "opskit.pending.tmp"
+        cache_path = tmp_data / "cache" / "update_check.json"
+
+        monkeypatch.setattr("core.updater._get_pending_path", lambda: fake_pending)
+        monkeypatch.setattr("core.updater._get_pending_tmp_path", lambda: fake_tmp)
+        monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
+
+        fake_tmp.write_bytes(b"MZ" + b"\x00" * (256 * 1024 - 2))
+        with cache_path.open("w") as f:
+            json.dump({"download_version": 2, "etag": '"old"'}, f)
+
+        range_headers_sent = []
+
+        class FakeResp:
+            status_code = 200
+            headers = {"ETag": ""}
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def iter_bytes(self, chunk_size):
+                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+
+        def fake_stream(method, url, timeout, follow_redirects, headers=None):
+            range_headers_sent.append(headers or {})
+            return FakeResp()
+
+        with patch("httpx.stream", side_effect=fake_stream), \
+             patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
+             patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater._sha256_file", return_value=""), \
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
+            upd._download_update(
+                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", "", 4)
+
+        assert all("Range" not in h for h in range_headers_sent), "旧版本残包应被丢弃，不应发 Range"
+        assert all("If-None-Match" not in h for h in range_headers_sent), "版本变化后应清空 ETag"
+        assert upd._load_check_cache().get("download_version") == 4
+
     def test_T06_stall_timeout_uses_read_timeout(self, tmp_data, monkeypatch):
         """T06: 下载使用 TIMEOUT_DOWNLOAD_READ 而非 read=None"""
         import core.updater as upd
@@ -634,8 +676,8 @@ class TestWindowsReplacement:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestVersionCheckExceptions:
-    def test_T21_rate_limit_writes_last_check_with_backoff(self, tmp_data, monkeypatch):
-        """T21: GitHub Rate Limit 403 后写入 last_check，延迟 1h 再检查"""
+    def test_T21_rate_limit_writes_backoff_until(self, tmp_data, monkeypatch):
+        """T21: GitHub Rate Limit 403 后写入 backoff_until，延迟 1h 再检查"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -656,11 +698,11 @@ class TestVersionCheckExceptions:
             result = upd._fetch_latest("ougato/opskit-cli")
 
         assert result is None
-        assert mock_save.called, "Rate Limit 后应写入 last_check"
+        assert mock_save.called, "Rate Limit 后应写入 backoff_until"
         saved_data = mock_save.call_args[0][0]
-        assert "last_check" in saved_data, "应写入 last_check 字段"
+        assert "backoff_until" in saved_data, "应写入 backoff_until 字段"
         from core.constants import UPDATE_RATELIMIT_BACKOFF
-        assert saved_data["last_check"] > time.time() + UPDATE_RATELIMIT_BACKOFF - 86401
+        assert saved_data["backoff_until"] >= time.time() + UPDATE_RATELIMIT_BACKOFF - 1
 
     def test_T22_api_field_missing_no_key_error(self, tmp_data, monkeypatch):
         """T22: GitHub API 返回缺字段时，防御性处理不抛 KeyError"""

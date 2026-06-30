@@ -425,6 +425,11 @@ def _should_check(check_interval: int) -> bool:
     if last > now:
         _log.info("_should_check: clock jumped back (last=%s now=%s), forcing check", last, now)
         return True
+    backoff_until = cache.get("backoff_until", 0)
+    if backoff_until and now < backoff_until:
+        return False
+    if check_interval <= 0:
+        return True
     return (now - last) >= check_interval
 
 
@@ -450,7 +455,7 @@ def _fetch_latest(repo: str, token: str = "") -> dict[str, Any] | None:
             _save_check_cache({"rate_limit_hit": True})
 
         if resp.status_code in (403, 429):
-            _save_check_cache({"last_check": time.time() + UPDATE_RATELIMIT_BACKOFF - 86400})
+            _save_check_cache({"backoff_until": time.time() + UPDATE_RATELIMIT_BACKOFF})
             _log.info("_fetch_latest: rate limited (%s), backing off %ss", resp.status_code, UPDATE_RATELIMIT_BACKOFF)
             _report("fetch_latest_rate_limited", level="info",
                     http_status=str(resp.status_code), repo=repo,
@@ -540,7 +545,7 @@ def _report(msg: str, exc: Exception | None = None, level: str = "warning", **ct
         pass
 
 
-def _download_update(asset_url: str, sha256_expected: str) -> Path | None:
+def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) -> Path | None:
     """
     下载新版本到临时文件，校验 SHA256 后原子 rename 为 pending。
 
@@ -575,6 +580,18 @@ def _download_update(asset_url: str, sha256_expected: str) -> Path | None:
             return Path(tempfile.gettempdir()) / "opskit.pending.tmp"
 
     actual_tmp = _ensure_tmp_dir()
+
+    # 版本感知断点续传：若 .tmp 残包属于旧目标版本，丢弃重下，
+    # 避免把旧版本（如 v2）的半包接到新版本（如 v4）的下载上导致损坏
+    if remote_ver:
+        _dl_cache = _load_check_cache()
+        if _dl_cache.get("download_version") not in (None, remote_ver):
+            _log.info("download: target changed to v%s, discarding stale partial (was v%s)",
+                      remote_ver, _dl_cache.get("download_version"))
+            actual_tmp.unlink(missing_ok=True)
+            _save_check_cache({"download_version": remote_ver, "etag": ""})
+        else:
+            _save_check_cache({"download_version": remote_ver})
 
     mirrors = get_sources("github_releases")
     urls: list[str] = []
@@ -721,8 +738,8 @@ def check_update_background(cfg: dict) -> None:
             if not update_cfg.get("enabled", True):
                 return
 
-            check_interval: int = update_cfg.get("check_interval", 86400)
-            if not _should_check(check_interval):
+            # 高频启动场景：每次启动都检测更新，仅受限流退避（backoff_until）约束
+            if not _should_check(0):
                 # 检查是否有已下载但未应用的版本
                 pending = _get_pending_path()
                 if pending.exists():
@@ -735,7 +752,7 @@ def check_update_background(cfg: dict) -> None:
                 return
             remote_ver, asset_url, sha256 = target
 
-            pending = _download_update(asset_url, sha256)
+            pending = _download_update(asset_url, sha256, remote_ver)
             if pending:
                 _pending_version = remote_ver
                 _save_check_cache({
