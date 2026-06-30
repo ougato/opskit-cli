@@ -109,7 +109,10 @@ def _ct(key: str) -> str:
 _HELP_TEXT = _ct("help_text")
 
 _CONTEXT_SETTINGS = {
-    "help_option_names": ["--help"],
+    # -h / --help 均可触发帮助；token_normalize_func 把所有选项/命令 token
+    # 归一为小写，使大小写不敏感（-V/-v、-H/-h、software/SOFTWARE 等价）。
+    "help_option_names": ["-h", "--help"],
+    "token_normalize_func": lambda token: token.lower(),
 }
 
 app = typer.Typer(
@@ -199,8 +202,8 @@ def _app_callback(
         help=_ct("yes_help"),
     ),
     version: bool = typer.Option(False, "--version", "-V", help=_ct("version_help")),
-    theme: str = typer.Option("", "--theme", help=_ct("theme_help")),
-    lang: str = typer.Option("", "--lang", help=_ct("lang_help")),
+    theme: str = typer.Option("", "--theme", "-T", help=_ct("theme_help")),
+    lang: str = typer.Option("", "--lang", "-l", help=_ct("lang_help")),
 ) -> None:
     import os
     if yes or os.environ.get("OPSKIT_YES", "").strip() in ("1", "true", "yes"):
@@ -472,9 +475,9 @@ def _on_exit(cfg: dict) -> None:
 
 # ─── 子命令组 ─────────────────────────────────────────────────────────────────
 
-sw_app = typer.Typer(help=_ct("software"))
-mon_app = typer.Typer(help=_ct("monitor"))
-net_app = typer.Typer(help=_ct("network"))
+sw_app = typer.Typer(help=_ct("software"), context_settings=_CONTEXT_SETTINGS)
+mon_app = typer.Typer(help=_ct("monitor"), context_settings=_CONTEXT_SETTINGS)
+net_app = typer.Typer(help=_ct("network"), context_settings=_CONTEXT_SETTINGS)
 app.add_typer(sw_app, name="software")
 app.add_typer(mon_app, name="monitor")
 app.add_typer(net_app, name="network")
@@ -538,7 +541,7 @@ def sw_versions(
 def sw_install(
     name: str = typer.Argument(None, help=_ct("sw_name_install")),
     token: str = typer.Option("", "--token", "-t", help=_ct("sw_token")),
-    version: str = typer.Option("", "--version", help=_ct("sw_version")),
+    version: str = typer.Option("", "--version", "-v", help=_ct("sw_version")),
 ) -> None:
     _boot()
     if name:
@@ -551,8 +554,8 @@ def sw_install(
 @sw_app.command("uninstall", help=_ct("sw_uninstall"))
 def sw_uninstall(
     name: str = typer.Argument(None, help=_ct("sw_name")),
-    version: str = typer.Option("", "--version", help=_ct("sw_version")),
-    all_versions: bool = typer.Option(False, "--all", help=_ct("sw_all_versions")),
+    version: str = typer.Option("", "--version", "-v", help=_ct("sw_version")),
+    all_versions: bool = typer.Option(False, "--all", "-a", help=_ct("sw_all_versions")),
 ) -> None:
     _boot()
     if name:
@@ -565,7 +568,7 @@ def sw_uninstall(
 @sw_app.command("upgrade", help=_ct("sw_upgrade"))
 def sw_upgrade(
     name: str = typer.Argument(None, help=_ct("sw_name")),
-    version: str = typer.Option("", "--version", help=_ct("sw_version")),
+    version: str = typer.Option("", "--version", "-v", help=_ct("sw_version")),
 ) -> None:
     _boot()
     if name:
@@ -578,7 +581,7 @@ def sw_upgrade(
 @sw_app.command("switch", help=_ct("sw_switch"))
 def sw_switch(
     name: str = typer.Argument(..., help=_ct("sw_name")),
-    version: str = typer.Option(..., "--version", help=_ct("sw_version")),
+    version: str = typer.Option(..., "--version", "-v", help=_ct("sw_version")),
 ) -> None:
     _boot()
     _sw_action_by_name(name, "switch", version=version)
