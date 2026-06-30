@@ -4,6 +4,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import os
+import concurrent.futures
 import secrets
 import shutil
 import sqlite3
@@ -30,6 +31,7 @@ from xui.constants import (
     HTTP_STATUS_REDIRECT_MAX,
     HTTP_STATUS_REDIRECT_MIN,
     HTTP_TIMEOUT_SECONDS,
+    PUBLIC_HOST_DETECT_TIMEOUT,
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
@@ -110,17 +112,29 @@ def gen_password() -> str:
     return secrets.token_urlsafe(PASSWORD_BYTES)
 
 
-def detect_public_host() -> str:
-    for url in PUBLIC_IP_APIS:
+def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
+    """并发探测公网 IP，取最快返回的非空结果；整体受 timeout 限制，避免逐个超时累加阻塞。"""
+    def _probe(url: str) -> str:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": OPSKIT_USER_AGENT})
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-                text = resp.read().decode("utf-8").strip()
-                if text:
-                    return text
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8").strip()
         except Exception:
-            continue
-    return ""
+            return ""
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(PUBLIC_IP_APIS))
+    futures = [pool.submit(_probe, url) for url in PUBLIC_IP_APIS]
+    result = ""
+    try:
+        for fut in concurrent.futures.as_completed(futures, timeout=timeout + 1):
+            text = fut.result()
+            if text:
+                result = text
+                break
+    except Exception:
+        pass
+    pool.shutdown(wait=False)
+    return result
 
 
 def is_service_active(service: str = XUI_SERVICE) -> bool:

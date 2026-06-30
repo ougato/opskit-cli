@@ -248,12 +248,11 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
 
 def install_server() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
-    host_default = detect_public_host()
     panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
     panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
     panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password())
     panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
-    host = _read_text(breadcrumb, "xui.input.host", host_default)
+    host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
     vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
     sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
     dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
