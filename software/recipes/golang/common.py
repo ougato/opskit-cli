@@ -88,6 +88,13 @@ def version_list() -> list[str]:
     from software._shared.version_resolver import resolve_versions
     from .constants import GOLANG_VERSIONS_API, GOLANG_EOL_API, GOLANG_VERSIONS_FALLBACK
 
+    import re
+    _STABLE_RE = re.compile(r"^\d+(\.\d+)*$")
+
+    def _is_stable(v: str) -> bool:
+        """仅保留正式版：纯数字点分（排除 rc/beta/alpha 等预发布）。"""
+        return bool(_STABLE_RE.match(v))
+
     def _ver_key(v: str) -> list[int]:
         return [int(x) for x in v.split(".") if x.isdigit()]
 
@@ -100,10 +107,13 @@ def version_list() -> list[str]:
                 data = resp.json()
                 seen: set[str] = set()
                 for entry in data:
+                    # go.dev JSON 带 stable 标记，预发布（include=all 拉到的 rc/beta）跳过
+                    if not entry.get("stable", False):
+                        continue
                     v = entry.get("version", "")
                     if v.startswith("go"):
                         v = v[2:]
-                    if v and v not in seen:
+                    if v and _is_stable(v) and v not in seen:
                         seen.add(v)
                         raw.append(v)
         except Exception:
@@ -117,7 +127,7 @@ def version_list() -> list[str]:
                     data = resp.json()
                     for item in data:
                         v = item.get("latest", "")
-                        if v:
+                        if v and _is_stable(v):
                             raw.append(v)
             except Exception:
                 pass
@@ -125,8 +135,12 @@ def version_list() -> list[str]:
         raw.sort(key=_ver_key, reverse=True)
         return raw
 
-    fallback = sorted(GOLANG_VERSIONS_FALLBACK, key=_ver_key, reverse=True)
-    return resolve_versions("golang", _fetch, fallback)
+    fallback = sorted(
+        [v for v in GOLANG_VERSIONS_FALLBACK if _is_stable(v)],
+        key=_ver_key, reverse=True,
+    )
+    # 兜底再过滤一次，清理历史缓存里可能残留的预发布版本
+    return [v for v in resolve_versions("golang", _fetch, fallback) if _is_stable(v)]
 
 
 # ─── 赛马下载 Golang tarball ──────────────────────────────────────────────────
