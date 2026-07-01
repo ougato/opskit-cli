@@ -189,3 +189,30 @@ def write_root_file(path, content, mode: str = "0644") -> None:
             os.unlink(tmp)
         except OSError:
             pass
+
+
+def read_root_file(path) -> str | None:
+    """读取系统文件内容（``/etc``、``/root`` 等），文件不存在返回 ``None``。
+
+    非 root 读取 root 私有目录（如 ``/etc/wireguard`` 0700）下的文件时，
+    ``Path.exists()`` / 直接读取会抛 ``PermissionError``（无法遍历目录），
+    此时回退到 ``run_as_root(["cat", ...])`` 以 root 身份读取。
+
+    Args:
+        path: 目标路径（str 或 Path）。
+    """
+    from pathlib import Path
+
+    p = Path(path)
+    try:
+        return p.read_text("utf-8")
+    except FileNotFoundError:
+        return None
+    except (PermissionError, OSError):
+        pass
+
+    r = run_as_root(["cat", str(path)], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", check=False)
+    if r.returncode == 0:
+        return r.stdout
+    return None

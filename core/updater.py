@@ -63,9 +63,18 @@ def _get_pending_tmp_path() -> Path:
     return get_data_dir() / "cache" / "opskit.pending.tmp"
 
 
+def _is_frozen() -> bool:
+    """是否为打包后的可执行文件（Nuitka / PyInstaller）。
+
+    源码 / 开发模式（直接跑 main.py）返回 False，此时自更新一律禁用，
+    避免把 pending 二进制覆盖到 main.py 源文件上。
+    """
+    return getattr(sys, "frozen", False) or "__compiled__" in globals()
+
+
 def _self_path() -> Path:
     """当前可执行文件路径（打包 or python 解释器）"""
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+    if _is_frozen():
         return Path(sys.executable)
     return Path(__file__).resolve().parent.parent / "main.py"
 
@@ -379,6 +388,14 @@ def check_and_apply_pending() -> bool:
         return False
 
     remote_ver = cache.get("pending_version") or (APP_VERSION + 1)
+
+    # 源码 / 开发模式：不把 pending 二进制替换到 main.py 源文件上，清理后返回
+    if not _is_frozen():
+        _log.info("dev mode: skip applying pending v%s, removing", remote_ver)
+        pending.unlink(missing_ok=True)
+        _save_check_cache({"pending_version": None})
+        return False
+
     _log.info("startup: found pending v%s, applying", remote_ver)
     ok = _do_apply(pending, remote_ver)
     if ok:
@@ -726,6 +743,9 @@ def check_update_background(cfg: dict) -> None:
     def _worker():
         global _pending_version
         try:
+            # 源码 / 开发模式：不下载 pending，避免后续覆盖 main.py 源文件
+            if not _is_frozen():
+                return
             update_cfg = cfg.get("update", {})
             if not update_cfg.get("enabled", True):
                 return
@@ -812,6 +832,9 @@ def _resolve_update_target(update_cfg: dict) -> tuple[int, str, str] | None:
 
 def apply_pending_update() -> None:
     """退出时应用已下载的更新（与 check_and_apply_pending 共享 _do_apply 逻辑）"""
+    # 源码 / 开发模式：禁用自更新替换，避免覆盖 main.py 源文件
+    if not _is_frozen():
+        return
     pending = _get_pending_path()
     if not pending.exists():
         return

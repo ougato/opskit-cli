@@ -36,12 +36,12 @@ def _save_state(state: dict) -> None:
 def _load_state() -> dict:
     """加载服务端状态文件"""
     import json
-    from pathlib import Path
     from wireguard.constants import WG_STATE_FILE
-    p = Path(WG_STATE_FILE)
-    if p.exists():
+    from core.privilege import read_root_file
+    content = read_root_file(WG_STATE_FILE)
+    if content:
         try:
-            return json.loads(p.read_text("utf-8"))
+            return json.loads(content)
         except Exception:
             pass
     return {}

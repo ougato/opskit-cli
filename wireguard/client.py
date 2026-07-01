@@ -95,12 +95,12 @@ def _save_client_state(data: dict) -> None:
 def _load_client_state() -> dict:
     """加载客户端 state 文件"""
     import json
-    from pathlib import Path
     from wireguard.constants import WG_CLIENT_STATE_FILE
-    p = Path(WG_CLIENT_STATE_FILE)
-    if p.exists():
+    from core.privilege import read_root_file
+    content = read_root_file(WG_CLIENT_STATE_FILE)
+    if content:
         try:
-            return json.loads(p.read_text("utf-8"))
+            return json.loads(content)
         except Exception:
             pass
     return {}
