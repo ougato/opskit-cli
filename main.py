@@ -259,8 +259,8 @@ def _app_callback(
         False, "--yes", "-y",
         help=_ct("yes_help"),
     ),
-    version: bool = typer.Option(False, "--version", "-V", help=_ct("version_help")),
-    theme: str = typer.Option("", "--theme", "-T", help=_ct("theme_help")),
+    version: bool = typer.Option(False, "--version", "-v", help=_ct("version_help")),
+    theme: str = typer.Option("", "--theme", "-t", help=_ct("theme_help")),
     lang: str = typer.Option("", "--lang", "-l", help=_ct("lang_help")),
 ) -> None:
     import os
