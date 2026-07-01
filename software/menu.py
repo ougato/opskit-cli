@@ -38,6 +38,7 @@ def entry() -> None:
             {"key": "2", "label": f"{get_icon('installed')} {t('software.installed_list')}"},
             {"key": "3", "label": f"{get_icon('devtools')} {t('software.category.devtools')}"},
             {"key": "4", "label": f"{get_icon('devops')} {t('software.category.devops')}"},
+            {"key": "5", "label": f"{get_icon('systools')} {t('software.category.systools')}"},
         ]
         try:
             key = select(
@@ -61,6 +62,8 @@ def entry() -> None:
                 show_category("devtools")
             elif key == "4":
                 show_category("devops")
+            elif key == "5":
+                show_category("systools")
         except (KeyboardInterrupt, UserCancel):
             pass
 

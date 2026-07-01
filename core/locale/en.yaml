@@ -131,6 +131,8 @@ software:
     stop_service: "Stopping service..."
     remove_files: "Removing files..."
     cleanup: "Cleaning up..."
+  systools: "System Tools"
+  ohmyzsh: "Oh My Zsh"
   docker: "Docker"
   docker_error:
     platform_not_supported: "Docker recipe does not support platform: {platform}"
@@ -260,6 +262,7 @@ software:
   category:
     devtools: "Dev Tools"
     devops: "DevOps Tools"
+    systools: "System Tools"
   category_empty: "No software available in {category} category"
   coming_soon: "Feature coming soon"
 
@@ -391,6 +394,38 @@ xui:
     month: "Month"
     up: "↑"
     down: "↓"
+
+ohmyzsh:
+  confirm_p10k: "Also install the Powerlevel10k theme?"
+  installed_mark: "Installed"
+  step:
+    check_env: "Checking zsh environment..."
+    install_omz: "Installing Oh My Zsh..."
+    disable_update: "Disabling auto-update..."
+    config_p10k: "Configuring Powerlevel10k..."
+    switch_shell: "Switching default shell..."
+  manage:
+    p10k_configure: "Customize Powerlevel10k"
+    p10k_configure_hint: "Launching the Powerlevel10k wizard, follow the prompts"
+    p10k_apply_preset: "Apply recommended Powerlevel10k config"
+    switch_shell: "Set default shell to zsh"
+  output:
+    install_done: "Oh My Zsh installed"
+    omz_ready: "Oh My Zsh installed with auto-update disabled"
+    p10k_ready: "Powerlevel10k installed and auto-configured"
+    p10k_skipped: "Powerlevel10k not installed"
+    shell_switched: "Default shell set to zsh, effective in a new terminal"
+    shell_manual: "Could not switch default shell, run: chsh -s $(which zsh)"
+    uninstall_done: "Oh My Zsh uninstalled"
+  error:
+    unsupported_os: "Oh My Zsh only supports Linux and macOS"
+    download_failed: "Failed to download the Oh My Zsh install script"
+    install_failed: "Oh My Zsh installation failed"
+    dep_failed: "Dependency install failed: {error}"
+    zsh_missing: "zsh not found, please install zsh first"
+    git_missing: "git not found, please install git first"
+    p10k_clone_failed: "Failed to download Powerlevel10k"
+    p10k_not_installed: "Powerlevel10k is not installed yet, install it first"
 
 tailscale:
   step:

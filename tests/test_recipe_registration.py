@@ -11,7 +11,7 @@ from pathlib import Path
 from software.registry import all_recipes
 
 # 与 software/menu.py entry() 暴露的分类保持一致
-MENU_CATEGORIES = {"devtools", "devops"}
+MENU_CATEGORIES = {"devtools", "devops", "systools"}
 
 RECIPES_DIR = Path(__file__).resolve().parent.parent / "software" / "recipes"
 
