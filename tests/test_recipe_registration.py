@@ -60,3 +60,32 @@ def test_registered_recipes_have_menu_category() -> None:
         f"以下软件的 category 不在菜单分类 {sorted(MENU_CATEGORIES)} 内，"
         f"交互菜单将看不到：{bad}"
     )
+
+
+def test_software_list_shows_every_supported_recipe() -> None:
+    """端到端守卫：`software list` 必须列出当前平台上所有非隐藏 recipe。
+
+    这是用户实际使用的入口（很多人只跑无交互 CLI）。新增软件后若忘了注册 /
+    平台声明写错，这里会直接把缺失的 key 报出来。
+    """
+    import main
+    from core.platform import get_platform
+    from core.prompt import console
+
+    info = get_platform()
+    expected = sorted(
+        cls.key
+        for cls in all_recipes()
+        if not getattr(cls, "hidden", False)
+        and info.os_type in getattr(cls, "platforms", [])
+    )
+
+    with console.capture() as cap:
+        main._print_software_table()
+    output = cap.get()
+
+    missing = [key for key in expected if key not in output]
+    assert not missing, (
+        f"以下软件在 `software list` 里看不到（当前平台 {info.os_type}）：{missing}。"
+        f" 新增 recipe 必须在 __init__.py 导出并注册，且 platforms 含当前平台。"
+    )
