@@ -296,10 +296,24 @@ def _boot() -> dict:
     theme_init()
     i18n_init()
 
+    # 启动预检：要紧问题（无包管理器 / 磁盘不足）在进入主菜单前显示并暂停，
+    # 保证用户看得清（主菜单渲染会清屏）；「非 root」这类普通用户常态告警
+    # 不打断流程，仅写入日志。
     from core.platform import preflight_check
     from core.theme import print_warning
+    from core.prompt import pause
+    _SILENT_ISSUE_CODES = {"non_root"}
+    _shown = False
     for issue in preflight_check():
+        if issue.code in _SILENT_ISSUE_CODES:
+            _logger.warning("%s（%s）", issue.message, issue.suggestion)
+            continue
         print_warning(str(issue.message))
+        if issue.suggestion:
+            console.print(f"  [dim]↳ {issue.suggestion}[/dim]")
+        _shown = True
+    if _shown:
+        pause()
 
     # ── 启动时 pending 检测（上次下载但未替换的更新）──
     try:
