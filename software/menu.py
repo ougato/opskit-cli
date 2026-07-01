@@ -553,7 +553,11 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         return
     if not r.ok:
         report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
-    pause()
+        pause()
+    elif not getattr(cls, "has_wizard", False):
+        # 向导型 recipe（has_wizard=True）自行负责结果展示与「按任意键返回」，
+        # 框架不再重复 pause，避免出现两次任意键才能返回的问题。
+        pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
