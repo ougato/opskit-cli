@@ -227,6 +227,30 @@ try:
 except Exception:
     pass
 
+# usage 行的占位符（[OPTIONS] / COMMAND [ARGS]... / [NAME]）同样改小写。
+# 片段分散在几处 collect_usage_pieces：typer._click.core.Command（选项 + 参数），
+# typer.core.TyperGroup（额外的 COMMAND [ARGS]... 子命令占位符）。逐个包一层小写。
+def _install_lower_usage(cls) -> None:
+    if "collect_usage_pieces" not in cls.__dict__:
+        return
+    _orig = cls.collect_usage_pieces
+
+    def _patched(self, ctx, _orig=_orig):
+        return [piece.lower() for piece in _orig(self, ctx)]
+
+    cls.collect_usage_pieces = _patched
+
+
+try:
+    import typer._click.core as _typer_click_core
+    import typer.core as _typer_core
+
+    _install_lower_usage(_typer_click_core.Command)
+    _install_lower_usage(_typer_core.TyperGroup)
+    _install_lower_usage(_typer_core.TyperCommand)
+except Exception:
+    pass
+
 
 @app.callback(invoke_without_command=True)
 def _app_callback(
