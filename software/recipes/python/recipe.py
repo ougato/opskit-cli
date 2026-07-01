@@ -286,6 +286,13 @@ class PythonRecipe(Recipe):
         except Exception:
             return False
 
+    def upgrade(self, version: str) -> None:
+        """Python 多版本共存：升级即安装新版本并激活，不卸载已装的其它版本。
+
+        覆盖基类「卸载 + 安装」默认实现，避免升级时清掉用户并存的旧版本。
+        """
+        self.install(version)
+
     def switch(self, version: str) -> None:
         new_bin = find_uv_python(version)
         if not new_bin:

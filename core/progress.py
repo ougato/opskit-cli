@@ -84,6 +84,22 @@ def _display_width(s: str) -> int:
     return w
 
 
+_STEP_KEY_PREFIX = "software.step."
+
+
+def _global_step_width() -> int:
+    """所有 ``software.step.*`` 文案的最大显示宽度 + 2。
+
+    同一逻辑操作可能拆成多个独立 ``MultiStepProgress`` 块（如升级 = 卸载步骤
+    块 + 安装步骤块），各自按局部文案算宽度会导致百分比列错位。改用全局步骤
+    文案的统一宽度作为下限，保证跨块对齐。
+    """
+    from core.i18n import keys, t
+    widths = [_display_width(t(k)) for k in keys(_STEP_KEY_PREFIX)]
+    base = (max(widths) + 2) if widths else _MIN_DESC_WIDTH
+    return max(base, _MIN_DESC_WIDTH)
+
+
 def _pad_desc(desc: str, width: int) -> str:
     """将描述文本填充到指定列宽（考虑中文宽字符）"""
     dw = _display_width(desc)
@@ -188,10 +204,11 @@ class MultiStepProgress:
         self._interrupted: bool = False
         self._old_sigint = None
         self._win_handler_ref = None
+        floor = _global_step_width()
         if descriptions:
-            self._desc_width = max(_display_width(d) for d in descriptions) + 2
+            self._desc_width = max(max(_display_width(d) for d in descriptions) + 2, floor)
         else:
-            self._desc_width = _MIN_DESC_WIDTH
+            self._desc_width = floor
 
     def __enter__(self) -> "MultiStepProgress":
         self._start_time = time.monotonic()
