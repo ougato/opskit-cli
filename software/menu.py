@@ -401,12 +401,17 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
 
     _name = recipe_display_name(cls)
 
-    existing = instance.detect()
-    installed_set: set[str] = (
-        set(instance.installed_versions())
-        if hasattr(instance, "installed_versions")
-        else ({existing} if existing else set())
-    )
+    # 多版本管理型（java/go/node/python）：安装与卸载一律以「本工具管理的版本」为准，
+    # 不使用 detect() 的 which() 兜底（否则系统自带 java 会让安装显示「已安装」、卸载却「未安装」）。
+    if hasattr(instance, "installed_versions"):
+        installed_list = instance.installed_versions()
+        installed_set = set(installed_list)
+        existing = (
+            instance._active_version() if hasattr(instance, "_active_version") else None
+        ) or (installed_list[0] if installed_list else None)
+    else:
+        existing = instance.detect()
+        installed_set = {existing} if existing else set()
 
     with spinner(t("software.fetching_versions")):
         try:
