@@ -72,36 +72,38 @@ def show_search() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
 
-    try:
-        keyword = text_input(
+    while True:
+        try:
+            keyword = text_input(
+                breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
+                prompt=t("software.search_prompt"),
+                theme_key=_THEME_KEY,
+            )
+        except UserCancel:
+            return
+        if not keyword or not keyword.strip():
+            print_warning(t("software.search_empty"))
+            pause(t("prompt.press_any"))
+            continue
+
+        kw = keyword.strip().lower()
+        info = get_platform()
+        all_cls = [r for r in all_recipes() if info.os_type in r.platforms and not getattr(r, "hidden", False)]
+        matched = [
+            cls for cls in all_cls
+            if kw in cls.key.lower() or kw in t(f"software.{cls.key}").lower()
+        ]
+
+        if not matched:
+            print_warning(t("software.search_no_result", keyword=keyword))
+            pause(t("prompt.press_any"))
+            continue
+
+        _pick_and_act(
             breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
-            prompt=t("software.search_prompt"),
-            theme_key=_THEME_KEY,
+            recipes=matched,
         )
-    except UserCancel:
         return
-    if not keyword or not keyword.strip():
-        print_warning(t("software.search_empty"))
-        pause()
-        return
-
-    kw = keyword.strip().lower()
-    info = get_platform()
-    all_cls = [r for r in all_recipes() if info.os_type in r.platforms and not getattr(r, "hidden", False)]
-    matched = [
-        cls for cls in all_cls
-        if kw in cls.key.lower() or kw in t(f"software.{cls.key}").lower()
-    ]
-
-    if not matched:
-        print_warning(t("software.search_no_result", keyword=keyword))
-        pause()
-        return
-
-    _pick_and_act(
-        breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
-        recipes=matched,
-    )
 
 
 # ─── 分类浏览 ──────────────────────────────────────────────────────────────────
