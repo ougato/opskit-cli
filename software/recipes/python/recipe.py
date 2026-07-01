@@ -175,15 +175,17 @@ class PythonRecipe(Recipe):
                         pct += 1
                     on_progress(pct)
 
-            def drain(pipe) -> None:
+            _captured: dict[str, bytes] = {}
+
+            def drain(pipe, key: str) -> None:
                 try:
-                    pipe.read()
+                    _captured[key] = pipe.read() or b""
                 except Exception:
-                    pass
+                    _captured[key] = b""
 
             t_pct = _threading.Thread(target=time_pct_ticker, daemon=True)
-            t_out = _threading.Thread(target=drain, args=(proc.stdout,), daemon=True)
-            t_err = _threading.Thread(target=drain, args=(proc.stderr,), daemon=True)
+            t_out = _threading.Thread(target=drain, args=(proc.stdout, "out"), daemon=True)
+            t_err = _threading.Thread(target=drain, args=(proc.stderr, "err"), daemon=True)
             t_pct.start()
             t_out.start()
             t_err.start()
@@ -201,7 +203,17 @@ class PythonRecipe(Recipe):
             t_err.join(timeout=2)
 
             if proc.returncode != 0:
-                raise InstallError(t("software.python_error.uv_failed", code=proc.returncode))
+                import logging
+                stderr_txt = _captured.get("err", b"").decode("utf-8", "replace").strip()
+                logging.getLogger("opskit.python").warning(
+                    "uv python install %s failed rc=%s: %s",
+                    version, proc.returncode, stderr_txt or "(no stderr)",
+                )
+                tail = stderr_txt.splitlines()[-1] if stderr_txt else ""
+                detail = f" [{tail}]" if tail else ""
+                raise InstallError(
+                    t("software.python_error.uv_failed", code=proc.returncode, detail=detail)
+                )
 
             return find_uv_python(version)
         except InstallError:

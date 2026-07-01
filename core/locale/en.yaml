@@ -208,7 +208,7 @@ software:
     not_installed: "Python {version} is not installed, please install first"
     install_failed: "Python {version} installation failed, all methods unavailable"
     uv_timeout: "uv python install timed out ({timeout}s)"
-    uv_failed: "uv install failed, exit code {code}"
+    uv_failed: "uv install failed, exit code {code} (usually network/rate-limit, please retry){detail}"
     uv_win_failed: "uv install failed (Windows), check network connection"
     uv_linux_failed: "uv install failed (Linux), check network connection"
     download_src_failed: "Failed to download Python {version} source: {error}"
