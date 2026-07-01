@@ -175,7 +175,7 @@ class TestWireGuardRecipeSafety:
         source = inspect.getsource(server.uninstall_server)
 
         assert "WG_STATE_FILE" in source
-        assert "Path(WG_STATE_FILE).unlink" in source
+        assert 'run_as_root(["rm", "-f", WG_STATE_FILE' in source
 
     def test_install_marks_installed_after_service_verification(self):
         import inspect
@@ -205,8 +205,7 @@ class TestWireGuardRecipeSafety:
 
         assert "stop_and_disable(wg_svc)" in failure_block
         assert "stop_and_disable(xray_svc)" in failure_block
-        assert "_Path(wg_cfg_path).unlink" in failure_block
-        assert "_Path(xray_cfg_path).unlink" in failure_block
+        assert 'run_as_root(["rm", "-f", wg_cfg_path, xray_cfg_path' in failure_block
         assert "_SCM.remove" in failure_block
 
     def test_server_manage_menu_has_no_manual_dns_entry(self):

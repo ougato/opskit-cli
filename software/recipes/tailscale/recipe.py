@@ -16,6 +16,7 @@ class TailscaleRecipe(Recipe):
     description: ClassVar[str] = "Tailscale WireGuard 组网"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = []
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -48,7 +49,7 @@ class TailscaleRecipe(Recipe):
     def install(self, version: str) -> None:
         install_client()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         uninstall_client()
 
     def diagnose(self) -> None:

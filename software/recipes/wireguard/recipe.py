@@ -14,6 +14,7 @@ class WireGuardRecipe(Recipe):
     description: ClassVar[str] = "WireGuard VPN 隧道"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = False
@@ -29,7 +30,7 @@ class WireGuardRecipe(Recipe):
     def install(self, version: str) -> None:
         pass
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         pass
 
     def submenu_items(self) -> list[dict]:
@@ -46,6 +47,7 @@ class WgServerRecipe(Recipe):
     description: ClassVar[str] = "WireGuard 公网服务端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -103,7 +105,7 @@ class WgServerRecipe(Recipe):
         from wireguard.server import install_server
         install_server()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from wireguard.server import uninstall_server
         uninstall_server()
 
@@ -123,6 +125,7 @@ class WgClientRecipe(Recipe):
     description: ClassVar[str] = "WireGuard 私网客户端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -184,7 +187,7 @@ class WgClientRecipe(Recipe):
         from wireguard.client import install_client
         install_client()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from wireguard.client import uninstall_client
         uninstall_client()
 

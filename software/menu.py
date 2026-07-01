@@ -38,6 +38,7 @@ def entry() -> None:
             {"key": "2", "label": f"{get_icon('installed')} {t('software.installed_list')}"},
             {"key": "3", "label": f"{get_icon('devtools')} {t('software.category.devtools')}"},
             {"key": "4", "label": f"{get_icon('devops')} {t('software.category.devops')}"},
+            {"key": "5", "label": f"{get_icon('systools')} {t('software.category.systools')}"},
         ]
         try:
             key = select(
@@ -61,6 +62,8 @@ def entry() -> None:
                 show_category("devtools")
             elif key == "4":
                 show_category("devops")
+            elif key == "5":
+                show_category("systools")
         except (KeyboardInterrupt, UserCancel):
             pass
 
@@ -72,34 +75,38 @@ def show_search() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
 
-    try:
-        keyword = text_input(
+    while True:
+        try:
+            keyword = text_input(
+                breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
+                prompt=t("software.search_prompt"),
+                theme_key=_THEME_KEY,
+            )
+        except UserCancel:
+            return
+        if not keyword or not keyword.strip():
+            print_warning(t("software.search_empty"))
+            pause(t("prompt.press_any"))
+            continue
+
+        kw = keyword.strip().lower()
+        info = get_platform()
+        all_cls = [r for r in all_recipes() if info.os_type in r.platforms and not getattr(r, "hidden", False)]
+        matched = [
+            cls for cls in all_cls
+            if kw in cls.key.lower() or kw in t(f"software.{cls.key}").lower()
+        ]
+
+        if not matched:
+            print_warning(t("software.search_no_result", keyword=keyword))
+            pause(t("prompt.press_any"))
+            continue
+
+        _pick_and_act(
             breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
-            prompt=t("software.search_prompt"),
-            theme_key=_THEME_KEY,
+            recipes=matched,
         )
-    except UserCancel:
         return
-    if not keyword:
-        return
-
-    kw = keyword.strip().lower()
-    info = get_platform()
-    all_cls = [r for r in all_recipes() if info.os_type in r.platforms and not getattr(r, "hidden", False)]
-    matched = [
-        cls for cls in all_cls
-        if kw in cls.key.lower() or kw in t(f"software.{cls.key}").lower()
-    ]
-
-    if not matched:
-        print_warning(t("software.search_no_result", keyword=keyword))
-        pause()
-        return
-
-    _pick_and_act(
-        breadcrumb=["OpsKit", t("menu.software"), t("software.search")],
-        recipes=matched,
-    )
 
 
 # ─── 分类浏览 ──────────────────────────────────────────────────────────────────
@@ -397,12 +404,17 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
 
     _name = recipe_display_name(cls)
 
-    existing = instance.detect()
-    installed_set: set[str] = (
-        set(instance.installed_versions())
-        if hasattr(instance, "installed_versions")
-        else ({existing} if existing else set())
-    )
+    # 多版本管理型（java/go/node/python）：安装与卸载一律以「本工具管理的版本」为准，
+    # 不使用 detect() 的 which() 兜底（否则系统自带 java 会让安装显示「已安装」、卸载却「未安装」）。
+    if hasattr(instance, "installed_versions"):
+        installed_list = instance.installed_versions()
+        installed_set = set(installed_list)
+        existing = (
+            instance._active_version() if hasattr(instance, "_active_version") else None
+        ) or (installed_list[0] if installed_list else None)
+    else:
+        existing = instance.detect()
+        installed_set = {existing} if existing else set()
 
     with spinner(t("software.fetching_versions")):
         try:
@@ -541,7 +553,11 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         return
     if not r.ok:
         report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
-    pause()
+        pause()
+    elif not getattr(cls, "has_wizard", False):
+        # 向导型 recipe（has_wizard=True）自行负责结果展示与「按任意键返回」，
+        # 框架不再重复 pause，避免出现两次任意键才能返回的问题。
+        pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
@@ -625,7 +641,15 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    existing = instance.detect()
+    # 多版本管理型（java/go/node/python）：升级判定以「本工具管理的激活版本」为准，
+    # 不用 detect() 的 which() 兜底（否则系统自带 python 会让已装最新版仍能进升级选择）。
+    if hasattr(instance, "installed_versions"):
+        installed_list = instance.installed_versions()
+        existing = (
+            instance._active_version() if hasattr(instance, "_active_version") else None
+        ) or (installed_list[0] if installed_list else None)
+    else:
+        existing = instance.detect()
     if not existing:
         print_warning(t("software.not_installed_hint", name=_name))
         pause()
@@ -642,8 +666,12 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
+    import re as _re
+
     def _ver_tuple(v: str) -> tuple:
-        return tuple(int(x) for x in v.split(".") if x.isdigit())
+        # 提取所有数字段（兼容 build metadata，如 "21.0.11+10" → (21,0,11,10)），
+        # 与安装列表使用同一份会话缓存的版本字符串，避免「升级说没有、安装却有」。
+        return tuple(int(x) for x in _re.findall(r"\d+", v or ""))
 
     # 只保留比当前版本更新的版本
     try:
@@ -869,12 +897,16 @@ def show_install() -> None:
     print_header(["OpsKit", t("menu.software"), t("software.install")])
     base_console.print()
     import time as _time
+    from core.privilege import ensure_root_for_action, PrivilegeError
     _t0 = _time.monotonic()
     try:
+        ensure_root_for_action(instance, "install")
         instance.install(version)
         _vers = getattr(instance, "installed_versions", lambda: [])() or []
         _ver = _vers[-1] if _vers else version
         print_success(t("install.success", name=_iname, version=_ver, elapsed=_time.monotonic() - _t0))
+    except PrivilegeError as e:
+        print_warning(str(e))
     except InstallError as e:
         print_error(t("install.failed", name=_iname, error=str(e)))
     except Exception as e:
@@ -1016,10 +1048,14 @@ def show_uninstall() -> None:
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.uninstall")])
     base_console.print()
+    from core.privilege import ensure_root_for_action, PrivilegeError
     try:
+        ensure_root_for_action(instance, "uninstall")
         instance.uninstall()
         from core.installed_cache import invalidate
         invalidate(cls.key)
+    except PrivilegeError as e:
+        print_warning(str(e))
     except UninstallError as e:
         print_error(t("uninstall.failed", name=_usname, error=str(e)))
     except Exception as e:
@@ -1116,11 +1152,15 @@ def show_upgrade() -> None:
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.upgrade")])
     base_console.print()
+    from core.privilege import ensure_root_for_action, PrivilegeError
     try:
+        ensure_root_for_action(instance, "upgrade")
         instance.upgrade(new_version)
         from core.installed_cache import invalidate
         invalidate(cls.key)
         print_success(t("upgrade.success", name=_upgname, elapsed=0))
+    except PrivilegeError as e:
+        print_warning(str(e))
     except InstallError as e:
         print_error(t("upgrade.failed", name=_upgname, error=str(e)))
     except Exception as e:

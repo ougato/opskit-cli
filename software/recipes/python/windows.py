@@ -30,10 +30,9 @@ class WindowsDriver(PlatformDriver):
         from .constants import UV_INSTALL_TIMEOUT
         from .common import uv_bin_path
 
-        sys_uv = shutil.which("uv")
-        if sys_uv:
-            return sys_uv
-
+        # 优先用 OpsKit 自管的私有 uv（版本新、元数据最新）；系统 PATH 上可能存在
+        # 陈旧的 uv，其内置 python-build-standalone 清单缺新版本，会导致
+        # "No download found"，故仅作为最后兜底。
         private_uv = uv_bin_path()
         if private_uv.exists() and os.access(str(private_uv), os.X_OK):
             return str(private_uv)
@@ -84,6 +83,10 @@ class WindowsDriver(PlatformDriver):
                         return str(private_uv)
                 except Exception:
                     continue
+
+        sys_uv = shutil.which("uv")
+        if sys_uv:
+            return sys_uv
 
         from core.i18n import t
         raise InstallError(t("software.python_error.uv_win_failed"))

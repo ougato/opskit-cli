@@ -17,6 +17,7 @@ class DockerRecipe(Recipe):
     description: ClassVar[str] = "Docker 容器引擎"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    requires_root: ClassVar[bool] = True
     has_upgrade: ClassVar[bool] = False
     has_install_version_selection: ClassVar[bool] = False
     confirm_before_install: ClassVar[bool] = False
@@ -103,7 +104,7 @@ class DockerRecipe(Recipe):
                 raise InstallError(t("software.docker_error.verify_failed"))
             sp.complete()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from core.platform import get_platform
         from core.progress import MultiStepProgress
 

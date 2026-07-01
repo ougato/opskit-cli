@@ -1,0 +1,31 @@
+---
+description: 新增软件 recipe 的强制清单 — 必须在 `software list` 与交互菜单可见
+globs:
+alwaysApply: true
+---
+
+# 新增软件 recipe 清单
+
+新增 `software/recipes/<name>/` 配方时，**必须**保证它出现在 `python3 main.py software list`
+里，避免像 ohmyzsh 那样注册了却在列表看不到。逐项自查：
+
+1. **导出并触发注册**：`software/recipes/<name>/__init__.py` 里
+   `from .recipe import XxxRecipe`；recipe 类带 `@register` 装饰器。
+   注册表靠 `pkgutil` 自动发现包并 import `__init__`，漏了这行 `@register` 就不执行。
+2. **platforms 正确**：`platforms` 必须含目标平台（`linux` / `darwin` / `windows`）。
+   `software list` 会按当前平台过滤，平台没写全就只在部分系统可见。
+3. **category 属于菜单分类**：非隐藏 recipe 的 `category` 必须是
+   `devtools` / `devops` / `systools` 之一，否则交互菜单看不到。
+4. **图标**：在主题文件里为 `<key>` 配 `get_icon` 图标。
+5. **本地化**：所有用户可见文案走 `t()`，中英混排按空格规则。
+
+## 守卫测试（改动前先跑）
+
+`tests/test_recipe_registration.py` 已经把上述前三条固化为断言：
+
+- `test_every_recipe_package_is_registered`：每个含 `@register` 的包都要被注册。
+- `test_registered_recipes_have_menu_category`：非隐藏 recipe 的 category 合法。
+- `test_software_list_shows_every_supported_recipe`：端到端渲染 `software list`，
+  当前平台上每个非隐藏 recipe 的 key 都要出现在输出里。
+
+新增软件后 `python3 -m pytest tests/test_recipe_registration.py` 必须通过。

@@ -26,9 +26,16 @@ def _mock_run(monkeypatch):
     return mock
 
 
+def _mock_root_run(monkeypatch):
+    """needs_root 的 runner 统一走 run_as_root，这里拦截它以验证代发。"""
+    mock = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr("core.privilege.run_as_root", mock)
+    return mock
+
+
 class TestAptRunner:
     def test_install(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         AptRunner().install(["nginx", "curl"])
         mock.assert_any_call(
             ["apt-get", "install", "-y", "-qq", "nginx", "curl"],
@@ -36,7 +43,7 @@ class TestAptRunner:
         )
 
     def test_update_index(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         AptRunner().update_index()
         mock.assert_any_call(
             ["apt-get", "update", "-qq"],
@@ -44,7 +51,7 @@ class TestAptRunner:
         )
 
     def test_remove(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         AptRunner().remove(["nginx"])
         mock.assert_any_call(
             ["apt-get", "remove", "-y", "nginx"],
@@ -54,7 +61,7 @@ class TestAptRunner:
 
 class TestYumRunner:
     def test_install(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         YumRunner().install(["wireguard-tools"])
         mock.assert_any_call(
             ["yum", "install", "-y", "wireguard-tools"],
@@ -62,7 +69,7 @@ class TestYumRunner:
         )
 
     def test_install_extras(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         YumRunner().install_extras(["epel-release"])
         mock.assert_any_call(
             ["yum", "install", "-y", "epel-release"],
@@ -72,7 +79,7 @@ class TestYumRunner:
 
 class TestDnfRunner:
     def test_install(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         DnfRunner().install(["wireguard-tools"])
         mock.assert_any_call(
             ["dnf", "install", "-y", "wireguard-tools"],
@@ -80,7 +87,7 @@ class TestDnfRunner:
         )
 
     def test_install_extras(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         DnfRunner().install_extras(["epel-release", "elrepo-release"])
         calls = [c.args[0] for c in mock.call_args_list]
         assert ["dnf", "install", "-y", "epel-release"] in calls
@@ -89,7 +96,7 @@ class TestDnfRunner:
 
 class TestApkRunner:
     def test_install(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         ApkRunner().install(["python3"])
         mock.assert_any_call(
             ["apk", "add", "--no-cache", "python3"],
@@ -97,12 +104,28 @@ class TestApkRunner:
         )
 
     def test_update_index(self, monkeypatch):
-        mock = _mock_run(monkeypatch)
+        mock = _mock_root_run(monkeypatch)
         ApkRunner().update_index()
         mock.assert_any_call(
             ["apk", "update"],
             check=False, capture_output=True, text=True,
         )
+
+    def test_needs_root_flags(self):
+        from core.pkg_runner import (
+            PacmanRunner, ZypperRunner, MsiRunner, WingetRunner,
+        )
+        assert AptRunner.needs_root is True
+        assert YumRunner.needs_root is True
+        assert DnfRunner.needs_root is True
+        assert ApkRunner.needs_root is True
+        assert PacmanRunner.needs_root is True
+        assert ZypperRunner.needs_root is True
+        # 非 root / 平台自带提权的包管理器不应加 sudo
+        assert BrewRunner.needs_root is False
+        assert ChocoRunner.needs_root is False
+        assert WingetRunner.needs_root is False
+        assert MsiRunner.needs_root is False
 
 
 class TestBrewRunner:

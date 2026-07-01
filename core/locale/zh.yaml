@@ -71,6 +71,9 @@ error:
   not_supported: "当前平台不支持此功能"
   unknown: "未知错误：{error}"
 
+privilege:
+  need_root: "此操作需要 root 权限，请切换到 root 后重试（sudo -i，或为当前用户配置 sudo）"
+
 compat:
   ok: "兼容"
   warn: "有风险"
@@ -128,6 +131,8 @@ software:
     stop_service: "停止服务..."
     remove_files: "删除文件..."
     cleanup: "清理残留文件..."
+  systools: "系统工具"
+  ohmyzsh: "Oh My Zsh"
   docker: "Docker"
   docker_error:
     platform_not_supported: "Docker 配方不支持平台：{platform}"
@@ -235,7 +240,7 @@ software:
     not_installed: "Python {version} 未安装，请先安装后再切换"
     install_failed: "Python {version} 安装失败，所有方式均不可用"
     uv_timeout: "uv python install 超时（{timeout}s）"
-    uv_failed: "uv 安装失败，返回码 {code}"
+    uv_failed: "uv 安装失败，返回码 {code}（多为网络中断/限流或该版本暂无可用构建，可重试或换个版本）{detail}"
     uv_win_failed: "uv 安装失败（Windows），请检查网络连接"
     uv_linux_failed: "uv 安装失败（Linux），请检查网络连接"
     download_src_failed: "下载 Python {version} 源码失败：{error}"
@@ -253,9 +258,11 @@ software:
   search: "搜索软件"
   search_prompt: "输入软件名称或关键词"
   search_no_result: "未找到匹配软件：{keyword}"
+  search_empty: "请输入软件名称或关键词后再搜索"
   category:
     devtools: "开发工具"
     devops: "运维工具"
+    systools: "系统工具"
   category_empty: "{category} 分类下暂无可用软件"
   coming_soon: "功能即将开放"
 
@@ -386,6 +393,43 @@ xui:
     month: "本月"
     up: "↑"
     down: "↓"
+
+ohmyzsh:
+  confirm_p10k: "是否同时安装 Powerlevel10k 主题？"
+  installed_mark: "已安装"
+  step:
+    check_env: "检查 zsh 环境..."
+    install_omz: "安装 Oh My Zsh..."
+    install_plugins: "安装常用插件..."
+    disable_update: "关闭自动更新..."
+    config_p10k: "配置 Powerlevel10k..."
+    install_font: "安装 Nerd Font 字体..."
+    switch_shell: "切换默认 Shell..."
+  manage:
+    p10k_configure: "自定义 Powerlevel10k"
+    p10k_configure_hint: "即将进入 Powerlevel10k 配置向导，按提示操作即可"
+    p10k_apply_preset: "应用推荐 Powerlevel10k 配置"
+    switch_shell: "切换默认 Shell 为 zsh"
+  output:
+    install_done: "Oh My Zsh 安装完成"
+    omz_ready: "Oh My Zsh 已安装并关闭自动更新"
+    p10k_ready: "Powerlevel10k 已安装并完成自动配置"
+    p10k_skipped: "未安装 Powerlevel10k"
+    shell_switched: "默认 Shell 已切换为 zsh，重开终端生效"
+    shell_manual: "默认 Shell 未能自动切换，请手动执行 chsh -s $(which zsh)"
+    font_ready: "MesloLGS NF 字体已安装，重开终端即为最佳效果"
+    font_hint: "字体自动安装失败，可手动装 MesloLGS NF 后重开终端"
+    uninstall_done: "Oh My Zsh 已卸载"
+  error:
+    unsupported_os: "Oh My Zsh 仅支持 Linux 与 macOS"
+    download_failed: "Oh My Zsh 安装脚本下载失败"
+    install_failed: "Oh My Zsh 安装失败"
+    dep_failed: "依赖安装失败：{error}"
+    zsh_missing: "未检测到 zsh，请先安装 zsh"
+    git_missing: "未检测到 git，请先安装 git"
+    p10k_clone_failed: "Powerlevel10k 下载失败"
+    plugin_clone_failed: "插件 {name} 下载失败"
+    p10k_not_installed: "尚未安装 Powerlevel10k，请先安装"
 
 tailscale:
   step:

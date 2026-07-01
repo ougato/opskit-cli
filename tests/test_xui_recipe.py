@@ -120,7 +120,18 @@ def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(utils, "TRAFFIC_TIMER_UNIT_FILE", timer_unit)
     monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history)
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
-    monkeypatch.setattr(utils.subprocess, "run", lambda *a, **k: None)
+
+    class _R:
+        returncode = 0
+
+    def fake_root(cmd, **kwargs):
+        if cmd and cmd[0] == "rm":
+            from pathlib import Path
+            for target in cmd[2:]:
+                Path(target).unlink(missing_ok=True)
+        return _R()
+
+    monkeypatch.setattr(utils, "run_as_root", fake_root)
 
     utils.install_traffic_timer()
     assert service_unit.exists()
@@ -201,7 +212,7 @@ def test_configure_panel_settings_uses_quiet_xui_binary(monkeypatch) -> None:
         return Result()
 
     monkeypatch.setattr(utils, "command_exists", lambda name: True)
-    monkeypatch.setattr(utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     assert utils.configure_panel_settings(
         port=54321,
@@ -287,7 +298,17 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
     calls: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        calls.append(command)
+        if command and command[0] == "rm":
+            import shutil
+            from pathlib import Path
+            for target in command[2:]:
+                p = Path(target)
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    p.unlink(missing_ok=True)
+        else:
+            calls.append(command)
 
         class Result:
             returncode = 0
@@ -296,7 +317,7 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
 
     monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
-    monkeypatch.setattr(utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     utils.remove_xui_artifacts()
 

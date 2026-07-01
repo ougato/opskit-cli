@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
+from pathlib import Path
 
 from software.registry import all_recipes, get
 
@@ -52,8 +54,32 @@ def test_remove_tailscale_artifacts(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(server, "TAILSCALE_REPO_FILE", repo)
     monkeypatch.setattr(server, "TAILSCALE_KEYRING_FILE", keyring)
 
+    calls: list[list[str]] = []
+
+    def fake_run_root(command, check=True, timeout=0):
+        calls.append(command)
+        for arg in command[2:]:
+            p = Path(arg)
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(server, "_run_root", fake_run_root)
+
     server.remove_tailscale_artifacts()
 
+    assert calls == [[
+        server.RM_COMMAND, "-rf",
+        str(state_dir), str(run_dir), str(repo), str(keyring),
+    ]]
     assert not state_dir.exists()
     assert not run_dir.exists()
     assert not repo.exists()

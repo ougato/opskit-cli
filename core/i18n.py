@@ -149,3 +149,10 @@ def switch(lang: str) -> None:
 def current_lang() -> str:
     """返回当前语言代码：'zh' / 'en'"""
     return _lang
+
+
+def keys(prefix: str = "") -> list[str]:
+    """返回当前语言下所有文案 key，可选按点号前缀过滤。"""
+    if not prefix:
+        return list(_current.keys())
+    return [k for k in _current if k.startswith(prefix)]
