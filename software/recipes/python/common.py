@@ -181,6 +181,14 @@ def find_uv_python(version: str) -> str | None:
 
 # ─── 版本条目列表 ─────────────────────────────────────────────────────────────
 
+_PY_STABLE_RE = __import__("re").compile(r"^\d+(?:\.\d+)*$")
+
+
+def is_stable_pyver(version: str) -> bool:
+    """仅纯数字点分（如 3.14.0）视为正式版；含 a/b/rc 等字母的预发布返回 False。"""
+    return bool(_PY_STABLE_RE.match(version or ""))
+
+
 def version_entries() -> list[VersionEntry]:
     """
     返回带编译标记的版本条目列表。
@@ -239,6 +247,8 @@ def version_entries() -> list[VersionEntry]:
         return raw
 
     raw = resolve_versions("python", _fetch, list(PYTHON_VERSIONS_FALLBACK))
+    # 仅保留正式版：排除 a/b/rc 等预发布（如 3.14.0a7），保证安装/升级/切换一致
+    raw = [v for v in raw if is_stable_pyver(v)]
 
     info = get_platform()
     pkg_minors = get_pkg_minors(info.os_name, info.os_version, info.pkg_manager)

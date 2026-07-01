@@ -12,6 +12,7 @@ from software.registry import register
 from core.i18n import t
 from .common import (
     find_uv_python,
+    is_stable_pyver,
     load_snapshot,
     save_snapshot,
     delete_snapshot,
@@ -65,7 +66,7 @@ class PythonRecipe(Recipe):
             if len(parts) < 2:
                 continue
             ver = parts[1]
-            if ver.count(".") >= 2:
+            if ver.count(".") >= 2 and is_stable_pyver(ver):
                 versions.append(ver)
         versions.sort(key=lambda v: [int(x) for x in v.split(".") if x.isdigit()], reverse=True)
         return versions
