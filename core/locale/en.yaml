@@ -404,6 +404,7 @@ ohmyzsh:
     install_plugins: "Installing common plugins..."
     disable_update: "Disabling auto-update..."
     config_p10k: "Configuring Powerlevel10k..."
+    install_font: "Installing Nerd Font..."
     switch_shell: "Switching default shell..."
   manage:
     p10k_configure: "Customize Powerlevel10k"
@@ -417,7 +418,8 @@ ohmyzsh:
     p10k_skipped: "Powerlevel10k not installed"
     shell_switched: "Default shell set to zsh, effective in a new terminal"
     shell_manual: "Could not switch default shell, run: chsh -s $(which zsh)"
-    font_hint: "If prompt icons look garbled, install the MesloLGS NF font"
+    font_ready: "MesloLGS NF font installed, reopen terminal for best results"
+    font_hint: "Auto font install failed; install MesloLGS NF, then reopen terminal"
     uninstall_done: "Oh My Zsh uninstalled"
   error:
     unsupported_os: "Oh My Zsh only supports Linux and macOS"

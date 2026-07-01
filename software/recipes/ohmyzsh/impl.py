@@ -40,6 +40,9 @@ from software.recipes.ohmyzsh.constants import (
     DISABLE_UPDATE_LINES,
     DOWNLOAD_TIMEOUT_SECONDS,
     EXTRA_PLUGINS,
+    FC_CACHE_COMMAND,
+    FONT_BASE_URL,
+    FONT_FILES,
     FULL_PLUGINS,
     GIT_CLONE_TIMEOUT_SECONDS,
     GIT_COMMAND,
@@ -56,6 +59,7 @@ from software.recipes.ohmyzsh.constants import (
     SUPPORTED_PLATFORMS,
     ZSH_COMMAND,
     ZSH_PACKAGE,
+    font_dir,
     omz_dir,
     omz_plugin_dir,
     p10k_config_path,
@@ -252,6 +256,29 @@ def _write_p10k_preset() -> None:
     p10k_config_path().write_text(p10k_preset(), encoding="utf-8")
 
 
+def _install_fonts() -> bool:
+    """下载并安装 MesloLGS NF 字体，成功返回 True（尽力而为，失败不阻断安装）。"""
+    from urllib.parse import quote
+
+    try:
+        dest_dir = font_dir()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for name in FONT_FILES:
+            target = dest_dir / name
+            if target.exists():
+                continue
+            content = get_bytes(FONT_BASE_URL + quote(name), timeout=DOWNLOAD_TIMEOUT_SECONDS)
+            if content is None:
+                return False
+            target.write_bytes(content)
+        # Linux 刷新字体缓存（macOS 自动识别，无需 fc-cache）。
+        if command_exists(FC_CACHE_COMMAND):
+            _run([FC_CACHE_COMMAND, "-f", str(dest_dir)])
+        return True
+    except Exception:
+        return False
+
+
 def _install_plugins() -> None:
     """克隆常用 Oh My Zsh 插件（自动补全、语法高亮），已存在则跳过。"""
     if not command_exists(GIT_COMMAND):
@@ -322,9 +349,11 @@ def install_ohmyzsh() -> None:
     ]
     if with_p10k:
         descs.append(t("ohmyzsh.step.config_p10k"))
+        descs.append(t("ohmyzsh.step.install_font"))
     descs.append(t("ohmyzsh.step.switch_shell"))
 
     shell_switched = False
+    font_installed = True
     try:
         with MultiStepProgress(descs) as sp:
             sp.step(t("ohmyzsh.step.check_env"))
@@ -344,6 +373,9 @@ def install_ohmyzsh() -> None:
                 _install_p10k()
                 _write_p10k_preset()
 
+                sp.step(t("ohmyzsh.step.install_font"))
+                font_installed = _install_fonts()
+
             sp.step(t("ohmyzsh.step.switch_shell"))
             shell_switched = _switch_default_shell()
             sp.complete()
@@ -353,7 +385,8 @@ def install_ohmyzsh() -> None:
         raise InstallError(str(exc)) from exc
 
     console.print()
-    _render_done_panel(with_p10k=with_p10k, shell_switched=shell_switched)
+    _render_done_panel(with_p10k=with_p10k, shell_switched=shell_switched,
+                       font_installed=font_installed)
 
 
 def uninstall_ohmyzsh() -> None:
@@ -407,7 +440,7 @@ def _cleanup_zshrc() -> None:
 
 # ─── 结果面板 ─────────────────────────────────────────────────────────────────
 
-def _render_done_panel(with_p10k: bool, shell_switched: bool) -> None:
+def _render_done_panel(with_p10k: bool, shell_switched: bool, font_installed: bool = True) -> None:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
@@ -423,7 +456,9 @@ def _render_done_panel(with_p10k: bool, shell_switched: bool) -> None:
         t("ohmyzsh.output.shell_switched") if shell_switched else t("ohmyzsh.output.shell_manual")
     )
     if with_p10k:
-        rows.append(t("ohmyzsh.output.font_hint"))
+        rows.append(
+            t("ohmyzsh.output.font_ready") if font_installed else t("ohmyzsh.output.font_hint")
+        )
 
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(no_wrap=False)
@@ -505,11 +540,13 @@ def _manage_p10k_apply_preset(breadcrumb: list[str]) -> None:
         _install_p10k()
         _apply_zshrc(with_p10k=True)
         _write_p10k_preset()
+        font_installed = _install_fonts()
     except Exception as exc:
         print_error(t("error.unknown", error=str(exc)))
         pause()
         return
     print_success(t("ohmyzsh.output.p10k_ready"))
+    print_info(t("ohmyzsh.output.font_ready") if font_installed else t("ohmyzsh.output.font_hint"))
     pause()
 
 

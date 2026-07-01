@@ -25,6 +25,18 @@ ZSH_SYNTAX_HIGHLIGHTING_REPO_URL: Final[str] = (
     "https://github.com/zsh-users/zsh-syntax-highlighting.git"
 )
 
+# Powerlevel10k 推荐字体 MesloLGS NF（rainbow 圆角分隔符/图标需要 Nerd Font 才能正常渲染）。
+FONT_BASE_URL: Final[str] = (
+    "https://github.com/romkatv/powerlevel10k-media/raw/master/"
+)
+FONT_FILES: Final[tuple[str, ...]] = (
+    "MesloLGS NF Regular.ttf",
+    "MesloLGS NF Bold.ttf",
+    "MesloLGS NF Italic.ttf",
+    "MesloLGS NF Bold Italic.ttf",
+)
+FC_CACHE_COMMAND: Final[str] = "fc-cache"
+
 # ─── 路径 ─────────────────────────────────────────────────────────────────────
 def home_dir() -> Path:
     return Path.home()
@@ -44,6 +56,15 @@ def p10k_theme_dir() -> Path:
 
 def omz_plugin_dir(name: str) -> Path:
     return omz_custom_dir() / "plugins" / name
+
+
+def font_dir() -> Path:
+    """用户字体目录：macOS 用 ~/Library/Fonts，其余（Linux）用 ~/.local/share/fonts。"""
+    import sys
+
+    if sys.platform == "darwin":
+        return home_dir() / "Library" / "Fonts"
+    return home_dir() / ".local" / "share" / "fonts"
 
 
 def zshrc_path() -> Path:

@@ -403,6 +403,7 @@ ohmyzsh:
     install_plugins: "安装常用插件..."
     disable_update: "关闭自动更新..."
     config_p10k: "配置 Powerlevel10k..."
+    install_font: "安装 Nerd Font 字体..."
     switch_shell: "切换默认 Shell..."
   manage:
     p10k_configure: "自定义 Powerlevel10k"
@@ -416,7 +417,8 @@ ohmyzsh:
     p10k_skipped: "未安装 Powerlevel10k"
     shell_switched: "默认 Shell 已切换为 zsh，重开终端生效"
     shell_manual: "默认 Shell 未能自动切换，请手动执行 chsh -s $(which zsh)"
-    font_hint: "如提示符图标乱码，请给终端安装 MesloLGS NF 字体"
+    font_ready: "MesloLGS NF 字体已安装，重开终端即为最佳效果"
+    font_hint: "字体自动安装失败，可手动装 MesloLGS NF 后重开终端"
     uninstall_done: "Oh My Zsh 已卸载"
   error:
     unsupported_os: "Oh My Zsh 仅支持 Linux 与 macOS"
