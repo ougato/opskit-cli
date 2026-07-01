@@ -71,6 +71,9 @@ error:
   not_supported: "Not supported on this platform"
   unknown: "Unknown error: {error}"
 
+privilege:
+  need_root: "This operation requires root. Switch to root and retry (sudo -i, or grant the current user sudo)"
+
 compat:
   ok: "Compatible"
   warn: "Risk"

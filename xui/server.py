@@ -11,6 +11,7 @@ import sys
 from rich.console import Console
 
 from core.i18n import t
+from core.privilege import run_as_root, write_root_file
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
 from core.theme import get_icon, print_action_title, print_error, print_success, print_warning
@@ -132,27 +133,33 @@ def _install_base_packages() -> None:
         return
     env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
     if command_exists(APT_GET_COMMAND):
-        subprocess.run(
+        run_as_root(
             [APT_GET_COMMAND, APT_UPDATE_COMMAND],
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
         )
-        subprocess.run(
+        run_as_root(
             [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND],
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
         )
         return
     if command_exists(YUM_COMMAND):
-        subprocess.run(
+        run_as_root(
             [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE],
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
         )
         return
@@ -160,24 +167,23 @@ def _install_base_packages() -> None:
 
 
 def _enable_bbr() -> None:
-    subprocess.run(
+    run_as_root(
         [MODPROBE_COMMAND, BBR_KERNEL_MODULE],
-        check=False, capture_output=True, text=True,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     for param, value in BBR_SYSPARAMS.items():
-        subprocess.run(
+        run_as_root(
             [SYSCTL_COMMAND, SYSCTL_WRITE_ARG, f"{param}={value}"],
-            check=False, capture_output=True, text=True,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-    BBR_SYSCTL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BBR_SYSCTL_FILE.write_text(BBR_SYSCTL_FILE_CONTENT, encoding="utf-8")
+    write_root_file(BBR_SYSCTL_FILE, BBR_SYSCTL_FILE_CONTENT, "0644")
 
 
 def _save_pending_inbounds(inbounds: list[dict[str, object]]) -> None:
-    XUI_PENDING_INBOUNDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    XUI_PENDING_INBOUNDS_FILE.write_text(
+    write_root_file(
+        XUI_PENDING_INBOUNDS_FILE,
         json.dumps(inbounds, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+        "0644",
     )
 
 
@@ -210,8 +216,7 @@ def _enable_wsl_systemd() -> None:
     else:
         sep = "" if text == "" or text.endswith("\n") else "\n"
         new_text = f"{text}{sep}{WSL_BOOT_HEADER}\n{WSL_SYSTEMD_LINE}\n"
-    WSL_CONF_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WSL_CONF_FILE.write_text(new_text, encoding="utf-8")
+    write_root_file(WSL_CONF_FILE, new_text, "0644")
 
 
 def _restart_wsl() -> bool:
@@ -415,7 +420,7 @@ def uninstall_server() -> None:
             sp.step(descs[1])
             uninstall_traffic_timer()
             remove_xui_artifacts()
-            BBR_SYSCTL_FILE.unlink(missing_ok=True)
+            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE)], check=False, capture_output=True)
 
             sp.step(descs[2])
             from core.sysconfig import SysConfigManager

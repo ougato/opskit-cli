@@ -17,6 +17,7 @@ class XuiRecipe(Recipe):
     description: ClassVar[str] = "x-ui / 3x-ui VLESS REALITY TCP 面板"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True

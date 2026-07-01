@@ -71,6 +71,9 @@ error:
   not_supported: "当前平台不支持此功能"
   unknown: "未知错误：{error}"
 
+privilege:
+  need_root: "此操作需要 root 权限，请切换到 root 后重试（sudo -i，或为当前用户配置 sudo）"
+
 compat:
   ok: "兼容"
   warn: "有风险"

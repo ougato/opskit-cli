@@ -6,6 +6,7 @@ import subprocess
 import re
 from pathlib import Path
 
+from core.privilege import run_as_root, write_root_file
 from wireguard.constants import XRAY_DOC_URL as _XRAY_DOC_URL
 
 
@@ -101,45 +102,29 @@ def is_service_active(service: str) -> bool:
 
 
 def enable_and_start(service: str) -> None:
-    """启用并启动 systemd 服务"""
-    subprocess.run(["systemctl", "enable", service], check=True,
-                   capture_output=True, text=True)
-    subprocess.run(["systemctl", "start", service], check=True,
-                   capture_output=True, text=True)
+    """启用并启动 systemd 服务（写系统 unit，需 root，非 root 自动 sudo）"""
+    run_as_root(["systemctl", "enable", service], check=True,
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+    run_as_root(["systemctl", "start", service], check=True,
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def stop_and_disable(service: str) -> None:
-    """停止并禁用 systemd 服务"""
-    subprocess.run(["systemctl", "stop", service], check=False,
-                   capture_output=True, text=True)
-    subprocess.run(["systemctl", "disable", service], check=False,
-                   capture_output=True, text=True)
+    """停止并禁用 systemd 服务（需 root，非 root 自动 sudo）"""
+    run_as_root(["systemctl", "stop", service], check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+    run_as_root(["systemctl", "disable", service], check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def write_file(path: str, content: str) -> None:
-    """原子写入文件"""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(p)
+    """写入文件（系统路径自动提权落位）"""
+    write_root_file(path, content, "0644")
 
 
 def write_secret_file(path: str, content: str) -> None:
-    """原子写入敏感文件，并限制为 owner 可读写。"""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    try:
-        tmp.chmod(0o600)
-    except Exception:
-        pass
-    tmp.replace(p)
-    try:
-        p.chmod(0o600)
-    except Exception:
-        pass
+    """写入敏感文件，并限制为 owner 可读写（系统路径自动提权落位）。"""
+    write_root_file(path, content, "0600")
 
 
 def get_os_id() -> str:
@@ -198,7 +183,8 @@ def ensure_xray_service(xray_path: Path, service_name: str) -> None:
     from core.paths import xray_config_file
     service_path = Path(f"/etc/systemd/system/{service_name}.service")
     if not service_path.exists():
-        service_path.write_text(
+        write_root_file(
+            service_path,
             "[Unit]\n"
             "Description=Xray Service\n"
             f"Documentation={_XRAY_DOC_URL}\n"
@@ -216,9 +202,10 @@ def ensure_xray_service(xray_path: Path, service_name: str) -> None:
             "RuntimeDirectory=xray\n"
             "RuntimeDirectoryMode=0755\n\n"
             "[Install]\n"
-            "WantedBy=multi-user.target\n"
+            "WantedBy=multi-user.target\n",
+            "0644",
         )
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 
 def install_xray() -> None:
@@ -236,11 +223,10 @@ def install_xray() -> None:
     log_dir = xray_log_dir()
 
     if xray_path.exists():
-        log_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["chown", "nobody:nogroup", str(log_dir)],
-                       check=False, capture_output=True)
-        xray_config_dir().mkdir(parents=True, exist_ok=True)
-        xray_data_dir().mkdir(parents=True, exist_ok=True)
+        run_as_root(["mkdir", "-p", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
+                    check=False, capture_output=True)
+        run_as_root(["chown", "nobody:nogroup", str(log_dir)],
+                    check=False, capture_output=True)
         ensure_xray_service(xray_path, XRAY_SERVICE)
         return
 
@@ -325,23 +311,16 @@ def install_xray() -> None:
             from core.i18n import t
             raise InstallError(t("wireguard.error.xray_zip_missing"))
 
-        xray_path.parent.mkdir(parents=True, exist_ok=True)
-        xray_data_dir().mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(xray_path))
-        xray_path.chmod(0o755)
+        run_as_root(["mkdir", "-p", str(xray_path.parent), str(xray_data_dir())],
+                    check=False, capture_output=True)
+        run_as_root(["install", "-m", "0755", str(src), str(xray_path)])
 
         for geo in ("geoip.dat", "geosite.dat"):
             geo_src = extract_dir / geo
             if geo_src.exists():
-                shutil.copy2(str(geo_src), str(xray_data_dir() / geo))
+                run_as_root(["install", "-m", "0644", str(geo_src), str(xray_data_dir() / geo)])
 
     ensure_xray_service(xray_path, XRAY_SERVICE)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    xray_config_dir().mkdir(parents=True, exist_ok=True)
-    xray_data_dir().mkdir(parents=True, exist_ok=True)
-    try:
-        import pwd as _pwd
-        shutil.chown(str(log_dir), user=_pwd.getpwnam("nobody").pw_uid,
-                     group=_pwd.getpwnam("nobody").pw_gid)
-    except Exception:
-        pass
+    run_as_root(["mkdir", "-p", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
+                check=False, capture_output=True)
+    run_as_root(["chown", "nobody:nogroup", str(log_dir)], check=False, capture_output=True)

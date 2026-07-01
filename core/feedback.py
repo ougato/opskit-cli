@@ -42,6 +42,13 @@ def report_failure(
         software/action/version: 遥测上下文（version 为 None 时不带）。
     """
     from software.base import InstallError, UninstallError
+    from core.privilege import PrivilegeError
+
+    # 权限前置条件未满足：不是执行失败，直接给出「切换到 root」的友好提示，不计入失败遥测。
+    if isinstance(exc, PrivilegeError):
+        from core.theme import print_warning
+        print_warning(str(exc))
+        return
 
     ctx: dict = {"software": software, "action": action}
     if version is not None:

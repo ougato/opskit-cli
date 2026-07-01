@@ -875,12 +875,16 @@ def show_install() -> None:
     print_header(["OpsKit", t("menu.software"), t("software.install")])
     base_console.print()
     import time as _time
+    from core.privilege import ensure_root_for_action, PrivilegeError
     _t0 = _time.monotonic()
     try:
+        ensure_root_for_action(instance, "install")
         instance.install(version)
         _vers = getattr(instance, "installed_versions", lambda: [])() or []
         _ver = _vers[-1] if _vers else version
         print_success(t("install.success", name=_iname, version=_ver, elapsed=_time.monotonic() - _t0))
+    except PrivilegeError as e:
+        print_warning(str(e))
     except InstallError as e:
         print_error(t("install.failed", name=_iname, error=str(e)))
     except Exception as e:
@@ -1022,10 +1026,14 @@ def show_uninstall() -> None:
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.uninstall")])
     base_console.print()
+    from core.privilege import ensure_root_for_action, PrivilegeError
     try:
+        ensure_root_for_action(instance, "uninstall")
         instance.uninstall()
         from core.installed_cache import invalidate
         invalidate(cls.key)
+    except PrivilegeError as e:
+        print_warning(str(e))
     except UninstallError as e:
         print_error(t("uninstall.failed", name=_usname, error=str(e)))
     except Exception as e:
@@ -1122,11 +1130,15 @@ def show_upgrade() -> None:
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.upgrade")])
     base_console.print()
+    from core.privilege import ensure_root_for_action, PrivilegeError
     try:
+        ensure_root_for_action(instance, "upgrade")
         instance.upgrade(new_version)
         from core.installed_cache import invalidate
         invalidate(cls.key)
         print_success(t("upgrade.success", name=_upgname, elapsed=0))
+    except PrivilegeError as e:
+        print_warning(str(e))
     except InstallError as e:
         print_error(t("upgrade.failed", name=_upgname, error=str(e)))
     except Exception as e:

@@ -16,6 +16,7 @@ class RustDeskRecipe(Recipe):
     description: ClassVar[str] = "RustDesk 远程桌面服务"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = []
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True

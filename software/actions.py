@@ -46,8 +46,10 @@ class ActionResult:
 
 def execute_install(instance, version: str) -> ActionResult:
     """执行安装：``install(version)`` → 计时 → 安装后 ``detect()`` 回落版本。"""
+    from core.privilege import ensure_root_for_action
     start = time.monotonic()
     try:
+        ensure_root_for_action(instance, "install")
         instance.install(version)
         detected = instance.detect() or version
         _invalidate_installed(instance)
@@ -58,8 +60,10 @@ def execute_install(instance, version: str) -> ActionResult:
 
 def execute_switch(instance, version: str) -> ActionResult:
     """执行版本切换：``switch(version)``。"""
+    from core.privilege import ensure_root_for_action
     start = time.monotonic()
     try:
+        ensure_root_for_action(instance, "switch")
         instance.switch(version)
         _invalidate_installed(instance)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
@@ -73,8 +77,10 @@ def execute_upgrade(instance, version: str, already_installed: bool) -> ActionRe
     ``already_installed=True`` 且 recipe 支持切换时，目标版本已在本地 → 直接
     ``switch``（免重新下载），结果 ``switched=True``；否则走 ``upgrade``。
     """
+    from core.privilege import ensure_root_for_action
     start = time.monotonic()
     try:
+        ensure_root_for_action(instance, "upgrade")
         if already_installed and hasattr(instance, "switch"):
             instance.switch(version)
             _invalidate_installed(instance)
@@ -88,8 +94,10 @@ def execute_upgrade(instance, version: str, already_installed: bool) -> ActionRe
 
 def execute_uninstall(instance, version: str | None = None) -> ActionResult:
     """执行卸载：``uninstall(version)``（``version=None`` 表示卸载全部）。"""
+    from core.privilege import ensure_root_for_action
     start = time.monotonic()
     try:
+        ensure_root_for_action(instance, "uninstall")
         instance.uninstall(version)
         _invalidate_installed(instance)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)

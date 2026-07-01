@@ -14,6 +14,7 @@ class WireGuardRecipe(Recipe):
     description: ClassVar[str] = "WireGuard VPN 隧道"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = False
@@ -46,6 +47,7 @@ class WgServerRecipe(Recipe):
     description: ClassVar[str] = "WireGuard 公网服务端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -123,6 +125,7 @@ class WgClientRecipe(Recipe):
     description: ClassVar[str] = "WireGuard 私网客户端（over Xray VLESS WS TLS）"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = [{"key": "python", "min": "3.10"}]
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True

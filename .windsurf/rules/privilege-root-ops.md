@@ -15,6 +15,37 @@ OpsKit **没有**进程级整体提权（不存在启动即 sudo 的逻辑，`re
 
 ---
 
+## 提权闸门（gate）+ `requires_root` 声明
+
+为避免「进度条中途逐条弹 sudo 密码」的割裂体验，在每个 install / uninstall / upgrade / switch
+动作**入口**统一经过一道提权闸门 `core.privilege.ensure_root_for_action(instance, action)`：
+
+1. recipe 未声明 `requires_root`（用户态软件）→ 直接返回，不受影响；
+2. 已是 root / Windows → 返回；
+3. 非 root Linux/macOS：
+   - 免密 sudo 可用（`sudo -n true`）→ 返回，后续 `run_as_root` 全程无感；
+   - 需要密码 → **一次性** `sudo -v` 预热（只输一次密码，缓存约 15 分钟）→ 返回；
+   - 无 sudo / 用户取消 → 抛 `PrivilegeError`，上层 `menu.py` 捕获并 `print_warning`
+     友好提示「切到 root 后重试或为当前账号配置 sudo」，**不崩溃**。
+
+闸门已接入 `software/actions.py`（execute_install/uninstall/upgrade/switch）与
+`software/menu.py`（show_install/uninstall/upgrade），**新增软件无需自己调用**。
+
+### `requires_root` 类属性（`software/base.py`）
+
+每个 Recipe 通过类属性声明是否需要 root，闸门据此决定是否预热 sudo：
+
+```python
+class MyRecipe(Recipe):
+    requires_root = True   # 装到 /usr + systemd 系统服务：docker/nginx/tailscale/wireguard/xui/rustdesk
+    # requires_root = False  # 纯用户态：python/nodejs/golang/java（默认 False）
+```
+
+> 判定标准：**实际装到 `/usr`、`/etc` 且注册 systemd 服务** 才置 `True`；
+> 装到用户目录（`~/.config` 等）的一律 `False`。
+
+---
+
 ## 哪些操作需要提权
 
 凡是触及以下资源的操作都属于 root 操作，必须走 `run_as_root`：
@@ -86,29 +117,30 @@ Path("/etc/apt/sources.list.d/foo.list").unlink(missing_ok=True)
 shutil.rmtree("/var/lib/foo")
 ```
 
-### 4. 写入系统文件：写临时文件再用 root 拷贝（不要直接 write_text）
+### 4. 写入系统文件：用 `write_root_file()`（不要直接 write_text）
 
-`Path("/etc/...").write_text(...)` 在非 root 下必然失败。应写到临时文件，再以 root 落位：
+`Path("/etc/...").write_text(...)` 在非 root 下必然失败。统一用 `core.privilege.write_root_file()`——
+它在 root/Windows/父目录可写时直接写入，否则自动「临时文件 + `run_as_root(["install", ...])` 落位」：
 
 ```python
-# ✅ 正确：tempfile + run_as_root(["cp"/"install"/"tee"])
-import tempfile
-from pathlib import Path
-from core.privilege import run_as_root
-
-with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as f:
-    f.write(content)
-    tmp = f.name
-run_as_root(["install", "-m", "0644", tmp, "/etc/sysctl.d/99-wg.conf"],
-            capture_output=True, text=True, check=False)
-Path(tmp).unlink(missing_ok=True)
+# ✅ 正确：一行搞定，非 root 自动提权落位，属主为 root
+from core.privilege import write_root_file
+write_root_file("/etc/sysctl.d/99-wg.conf", "net.ipv4.ip_forward=1\n", "0644")
 ```
+
+> 参考实现：`wireguard/server.py`、`wireguard/client.py`、`xui/server.py`、`xui/utils.py`
+> 均已将裸 `write_text` / `open(系统路径,"w"/"a")` 改为 `write_root_file`。
 
 ```python
 # ❌ 禁止：直接写系统路径
 Path("/etc/sysctl.d/99-wg.conf").write_text("net.ipv4.ip_forward=1\n")
 with open("/etc/wireguard/wg0.conf", "a") as f: ...
 ```
+
+### 5. subprocess 编码：统一 `encoding="utf-8", errors="replace"`
+
+所有带 `text=True` 的 `run_as_root` / `subprocess.run` 必须显式指定 `encoding="utf-8", errors="replace"`，
+否则在 ASCII locale 机器上解码脚本输出（含 UTF-8 字符）会抛 `'ascii' codec can't decode`。
 
 ---
 
@@ -119,7 +151,9 @@ with open("/etc/wireguard/wg0.conf", "a") as f: ...
 - [ ] 所有包管理操作经 `get_runner()`，无裸 `subprocess.run(["apt-get"/"yum"/...])`
 - [ ] 所有 `systemctl` / `service` 操作经 `core/service.py` 或 `run_as_root`
 - [ ] 删除 `/etc`、`/usr`、`/var`、`/run`、`/root` 下文件经 `run_as_root(["rm", ...])`，无裸 `unlink` / `shutil.rmtree`
-- [ ] 写入系统文件经「临时文件 + `run_as_root` 拷贝」，无直接 `write_text` / `open(系统路径, "w"/"a")`
+- [ ] 写入系统文件经 `write_root_file()`，无直接 `write_text` / `open(系统路径, "w"/"a")`
+- [ ] 需要 root 的 Recipe 已在 `software/base.py` 子类里声明 `requires_root = True`（用户态保持默认 `False`）
+- [ ] 带 `text=True` 的 subprocess 均带 `encoding="utf-8", errors="replace"`
 - [ ] **对称性**：install 提权的每一处，对应的 uninstall / upgrade 也提权
 - [ ] 以**非 root 普通用户**走完 安装 → 卸载 → 重装 全流程，卸载后 `detect()` 返回 `None`（确认卸干净、重装不再提示「已安装」）
 - [ ] 只读探测命令（version / is-active / show / `nginx -t`）不要无谓提权
@@ -130,8 +164,11 @@ with open("/etc/wireguard/wg0.conf", "a") as f: ...
 
 | 文件 | 职责 |
 |---|---|
-| `core/privilege.py` | `run_as_root()` 逐命令提权（非 root 加 sudo），`is_root()` 检测 |
+| `core/privilege.py` | `run_as_root()` 逐命令提权、`write_root_file()` root 写文件、`ensure_root_for_action()` 提权闸门、`is_root()` 检测 |
+| `software/base.py` | `Recipe.requires_root` 类属性声明 |
+| `software/actions.py` / `software/menu.py` | 在 install/uninstall/upgrade/switch 入口调用闸门并捕获 `PrivilegeError` |
 | `core/pkg_runner.py` | 包管理器策略；系统级管理器 `needs_root = True` 自动提权 |
 | `core/service.py` | `enable_now` / `disable_now` 等服务操作，内部已用 `run_as_root` |
-| `tailscale/server.py` | 提权删除系统文件（`remove_tailscale_artifacts`）、root 写文件参考实现 |
+| `tailscale/server.py` | 提权删除系统文件（`remove_tailscale_artifacts`）参考实现 |
+| `wireguard/{server,client,utils}.py`、`xui/{server,utils}.py` | `run_as_root` + `write_root_file` 全量改造范例 |
 | `software/recipes/rustdesk/server.py` | `run_as_root(["rm", ...])`、服务管理的范例 |

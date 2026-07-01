@@ -72,6 +72,61 @@ def _elevate_windows() -> None:
         sys.exit(1)
 
 
+class PrivilegeError(Exception):
+    """需要 root 权限但无法提权（无 sudo / 提权被拒）时抛出。"""
+
+
+def _has_sudo() -> bool:
+    import shutil
+    return shutil.which("sudo") is not None
+
+
+def _sudo_passwordless() -> bool:
+    """免密 sudo 可用（`sudo -n true` 成功）。"""
+    try:
+        return subprocess.run(
+            ["sudo", "-n", "true"], capture_output=True
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _prime_sudo() -> bool:
+    """交互式预热 sudo 凭据（提示一次密码，缓存约 15 分钟），成功返回 True。
+
+    预热后同一会话内的多次 run_as_root 不会在进度条中途再逐条弹密码。
+    """
+    try:
+        return subprocess.run(["sudo", "-v"]).returncode == 0
+    except Exception:
+        return False
+
+
+def ensure_root_for_action(instance, action: str = "") -> None:
+    """特权闸门：在执行需要 root 的 install/uninstall/upgrade 前统一调用。
+
+    - recipe 未声明 ``requires_root`` → 直接返回（用户态软件不受影响）。
+    - 已是 root（或 Windows，另有提权机制）→ 返回。
+    - 非 root Linux/macOS：
+        免密 sudo 可用 → 返回（后续 ``run_as_root`` 全程无感）；
+        需要密码 → 预热 sudo（仅提示一次密码）→ 成功返回，否则抛 :class:`PrivilegeError`；
+        无 sudo → 抛 :class:`PrivilegeError`（提示用户切换到 root）。
+    """
+    if not getattr(type(instance), "requires_root", False):
+        return
+    if is_root() or sys.platform == "win32":
+        return
+
+    from core.i18n import t
+    if not _has_sudo():
+        raise PrivilegeError(t("privilege.need_root"))
+    if _sudo_passwordless():
+        return
+    if _prime_sudo():
+        return
+    raise PrivilegeError(t("privilege.need_root"))
+
+
 def run_as_root(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
     """
     以 root / admin 权限执行命令。
@@ -88,3 +143,49 @@ def run_as_root(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
         return subprocess.run(["sudo"] + list(cmd), **kwargs)
 
     return subprocess.run(list(cmd), **kwargs)
+
+
+def write_root_file(path, content, mode: str = "0644") -> None:
+    """以 root 权限写入系统文件（``/etc``、``/root`` 等）。
+
+    - 已是 root / Windows：直接写入（自动创建父目录）。
+    - 非 root Linux/macOS：写入临时文件 → ``run_as_root(["install", ...])`` 落位，
+      避免用普通用户身份直接 ``write_text`` 系统路径导致的 Permission denied，
+      同时保证落位文件属主为 root。
+
+    Args:
+        path: 目标路径（str 或 Path）。
+        content: 文件内容（str 按 UTF-8 编码，或 bytes）。
+        mode: 八进制权限字符串（如 ``"0644"`` / ``"0600"``）。
+    """
+    import tempfile
+    from pathlib import Path
+
+    p = Path(path)
+    path = str(path)
+    data = content.encode("utf-8") if isinstance(content, str) else content
+
+    # 已是 root / Windows，或父目录当前用户可写（如用户态目录、临时目录）：直接写入。
+    parent = p.parent
+    if is_root() or sys.platform == "win32" or (parent.exists() and os.access(parent, os.W_OK)):
+        parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        try:
+            os.chmod(path, int(mode, 8))
+        except OSError:
+            pass
+        return
+
+    fd, tmp = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        parent = os.path.dirname(path)
+        if parent:
+            run_as_root(["mkdir", "-p", parent])
+        run_as_root(["install", "-m", mode, tmp, path])
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass

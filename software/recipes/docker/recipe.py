@@ -17,6 +17,7 @@ class DockerRecipe(Recipe):
     description: ClassVar[str] = "Docker 容器引擎"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    requires_root: ClassVar[bool] = True
     has_upgrade: ClassVar[bool] = False
     has_install_version_selection: ClassVar[bool] = False
     confirm_before_install: ClassVar[bool] = False

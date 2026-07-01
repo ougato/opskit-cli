@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from software.base import InstallError
 from core.constants import PUBLIC_IP_APIS
+from core.privilege import run_as_root, write_root_file
 from core.theme import console
 from wireguard.constants import ACME_INSTALL_MIRRORS
 
@@ -113,17 +114,16 @@ def _generate_client_token(
 def _setup_dnsmasq(vpn_gateway: str, base_domain: str, os_id: str) -> None:
     """安装并配置 dnsmasq — 安全、幂等、不覆盖用户配置"""
     import shutil
-    import subprocess
     from pathlib import Path
     from wireguard.constants import DNSMASQ_CONF_PATH, DNSMASQ_UPSTREAM_DNS
 
     if not shutil.which("dnsmasq"):
         if os_id in ("debian", "ubuntu"):
-            subprocess.run(["apt-get", "install", "-y", "dnsmasq"],
-                           check=True, capture_output=True, text=True)
+            run_as_root(["apt-get", "install", "-y", "dnsmasq"],
+                        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         else:
-            subprocess.run(["yum", "install", "-y", "dnsmasq"],
-                           check=True, capture_output=True, text=True)
+            run_as_root(["yum", "install", "-y", "dnsmasq"],
+                        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     upstream_lines = "\n".join(f"server={s}" for s in DNSMASQ_UPSTREAM_DNS)
     new_content = (
@@ -137,16 +137,13 @@ def _setup_dnsmasq(vpn_gateway: str, base_domain: str, os_id: str) -> None:
         f"{upstream_lines}\n"
     )
     conf_path = Path(DNSMASQ_CONF_PATH)
-    conf_path.parent.mkdir(parents=True, exist_ok=True)
-    if conf_path.exists() and conf_path.read_text("utf-8") == new_content:
-        pass
-    else:
-        conf_path.write_text(new_content, encoding="utf-8")
+    if not (conf_path.exists() and conf_path.read_text("utf-8") == new_content):
+        write_root_file(conf_path, new_content, "0644")
 
-    subprocess.run(["systemctl", "enable", "--now", "dnsmasq"],
-                   check=False, capture_output=True, text=True)
-    subprocess.run(["systemctl", "restart", "dnsmasq"],
-                   check=False, capture_output=True, text=True)
+    run_as_root(["systemctl", "enable", "--now", "dnsmasq"],
+                check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    run_as_root(["systemctl", "restart", "dnsmasq"],
+                check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def install_server() -> None:
@@ -362,9 +359,9 @@ def install_server() -> None:
             ws_path=XRAY_WS_PATH,
         )
         write_file(NGINX_VLESS_WS_CONF, nginx_cfg)
-        subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-        subprocess.run(["systemctl", "reload", "nginx"], check=False,
-                       capture_output=True, text=True)
+        run_as_root(["nginx", "-t"], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        run_as_root(["systemctl", "reload", "nginx"], check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
 
         # ── 生成密钥 ─────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.gen_keys"))
@@ -404,8 +401,8 @@ def install_server() -> None:
             client_ip=client_ip,
             psk=client_psk,
         )
-        with open(WG_CONFIG_FILE, "a") as f:
-            f.write(peer_section)
+        run_as_root(["tee", "-a", WG_CONFIG_FILE], input=peer_section,
+                    check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
         # 提取基准域名（如 wg.icerror.top → icerror.top）
         _sni_parts = sni.strip().split(".")
@@ -459,19 +456,18 @@ def install_server() -> None:
 
         # ── 启动服务 ─────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.start_services"))
-        subprocess.run(["sysctl", "-w", "net.ipv4.ip_forward=1"], check=True,
-                       capture_output=True, text=True)
-        from pathlib import Path as _SysPath
-        _SysPath("/etc/sysctl.d/99-wg.conf").write_text("net.ipv4.ip_forward=1\n")
+        run_as_root(["sysctl", "-w", "net.ipv4.ip_forward=1"], check=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
+        write_root_file("/etc/sysctl.d/99-wg.conf", "net.ipv4.ip_forward=1\n", "0644")
 
         from wireguard.utils import stop_and_disable as _sad
         _sad(XRAY_SERVICE)
         _sad(WG_SERVICE)
         enable_and_start(XRAY_SERVICE)
         enable_and_start(WG_SERVICE)
-        subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-        subprocess.run(["systemctl", "reload", "nginx"], check=False,
-                       capture_output=True, text=True)
+        run_as_root(["nginx", "-t"], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        run_as_root(["systemctl", "reload", "nginx"], check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
 
         # ── 验证 ─────────────────────────────────────────────────────────────
         sp.step(t("wireguard.step.verify"))
@@ -559,9 +555,6 @@ def uninstall_server() -> None:
     )
     from wireguard.utils import stop_and_disable
 
-    import subprocess
-    from pathlib import Path
-
     step_keys = [
         "wireguard.step.uninstall_stop_wg",
         "wireguard.step.uninstall_stop_xray",
@@ -576,8 +569,8 @@ def uninstall_server() -> None:
     with MultiStepProgress(descs) as sp:
         # ── 1. 停止 WireGuard ────────────────────────────────────────────────
         sp.step(descs[0])
-        subprocess.run(["wg-quick", "down", "wg0"], check=False,
-                       capture_output=True, text=True)
+        run_as_root(["wg-quick", "down", "wg0"], check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
         stop_and_disable(WG_SERVICE)
 
         # ── 2. 停止 xray 及 xray-restart.timer ──────────────────────────────
@@ -588,17 +581,14 @@ def uninstall_server() -> None:
         # ── 3. 清理 systemd service 文件 ─────────────────────────────────────
         sp.step(descs[2])
         # xray 二进制与 systemd 单元可能由外部或客户端共用，卸载服务端时只停用不删除。
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
         # ── 4. 清理配置目录 ───────────────────────────────────────────────────
         sp.step(descs[3])
-        Path(WG_CONFIG_FILE).unlink(missing_ok=True)
-        Path(XRAY_CONFIG_FILE).unlink(missing_ok=True)
-        Path(NGINX_VLESS_WS_CONF).unlink(missing_ok=True)
-        Path(NGINX_STREAM_CONF).unlink(missing_ok=True)
-        Path(NGINX_STEAL_CONF).unlink(missing_ok=True)
-        subprocess.run(["nginx", "-t"], check=False, capture_output=True)
-        subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True)
+        run_as_root(["rm", "-f", WG_CONFIG_FILE, XRAY_CONFIG_FILE, NGINX_VLESS_WS_CONF,
+                     NGINX_STREAM_CONF, NGINX_STEAL_CONF], check=False, capture_output=True)
+        run_as_root(["nginx", "-t"], check=False, capture_output=True)
+        run_as_root(["systemctl", "reload", "nginx"], check=False, capture_output=True)
 
         # ── 5. 清理日志目录 ───────────────────────────────────────────────────
         sp.step(descs[4])
@@ -606,14 +596,14 @@ def uninstall_server() -> None:
 
         # ── 6. 清理系统配置 ──────────────────────────────────────────────────────
         sp.step(descs[5])
-        Path("/etc/sysctl.d/99-wg.conf").unlink(missing_ok=True)
         from wireguard.constants import DNSMASQ_CONF_PATH as _DNSMASQ_CONF
-        Path(_DNSMASQ_CONF).unlink(missing_ok=True)
+        run_as_root(["rm", "-f", "/etc/sysctl.d/99-wg.conf", _DNSMASQ_CONF],
+                    check=False, capture_output=True)
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore("wg_server")
         _SCM.remove("wg_server")
-        Path(WG_STATE_FILE).unlink(missing_ok=True)
-        Path("/root/wg_server_info.txt").unlink(missing_ok=True)
+        run_as_root(["rm", "-f", WG_STATE_FILE, "/root/wg_server_info.txt"],
+                    check=False, capture_output=True)
 
     print_success(t('wireguard.diagnose.uninstall_success'))
 
@@ -1038,21 +1028,21 @@ def add_peer(breadcrumb: list[str]) -> None:
     client_psk = gen_wg_psk()
 
     # 添加 peer 到运行中的 wg0
-    r_set = subprocess.run(
+    r_set = run_as_root(
         ["wg", "set", "wg0", "peer", client_pub,
          "preshared-key", "/dev/stdin",
          "allowed-ips", f"{client_ip}/32"],
         input=client_psk,
-        check=False, capture_output=True, text=True,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if r_set.returncode != 0:
         detail = (r_set.stderr or r_set.stdout or "").strip()
         print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set failed"))
         pause()
         return
-    r_save = subprocess.run(
+    r_save = run_as_root(
         ["wg-quick", "save", "wg0"],
-        check=False, capture_output=True, text=True,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if r_save.returncode != 0:
         detail = (r_save.stderr or r_save.stdout or "").strip()
@@ -1201,18 +1191,18 @@ def remove_peer(breadcrumb: list[str]) -> None:
     pubkey = client.get("pubkey", "")
 
     if pubkey:
-        r_remove = subprocess.run(
+        r_remove = run_as_root(
             ["wg", "set", "wg0", "peer", pubkey, "remove"],
-            check=False, capture_output=True, text=True,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if r_remove.returncode != 0:
             detail = (r_remove.stderr or r_remove.stdout or "").strip()
             print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set remove failed"))
             pause()
             return
-        r_save = subprocess.run(
+        r_save = run_as_root(
             ["wg-quick", "save", "wg0"],
-            check=False, capture_output=True, text=True,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if r_save.returncode != 0:
             detail = (r_save.stderr or r_save.stdout or "").strip()
@@ -1429,8 +1419,6 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
       "append"  — 已有 nginx，只追加本程序配置文件
     两种模式都只写 NGINX_VLESS_WS_CONF，不改用户其他文件。
     """
-    import subprocess
-    from pathlib import Path
     from wireguard.constants import (
         NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
     )
@@ -1441,15 +1429,15 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
         from software.recipes.nginx.recipe import NginxRecipe
         NginxRecipe()._do_install(on_progress=sp.set_step_pct if sp else None)
         from core.paths import nginx_sites_enabled_dir, nginx_conf_dir
-        (nginx_sites_enabled_dir() / "default").unlink(missing_ok=True)
-        (nginx_conf_dir() / "default.conf").unlink(missing_ok=True)
+        run_as_root(["rm", "-f", str(nginx_sites_enabled_dir() / "default"),
+                     str(nginx_conf_dir() / "default.conf")], check=False, capture_output=True)
 
-    for _old_conf in (NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF):
-        Path(_old_conf).unlink(missing_ok=True)
+    run_as_root(["rm", "-f", NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF],
+                check=False, capture_output=True)
 
     write_file(NGINX_VLESS_WS_CONF, nginx_http_only_config(sni))
-    subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-    subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True, text=True)
+    run_as_root(["nginx", "-t"], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    run_as_root(["systemctl", "reload", "nginx"], check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _issue_cert(sni: str, email: str, cert_dir: str) -> None:
@@ -1458,51 +1446,57 @@ def _issue_cert(sni: str, email: str, cert_dir: str) -> None:
     import shutil
     from pathlib import Path
     from core.i18n import t
+    from core.privilege import is_root
     from software.base import InstallError
 
-    Path(cert_dir).mkdir(parents=True, exist_ok=True)
+    def _root_exists(p: str) -> bool:
+        return run_as_root(["test", "-e", p], check=False, capture_output=True).returncode == 0
 
-    acme = shutil.which("acme.sh") or str(Path.home() / ".acme.sh" / "acme.sh")
+    run_as_root(["mkdir", "-p", cert_dir], check=False, capture_output=True)
 
-    if not Path(acme).exists():
+    # acme.sh 全程以 root 运行（run_as_root），故其工作目录固定在 root 家目录。
+    acme_home = str(Path.home() / ".acme.sh") if is_root() else "/root/.acme.sh"
+    acme = shutil.which("acme.sh") or f"{acme_home}/acme.sh"
+
+    if not _root_exists(acme):
         _ACME_MIRRORS = ACME_INSTALL_MIRRORS
         tmp_script = Path("/tmp/acme-install.sh")
         installed = False
         for url in _ACME_MIRRORS:
             r = subprocess.run(
                 ["curl", "-fsSL", "--max-time", "20", "-o", str(tmp_script), url],
-                capture_output=True, text=True, timeout=25,
+                capture_output=True, text=True, timeout=25, encoding="utf-8", errors="replace",
             )
             if r.returncode != 0 or not tmp_script.exists() or tmp_script.stat().st_size < 1024:
                 continue
-            r2 = subprocess.run(
-                ["sh", str(tmp_script), "--install-online", "-m", email],
-                capture_output=True, text=True, timeout=120,
+            run_as_root(
+                ["sh", str(tmp_script), "--install-online", "--home", acme_home, "-m", email],
+                check=False, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
             )
-            acme = str(Path.home() / ".acme.sh" / "acme.sh")
-            if Path(acme).exists():
+            acme = f"{acme_home}/acme.sh"
+            if _root_exists(acme):
                 installed = True
                 break
         if not installed:
             raise InstallError(t("wireguard.error.acme_install_fail"))
 
-    subprocess.run(
-        [acme, "--register-account", "-m", email],
-        check=False, capture_output=True, text=True, timeout=30,
+    run_as_root(
+        [acme, "--home", acme_home, "--register-account", "-m", email],
+        check=False, capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
     )
 
-    subprocess.run(
+    run_as_root(
         ["systemctl", "reload", "nginx"],
-        check=False, capture_output=True, text=True,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
 
-    cert_file = Path(f"{cert_dir}/{sni}.cer")
-    if cert_file.exists():
+    cert_file = f"{cert_dir}/{sni}.cer"
+    if _root_exists(cert_file):
         try:
             import datetime
-            r_check = subprocess.run(
-                ["openssl", "x509", "-noout", "-enddate", "-in", str(cert_file)],
-                capture_output=True, text=True, timeout=10,
+            r_check = run_as_root(
+                ["openssl", "x509", "-noout", "-enddate", "-in", cert_file],
+                check=False, capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
             )
             if r_check.returncode == 0:
                 end_str = r_check.stdout.strip().replace("notAfter=", "")
@@ -1516,18 +1510,18 @@ def _issue_cert(sni: str, email: str, cert_dir: str) -> None:
             pass
 
     from core.paths import nginx_webroot
-    r = subprocess.run(
-        [acme, "--issue", "-d", sni, "--webroot", str(nginx_webroot())],
-        capture_output=True, text=True, timeout=180,
+    r = run_as_root(
+        [acme, "--home", acme_home, "--issue", "-d", sni, "--webroot", str(nginx_webroot())],
+        check=False, capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace",
     )
     if r.returncode not in (0, 2):
         detail = r.stderr[-400:] if r.stderr else r.stdout[-400:]
         raise InstallError(t("wireguard.error.cert_issue_fail", detail=detail))
 
-    subprocess.run(
-        [acme, "--install-cert", "-d", sni,
+    run_as_root(
+        [acme, "--home", acme_home, "--install-cert", "-d", sni,
          "--fullchain-file", f"{cert_dir}/{sni}.cer",
          "--key-file",       f"{cert_dir}/{sni}.key",
          "--reloadcmd",      "systemctl reload nginx"],
-        check=True, capture_output=True, text=True, timeout=30,
+        check=True, capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
     )

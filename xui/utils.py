@@ -20,6 +20,7 @@ import uuid
 from pathlib import Path
 
 from core.constants import PUBLIC_IP_APIS
+from core.privilege import run_as_root, write_root_file
 from xui.constants import (
     HTTP_CONTENT_TYPE_FORM,
     HTTP_CONTENT_TYPE_JSON,
@@ -194,13 +195,16 @@ def install_xui_script() -> None:
         with urllib.request.urlopen(XUI_INSTALL_SCRIPT_URL, timeout=HTTP_TIMEOUT_SECONDS) as resp:
             script_path.write_bytes(resp.read())
         script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-        subprocess.run(
-            [BASH_COMMAND, str(script_path)],
+        # env 前缀确保 DEBIAN_FRONTEND 透传（sudo 默认会清理环境变量）。
+        run_as_root(
+            ["env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
+             BASH_COMMAND, str(script_path)],
             input=XUI_INSTALL_SCRIPT_INPUT,
             text=True,
             check=True,
             capture_output=True,
-            env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
+            encoding="utf-8",
+            errors="replace",
             timeout=INSTALL_SCRIPT_TIMEOUT,
         )
     finally:
@@ -234,12 +238,7 @@ def generate_reality_keypair() -> tuple[str, str]:
 
 
 def write_secret_json(path: Path, data: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    tmp.replace(path)
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    write_root_file(path, json.dumps(data, indent=2, ensure_ascii=False), "0600")
 
 
 def load_state(path: Path = XUI_STATE_FILE) -> dict[str, object]:
@@ -290,7 +289,7 @@ def configure_panel_settings(
 ) -> bool:
     if not command_exists(XUI_BINARY_COMMAND):
         return False
-    result = subprocess.run(
+    result = run_as_root(
         [
             XUI_BINARY_COMMAND,
             XUI_SETTING_SUBCOMMAND,
@@ -306,7 +305,8 @@ def configure_panel_settings(
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
+        encoding="utf-8",
+        errors="replace",
         timeout=HTTP_TIMEOUT_SECONDS,
     )
     return result.returncode == 0
@@ -320,12 +320,13 @@ def get_panel_settings() -> dict[str, object]:
     """
     if not command_exists(XUI_BINARY_COMMAND):
         return {}
-    result = subprocess.run(
+    result = run_as_root(
         [XUI_BINARY_COMMAND, XUI_SETTING_SUBCOMMAND, XUI_SETTING_SHOW_ARG],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE},
+        encoding="utf-8",
+        errors="replace",
         timeout=HTTP_TIMEOUT_SECONDS,
     )
     settings: dict[str, object] = {}
@@ -489,36 +490,40 @@ def is_wsl() -> bool:
 def restart_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, "restart", service],
-        check=True, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def start_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_START_ARG, service],
-        check=True, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def stop_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_STOP_ARG, service],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def enable_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, service],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
@@ -534,59 +539,65 @@ def install_traffic_timer() -> None:
     """安装并启用每小时流量快照定时器；无 systemd 时跳过。"""
     if not systemd_available():
         return
-    TRAFFIC_SERVICE_UNIT_FILE.write_text(
+    write_root_file(
+        TRAFFIC_SERVICE_UNIT_FILE,
         TRAFFIC_SERVICE_UNIT_CONTENT.format(exec_start=_snapshot_exec_start()),
-        encoding="utf-8",
+        "0644",
     )
-    TRAFFIC_TIMER_UNIT_FILE.write_text(TRAFFIC_TIMER_UNIT_CONTENT, encoding="utf-8")
-    subprocess.run(
+    write_root_file(TRAFFIC_TIMER_UNIT_FILE, TRAFFIC_TIMER_UNIT_CONTENT, "0644")
+    run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def uninstall_traffic_timer() -> None:
     """停用并移除流量快照定时器、历史库；无 systemd 时仅清理文件。"""
     if systemd_available():
-        subprocess.run(
+        run_as_root(
             [SYSTEMCTL_COMMAND, "disable", SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=SERVICE_RESTART_TIMEOUT,
         )
-    TRAFFIC_TIMER_UNIT_FILE.unlink(missing_ok=True)
-    TRAFFIC_SERVICE_UNIT_FILE.unlink(missing_ok=True)
-    XUI_TRAFFIC_HISTORY_FILE.unlink(missing_ok=True)
+    run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE),
+                 str(XUI_TRAFFIC_HISTORY_FILE)], check=False, capture_output=True)
     if systemd_available():
-        subprocess.run(
+        run_as_root(
             [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=SERVICE_RESTART_TIMEOUT,
         )
 
 
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, "stop", service],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
-    subprocess.run(
+    run_as_root(
         [SYSTEMCTL_COMMAND, "disable", service],
-        check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def remove_xui_artifacts() -> None:
     for path in XUI_ARTIFACT_DIRS:
-        if path.exists():
-            shutil.rmtree(path, ignore_errors=True)
+        run_as_root(["rm", "-rf", str(path)], check=False, capture_output=True)
     for path in XUI_ARTIFACT_FILES:
-        path.unlink(missing_ok=True)
+        run_as_root(["rm", "-f", str(path)], check=False, capture_output=True)
     if systemd_available():
-        subprocess.run(
+        run_as_root(
             [SYSTEMCTL_COMMAND, "daemon-reload"],
-            check=False, capture_output=True, text=True, timeout=SERVICE_RESTART_TIMEOUT,
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=SERVICE_RESTART_TIMEOUT,
         )
