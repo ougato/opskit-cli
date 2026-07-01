@@ -185,52 +185,60 @@ def version_entries() -> list[VersionEntry]:
     """
     返回带编译标记的版本条目列表。
     数据来源优先级：1. uv list  2. endoflife.date  3. 硬编码 fallback
+
+    原始版本列表经 ``resolve_versions`` 走会话级缓存：本次启动应用后 install /
+    upgrade 首次进入才联网拉取一次，之后复用同一份缓存，避免每次进入都跑
+    ``uv python list``（很慢）。编译标记（need_build）依赖本地平台信息，快速计算，
+    不参与缓存。
     """
     import re as _re
     from core.constants import TIMEOUT_VERSION_FETCH
+    from software._shared.version_resolver import resolve_versions
     from .constants import PYTHON_EOL_API
     from core.platform import get_platform
 
-    raw: list[str] = []
+    def _fetch() -> list[str]:
+        raw: list[str] = []
 
-    uv = uv_bin_path()
-    if uv.exists():
-        try:
-            result = subprocess.run(
-                [str(uv), "python", "list", "--all-versions"],
-                capture_output=True, text=True, timeout=15,
-            )
-            seen: set[str] = set()
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if not line.startswith("cpython-"):
-                    continue
-                m = _re.match(r"cpython-(\d+\.\d+\.\d+)-", line)
-                if not m:
-                    continue
-                ver = m.group(1)
-                if ver in seen:
-                    continue
-                seen.add(ver)
-                raw.append(ver)
-        except Exception:
-            pass
+        uv = uv_bin_path()
+        if uv.exists():
+            try:
+                result = subprocess.run(
+                    [str(uv), "python", "list", "--all-versions"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                seen: set[str] = set()
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if not line.startswith("cpython-"):
+                        continue
+                    m = _re.match(r"cpython-(\d+\.\d+\.\d+)-", line)
+                    if not m:
+                        continue
+                    ver = m.group(1)
+                    if ver in seen:
+                        continue
+                    seen.add(ver)
+                    raw.append(ver)
+            except Exception:
+                pass
 
-    if not raw:
-        try:
-            import httpx
-            resp = httpx.get(PYTHON_EOL_API, timeout=TIMEOUT_VERSION_FETCH)
-            if resp.status_code == 200:
-                data = resp.json()
-                raw = [
-                    d["latest"] for d in data
-                    if not d.get("eol") or str(d["eol"]) > "2024"
-                ]
-        except Exception:
-            pass
+        if not raw:
+            try:
+                import httpx
+                resp = httpx.get(PYTHON_EOL_API, timeout=TIMEOUT_VERSION_FETCH)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw = [
+                        d["latest"] for d in data
+                        if not d.get("eol") or str(d["eol"]) > "2024"
+                    ]
+            except Exception:
+                pass
 
-    if not raw:
-        raw = list(PYTHON_VERSIONS_FALLBACK)
+        return raw
+
+    raw = resolve_versions("python", _fetch, list(PYTHON_VERSIONS_FALLBACK))
 
     info = get_platform()
     pkg_minors = get_pkg_minors(info.os_name, info.os_version, info.pkg_manager)
