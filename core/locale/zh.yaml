@@ -400,6 +400,7 @@ ohmyzsh:
   step:
     check_env: "检查 zsh 环境..."
     install_omz: "安装 Oh My Zsh..."
+    install_plugins: "安装常用插件..."
     disable_update: "关闭自动更新..."
     config_p10k: "配置 Powerlevel10k..."
     switch_shell: "切换默认 Shell..."
@@ -415,6 +416,7 @@ ohmyzsh:
     p10k_skipped: "未安装 Powerlevel10k"
     shell_switched: "默认 Shell 已切换为 zsh，重开终端生效"
     shell_manual: "默认 Shell 未能自动切换，请手动执行 chsh -s $(which zsh)"
+    font_hint: "如提示符图标乱码，请给终端安装 MesloLGS NF 字体"
     uninstall_done: "Oh My Zsh 已卸载"
   error:
     unsupported_os: "Oh My Zsh 仅支持 Linux 与 macOS"
@@ -424,6 +426,7 @@ ohmyzsh:
     zsh_missing: "未检测到 zsh，请先安装 zsh"
     git_missing: "未检测到 git，请先安装 git"
     p10k_clone_failed: "Powerlevel10k 下载失败"
+    plugin_clone_failed: "插件 {name} 下载失败"
     p10k_not_installed: "尚未安装 Powerlevel10k，请先安装"
 
 tailscale:

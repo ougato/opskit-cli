@@ -18,6 +18,12 @@ OMZ_INSTALL_SCRIPT_URL: Final[str] = (
     "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 )
 P10K_REPO_URL: Final[str] = "https://github.com/romkatv/powerlevel10k.git"
+ZSH_AUTOSUGGESTIONS_REPO_URL: Final[str] = (
+    "https://github.com/zsh-users/zsh-autosuggestions.git"
+)
+ZSH_SYNTAX_HIGHLIGHTING_REPO_URL: Final[str] = (
+    "https://github.com/zsh-users/zsh-syntax-highlighting.git"
+)
 
 # ─── 路径 ─────────────────────────────────────────────────────────────────────
 def home_dir() -> Path:
@@ -36,6 +42,10 @@ def p10k_theme_dir() -> Path:
     return omz_custom_dir() / "themes" / "powerlevel10k"
 
 
+def omz_plugin_dir(name: str) -> Path:
+    return omz_custom_dir() / "plugins" / name
+
+
 def zshrc_path() -> Path:
     return home_dir() / ".zshrc"
 
@@ -47,6 +57,17 @@ def p10k_config_path() -> Path:
 # ─── 主题与配置标记 ───────────────────────────────────────────────────────────
 P10K_THEME_NAME: Final[str] = "powerlevel10k/powerlevel10k"
 DEFAULT_THEME_NAME: Final[str] = "robbyrussell"
+
+# 默认启用的 Oh My Zsh 插件（与用户 Debian 配置一致：git + 自动补全 + 语法高亮）。
+DEFAULT_PLUGINS: Final[tuple[str, ...]] = ("git",)
+# 需额外从 GitHub 克隆的插件：(插件名, 仓库地址)。
+EXTRA_PLUGINS: Final[tuple[tuple[str, str], ...]] = (
+    ("zsh-autosuggestions", ZSH_AUTOSUGGESTIONS_REPO_URL),
+    ("zsh-syntax-highlighting", ZSH_SYNTAX_HIGHLIGHTING_REPO_URL),
+)
+FULL_PLUGINS: Final[tuple[str, ...]] = DEFAULT_PLUGINS + tuple(
+    name for name, _ in EXTRA_PLUGINS
+)
 
 # .zshrc 中由本工具托管的配置块标记，便于幂等写入与卸载清理。
 MANAGED_BLOCK_BEGIN: Final[str] = "# >>> opskit oh-my-zsh >>>"

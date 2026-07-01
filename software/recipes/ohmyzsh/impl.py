@@ -35,9 +35,12 @@ from software.base import InstallError, UninstallError
 from software.recipes.ohmyzsh.constants import (
     CHSH_COMMAND,
     COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_PLUGINS,
     DEFAULT_THEME_NAME,
     DISABLE_UPDATE_LINES,
     DOWNLOAD_TIMEOUT_SECONDS,
+    EXTRA_PLUGINS,
+    FULL_PLUGINS,
     GIT_CLONE_TIMEOUT_SECONDS,
     GIT_COMMAND,
     GIT_PACKAGE,
@@ -54,11 +57,12 @@ from software.recipes.ohmyzsh.constants import (
     ZSH_COMMAND,
     ZSH_PACKAGE,
     omz_dir,
+    omz_plugin_dir,
     p10k_config_path,
     p10k_theme_dir,
     zshrc_path,
 )
-from software.recipes.ohmyzsh.p10k_preset import P10K_PRESET
+from software.recipes.ohmyzsh.p10k_preset import p10k_preset
 
 console = Console()
 
@@ -197,11 +201,22 @@ def _set_theme(text: str, theme_name: str) -> str:
     return text.rstrip() + "\n" + line + "\n"
 
 
+def _set_plugins(text: str, plugins: tuple[str, ...]) -> str:
+    """把 .zshrc 中的 plugins=(...) 替换为目标列表（不存在则追加）。"""
+    import re
+
+    line = f"plugins=({' '.join(plugins)})"
+    if re.search(r"^\s*plugins=\([^)]*\)", text, flags=re.MULTILINE):
+        return re.sub(r"^\s*plugins=\([^)]*\)", line, text, count=1, flags=re.MULTILINE)
+    return text.rstrip() + "\n" + line + "\n"
+
+
 def _apply_zshrc(with_p10k: bool) -> None:
     """写入托管块：关闭自动更新，按需启用 Powerlevel10k 并 source 预置配置。"""
     text = _read_zshrc()
     text = _strip_managed_block(text)
     text = _set_theme(text, P10K_THEME_NAME if with_p10k else DEFAULT_THEME_NAME)
+    text = _set_plugins(text, FULL_PLUGINS)
 
     block_lines = [MANAGED_BLOCK_BEGIN, *DISABLE_UPDATE_LINES]
     if with_p10k:
@@ -234,7 +249,25 @@ def _install_p10k() -> None:
 
 def _write_p10k_preset() -> None:
     """写入预置 .p10k.zsh，让用户无需跑向导即可直接使用。"""
-    p10k_config_path().write_text(P10K_PRESET, encoding="utf-8")
+    p10k_config_path().write_text(p10k_preset(), encoding="utf-8")
+
+
+def _install_plugins() -> None:
+    """克隆常用 Oh My Zsh 插件（自动补全、语法高亮），已存在则跳过。"""
+    if not command_exists(GIT_COMMAND):
+        raise InstallError(t("ohmyzsh.error.git_missing"))
+    for name, url in EXTRA_PLUGINS:
+        dest = omz_plugin_dir(name)
+        if dest.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        result = _run(
+            [GIT_COMMAND, "clone", "--depth", "1", url, str(dest)],
+            timeout=GIT_CLONE_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0 or not dest.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            raise InstallError(detail or t("ohmyzsh.error.plugin_clone_failed", name=name))
 
 
 # ─── 默认 Shell 切换 ──────────────────────────────────────────────────────────
@@ -284,6 +317,7 @@ def install_ohmyzsh() -> None:
     descs = [
         t("ohmyzsh.step.check_env"),
         t("ohmyzsh.step.install_omz"),
+        t("ohmyzsh.step.install_plugins"),
         t("ohmyzsh.step.disable_update"),
     ]
     if with_p10k:
@@ -298,6 +332,9 @@ def install_ohmyzsh() -> None:
 
             sp.step(t("ohmyzsh.step.install_omz"))
             _install_omz()
+
+            sp.step(t("ohmyzsh.step.install_plugins"))
+            _install_plugins()
 
             sp.step(t("ohmyzsh.step.disable_update"))
             _apply_zshrc(with_p10k)
@@ -364,6 +401,7 @@ def _cleanup_zshrc() -> None:
         return
     text = _strip_managed_block(_read_zshrc())
     text = _set_theme(text, DEFAULT_THEME_NAME)
+    text = _set_plugins(text, DEFAULT_PLUGINS)
     zshrc_path().write_text(text, encoding="utf-8")
 
 
@@ -384,6 +422,8 @@ def _render_done_panel(with_p10k: bool, shell_switched: bool) -> None:
     rows.append(
         t("ohmyzsh.output.shell_switched") if shell_switched else t("ohmyzsh.output.shell_manual")
     )
+    if with_p10k:
+        rows.append(t("ohmyzsh.output.font_hint"))
 
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(no_wrap=False)
