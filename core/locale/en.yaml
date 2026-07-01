@@ -71,6 +71,9 @@ error:
   not_supported: "Not supported on this platform"
   unknown: "Unknown error: {error}"
 
+privilege:
+  need_root: "This operation requires root. Switch to root and retry (sudo -i, or grant the current user sudo)"
+
 compat:
   ok: "Compatible"
   warn: "Risk"
@@ -128,6 +131,8 @@ software:
     stop_service: "Stopping service..."
     remove_files: "Removing files..."
     cleanup: "Cleaning up..."
+  systools: "System Tools"
+  ohmyzsh: "Oh My Zsh"
   docker: "Docker"
   docker_error:
     platform_not_supported: "Docker recipe does not support platform: {platform}"
@@ -205,7 +210,7 @@ software:
     not_installed: "Python {version} is not installed, please install first"
     install_failed: "Python {version} installation failed, all methods unavailable"
     uv_timeout: "uv python install timed out ({timeout}s)"
-    uv_failed: "uv install failed, exit code {code}"
+    uv_failed: "uv install failed, exit code {code} (usually network/rate-limit or no build available for this version; retry or pick another){detail}"
     uv_win_failed: "uv install failed (Windows), check network connection"
     uv_linux_failed: "uv install failed (Linux), check network connection"
     download_src_failed: "Failed to download Python {version} source: {error}"
@@ -253,9 +258,11 @@ software:
   search: "Search Software"
   search_prompt: "Enter software name or keyword"
   search_no_result: "No match found: {keyword}"
+  search_empty: "Please enter a software name or keyword to search"
   category:
     devtools: "Dev Tools"
     devops: "DevOps Tools"
+    systools: "System Tools"
   category_empty: "No software available in {category} category"
   coming_soon: "Feature coming soon"
 
@@ -387,6 +394,43 @@ xui:
     month: "Month"
     up: "↑"
     down: "↓"
+
+ohmyzsh:
+  confirm_p10k: "Also install the Powerlevel10k theme?"
+  installed_mark: "Installed"
+  step:
+    check_env: "Checking zsh environment..."
+    install_omz: "Installing Oh My Zsh..."
+    install_plugins: "Installing common plugins..."
+    disable_update: "Disabling auto-update..."
+    config_p10k: "Configuring Powerlevel10k..."
+    install_font: "Installing Nerd Font..."
+    switch_shell: "Switching default shell..."
+  manage:
+    p10k_configure: "Customize Powerlevel10k"
+    p10k_configure_hint: "Launching the Powerlevel10k wizard, follow the prompts"
+    p10k_apply_preset: "Apply recommended Powerlevel10k config"
+    switch_shell: "Set default shell to zsh"
+  output:
+    install_done: "Oh My Zsh installed"
+    omz_ready: "Oh My Zsh installed with auto-update disabled"
+    p10k_ready: "Powerlevel10k installed and auto-configured"
+    p10k_skipped: "Powerlevel10k not installed"
+    shell_switched: "Default shell set to zsh, effective in a new terminal"
+    shell_manual: "Could not switch default shell, run: chsh -s $(which zsh)"
+    font_ready: "MesloLGS NF font installed, reopen terminal for best results"
+    font_hint: "Auto font install failed; install MesloLGS NF, then reopen terminal"
+    uninstall_done: "Oh My Zsh uninstalled"
+  error:
+    unsupported_os: "Oh My Zsh only supports Linux and macOS"
+    download_failed: "Failed to download the Oh My Zsh install script"
+    install_failed: "Oh My Zsh installation failed"
+    dep_failed: "Dependency install failed: {error}"
+    zsh_missing: "zsh not found, please install zsh first"
+    git_missing: "git not found, please install git first"
+    p10k_clone_failed: "Failed to download Powerlevel10k"
+    plugin_clone_failed: "Failed to download plugin {name}"
+    p10k_not_installed: "Powerlevel10k is not installed yet, install it first"
 
 tailscale:
   step:

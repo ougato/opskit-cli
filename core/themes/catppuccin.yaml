@@ -90,6 +90,7 @@ icons:
   # 软件分类
   devtools: "\U0001F528"      # 🔨
   devops: "\U0001F4BB"        # 💻
+  systools: "\u2699\uFE0F"    # ⚙️
 
   # 软件 recipe 专用
   docker: "\U0001F433"        # 🐳
@@ -102,6 +103,7 @@ icons:
   postgresql: "\U0001F418"    # 🐘
   mongodb: "\U0001F343"       # 🍃
   redis: "\U0001F534"         # 🔴
+  ohmyzsh: "\U0001F41A"       # 🐚
 
   xui: "\U0001F4E1"          # 📡
   xui_server: "\U0001F4E1"   # 📡️

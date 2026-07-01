@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from software.base import InstallError
+from core.privilege import run_as_root, write_root_file
 from core.theme import console
 
 
@@ -94,12 +95,12 @@ def _save_client_state(data: dict) -> None:
 def _load_client_state() -> dict:
     """加载客户端 state 文件"""
     import json
-    from pathlib import Path
     from wireguard.constants import WG_CLIENT_STATE_FILE
-    p = Path(WG_CLIENT_STATE_FILE)
-    if p.exists():
+    from core.privilege import read_root_file
+    content = read_root_file(WG_CLIENT_STATE_FILE)
+    if content:
         try:
-            return json.loads(p.read_text("utf-8"))
+            return json.loads(content)
         except Exception:
             pass
     return {}
@@ -147,11 +148,11 @@ def _scan_listening_ports(port_min: int, port_max: int) -> set[int]:
 def _ensure_xray_template_service(xray_path: str) -> None:
     """确保 systemd 模板单元 xray@.service 存在（多隧道独立实例用）"""
     from pathlib import Path
-    import subprocess
     from wireguard.constants import XRAY_DOC_URL
     tpl_path = Path("/etc/systemd/system/xray@.service")
     if not tpl_path.exists():
-        tpl_path.write_text(
+        write_root_file(
+            tpl_path,
             "[Unit]\n"
             "Description=Xray Service - %i\n"
             f"Documentation={XRAY_DOC_URL}\n"
@@ -169,9 +170,10 @@ def _ensure_xray_template_service(xray_path: str) -> None:
             "RuntimeDirectory=xray\n"
             "RuntimeDirectoryMode=0755\n\n"
             "[Install]\n"
-            "WantedBy=multi-user.target\n"
+            "WantedBy=multi-user.target\n",
+            "0644",
         )
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 
 def install_client(token: str | None = None) -> None:
@@ -316,9 +318,9 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         sp.step(t("wireguard.step.install_wg"))
         install_wireguard_pkg(os_id)
         if os_id in ("debian", "ubuntu"):
-            subprocess.run(
+            run_as_root(
                 ["apt-get", "install", "-y", "openresolv"],
-                check=False, capture_output=True, text=True,
+                check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
 
         sp.step(t("wireguard.step.install_xray"))
@@ -363,12 +365,13 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         xray_svc = f"xray@{xray_instance}"
         wg_svc   = f"wg-quick@{wg_iface}"
         _dropin_dir = _Path(f"/etc/systemd/system/{wg_svc}.service.d")
-        _dropin_dir.mkdir(parents=True, exist_ok=True)
-        (_dropin_dir / "after-xray.conf").write_text(
-            f"[Unit]\nAfter={xray_svc}.service\nWants={xray_svc}.service\n"
+        write_root_file(
+            _dropin_dir / "after-xray.conf",
+            f"[Unit]\nAfter={xray_svc}.service\nWants={xray_svc}.service\n",
+            "0644",
         )
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        subprocess.run(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
         stop_and_disable(wg_svc)
         stop_and_disable(xray_svc)
         enable_and_start(xray_svc)
@@ -403,17 +406,13 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         ))
         stop_and_disable(wg_svc)
         stop_and_disable(xray_svc)
-        _Path(wg_cfg_path).unlink(missing_ok=True)
-        _Path(xray_cfg_path).unlink(missing_ok=True)
-        (_dropin_dir / "after-xray.conf").unlink(missing_ok=True)
-        try:
-            _dropin_dir.rmdir()
-        except Exception:
-            pass
+        run_as_root(["rm", "-f", wg_cfg_path, xray_cfg_path,
+                     str(_dropin_dir / "after-xray.conf")], check=False, capture_output=True)
+        run_as_root(["rmdir", str(_dropin_dir)], check=False, capture_output=True)
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore(f"wg_client_{label}")
         _SCM.remove(f"wg_client_{label}")
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
         pause()
         return
 
@@ -492,19 +491,17 @@ def uninstall_client() -> None:
     ]
     descs = [t(k) for k in step_keys]
 
-    import shutil
-    import subprocess
-    from pathlib import Path as _Path
-
     with MultiStepProgress(descs) as sp:
         sp.step(descs[0])
         for tn in tunnels:
             wg_iface = tn.get("wg_iface", "wg0")
             wg_svc   = f"wg-quick@{wg_iface}"
-            subprocess.run(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+            run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
             stop_and_disable(wg_svc)
-            shutil.rmtree(f"/etc/systemd/system/{wg_svc}.service.d", ignore_errors=True)
-            _Path(f"/etc/wireguard/{wg_iface}.conf").unlink(missing_ok=True)
+            run_as_root(["rm", "-rf", f"/etc/systemd/system/{wg_svc}.service.d"],
+                        check=False, capture_output=True)
+            run_as_root(["rm", "-f", f"/etc/wireguard/{wg_iface}.conf"],
+                        check=False, capture_output=True)
 
         sp.step(descs[1])
         for tn in tunnels:
@@ -512,7 +509,8 @@ def uninstall_client() -> None:
             stop_and_disable(xray_svc)
             lbl = tn.get("label", "")
             if lbl:
-                _Path(f"/usr/local/etc/xray/{lbl}.json").unlink(missing_ok=True)
+                run_as_root(["rm", "-f", f"/usr/local/etc/xray/{lbl}.json"],
+                            check=False, capture_output=True)
         # xray 模板/主服务、二进制和数据目录可能被服务端或外部 xray 复用，客户端卸载只删隧道配置。
 
         sp.step(descs[2])
@@ -521,7 +519,7 @@ def uninstall_client() -> None:
             lbl = tn.get("label", "")
             _SCM.restore(f"wg_client_{lbl}")
             _SCM.remove(f"wg_client_{lbl}")
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
         sp.step(descs[3])
         _save_client_state({})
@@ -805,18 +803,19 @@ def remove_tunnel(breadcrumb: list[str]) -> None:
     lbl      = tn.get("label",    "")
 
     if wg_iface:
-        subprocess.run(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
         stop_and_disable(f"wg-quick@{wg_iface}")
-        shutil.rmtree(f"/etc/systemd/system/wg-quick@{wg_iface}.service.d", ignore_errors=True)
-        _Path(f"/etc/wireguard/{wg_iface}.conf").unlink(missing_ok=True)
+        run_as_root(["rm", "-rf", f"/etc/systemd/system/wg-quick@{wg_iface}.service.d"],
+                    check=False, capture_output=True)
+        run_as_root(["rm", "-f", f"/etc/wireguard/{wg_iface}.conf"], check=False, capture_output=True)
     if xray_svc:
         stop_and_disable(xray_svc)
     if lbl:
-        _Path(f"/usr/local/etc/xray/{lbl}.json").unlink(missing_ok=True)
+        run_as_root(["rm", "-f", f"/usr/local/etc/xray/{lbl}.json"], check=False, capture_output=True)
         from core.sysconfig import SysConfigManager as _SCM
         _SCM.restore(f"wg_client_{lbl}")
         _SCM.remove(f"wg_client_{lbl}")
-    subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+    run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
     tunnels.pop(idx)
     state["tunnels"] = tunnels
@@ -939,7 +938,7 @@ def update_client_token(breadcrumb: list[str]) -> None:
         write_secret_file(wg_cfg_path, wg_cfg)
 
         sp.step(step_descs[2])
-        subprocess.run(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
         stop_and_disable(wg_svc)
         stop_and_disable(xray_svc)
         enable_and_start(xray_svc)

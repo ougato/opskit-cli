@@ -193,6 +193,64 @@ for _h in _typer_ru.OptionHighlighter.highlights:
     _new_highlights.append(_h.replace("Usage: ", _CLICK_LABEL_MAP.get("Usage:", "Usage:") + " "))
 _typer_ru.OptionHighlighter.highlights = _new_highlights
 
+# 帮助输出统一小写：选项/参数的类型占位符（TEXT / INTEGER 等）一律小写，
+# 避免大写字母在中文帮助里突兀。typer 的 _print_options_panel 在两处渲染类型：
+# 选项走 make_metavar() → self.type.name.upper()，参数/兜底走 param.type.name.upper()，
+# 都是对 click 类型名（本就是小写的 text / integer …）再 .upper()。
+# 这里把这些类型名换成一个 .upper() 返回小写的字符串子类，两条路径同时生效。
+# 唯独 boolean 保持原样：typer 靠 name.upper() == "BOOLEAN" 来隐藏布尔开关的类型列。
+# 注意：typer 0.26 内置了自己的 click（typer._click），实际参数类型来自那里，
+# 因此两套 ParamType 层级都要打补丁。
+import click.types as _click_types
+
+
+class _LowerName(str):
+    """click 类型名：显示/比较同普通字符串，但 .upper() 返回小写，供帮助渲染用。"""
+
+    def upper(self) -> str:  # noqa: D401
+        return self.lower()
+
+
+def _lowercase_type_names(root: type) -> None:
+    for sub in root.__subclasses__():
+        name = getattr(sub, "name", None)
+        if isinstance(name, str) and not isinstance(name, _LowerName) and name != "boolean":
+            sub.name = _LowerName(name)
+        _lowercase_type_names(sub)
+
+
+_lowercase_type_names(_click_types.ParamType)
+try:
+    import typer._click.types as _typer_click_types
+
+    _lowercase_type_names(_typer_click_types.ParamType)
+except Exception:
+    pass
+
+# usage 行的占位符（[OPTIONS] / COMMAND [ARGS]... / [NAME]）同样改小写。
+# 片段分散在几处 collect_usage_pieces：typer._click.core.Command（选项 + 参数），
+# typer.core.TyperGroup（额外的 COMMAND [ARGS]... 子命令占位符）。逐个包一层小写。
+def _install_lower_usage(cls) -> None:
+    if "collect_usage_pieces" not in cls.__dict__:
+        return
+    _orig = cls.collect_usage_pieces
+
+    def _patched(self, ctx, _orig=_orig):
+        return [piece.lower() for piece in _orig(self, ctx)]
+
+    cls.collect_usage_pieces = _patched
+
+
+try:
+    import typer._click.core as _typer_click_core
+    import typer.core as _typer_core
+
+    _install_lower_usage(_typer_click_core.Command)
+    _install_lower_usage(_typer_core.TyperGroup)
+    _install_lower_usage(_typer_core.TyperCommand)
+except Exception:
+    pass
+
 
 @app.callback(invoke_without_command=True)
 def _app_callback(
@@ -201,8 +259,8 @@ def _app_callback(
         False, "--yes", "-y",
         help=_ct("yes_help"),
     ),
-    version: bool = typer.Option(False, "--version", "-V", help=_ct("version_help")),
-    theme: str = typer.Option("", "--theme", "-T", help=_ct("theme_help")),
+    version: bool = typer.Option(False, "--version", "-v", help=_ct("version_help")),
+    theme: str = typer.Option("", "--theme", "-t", help=_ct("theme_help")),
     lang: str = typer.Option("", "--lang", "-l", help=_ct("lang_help")),
 ) -> None:
     import os

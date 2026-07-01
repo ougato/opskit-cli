@@ -65,13 +65,13 @@ def _ensure_linux() -> None:
 
 
 def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=check, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _run_root(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
     from core.privilege import run_as_root
 
-    return run_as_root(command, check=check, capture_output=True, text=True, timeout=timeout)
+    return run_as_root(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _write_root_file(path: Path, content: str, mode: str) -> None:
@@ -173,6 +173,8 @@ def _install_script() -> None:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
         )
@@ -278,12 +280,16 @@ def uninstall_client() -> None:
 
             sp.step(descs[1])
             if command_exists(APT_GET_COMMAND):
+                from core.privilege import run_as_root
+
                 env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
-                subprocess.run(
+                run_as_root(
                     [APT_GET_COMMAND, APT_PURGE_COMMAND, APT_ASSUME_YES_ARG, *TAILSCALE_PACKAGES],
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
                 )
@@ -298,11 +304,10 @@ def uninstall_client() -> None:
 
 
 def remove_tailscale_artifacts() -> None:
-    for path in (TAILSCALE_STATE_DIR, TAILSCALE_RUN_DIR):
-        if path.exists():
-            shutil.rmtree(path, ignore_errors=True)
-    for path in (TAILSCALE_REPO_FILE, TAILSCALE_KEYRING_FILE):
-        path.unlink(missing_ok=True)
+    # 这些路径均为 root 所有（/var/lib、/etc/apt/sources.list.d 等），
+    # 必须以 root 删除，否则普通用户会触发 PermissionError。
+    paths = (TAILSCALE_STATE_DIR, TAILSCALE_RUN_DIR, TAILSCALE_REPO_FILE, TAILSCALE_KEYRING_FILE)
+    _run_root([RM_COMMAND, "-rf", *(str(p) for p in paths)], check=False)
 
 
 def _extract_auth_url(output: str) -> str:

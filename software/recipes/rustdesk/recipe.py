@@ -16,6 +16,7 @@ class RustDeskRecipe(Recipe):
     description: ClassVar[str] = "RustDesk 远程桌面服务"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list] = []
+    requires_root: ClassVar[bool] = True
 
     has_upgrade: ClassVar[bool] = False
     has_diagnose: ClassVar[bool] = True
@@ -48,7 +49,7 @@ class RustDeskRecipe(Recipe):
     def install(self, version: str) -> None:
         install_server(version)
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         uninstall_server()
 
     def diagnose(self) -> None:

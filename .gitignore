@@ -63,3 +63,7 @@ Thumbs.db
 # ── Windows 系统 ──────────────────────────────────────────────────────────────
 desktop.ini
 ehthumbs.db
+
+# 运行时临时文件（自更新下载的二进制等）
+cache/opskit.pending
+cache/*.pending

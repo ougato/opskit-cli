@@ -17,6 +17,7 @@ class NginxRecipe(Recipe):
     description: ClassVar[str] = "Nginx Web 服务器"
     platforms: ClassVar[list[str]] = ["linux"]
     dependencies: ClassVar[list[str]] = []
+    requires_root: ClassVar[bool] = True
     has_upgrade: ClassVar[bool] = False
     has_install_version_selection: ClassVar[bool] = False
     confirm_before_install: ClassVar[bool] = False
@@ -70,7 +71,7 @@ class NginxRecipe(Recipe):
             self._do_install(on_progress=sp.set_step_pct)
             sp.complete()
 
-    def uninstall(self) -> None:
+    def uninstall(self, version: str | None = None) -> None:
         from core.progress import MultiStepProgress
 
         driver = get_driver()
