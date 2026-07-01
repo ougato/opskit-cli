@@ -634,7 +634,15 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    existing = instance.detect()
+    # 多版本管理型（java/go/node/python）：升级判定以「本工具管理的激活版本」为准，
+    # 不用 detect() 的 which() 兜底（否则系统自带 python 会让已装最新版仍能进升级选择）。
+    if hasattr(instance, "installed_versions"):
+        installed_list = instance.installed_versions()
+        existing = (
+            instance._active_version() if hasattr(instance, "_active_version") else None
+        ) or (installed_list[0] if installed_list else None)
+    else:
+        existing = instance.detect()
     if not existing:
         print_warning(t("software.not_installed_hint", name=_name))
         pause()
