@@ -4,8 +4,7 @@
 set -euo pipefail
 
 BIN_NAME="opskit"
-DOWNLOAD_BASE_CN="https://file.icerror.top/d/mirror/soft"
-DOWNLOAD_BASE_GLOBAL="https://github.com/ougato/opskit-cli/releases/latest/download"
+DOWNLOAD_BASE="https://github.com/ougato/opskit-cli/releases/latest/download"
 
 # -- output helpers ------------------------------------------------------------
 _title() { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -13,18 +12,6 @@ _field() { printf '  %-12s%s\n' "$1" "$2"; }
 _ok()    { printf '  \033[32m[OK]\033[0m    %s\n' "$*"; }
 _warn()  { printf '  \033[33m[WARN]\033[0m  %s\n' "$*"; }
 _err()   { printf '  \033[31m[FAIL]\033[0m  %s\n' "$*" >&2; }
-
-# -- region detection ----------------------------------------------------------
-detect_region() {
-    case "${OPSKIT_SOURCE:-auto}" in
-        cn)     echo "cn";     return ;;
-        global) echo "global"; return ;;
-    esac
-    local loc
-    loc="$(curl -fsSL --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
-            | grep '^loc=' | sed 's/^loc=//' | tr -d '\r\n ')"
-    [ "$loc" = "CN" ] && echo "cn" || echo "global"
-}
 
 # -- platform detection --------------------------------------------------------
 detect_platform() {
@@ -128,23 +115,10 @@ ensure_in_path() {
 
 # -- main ----------------------------------------------------------------------
 main() {
-    local platform os_dir filename download_url sha256_url tmp_dir region
-    local source_label install_dir target_display
+    local platform filename download_url sha256_url tmp_dir
+    local install_dir target_display
 
     platform="$(detect_platform)"
-
-    case "$platform" in
-        linux-*)  os_dir="linux" ;;
-        darwin-*) os_dir="macos" ;;
-        *) _err "Unsupported platform: $platform"; exit 1 ;;
-    esac
-
-    region="$(detect_region)"
-    if [ "$region" = "cn" ]; then
-        source_label="cn (file.icerror.top)"
-    else
-        source_label="global (GitHub)"
-    fi
 
     install_dir="$(get_install_dir)"
     target_display="${install_dir/#$HOME/~}/${BIN_NAME}"
@@ -153,16 +127,12 @@ main() {
     _title "  OpsKit  Installer"
     echo ""
     _field "Platform" "$platform"
-    _field "Source"   "$source_label"
+    _field "Source"   "GitHub Releases"
     _field "Target"   "$target_display"
     echo ""
 
     filename="${BIN_NAME}-${platform}"
-    if [ "$region" = "cn" ]; then
-        download_url="${DOWNLOAD_BASE_CN}/${os_dir}/${filename}"
-    else
-        download_url="${DOWNLOAD_BASE_GLOBAL}/${filename}"
-    fi
+    download_url="${DOWNLOAD_BASE}/${filename}"
     sha256_url="${download_url}.sha256"
 
     tmp_dir="$(mktemp -d)"
