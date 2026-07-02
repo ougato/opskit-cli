@@ -15,7 +15,7 @@ release_job:
     description: |
       ## OpsKit ${CI_COMMIT_TAG}
 
-      全平台产物由 GitHub Actions 构建，下载链接指向 file.icerror.top。
+      全平台产物由 GitHub Actions 构建，下载链接指向 GitHub Releases。
 
       | 平台 | 架构 | 文件 |
       |---|---|---|
@@ -26,15 +26,15 @@ release_job:
     assets:
       links:
         - name: "opskit-linux-x64"
-          url: "https://file.icerror.top/d/mirror/soft/linux/opskit-linux-x64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-linux-x64"
           link_type: other
         - name: "opskit-linux-arm64"
-          url: "https://file.icerror.top/d/mirror/soft/linux/opskit-linux-arm64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-linux-arm64"
           link_type: other
         - name: "opskit-windows-x64.exe"
-          url: "https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-windows-x64.exe"
           link_type: other
         - name: "opskit-darwin-arm64"
-          url: "https://file.icerror.top/d/mirror/soft/macos/opskit-darwin-arm64"
+          url: "https://github.com/ougato/opskit-cli/releases/download/${CI_COMMIT_TAG}/opskit-darwin-arm64"
           link_type: other
 

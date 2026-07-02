@@ -1,5 +1,5 @@
 # OpsKit installer - Windows PowerShell
-# Usage: irm https://file.icerror.top/d/install/opskit.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/ougato/opskit-cli/master/install.ps1 | iex
 #
 # NOTE: keep this bootstrap ASCII-only. Windows PowerShell 5.1's
 # Invoke-RestMethod decodes a piped script as ISO-8859-1 when the HTTP
@@ -10,31 +10,14 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$BIN_NAME             = "opskit"
-$DOWNLOAD_BASE_CN     = "https://file.icerror.top/d/mirror/soft/windows"
-$DOWNLOAD_BASE_GLOBAL = "https://github.com/ougato/opskit-cli/releases/latest/download"
-$INSTALL_DIR          = Join-Path $env:LOCALAPPDATA "opskit"
+$BIN_NAME      = "opskit"
+$DOWNLOAD_BASE = "https://github.com/ougato/opskit-cli/releases/latest/download"
+$INSTALL_DIR   = Join-Path $env:LOCALAPPDATA "opskit"
 
 function Write-Field { param($label, $value) Write-Host ("  {0,-12}{1}" -f $label, $value) }
 function Write-Ok    { param($msg) Write-Host "  [OK]    $msg" -ForegroundColor Green }
 function Write-Warn  { param($msg) Write-Host "  [WARN]  $msg" -ForegroundColor Yellow }
 function Write-Fail  { param($msg) Write-Host "  [FAIL]  $msg" -ForegroundColor Red }
-
-# -- region detection ----------------------------------------------------------
-function Get-Region {
-    switch ($env:OPSKIT_SOURCE) {
-        'cn'     { return 'cn' }
-        'global' { return 'global' }
-    }
-    try {
-        $resp = Invoke-WebRequest -Uri 'https://www.cloudflare.com/cdn-cgi/trace' `
-                                   -UseBasicParsing -TimeoutSec 3
-        if ($resp.Content -match 'loc=CN') { return 'cn' }
-        return 'global'
-    } catch {
-        return 'global'
-    }
-}
 
 # -- platform detection --------------------------------------------------------
 function Get-Platform {
@@ -92,19 +75,13 @@ function Main {
     Write-Host ""
 
     $platform = Get-Platform
-    $region   = Get-Region
-    $sourceLabel = if ($region -eq 'cn') { "cn (file.icerror.top)" } else { "global (GitHub)" }
 
     $filename = "${BIN_NAME}-${platform}.exe"
-    if ($region -eq 'cn') {
-        $downloadUrl = "$DOWNLOAD_BASE_CN/$filename"
-    } else {
-        $downloadUrl = "$DOWNLOAD_BASE_GLOBAL/$filename"
-    }
+    $downloadUrl = "$DOWNLOAD_BASE/$filename"
     $sha256Url = "$downloadUrl.sha256"
 
     Write-Field "Platform" $platform
-    Write-Field "Source"   $sourceLabel
+    Write-Field "Source"   "GitHub Releases"
     Write-Field "Target"   "%LOCALAPPDATA%\opskit\opskit.exe"
     Write-Host ""
 

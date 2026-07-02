@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/ougato/opskit-cli)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Download](https://img.shields.io/badge/download-file.icerror.top-blue)](https://file.icerror.top/d/mirror/soft/)
+[![Download](https://img.shields.io/badge/download-GitHub%20Releases-blue)](https://github.com/ougato/opskit-cli/releases/latest)
 
 **OpsKit** is a lightweight, single-file server operations panel with a beautiful TUI (Terminal UI).
 No web UI, no agent, no daemon. Just run it and go.
@@ -29,51 +29,24 @@ No web UI, no agent, no daemon. Just run it and go.
 
 ### 方式一：一键安装（推荐）
 
-安装脚本自动检测用户地区，**中国大陆**走 `file.icerror.top` 加速源，**境外**走 GitHub Releases，无需手动选择。
+安装脚本统一走 GitHub Releases 下载。
 
-**Linux / macOS（大陆优化）：**
-```bash
-curl -fsSL https://file.icerror.top/d/install/opskit.sh | bash
-```
-
-**Linux / macOS（境外 / GitHub）：**
+**Linux / macOS：**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ougato/opskit-cli/master/install.sh | bash
 ```
 
-**Windows PowerShell（大陆优化）：**
-```powershell
-irm https://file.icerror.top/d/install/opskit.ps1 | iex
-```
-
-**Windows PowerShell（境外 / GitHub）：**
+**Windows PowerShell：**
 ```powershell
 irm https://raw.githubusercontent.com/ougato/opskit-cli/master/install.ps1 | iex
 ```
 
 ```cmd
-curl -fsSL https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -o opskit.exe
+curl -fsSL https://github.com/ougato/opskit-cli/releases/latest/download/opskit-windows-x64.exe -o opskit.exe
 opskit.exe
 ```
 
 > **注意**：CMD 方式仅下载到当前目录，不配置 PATH，不支持热更新。完整安装请使用 PowerShell 命令。
-
-**手动指定下载源（可选）：**
-
-| 环境变量 | 说明 |
-|---|---|
-| `OPSKIT_SOURCE=cn` | 强制走大陆源（`file.icerror.top`） |
-| `OPSKIT_SOURCE=global` | 强制走 GitHub Releases |
-| 不设置（默认） | 自动检测地区分流 |
-
-```bash
-# Linux / macOS
-OPSKIT_SOURCE=global bash install.sh
-OPSKIT_SOURCE=cn bash install.sh
-
-# Windows PowerShell
-$env:OPSKIT_SOURCE='global'; irm https://file.icerror.top/d/install/opskit.ps1 | iex
-```
 
 安装路径：
 
@@ -99,18 +72,7 @@ make setup
 python main.py
 ```
 
-### 方式三：下载预编译单文件
-
-#### 大陆加速源（file.icerror.top）
-
-| 平台 | 架构 | 直链 |
-|---|---|---|
-| Linux x64 | x86_64 | `https://file.icerror.top/d/mirror/soft/linux/opskit-linux-x64` |
-| Linux arm64 | aarch64 | `https://file.icerror.top/d/mirror/soft/linux/opskit-linux-arm64` |
-| Windows x64 | x86_64 | `https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe` |
-| macOS arm64 | Apple Silicon | `https://file.icerror.top/d/mirror/soft/macos/opskit-darwin-arm64` |
-
-#### 国际源（GitHub Releases）
+### 方式三：下载预编译单文件（GitHub Releases）
 
 | 平台 | 架构 | 直链 |
 |---|---|---|
@@ -120,20 +82,16 @@ python main.py
 | macOS arm64 | Apple Silicon | `https://github.com/ougato/opskit-cli/releases/latest/download/opskit-darwin-arm64` |
 
 ```bash
-# Linux x64（大陆）
-curl -fsSL https://file.icerror.top/d/mirror/soft/linux/opskit-linux-x64 -o opskit
-chmod +x opskit && ./opskit
-
-# Linux x64（境外）
+# Linux x64
 curl -fsSL https://github.com/ougato/opskit-cli/releases/latest/download/opskit-linux-x64 -o opskit
 chmod +x opskit && ./opskit
 
-# macOS（大陆）
-curl -fsSL https://file.icerror.top/d/mirror/soft/macos/opskit-darwin-arm64 -o opskit
+# macOS
+curl -fsSL https://github.com/ougato/opskit-cli/releases/latest/download/opskit-darwin-arm64 -o opskit
 chmod +x opskit && ./opskit
 
-# Windows PowerShell（大陆）
-Invoke-WebRequest https://file.icerror.top/d/mirror/soft/windows/opskit-windows-x64.exe -OutFile opskit.exe
+# Windows PowerShell
+Invoke-WebRequest https://github.com/ougato/opskit-cli/releases/latest/download/opskit-windows-x64.exe -OutFile opskit.exe
 .\opskit.exe
 ```
 
@@ -596,7 +554,7 @@ opskit-cli/
 ├── main.py                   # 主入口 + 主菜单
 ├── build.py                  # 构建脚本（子命令：test/build/clean/all/info）
 ├── Makefile                  # 标准化入口
-├── .github/workflows/release.yml  # GitHub Actions：4 平台构建 + 自动上传 FileBrowser
+├── .github/workflows/release.yml  # GitHub Actions：4 平台构建 + GitHub Release
 ├── requirements.txt
 ├── pyproject.toml
 ├── core/                     # 框架核心层（不可作为插件模块）
