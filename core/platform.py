@@ -22,6 +22,7 @@ class Issue:
     level: IssueLevel
     message: str
     suggestion: str = ""
+    code: str = ""  # 稳定标识：non_root / no_pkg_manager / low_disk
 
 
 @dataclass
@@ -206,6 +207,7 @@ def preflight_check() -> list[Issue]:
             level=IssueLevel.WARN,
             message="未检测到支持的包管理器",
             suggestion="部分软件安装功能可能不可用",
+            code="no_pkg_manager",
         ))
 
     if not info.is_root:
@@ -213,6 +215,7 @@ def preflight_check() -> list[Issue]:
             level=IssueLevel.WARN,
             message="当前非 root / 管理员权限",
             suggestion="部分功能需要提权后使用",
+            code="non_root",
         ))
 
     if info.disk_free_bytes < MIN_DISK_FREE_BYTES:
@@ -221,6 +224,7 @@ def preflight_check() -> list[Issue]:
             level=IssueLevel.WARN,
             message=f"磁盘剩余空间不足（{free_mb}MB）",
             suggestion="清理磁盘后再使用安装功能",
+            code="low_disk",
         ))
 
     return issues

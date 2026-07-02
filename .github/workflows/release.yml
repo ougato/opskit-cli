@@ -170,7 +170,7 @@ jobs:
           done
 
       # 发布控制面：把 tag 对应的 build 写回默认分支的 constants.py + bootstrap.json，
-      # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本（CDN 源由 hook 同步）
+      # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本
       - name: publish bootstrap manifest
         run: |
           set -euo pipefail
@@ -185,21 +185,3 @@ jobs:
           git add core/constants.py bootstrap.json
           git commit -m "chore(release): bump to ${GITHUB_REF_NAME} [skip ci]"
           git push origin HEAD:"${{ github.event.repository.default_branch }}"
-
-      - name: trigger artifact pull
-        continue-on-error: true
-        env:
-          HOOK_URL: ${{ secrets.HOOK_URL }}
-          HOOK_SECRET: ${{ secrets.HOOK_SECRET }}
-        run: |
-          set -euo pipefail
-          if [ -z "${HOOK_URL:-}" ]; then echo "::error::HOOK_URL secret is empty or not set"; exit 1; fi
-          if [ -z "${HOOK_SECRET:-}" ]; then echo "::error::HOOK_SECRET secret is empty or not set (server will return 401)"; exit 1; fi
-          HOOK_URL="${HOOK_URL%/}"
-          BODY='{"event":"release_sync"}'
-          SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HOOK_SECRET" -binary | xxd -p | tr -d '\n')
-          curl -fsSL -X POST "${HOOK_URL}/artifact-pull" \
-            -H "X-Hook-Secret: ${SIG}" \
-            -H "Content-Type: application/json" \
-            --data-binary "$BODY"
-          echo "[hook] artifact-pull triggered"

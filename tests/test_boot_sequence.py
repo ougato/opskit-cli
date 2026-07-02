@@ -152,6 +152,51 @@ class TestUpdateVersionPrompt:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2b. 启动预检：要紧告警暂停、非 root 静音
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPreflightWarnings:
+    def _boot_with_issues(self, issues):
+        import main as _main
+        from core.platform import Issue, IssueLevel  # noqa: F401
+
+        with patch("core.updater.check_and_apply_pending", return_value=False), \
+             patch("os.execv"), \
+             patch("core.config.ensure_config", return_value={"log": {}, "update": {}}), \
+             patch("core.logger.init"), \
+             patch("core.cleanup.init"), \
+             patch("main.theme_init"), \
+             patch("main.i18n_init"), \
+             patch("core.platform.preflight_check", return_value=issues), \
+             patch("threading.Thread"), \
+             patch("core.theme.print_warning") as mock_warn, \
+             patch("core.prompt.pause") as mock_pause:
+            _main._boot()
+        return mock_warn, mock_pause
+
+    def test_non_root_silenced_no_pause(self):
+        """仅「非 root」告警时不打印、不暂停（仅记日志）"""
+        from core.platform import Issue, IssueLevel
+
+        issues = [Issue(level=IssueLevel.WARN, message="非 root", code="non_root")]
+        mock_warn, mock_pause = self._boot_with_issues(issues)
+        mock_warn.assert_not_called()
+        mock_pause.assert_not_called()
+
+    def test_serious_issue_pauses(self):
+        """要紧告警（磁盘不足）应打印并暂停"""
+        from core.platform import Issue, IssueLevel
+
+        issues = [
+            Issue(level=IssueLevel.WARN, message="磁盘不足", code="low_disk"),
+            Issue(level=IssueLevel.WARN, message="非 root", code="non_root"),
+        ]
+        mock_warn, mock_pause = self._boot_with_issues(issues)
+        mock_warn.assert_called_once()
+        mock_pause.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. _on_exit 捕获 Exception（而非 ImportError）
 # ═══════════════════════════════════════════════════════════════════════════════
 

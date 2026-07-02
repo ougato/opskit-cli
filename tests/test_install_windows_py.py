@@ -65,7 +65,7 @@ class TestInstallPs1Exists:
     def test_contains_download_base(self):
         ps1 = REPO_ROOT / "install.ps1"
         content = ps1.read_text(encoding="utf-8")
-        assert "file.icerror.top" in content
+        assert "github.com/ougato/opskit-cli/releases" in content
 
     def test_contains_localappdata(self):
         ps1 = REPO_ROOT / "install.ps1"

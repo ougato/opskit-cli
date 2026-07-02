@@ -218,7 +218,6 @@ flowchart LR
     B --> C[build 矩阵<br/>linux-x64/arm64 · win · mac<br/>每个 runner 先 release_bump 再 nuitka]
     C --> D[release: 上传产物到 GitHub Release]
     D --> E[publish bootstrap: 把 build 写回默认分支<br/>constants.py + bootstrap.json + push]
-    E --> F[artifact-pull hook → CDN file.icerror.top]
 ```
 
 **关键：版本同步脚本** `scripts/release_bump.py`
@@ -230,8 +229,8 @@ flowchart LR
 - `--min-build` / `--rollout` / `--notes` 可在发版时覆盖控制面字段，实现强制升级 / 灰度放量 / 公告。
 
 **控制面发布路径**：
-- GitHub raw 兜底源：`publish bootstrap` 步骤把 bumped `bootstrap.json` commit 回默认分支
-- CDN 优先源 `file.icerror.top`：由 `artifact-pull` hook 同步
+- GitHub raw 主源：`publish bootstrap` 步骤把 bumped `bootstrap.json` commit 回默认分支
+- ghproxy 镜像作兜底（见 `BOOTSTRAP_URLS`）
 
 ---
 
