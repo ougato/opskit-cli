@@ -90,6 +90,7 @@ def _ensure_supported() -> None:
 
 def _run(command: list[str], check: bool = False, timeout: int = COMMAND_TIMEOUT_SECONDS,
          env: dict | None = None) -> subprocess.CompletedProcess:
+    # stdin 关闭：输出被捕获时子进程若等待交互输入（如 chsh 要密码）会挂死到超时。
     return subprocess.run(
         command,
         check=check,
@@ -99,6 +100,7 @@ def _run(command: list[str], check: bool = False, timeout: int = COMMAND_TIMEOUT
         errors="replace",
         timeout=timeout,
         env=env,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -309,17 +311,21 @@ def _switch_default_shell() -> bool:
         return True
 
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
-    result = _run([CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path])
-    if result.returncode == 0:
-        return True
+    cmd = [CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path]
+    try:
+        result = _run(cmd)
+        if result.returncode == 0:
+            return True
+    except subprocess.TimeoutExpired:
+        pass
 
-    # 普通用户无权限时尝试提权。
+    # 普通用户无权限 / chsh 需要密码时尝试提权。
     try:
         from core.privilege import run_as_root
 
-        cmd = [CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path]
         r2 = run_as_root(cmd, check=False, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_SECONDS)
+                         encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_SECONDS,
+                         stdin=subprocess.DEVNULL)
         return r2.returncode == 0
     except Exception:
         return False
