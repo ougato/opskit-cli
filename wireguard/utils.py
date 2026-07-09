@@ -117,6 +117,31 @@ def stop_and_disable(service: str) -> None:
                 capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
+def ensure_xray_runtime_permissions() -> None:
+    """Prepare Xray runtime directories for services running as the nobody user."""
+    from core.paths import xray_config_dir, xray_data_dir, xray_log_dir
+
+    log_dir = xray_log_dir()
+    run_as_root(
+        ["mkdir", "-p", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
+        check=False, capture_output=True,
+    )
+    run_as_root(
+        ["chmod", "0755", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
+        check=False, capture_output=True,
+    )
+    run_as_root(
+        [
+            "sh",
+            "-c",
+            'group="$(id -gn nobody 2>/dev/null || printf nobody)"; chown -R "nobody:${group}" "$1"',
+            "sh",
+            str(log_dir),
+        ],
+        check=False, capture_output=True,
+    )
+
+
 def write_file(path: str, content: str) -> None:
     """写入文件（系统路径自动提权落位）"""
     write_root_file(path, content, "0644")
@@ -218,15 +243,11 @@ def install_xray() -> None:
     from software.base import InstallError
     from wireguard.constants import XRAY_BINARY, XRAY_SERVICE
 
-    from core.paths import xray_config_dir, xray_data_dir, xray_log_dir
+    from core.paths import xray_data_dir
     xray_path = Path(XRAY_BINARY)
-    log_dir = xray_log_dir()
 
     if xray_path.exists():
-        run_as_root(["mkdir", "-p", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
-                    check=False, capture_output=True)
-        run_as_root(["chown", "nobody:nogroup", str(log_dir)],
-                    check=False, capture_output=True)
+        ensure_xray_runtime_permissions()
         ensure_xray_service(xray_path, XRAY_SERVICE)
         return
 
@@ -321,6 +342,4 @@ def install_xray() -> None:
                 run_as_root(["install", "-m", "0644", str(geo_src), str(xray_data_dir() / geo)])
 
     ensure_xray_service(xray_path, XRAY_SERVICE)
-    run_as_root(["mkdir", "-p", str(log_dir), str(xray_config_dir()), str(xray_data_dir())],
-                check=False, capture_output=True)
-    run_as_root(["chown", "nobody:nogroup", str(log_dir)], check=False, capture_output=True)
+    ensure_xray_runtime_permissions()

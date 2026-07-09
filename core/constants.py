@@ -5,7 +5,7 @@ from pathlib import Path
 
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
-APP_VERSION = 2
+APP_VERSION = 6
 
 # ─── 目录名 ──────────────────────────────────────────────────────────────────
 DIR_CONFIG = "config"
@@ -128,6 +128,7 @@ GHPROXY_BASE = "https://mirror.ghproxy.com"
 
 # ─── 公网 IP 探测 API ────────────────────────────────────────────────────────
 PUBLIC_IP_APIS = [
+    "https://ip.sb",
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
     "https://icanhazip.com",
