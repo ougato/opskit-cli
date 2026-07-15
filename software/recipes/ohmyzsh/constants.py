@@ -9,6 +9,7 @@ ZSH_COMMAND: Final[str] = "zsh"
 GIT_COMMAND: Final[str] = "git"
 SH_COMMAND: Final[str] = "sh"
 CHSH_COMMAND: Final[str] = "chsh"
+SUDO_COMMAND: Final[str] = "sudo"
 
 ZSH_PACKAGE: Final[str] = "zsh"
 GIT_PACKAGE: Final[str] = "git"

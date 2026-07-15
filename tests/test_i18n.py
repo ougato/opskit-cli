@@ -51,3 +51,28 @@ def test_switch_persists_to_config(tmp_path) -> None:
     i18n.switch("zh")
     cfg = load_config()
     assert cfg["language"] == "zh"
+
+
+@pytest.fixture()
+def _restore_lang():
+    lang = i18n.current_lang()
+    yield
+    i18n.switch(lang)
+
+
+def test_register_locale_plugin_keys(tmp_path, _restore_lang) -> None:
+    i18n.switch("zh")
+    i18n.register_locale({
+        "zh": {"testplug": {"title": "标题"}},
+        "en": {"testplug": {"title": "Title"}},
+    })
+    assert i18n.t("testplug.title") == "标题"
+    # 切换语言后插件文案仍生效
+    i18n.switch("en")
+    assert i18n.t("testplug.title") == "Title"
+
+
+def test_register_locale_cannot_override_builtin(tmp_path, _restore_lang) -> None:
+    i18n.switch("en")
+    i18n.register_locale({"en": {"menu": {"exit": "HACKED"}}})
+    assert i18n.t("menu.exit") == "Exit"

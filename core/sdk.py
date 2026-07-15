@@ -13,7 +13,7 @@ from core.constants import PLUGIN_API_VERSION as SDK_API_VERSION
 from core.module import ModuleInfo
 
 # ─── i18n ─────────────────────────────────────────────────────────────────────
-from core.i18n import t, current_lang
+from core.i18n import t, current_lang, register_locale
 
 # ─── 主题 / 输出 ──────────────────────────────────────────────────────────────
 from core.theme import (
@@ -48,7 +48,7 @@ from core.logger import get_logger
 __all__ = [
     "SDK_API_VERSION",
     "ModuleInfo",
-    "t", "current_lang",
+    "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
     "select", "confirm", "text_input", "pause", "clear_screen", "UserCancel", "console",

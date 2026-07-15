@@ -81,7 +81,7 @@ def _has_sudo() -> bool:
     return shutil.which("sudo") is not None
 
 
-def _sudo_passwordless() -> bool:
+def sudo_passwordless() -> bool:
     """免密 sudo 可用（`sudo -n true` 成功）。"""
     try:
         return subprocess.run(
@@ -91,7 +91,7 @@ def _sudo_passwordless() -> bool:
         return False
 
 
-def _prime_sudo() -> bool:
+def prime_sudo() -> bool:
     """交互式预热 sudo 凭据（提示一次密码，缓存约 15 分钟），成功返回 True。
 
     预热后同一会话内的多次 run_as_root 不会在进度条中途再逐条弹密码。
@@ -120,9 +120,9 @@ def ensure_root_for_action(instance, action: str = "") -> None:
     from core.i18n import t
     if not _has_sudo():
         raise PrivilegeError(t("privilege.need_root"))
-    if _sudo_passwordless():
+    if sudo_passwordless():
         return
-    if _prime_sudo():
+    if prime_sudo():
         return
     raise PrivilegeError(t("privilege.need_root"))
 
