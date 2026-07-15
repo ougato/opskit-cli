@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from core.constants import FILE_PLUGIN_MANIFEST, PLUGIN_API_VERSION
 from core.logger import get_logger
 from core.module import ModuleInfo
 from core.paths import plugins_dir
+from core.plugin_trust import compute_fingerprint, is_trusted
 
 # 插件 name 合法格式（同时用作模块 key 与 i18n/config 命名空间）
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -54,6 +56,7 @@ class PluginManifest:
     icon: str | None = None
     label: dict[str, str] = field(default_factory=dict)
     description: dict[str, str] = field(default_factory=dict)
+    permissions: list[str] = field(default_factory=list)
     root: Path = field(default_factory=Path)
 
     def display_label(self, lang: str) -> str | None:
@@ -118,6 +121,10 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
     except (TypeError, ValueError):
         order = _DEFAULT_ORDER
 
+    permissions = data.get("permissions") or []
+    if not isinstance(permissions, list):
+        permissions = []
+
     return PluginManifest(
         name=name,
         version=str(data["version"]),
@@ -129,6 +136,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         icon=data.get("icon"),
         label={str(k): str(v) for k, v in label.items()},
         description={str(k): str(v) for k, v in description.items()},
+        permissions=[str(p) for p in permissions],
         root=plugin_root,
     )
 
@@ -164,22 +172,64 @@ def _make_exec_entry(manifest: PluginManifest, exec_path: Path):
         clear_screen()
         try:
             subprocess.call([str(exec_path)], cwd=str(manifest.root))
-        except OSError as e:
+        except Exception as e:
             from core.i18n import t
             from core.theme import print_error
+            _log.error("plugin %s: exec failed: %s", manifest.name, e)
             print_error(t("plugin.exec_failed", name=manifest.name, error=str(e)))
         pause()
 
     return _entry
 
 
+def _guard_entry(name: str, fn):
+    """插件菜单入口守卫：运行期任何异常（含 SystemExit）只报错回菜单，绝不杀死主程序"""
+
+    def _entry() -> None:
+        from core.prompt import UserCancel, pause
+        try:
+            fn()
+        except (KeyboardInterrupt, UserCancel):
+            raise
+        except BaseException as e:  # 含 SystemExit：插件 sys.exit() 不得终止主程序
+            from core.i18n import t
+            from core.theme import print_error
+            _log.error("plugin %s: entry failed: %r", name, e)
+            print_error(t("plugin.entry_failed", name=name, error=str(e)))
+            pause()
+
+    return _entry
+
+
+def _entry_shadows_existing(entry_name: str, plugin_root: Path) -> bool:
+    """entry 包名是否与已有模块重名（防插件遮蔽/劫持 core、rich 等主程序依赖）"""
+    if entry_name in sys.modules:
+        mod = sys.modules[entry_name]
+        mod_file = getattr(mod, "__file__", None) or ""
+        return not mod_file.startswith(str(plugin_root.resolve()))
+    try:
+        spec = importlib.util.find_spec(entry_name)
+    except (ImportError, ValueError):
+        return False
+    if spec is None or not spec.origin:
+        return False
+    return not str(spec.origin).startswith(str(plugin_root.resolve()))
+
+
 def _load_python_plugin(manifest: PluginManifest) -> ModuleInfo | None:
     """进程内加载 python 插件：sys.path 注入插件目录 → import → register()"""
+    entry_name = str(manifest.entry)
+    if not _NAME_PATTERN.match(entry_name):
+        _log.warning("plugin %s: invalid python entry name %r", manifest.name, entry_name)
+        return None
+    if _entry_shadows_existing(entry_name, manifest.root):
+        _log.warning("plugin %s: entry %r shadows an existing module, skipped", manifest.name, entry_name)
+        return None
     root_str = str(manifest.root.resolve())
     if root_str not in sys.path:
-        sys.path.insert(0, root_str)
+        sys.path.append(root_str)
     try:
-        mod = importlib.import_module(str(manifest.entry))
+        mod = importlib.import_module(entry_name)
         register_fn = getattr(mod, "register", None)
         if not callable(register_fn):
             _log.warning("plugin %s: entry package has no register()", manifest.name)
@@ -188,9 +238,10 @@ def _load_python_plugin(manifest: PluginManifest) -> ModuleInfo | None:
         if not isinstance(info, ModuleInfo):
             _log.warning("plugin %s: register() did not return ModuleInfo", manifest.name)
             return None
+        info.entry = _guard_entry(manifest.name, info.entry)
         return info
-    except Exception as e:
-        _log.warning("plugin %s: import/register failed: %s", manifest.name, e)
+    except (Exception, SystemExit) as e:  # 插件 import 期 sys.exit() 也不得杀死主程序
+        _log.warning("plugin %s: import/register failed: %r", manifest.name, e)
         return None
 
 
@@ -257,6 +308,9 @@ def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:
     for manifest in list_manifests():
         if manifest.name in builtin_keys or manifest.name in seen:
             _log.warning("plugin %s: key conflict, skipped", manifest.name)
+            continue
+        if not is_trusted(manifest.name, compute_fingerprint(manifest.root)):
+            _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
             continue
         info = _to_module_info(manifest)
         if info is None:

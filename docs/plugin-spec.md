@@ -33,6 +33,9 @@ label:                   # 可选。菜单显示名（按语言，缺省回退 e
 description:
   zh: 插件描述
   en: Plugin description
+permissions:             # 可选。权限声明（声明式，不强制），信任确认时展示给用户
+  - network              # 建议值：network / filesystem / exec / root
+  - exec
 ```
 
 `exec` 的 `entry` 支持按平台映射：
@@ -47,6 +50,23 @@ entry:
 
 校验失败（缺字段 / name 非法 / kind 非法 / api_version 不匹配 / entry 不存在）时插件被
 跳过并写入日志（`logs/opskit.log`），不影响主程序与其他插件。
+
+## 信任模型与安全边界
+
+插件代码加载前必须经用户明确信任（同 Homebrew tap 模型）：
+
+- 首次信任：菜单安装时展示名称/版本/形态/权限声明，用户确认后记录插件目录内容指纹
+  （全部文件 sha256 汇总，跳过 .git / __pycache__）到 `<data_dir>/plugin_trust.yaml`；
+  手动 `git clone` 的插件需在菜单「信任插件」确认后才会加载
+- 变化重确认：插件内容一旦变化（如 `git pull` 更新）指纹失效，重新信任前不加载，
+  防止「先发好版本、后续更新投毒」
+- 来源警告：安装时 URL 主机不在配置 `plugin.trusted_sources` 白名单时强警告
+- 防崩隔离：插件 import / register / 菜单入口的任何异常（含 `sys.exit()`）只写日志 +
+  短提示，不终止主程序；entry 包名与已有模块（core / rich 等）重名时拒绝加载
+
+⚠ 安全边界：`permissions` 只是声明式透明度机制，**不是沙箱**。python 插件与主程序
+同进程、exec 插件继承当前用户权限，被信任的插件拥有与 OpsKit 同等的系统权限；
+请只信任来源可靠的插件，并避免以 root 运行 OpsKit（除非确实需要）。
 
 ## 形态一：python 插件（进程内加载）
 
@@ -139,3 +159,4 @@ mytool/
 - 安装：`git clone <repo> <plugins_dir>/<name>`，或菜单「插件管理 → 安装插件」输入 URL
 - 更新：`git pull`，或菜单「插件管理 → 更新插件」
 - 启用/禁用：写入 OpsKit 配置 `modules.<name>.enabled`（菜单可切换），重启生效
+- 信任：安装/更新/手动 clone 后均需在菜单确认信任，否则插件不加载

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from core.logger import get_logger
 from core.module import ModuleInfo
 
 
@@ -105,8 +106,8 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
     try:
         from core.plugin import discover_plugins
         modules.extend(discover_plugins(builtin_keys={m.key for m in modules}))
-    except Exception:
-        pass
+    except (Exception, SystemExit) as e:
+        get_logger("opskit.plugin").error("plugin discovery failed: %r", e)
 
     current_platform = _current_platform()
 

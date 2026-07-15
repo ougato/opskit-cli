@@ -23,6 +23,7 @@ FILE_MIRROR_CACHE = "mirror_cache.yaml"
 FILE_UPDATE_CACHE = "update_check.json"
 FILE_LOCK = "opskit.lock"
 FILE_PLUGIN_MANIFEST = "plugin.yaml"
+FILE_PLUGIN_TRUST = "plugin_trust.yaml"
 
 # ─── 插件 SDK API 版本（不兼容变更才递增，见 core/sdk.py 与 docs/plugin-spec.md） ──
 PLUGIN_API_VERSION = 1
@@ -51,6 +52,9 @@ DEFAULT_CONFIG: dict = {
     },
     "log": {
         "level": "WARNING",
+    },
+    "plugin": {
+        "trusted_sources": [],
     },
     "telemetry": {
         "enabled": True,
