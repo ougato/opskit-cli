@@ -1,4 +1,4 @@
-"""插件管理命令 — 安装 / 更新 / 启停 / 卸载（纯业务，供 menu.py 调用）"""
+"""插件管理命令 — 安装 / 更新 / 卸载，支持热插拔（纯业务，供 menu.py 调用）"""
 from __future__ import annotations
 
 import re
@@ -7,8 +7,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from core.config import load_config, set_config_value
+from core.loader import builtin_module_keys
+from core.module import ModuleInfo
 from core.paths import plugins_dir
-from core.plugin import PluginManifest, list_manifests, load_manifest
+from core.plugin import (
+    PluginManifest,
+    list_manifests,
+    load_manifest,
+    load_plugin,
+    unload_plugin,
+)
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
 from core.runner import run
 
@@ -24,6 +32,28 @@ TRUST_CHANGED = "changed"
 def manifests() -> list[PluginManifest]:
     """当前插件目录下所有合法插件清单"""
     return list_manifests()
+
+
+def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
+    """实时扫描并加载全部已信任且启用的插件（热插拔：每次进插件工具菜单调用）"""
+    builtin = builtin_module_keys()
+    pairs: list[tuple[PluginManifest, ModuleInfo]] = []
+    seen: set[str] = set()
+    for manifest in manifests():
+        if manifest.name in builtin or manifest.name in seen or not is_enabled(manifest.name):
+            continue
+        info = load_plugin(manifest)
+        if info is None:
+            continue
+        seen.add(manifest.name)
+        pairs.append((manifest, info))
+    pairs.sort(key=lambda p: p[1].order)
+    return pairs
+
+
+def reload(manifest: PluginManifest) -> None:
+    """清除插件旧模块缓存，下次扫描时重新 import 新代码"""
+    unload_plugin(manifest)
 
 
 def is_enabled(key: str) -> bool:
@@ -110,6 +140,7 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
 
 
 def remove(manifest: PluginManifest) -> None:
-    """删除插件目录并移除信任记录"""
+    """删除插件目录、移除信任记录并清除进程内残留（立即生效）"""
+    unload_plugin(manifest)
     shutil.rmtree(manifest.root, ignore_errors=True)
     revoke(manifest.name)

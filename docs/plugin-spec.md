@@ -1,7 +1,8 @@
 # OpsKit 插件开发规范
 
 OpsKit 支持外部插件：无需改动 OpsKit 源码、无需重新打包，把插件仓库 `git clone`
-进插件目录（或用菜单「🧩 插件管理 → 安装插件」）即可扩展主菜单。
+进插件目录（或用菜单「🧩 插件工具 → 插件管理 → 安装插件」）即可扩展「插件工具」菜单，
+安装 / 更新 / 卸载热插拔立即生效，无需重启。
 
 本文是插件开发的唯一权威规范。按「10 分钟上手」一节即可跑通第一个插件，
 其余章节按需查阅。
@@ -71,11 +72,13 @@ def entry() -> None:
     pause()
 EOF
 
-# 4. 运行 OpsKit，在「插件管理 → 信任插件」中信任 hello，重启即出现在主菜单
+# 4. 运行 OpsKit，在「插件工具 → 插件管理 → 更新插件」中选中 hello 确认信任，
+#    立即出现在「插件工具」菜单（无需重启）
 python3 main.py
 ```
 
-要点：**新插件必须先在「插件管理 → 信任插件」中确认信任，否则不会加载**（见
+要点：**新插件必须先经用户确认信任，否则不会加载**；手动 clone 的插件在
+「更新插件」中选中即弹信任确认（见
 [信任模型](#信任模型与安全边界)）。
 
 ## 插件目录
@@ -100,7 +103,7 @@ version: 1.0.0           # 必填。插件自身版本（semver）
 api_version: 1           # 必填。依赖的 SDK API 大版本，必须等于当前 OpsKit 的 SDK_API_VERSION
 kind: python             # 必填。python | exec
 entry: myplugin_pkg      # 必填。python: 插件目录内的包名; exec: 相对可执行文件路径
-order: 50                # 可选。主菜单排序权重（内置模块 1-40，建议 50+）
+order: 50                # 可选。插件工具菜单排序权重（建议 50+）
 platforms: [linux, darwin, windows]   # 可选。默认三平台
 icon: "🚀"               # 可选。菜单图标（emoji）
 label:                   # 可选。菜单显示名（按语言，缺省回退 en → 任意）
@@ -254,10 +257,11 @@ mytool/
 
 - 首次信任：菜单安装时展示名称/版本/形态/权限声明，用户确认后记录插件目录内容指纹
   （全部文件 sha256 汇总，跳过 .git / __pycache__）到 `<data_dir>/plugin_trust.yaml`；
-  手动 `git clone` 的插件需在菜单「信任插件」确认后才会加载
+  手动 `git clone` 的插件在「更新插件」中选中即弹信任确认，确认后才会加载
 - 变化重确认：插件内容一旦变化（如 `git pull` 更新）指纹失效，重新信任前不加载，
   防止「先发好版本、后续更新投毒」
-- 来源警告：安装时 URL 主机不在配置 `plugin.trusted_sources` 白名单时强警告
+- 来源警告：安装时 URL 主机不在配置 `plugin.trusted_sources` 白名单时显示警告，
+  真正的安全闸门是 clone 后的信任确认
 - 防崩隔离：插件 import / register / 菜单入口的任何异常（含 `sys.exit()`）只写日志 +
   短提示，不终止主程序；entry 包名与已有模块（core / rich 等）重名时拒绝加载
 
@@ -271,15 +275,15 @@ mytool/
 
 1. 源码运行 OpsKit：`python3 main.py`，插件放 `<项目根>/plugins/<name>/`
    （或 `export OPSKIT_PLUGINS_DIR=/path/to/dev-plugins` 指向任意目录）；
-2. 每次改动插件文件后内容指纹变化，需重新「信任插件」——开发期频繁改动时建议直接
-   进「插件管理 → 信任插件」一键重新确认；
+2. 每次改动插件文件后内容指纹变化，需重新信任——进「插件工具 → 插件管理 → 更新插件」
+   选中该插件重新确认，确认后立即生效；
 3. 插件被跳过 / 不显示时，先看日志：`logs/opskit.log`（grep 插件名）。
 
 常见问题速查：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 主菜单不出现插件 | 未信任 / 内容变化后未重新信任 | 插件管理 → 信任插件 |
+| 插件工具不出现插件 | 未信任 / 内容变化后未重新信任 | 插件管理 → 更新插件 → 选中确认信任 |
 | 日志 `manifest missing fields` | plugin.yaml 缺必填字段 | 补齐 name/version/api_version/kind/entry |
 | 日志 `api_version ... incompatible` | 与当前 SDK 大版本不符 | 适配后更新清单 api_version |
 | 日志 `entry ... shadows an existing module` | entry 包名与已有模块重名 | 改带后缀的包名（如 `xxx_pkg`） |
@@ -302,9 +306,9 @@ mytool/
 ## 发布约定
 
 - 仓库命名建议：`opskit-plugin-<name>`
-- 安装：菜单「插件管理 → 安装插件」输入 URL，或 `git clone <repo> <plugins_dir>/<name>`
-- 更新：菜单「插件管理 → 更新插件」，或 `git pull`（更新后需重新信任）
-- 启用/禁用：写入 OpsKit 配置 `modules.<name>.enabled`（菜单可切换），重启生效
+- 安装：菜单「插件工具 → 插件管理 → 安装插件」输入 URL，或 `git clone <repo> <plugins_dir>/<name>`
+- 更新：菜单「插件管理 → 更新插件」，或 `git pull`（更新后需重新信任）；确认后热重载立即生效
+- 卸载：菜单「插件管理 → 卸载插件」，删除目录 + 移除信任记录，列表即刻消失
 - 信任：安装/更新/手动 clone 后均需在菜单确认信任，否则插件不加载
 - 版本：清单 `version` 用 semver，每次发布递增；建议在仓库 README 标注兼容的
   `api_version`
@@ -317,5 +321,5 @@ mytool/
 - [ ] exec 插件：可执行文件在插件目录内且有可执行位；`platforms` 与提供的产物一致
 - [ ] `label` / `description` 提供 zh + en；自有文案通过 `register_locale()` 注册
 - [ ] `permissions` 如实声明
-- [ ] 在干净环境 clone → 信任 → 重启 OpsKit 验证菜单出现、功能可用
+- [ ] 在干净环境 clone → 信任 → 验证「插件工具」菜单立即出现、功能可用
 - [ ] 菜单入口内抛异常只显示短错误、能正常返回主菜单（不会杀死 OpsKit）

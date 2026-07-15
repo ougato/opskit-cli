@@ -295,6 +295,27 @@ def list_manifests() -> list[PluginManifest]:
     return manifests
 
 
+def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
+    """加载单个已信任插件，未信任或加载失败返回 None（写日志）"""
+    if not is_trusted(manifest.name, compute_fingerprint(manifest.root)):
+        _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
+        return None
+    return _to_module_info(manifest)
+
+
+def unload_plugin(manifest: PluginManifest) -> None:
+    """卸载插件的进程内残留（sys.modules / sys.path），供热插拔更新与卸载"""
+    root_str = str(manifest.root.resolve())
+    for name, mod in list(sys.modules.items()):
+        mod_file = getattr(mod, "__file__", None) or ""
+        if mod_file.startswith(root_str):
+            sys.modules.pop(name, None)
+    try:
+        sys.path.remove(root_str)
+    except ValueError:
+        pass
+
+
 def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:
     """
     发现并加载全部外部插件，返回 ModuleInfo 列表。
@@ -309,10 +330,7 @@ def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:
         if manifest.name in builtin_keys or manifest.name in seen:
             _log.warning("plugin %s: key conflict, skipped", manifest.name)
             continue
-        if not is_trusted(manifest.name, compute_fingerprint(manifest.root)):
-            _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
-            continue
-        info = _to_module_info(manifest)
+        info = load_plugin(manifest)
         if info is None:
             continue
         seen.add(manifest.name)

@@ -5,13 +5,14 @@ import os
 import stat
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
 
 from core.loader import discover_modules
 from core.module import ModuleInfo
-from core.plugin import discover_plugins, list_manifests, load_manifest
+from core.plugin import discover_plugins, list_manifests, load_manifest, load_plugin, unload_plugin
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke
 
 
@@ -250,17 +251,60 @@ def test_exec_entry_escape_rejected(plugins_root) -> None:
     assert discover_plugins() == []
 
 
-def test_discover_modules_includes_plugins(plugins_root) -> None:
+def test_discover_modules_excludes_plugins(plugins_root) -> None:
+    """外部插件不进主菜单，只在插件工具内展示"""
     _trust(_make_python_plugin(plugins_root))
     keys = [m.key for m in discover_modules()]
-    assert "demo" in keys
-
-
-def test_discover_modules_respects_disabled_plugin(plugins_root) -> None:
-    _trust(_make_python_plugin(plugins_root))
-    cfg = {"modules": {"demo": {"enabled": False}}}
-    keys = [m.key for m in discover_modules(cfg)]
     assert "demo" not in keys
+    assert "plugin" in keys
+
+
+def test_loaded_plugins_hot_scan(plugins_root) -> None:
+    """loaded_plugins 实时扫描：新增插件无需重启即可被发现"""
+    from plugin import commands
+    assert commands.loaded_plugins() == []
+    _trust(_make_python_plugin(plugins_root))
+    pairs = commands.loaded_plugins()
+    assert [info.key for _m, info in pairs] == ["demo"]
+
+
+def test_load_plugin_single(plugins_root) -> None:
+    plugin_dir = _make_python_plugin(plugins_root)
+    manifest = load_manifest(plugin_dir)
+    assert manifest is not None
+    assert load_plugin(manifest) is None  # 未信任不加载
+    _trust(plugin_dir)
+    info = load_plugin(manifest)
+    assert info is not None and info.key == "demo"
+
+
+def test_unload_plugin_purges_modules(plugins_root) -> None:
+    plugin_dir = _make_python_plugin(plugins_root)
+    _trust(plugin_dir)
+    manifest = load_manifest(plugin_dir)
+    assert load_plugin(manifest) is not None
+    assert "demo_pkg" in sys.modules
+    unload_plugin(manifest)
+    assert "demo_pkg" not in sys.modules
+    assert str(plugin_dir.resolve()) not in sys.path
+
+
+def test_hot_reload_after_update(plugins_root) -> None:
+    """更新后 unload + 重新加载，新代码当场生效"""
+    plugin_dir = _make_python_plugin(plugins_root)
+    _trust(plugin_dir)
+    manifest = load_manifest(plugin_dir)
+    assert load_plugin(manifest) is not None
+    pkg_init = plugin_dir / "demo_pkg" / "__init__.py"
+    pkg_init.write_text(pkg_init.read_text(encoding="utf-8").replace("order=1", "order=77"), encoding="utf-8")
+    now = time.time()
+    os.utime(pkg_init, (now + 10, now + 10))  # 确保 mtime 变化，避免命中旧 .pyc
+    assert load_plugin(manifest) is None  # 内容变化后信任失效
+    _trust(plugin_dir)
+    unload_plugin(manifest)
+    info = load_plugin(manifest)
+    assert info is not None
+    assert sys.modules["demo_pkg"].register().order == 77
 
 
 def test_list_manifests_and_load_manifest(plugins_root) -> None:

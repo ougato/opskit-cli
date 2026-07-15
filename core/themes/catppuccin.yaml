@@ -70,6 +70,7 @@ icons:
   network: "\U0001F310"       # 🌐
   toolkit: "\U0001F527"       # 🔧
   plugin: "\U0001F9E9"        # 🧩
+  plugin_manage: "\u2699\uFE0F"  # ⚙️
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧
