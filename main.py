@@ -411,7 +411,7 @@ def _main_menu(cfg: dict) -> None:
         choices = [
             {
                 "key": str(i + 1),
-                "label": f"{get_icon(m.key)} {t(f'menu.{m.key}')}",
+                "label": f"{m.icon or get_icon(m.key)} {m.label or t(f'menu.{m.key}')}",
             }
             for i, m in enumerate(modules)
         ]

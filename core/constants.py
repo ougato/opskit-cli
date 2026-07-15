@@ -15,12 +15,17 @@ DIR_LOGS = "logs"
 DIR_THEMES = "core/themes"
 DIR_LOCALE = "core/locale"
 DIR_MIRRORS = "core/mirrors"
+DIR_PLUGINS = "plugins"
 
 # ─── 配置文件名 ──────────────────────────────────────────────────────────────
 FILE_CONFIG = "common.yaml"
 FILE_MIRROR_CACHE = "mirror_cache.yaml"
 FILE_UPDATE_CACHE = "update_check.json"
 FILE_LOCK = "opskit.lock"
+FILE_PLUGIN_MANIFEST = "plugin.yaml"
+
+# ─── 插件 SDK API 版本（不兼容变更才递增，见 core/sdk.py 与 docs/plugin-spec.md） ──
+PLUGIN_API_VERSION = 1
 
 # ─── 默认配置模板（首次运行时写入） ─────────────────────────────────────────
 DEFAULT_CONFIG: dict = {

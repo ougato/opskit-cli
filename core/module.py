@@ -25,3 +25,9 @@ class ModuleInfo:
 
     enabled: bool = True
     """是否启用（可通过配置文件动态关闭）"""
+
+    label: str | None = None
+    """直接指定菜单显示名（外部插件用，绕过 t(f'menu.{key}')）"""
+
+    icon: str | None = None
+    """直接指定菜单图标（外部插件用，绕过 get_icon(key)）"""

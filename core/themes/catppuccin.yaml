@@ -37,6 +37,11 @@ colors:
       border: "#eba0ac"
       breadcrumb_bg: "#eba0ac"
       breadcrumb_fg: "#1e1e2e"
+    plugin:
+      title: "bold #f5c2e7"
+      border: "#f5c2e7"
+      breadcrumb_bg: "#f5c2e7"
+      breadcrumb_fg: "#1e1e2e"
 
   progress:
     bar_active: "#cdd6f4"
@@ -64,6 +69,7 @@ icons:
   monitor: "\U0001F4CA"       # 📊
   network: "\U0001F310"       # 🌐
   toolkit: "\U0001F527"       # 🔧
+  plugin: "\U0001F9E9"        # 🧩
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧

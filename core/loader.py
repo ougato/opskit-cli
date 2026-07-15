@@ -16,7 +16,7 @@ _REGISTRY_MODULE = "_registry"
 # 不属于插件的顶层目录/包名（扫描时跳过）
 _SKIP_NAMES = frozenset({
     "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env",
+    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
 })
 
 
@@ -100,6 +100,13 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
         modules = _discover_frozen()
     else:
         modules = _discover_dev()
+
+    # 外部插件（plugins 目录，开发/打包两模式一致生效）
+    try:
+        from core.plugin import discover_plugins
+        modules.extend(discover_plugins(builtin_keys={m.key for m in modules}))
+    except Exception:
+        pass
 
     current_platform = _current_platform()
 

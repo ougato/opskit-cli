@@ -1,0 +1,63 @@
+# 外部插件平台
+
+## 功能概述
+
+OpsKit 开放外部插件扩展：用户把插件仓库 git clone 进插件目录（或用「插件管理」菜单安装），
+重启 opskit 即可在主菜单看到新功能。支持两种插件形态：
+
+- **python**：进程内加载，实现 `register() -> ModuleInfo`，只准依赖 `core/sdk.py` 稳定 API
+- **exec**：子进程执行任意可执行程序（Go / Rust / Shell），语言无关
+
+## 涉及文件
+
+| 文件 | 职责 |
+|---|---|
+| `core/sdk.py` | 插件 SDK 稳定 API 层（SDK_API_VERSION = 1） |
+| `core/plugin.py` | 清单解析校验 + python/exec 插件加载 + 故障隔离 |
+| `core/paths.py` | `plugins_dir()`（`OPSKIT_PLUGINS_DIR` 可覆盖） |
+| `core/constants.py` | `DIR_PLUGINS` / `FILE_PLUGIN_MANIFEST` / `PLUGIN_API_VERSION` |
+| `core/module.py` | `ModuleInfo` 新增 `label` / `icon` 可选字段 |
+| `core/loader.py` | `discover_modules()` 追加外部插件发现 |
+| `main.py` | 主菜单渲染支持 label / icon 覆盖 |
+| `plugin/` | 插件管理模块（列表 / 安装 / 更新 / 启停 / 卸载） |
+| `docs/plugin-spec.md` | 插件开发规范（对外文档） |
+| `tests/test_plugin.py` | 自动化测试 |
+
+## 核心实现流程
+
+1. `discover_modules()` 在内置模块（开发扫描 / `_registry` 静态表）之后调用
+   `core.plugin.discover_plugins(builtin_keys)`，打包模式同样生效
+2. 扫描 `plugins_dir()` 一级子目录，读 `plugin.yaml`：
+   校验必填字段 → name 格式 `^[a-z][a-z0-9_]*$` → kind ∈ {python, exec}
+   → `api_version == PLUGIN_API_VERSION` → 与内置模块 key 不冲突
+3. python：`sys.path` 注入插件目录 → import entry 包 → `register()` → 用清单的
+   name/order/platforms/label/icon 覆盖
+4. exec：解析 entry 路径（支持按平台映射，路径逃逸拒绝）→ 生成继承 stdio 的
+   子进程入口，退出后 `pause()` 回主菜单
+5. 任一步失败只写 `logs/opskit.log` 并跳过该插件，不影响其他模块
+6. 启停复用现有 `modules.<key>.enabled` 配置开关，重启生效
+
+## 跨平台处理
+
+- 插件目录按 `data_dir()` 派生：Linux root `/var/lib/opskit/plugins`、
+  非 root `~/.local/share/opskit/plugins`、Windows `%LOCALAPPDATA%\opskit\plugins`、
+  macOS `~/Library/Application Support/opskit/plugins`
+- exec entry 支持 `{linux: ..., darwin: ..., windows: ...}` 平台映射
+- 清单 `platforms` 字段复用 loader 现有平台过滤
+
+## 已知限制
+
+- python 插件与主程序同进程，恶意/劣质代码无沙箱隔离（信任模型同 Homebrew tap）
+- 插件启停后需重启 opskit 生效
+- exec 插件为整程序接管终端模式，暂无 JSON 协议双向通信
+- 插件自带 i18n 文案暂不合并进主程序 locale，需用清单 label/description 或自行处理
+
+## 测试验证
+
+```bash
+.venv/bin/python -m pytest tests/test_plugin.py -q   # 11 用例
+.venv/bin/python -m pytest tests/ -q                 # 全量 505 passed
+```
+
+手工验证：`OPSKIT_PLUGINS_DIR=/tmp/opk-plugins python3 main.py`，
+主菜单出现「🚀 Hello Plugin」「🛠 问候工具」与「🧩 插件管理」。

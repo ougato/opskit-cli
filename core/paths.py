@@ -102,6 +102,15 @@ def cache_dir() -> Path:
     return data_dir() / "cache"
 
 
+def plugins_dir() -> Path:
+    """外部插件目录（每个插件一个子目录，含 plugin.yaml 清单）"""
+    env = os.environ.get("OPSKIT_PLUGINS_DIR")
+    if env:
+        return Path(env)
+    from core.constants import DIR_PLUGINS
+    return data_dir() / DIR_PLUGINS
+
+
 def log_dir() -> Path:
     """日志目录"""
     if sys.platform == "linux" and _is_frozen() and _is_root():
