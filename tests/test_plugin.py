@@ -198,6 +198,35 @@ def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> Non
     modules[0].entry()  # 不得抛出 SystemExit
 
 
+def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
+    """插件内 Ctrl+C（UserExit）穿透守卫，作为正常退出向上传播"""
+    plugin_dir = _make_python_plugin(plugins_root, name="ctrlc")
+    pkg = plugin_dir / "ctrlc_pkg"
+    (pkg / "__init__.py").write_text(textwrap.dedent("""\
+        from core.module import ModuleInfo
+        from core.prompt import UserExit
+
+
+        def _boom() -> None:
+            raise UserExit
+
+
+        def register() -> ModuleInfo:
+            return ModuleInfo(
+                key="ctrlc",
+                description_key="plugin.ctrlc.desc",
+                order=1,
+                entry=_boom,
+            )
+    """), encoding="utf-8")
+    _trust(plugin_dir)
+    modules = discover_plugins()
+    assert len(modules) == 1
+    from core.prompt import UserExit
+    with pytest.raises(UserExit):
+        modules[0].entry()
+
+
 def test_entry_shadowing_core_rejected(plugins_root) -> None:
     """entry 包名与主程序模块重名时拒绝加载"""
     shadow = plugins_root / "shadow"

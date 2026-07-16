@@ -213,10 +213,10 @@ def _guard_entry(name: str, fn):
     """插件菜单入口守卫：运行期任何异常（含 SystemExit）只报错回菜单，绝不杀死主程序"""
 
     def _entry() -> None:
-        from core.prompt import UserCancel, pause
+        from core.prompt import UserCancel, UserExit, pause
         try:
             fn()
-        except (KeyboardInterrupt, UserCancel):
+        except (KeyboardInterrupt, UserCancel, UserExit):
             raise
         except BaseException as e:  # 含 SystemExit：插件 sys.exit() 不得终止主程序
             from core.i18n import t

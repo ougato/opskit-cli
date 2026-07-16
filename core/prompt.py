@@ -38,6 +38,13 @@ class UserCancel(Exception):
     """用户按 CANCEL_KEY（默认 ESC）主动取消，由调用方决定是返回上层还是退出"""
 
 
+class UserExit(SystemExit):
+    """用户按 Ctrl+C / Ctrl+D 主动退出程序，属正常退出（区别于插件 sys.exit()）"""
+
+    def __init__(self) -> None:
+        super().__init__(0)
+
+
 @contextmanager
 def shield_ctrlc() -> Iterator[None]:
     """在代码块执行期间屏蔽 Ctrl+C，退出后若收到过则安全 raise KeyboardInterrupt。
@@ -401,7 +408,7 @@ def select(
             raise UserCancel
         if ch in ('\x03', '\x04'):
             console.print()
-            sys.exit(0)
+            raise UserExit
         if ch in valid:
             console.print(ch)
             return ch
@@ -508,7 +515,7 @@ def confirm(
             return False
         if ch in ('\x03', '\x04'):
             console.print()
-            sys.exit(0)
+            raise UserExit
 
 
 def _read_line() -> str:
@@ -530,7 +537,7 @@ def _read_line() -> str:
             if ch in ('\x03', '\x04'):
                 sys.stdout.write('\n')
                 sys.stdout.flush()
-                sys.exit(0)
+                raise UserExit
             if ch == '\x08':
                 if buf:
                     buf.pop()
@@ -561,7 +568,7 @@ def _read_line() -> str:
                 if ch in ('\x03', '\x04'):
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
-                    sys.exit(0)
+                    raise UserExit
                 if ch in ('\x7f', '\x08'):
                     if buf:
                         buf.pop()
