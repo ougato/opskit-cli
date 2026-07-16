@@ -1,6 +1,7 @@
 """Powerline 交互原语 — 菜单渲染、选择、确认、输入"""
 from __future__ import annotations
 
+import io
 import os
 import signal
 import sys
@@ -189,6 +190,14 @@ def switch_scheme(name: str) -> None:
 
 
 # ─── 按键读取 ─────────────────────────────────────────────────────────────────
+
+def _stdin_is_tty() -> bool:
+    """stdin 是否为 TTY（fileno 不可用时视为非 TTY）"""
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (ValueError, OSError, AttributeError, io.UnsupportedOperation):
+        return False
+
 
 def _read_key() -> str:
     """读取单个按键（无需回车），跨平台"""
@@ -396,10 +405,14 @@ def select(
             pass
 
     while True:
-        ch = _read_key()
+        ch = _read_key_seq()
         if not ch:
-            console.print()
-            return None
+            if not _stdin_is_tty():
+                console.print()
+                return None
+            continue
+        if ch in ('UP', 'DOWN'):
+            continue
         if ch == '0':
             console.print()
             return None
@@ -516,7 +529,7 @@ def _read_key_seq() -> str:
     try:
         tty.setraw(fd)
         seq = sys.stdin.read(1)
-        if seq != '[':
+        if seq not in ('[', 'O'):  # 'O' = application mode 方向键（ESC O A 等）
             return ch
         code = sys.stdin.read(1)
     finally:
@@ -577,7 +590,7 @@ def multi_select(
         _render()
         ch = _read_key_seq()
         if not ch:
-            if os.name != 'nt' and not os.isatty(sys.stdin.fileno()):
+            if not _stdin_is_tty():
                 console.print()
                 return None
             continue
