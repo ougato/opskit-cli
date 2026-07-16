@@ -43,6 +43,9 @@ from core.runner import run, run_lines, which, cmd_ok
 # ─── 路径 ─────────────────────────────────────────────────────────────────────
 from core.paths import data_dir, cache_dir, log_dir, plugins_dir, plugin_data_dir
 
+# ─── YAML 读写（插件配置 / 构建记录，禁止直接依赖第三方库）──────────────────
+from core.yamlio import load_yaml, save_yaml
+
 # ─── 日志 ─────────────────────────────────────────────────────────────────────
 from core.logger import get_logger
 
@@ -55,5 +58,6 @@ __all__ = [
     "select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
     "run", "run_lines", "which", "cmd_ok",
     "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
+    "load_yaml", "save_yaml",
     "get_logger",
 ]

@@ -251,6 +251,7 @@ mytool/
 | 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console` |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
+| YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
 | 日志 | `get_logger` |
 
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
