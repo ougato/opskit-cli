@@ -412,3 +412,7 @@ def test_manage_pick_grouping(plugins_root) -> None:
     items = {_manifest_item(m) for m in groups["insight-flow"]}
     assert any("服务端" in i for i in items)
     assert any("客户端" in i for i in items)
+    from plugin.menu import _display_name
+    names = {_display_name(m) for m in groups["insight-flow"]}
+    assert "Insight Flow 服务端" in names
+    assert "Insight Flow 客户端" in names

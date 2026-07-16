@@ -148,7 +148,7 @@ def _manage() -> None:
 def _show_summary(manifest) -> None:
     """信任确认前展示插件概要（名称 / 版本 / 形态 / 权限声明）"""
     perms = ", ".join(manifest.permissions) if manifest.permissions else t("plugin.perm_none")
-    console.print(f"{t('plugin.col_name')}: {manifest.name}", style=get_color("info"))
+    console.print(f"{t('plugin.col_name')}: {_display_name(manifest)}", style=get_color("info"))
     console.print(f"{t('plugin.col_version')}: {manifest.version}", style=get_color("info"))
     console.print(f"{t('plugin.col_kind')}: {manifest.kind}", style=get_color("info"))
     console.print(f"{t('plugin.col_perms')}: {perms}", style=get_color("info"))
@@ -160,7 +160,7 @@ def _confirm_trust(manifest, source: str = "") -> bool:
     _show_summary(manifest)
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-        prompt=t("plugin.trust_confirm", name=manifest.name),
+        prompt=t("plugin.trust_confirm", name=_display_name(manifest)),
         theme_key=_THEME_KEY,
     ):
         return False
@@ -192,10 +192,10 @@ def _install() -> None:
         return
     if not _confirm_trust(manifest, source=url.strip()):
         commands.rollback_install(manifest)
-        print_error(t("plugin.trust_declined", name=manifest.name))
+        print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return
-    print_success(t("plugin.install_success", name=manifest.name))
+    print_success(t("plugin.install_success", name=_display_name(manifest)))
     pause()
 
 
@@ -225,6 +225,14 @@ def _manifest_group_display(members) -> tuple[str, str]:
 def _manifest_item(m) -> str:
     lang = current_lang()
     return f"{m.icon or get_icon('plugin')} {m.display_label(lang) or m.name}"
+
+
+def _display_name(m) -> str:
+    """提示文案用显示名：分组名 + 插件显示名（如 “Insight Flow 服务端”），无则降级 name"""
+    lang = current_lang()
+    label = m.display_label(lang) or m.name
+    group_label = m.display_group_label(lang)
+    return f"{group_label} {label}" if group_label else label
 
 
 def _pick_member(subtitle_key: str, members):
@@ -306,15 +314,15 @@ def _update() -> None:
     # 手动 clone / 内容变化后未信任的插件：选中即走信任确认
     if commands.trust_status(manifest) != commands.TRUST_OK:
         if _confirm_trust(manifest):
-            print_success(t("plugin.trust_granted", name=manifest.name))
+            print_success(t("plugin.trust_granted", name=_display_name(manifest)))
         else:
-            print_error(t("plugin.trust_declined", name=manifest.name))
+            print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return
     ok, msg = commands.update(manifest)
     if not ok:
         if msg == "not_git":
-            print_error(t("plugin.update_not_git", name=manifest.name))
+            print_error(t("plugin.update_not_git", name=_display_name(manifest)))
         else:
             print_error(t("plugin.update_failed", error=msg))
         pause()
@@ -325,14 +333,14 @@ def _update() -> None:
         pause()
         return
     if commands.trust_status(refreshed) == commands.TRUST_OK:
-        print_info(t("plugin.update_latest", name=refreshed.name))
+        print_info(t("plugin.update_latest", name=_display_name(refreshed)))
         pause()
         return
     if _confirm_trust(refreshed):
         commands.reload(refreshed)
-        print_success(t("plugin.update_success", name=refreshed.name))
+        print_success(t("plugin.update_success", name=_display_name(refreshed)))
     else:
-        print_error(t("plugin.trust_needed", name=refreshed.name))
+        print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
     pause()
 
 
@@ -342,10 +350,10 @@ def _remove() -> None:
         return
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-        prompt=t("plugin.remove_confirm", name=manifest.name),
+        prompt=t("plugin.remove_confirm", name=_display_name(manifest)),
         theme_key=_THEME_KEY,
     ):
         return
     commands.remove(manifest)
-    print_success(t("plugin.remove_success", name=manifest.name))
+    print_success(t("plugin.remove_success", name=_display_name(manifest)))
     pause()
