@@ -428,7 +428,7 @@ class TestTextInputInfoLines:
         from core import prompt as prompt_mod
 
         monkeypatch.setattr(prompt_mod.os, "system", lambda cmd: 0)
-        monkeypatch.setattr(prompt_mod, "_read_line", lambda: "")
+        monkeypatch.setattr(prompt_mod, "_read_line", lambda secret=False: "")
         result = prompt_mod.text_input(
             breadcrumb=["OpsKit", "Test"],
             prompt="构建版本",

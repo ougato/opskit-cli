@@ -500,7 +500,7 @@ def confirm(
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
     from core.i18n import t as _t
-    _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('prompt.no'))
+    _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('menu.back'))
 
     while True:
         ch = _read_key().lower()
@@ -518,8 +518,8 @@ def confirm(
             raise UserExit
 
 
-def _read_line() -> str:
-    """读取一行文本输入（带回显），Ctrl+C / ESC 安全。
+def _read_line(secret: bool = False) -> str:
+    """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
     Windows：msvcrt 逐字符读取。
     Unix：termios raw 模式逐字符读取，行为与 Windows 对齐。
@@ -549,7 +549,7 @@ def _read_line() -> str:
                 sys.stdout.flush()
                 raise UserCancel
             buf.append(ch)
-            sys.stdout.write(ch)
+            sys.stdout.write('*' if secret else ch)
             sys.stdout.flush()
     else:
         import termios
@@ -585,7 +585,7 @@ def _read_line() -> str:
                     raise UserCancel
                 if ch >= ' ':
                     buf.append(ch)
-                    sys.stdout.write(ch)
+                    sys.stdout.write('*' if secret else ch)
                     sys.stdout.flush()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -598,6 +598,7 @@ def text_input(
     hint: str = '',
     theme_key: str = 'root',
     info_lines: list[str] | None = None,
+    secret: bool = False,
 ) -> str:
     """Powerline 风格文本输入。
 
@@ -605,6 +606,7 @@ def text_input(
     hint       — 输入行提示（如默认值），显示在 ╰─ 右侧
     default    — 回车时的返回值（未填写时使用）
     info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
+    secret     — 敏感输入（如密码），回显 *
     """
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
@@ -630,7 +632,7 @@ def text_input(
     hint_str = f'  ({_hint})' if _hint else ''
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
     sys.stdout.flush()
-    raw = _read_line()
+    raw = _read_line(secret=secret)
     return raw if raw else default
 
 
