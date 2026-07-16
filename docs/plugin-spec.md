@@ -250,7 +250,7 @@ mytool/
 | 协议 | `ModuleInfo` |
 | i18n | `t` / `current_lang` / `register_locale` |
 | 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console` |
+| 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行） |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |

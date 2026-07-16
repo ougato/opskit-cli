@@ -590,12 +590,14 @@ def text_input(
     default: str = '',
     hint: str = '',
     theme_key: str = 'root',
+    info_lines: list[str] | None = None,
 ) -> str:
     """Powerline 风格文本输入。
 
-    prompt  — 字段标签，显示在色块 pill 里
-    hint    — 输入行提示（如默认值），显示在 ╰─ 右侧
-    default — 回车时的返回值（未填写时使用）
+    prompt     — 字段标签，显示在色块 pill 里
+    hint       — 输入行提示（如默认值），显示在 ╰─ 右侧
+    default    — 回车时的返回值（未填写时使用）
+    info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
     """
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
@@ -608,6 +610,14 @@ def text_input(
     row2.append_text(_seg_text(prompt, _INPUT_SEG))
     row2.append_text(_tail_text(_INPUT_SEG))
     console.print(row2)
+
+    for line in info_lines or []:
+        row = Text()
+        tee = Text(f' {_TEE} ')
+        tee.stylize(_PIPE_COLOR)
+        row.append_text(tee)
+        row.append(f' {line}')
+        console.print(row)
 
     _hint = hint or default
     hint_str = f'  ({_hint})' if _hint else ''

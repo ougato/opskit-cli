@@ -419,3 +419,23 @@ def test_confirm_returns_false_on_eof_without_busy_loop(monkeypatch) -> None:
 
     monkeypatch.setattr(prompt, "_read_key", lambda: "")
     assert prompt.confirm(breadcrumb=["x"], prompt="ok?") is False
+
+
+class TestTextInputInfoLines:
+    """text_input info_lines：标签与输入行之间的信息行渲染"""
+
+    def test_info_lines_rendered(self, monkeypatch, capsys):
+        from core import prompt as prompt_mod
+
+        monkeypatch.setattr(prompt_mod.os, "system", lambda cmd: 0)
+        monkeypatch.setattr(prompt_mod, "_read_line", lambda: "")
+        result = prompt_mod.text_input(
+            breadcrumb=["OpsKit", "Test"],
+            prompt="构建版本",
+            default="1.2.4",
+            info_lines=["当前 1.2.3"],
+        )
+        out = capsys.readouterr().out
+        assert result == "1.2.4"
+        assert "当前 1.2.3" in out
+        assert "(1.2.4)" in out
