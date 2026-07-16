@@ -57,8 +57,6 @@ plugin:
   trust_granted: "Plugin {name} trusted"
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
-  ver_old: "Previous version"
-  ver_new: "Updated version"
   update_tampered: "Plugin {name} content does not match CHECKSUMS.yaml, possible tampering, refused to load"
   downgrade_confirm: "Version downgrade {old} → {new}, trust and load anyway?"
   fingerprint_written: "Generated {path}"

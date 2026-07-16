@@ -58,8 +58,6 @@ plugin:
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
   source_warning: "来源不在可信来源白名单，代码未经审查"
-  ver_old: "更新前版本"
-  ver_new: "更新后版本"
   update_tampered: "插件 {name} 内容与发布清单 CHECKSUMS.yaml 不符，可能被篡改，已拒绝加载"
   downgrade_confirm: "版本回退 {old} → {new}，确认信任并加载？"
   fingerprint_written: "已生成 {path}"

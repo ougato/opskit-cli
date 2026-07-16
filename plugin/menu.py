@@ -335,10 +335,6 @@ def _update() -> None:
         print_error(t("plugin.install_no_manifest"))
         pause()
         return
-    # 版本信息常驻结果界面，不再一闪而过
-    console.print(f"  {t('plugin.col_name')}: {_display_name(refreshed)}", style=get_color("info"))
-    console.print(f"  {t('plugin.ver_old')}: {old_version}", style=get_color("info"))
-    console.print(f"  {t('plugin.ver_new')}: {refreshed.version}", style=get_color("info"))
     if msg == "unchanged":
         print_info(t("plugin.update_latest", name=_display_name(refreshed)))
         pause()
@@ -367,7 +363,6 @@ def _update() -> None:
     if commands.trust_status(refreshed) == commands.TRUST_OK or _confirm_trust(refreshed):
         commands.reload(refreshed)
         print_success(t("plugin.update_success", name=_display_name(refreshed)))
-        console.print(f"  {old_version} → {refreshed.version}")
     else:
         print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
     pause()
