@@ -15,6 +15,10 @@ _lang: str = "en"
 # 插件注册的额外文案：{lang: {flat_key: value}}，切换语言时重新叠加
 _extra: dict[str, dict[str, str]] = {}
 
+# 主程序 locale 文件自带的 key 集合：插件 key 不得覆盖它们，
+# 但插件自己的 key 允许重复注册时刷新（支持插件热更新文案）
+_core_keys: set[str] = set()
+
 
 # ─── 内部工具 ─────────────────────────────────────────────────────────────────
 
@@ -110,13 +114,17 @@ def init() -> None:
         _lang = _detect_system_lang()
 
     _current = _flatten(_load_lang(_lang))
+    _core_keys.clear()
+    _core_keys.update(_current)
     _apply_extra()
 
 
 def _apply_extra() -> None:
-    """把插件注册的额外文案叠加到当前语言表（插件 key 不得覆盖已有文案）"""
+    """把插件注册的额外文案叠加到当前语言表（插件 key 不得覆盖主程序文案，
+    插件自己的 key 重复注册时取最新值，保证热更新后文案立即生效）"""
     for k, v in _extra.get(_lang, {}).items():
-        _current.setdefault(k, v)
+        if k not in _core_keys:
+            _current[k] = v
 
 
 def register_locale(catalog: dict[str, dict[str, Any]]) -> None:
@@ -163,6 +171,8 @@ def switch(lang: str) -> None:
     else:
         _lang = lang
     _current = _flatten(_load_lang(_lang))
+    _core_keys.clear()
+    _core_keys.update(_current)
     _apply_extra()
 
     from core.config import load_config, set_config_value

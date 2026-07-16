@@ -76,3 +76,12 @@ def test_register_locale_cannot_override_builtin(tmp_path, _restore_lang) -> Non
     i18n.switch("en")
     i18n.register_locale({"en": {"menu": {"exit": "HACKED"}}})
     assert i18n.t("menu.exit") == "Exit"
+
+
+def test_register_locale_refreshes_plugin_keys(tmp_path, _restore_lang) -> None:
+    """插件热更新后重复注册自己的 key，取最新值"""
+    i18n.switch("zh")
+    i18n.register_locale({"zh": {"testplug2": {"build": "编译"}}})
+    assert i18n.t("testplug2.build") == "编译"
+    i18n.register_locale({"zh": {"testplug2": {"build": "编译构建"}}})
+    assert i18n.t("testplug2.build") == "编译构建"
