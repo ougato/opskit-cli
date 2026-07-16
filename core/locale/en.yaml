@@ -52,6 +52,7 @@ plugin:
   git_network_failed: "Network connection failed, retry later"
   git_exit: "git exited with code {code}"
   git_dubious_ownership: "Plugin dir owner differs from current user, run git config --global --add safe.directory <plugin dir> and retry"
+  git_too_old: "git does not support required options, upgrade git"
   remove_confirm: "Remove {name} and delete its directory?"
   remove_success: "Plugin {name} removed"
   exec_failed: "Plugin {name} failed to run ({error})"

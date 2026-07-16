@@ -52,6 +52,7 @@ plugin:
   git_network_failed: "网络连接失败，检查网络后重试"
   git_exit: "git 退出码 {code}"
   git_dubious_ownership: "插件目录属主与当前用户不一致，执行 git config --global --add safe.directory <插件目录> 后重试"
+  git_too_old: "git 不支持所需参数，请升级 git 版本"
   remove_confirm: "卸载 {name}，删除其目录？"
   remove_success: "插件 {name} 已卸载"
   exec_failed: "插件 {name} 运行失败（{error}）"

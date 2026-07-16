@@ -117,6 +117,7 @@ _GIT_ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("repository not found", "does not appear to be a git repository"), "plugin.git_repo_not_found"),
     (("could not resolve", "connection reset", "connection refused", "timed out", "unable to access", "network is unreachable"), "plugin.git_network_failed"),
     (("dubious ownership",), "plugin.git_dubious_ownership"),
+    (("usage: git",), "plugin.git_too_old"),
 )
 
 
@@ -177,14 +178,14 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
         return False, "not_git"
     was_trusted = trust_status(manifest) == TRUST_OK
     try:
-        head = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True, check=False)
+        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
         if head.returncode != 0:
             return False, git_error_reason(head)
         before = head.stdout.strip()
-        pulled = run(["git", "-C", str(root), "pull", "--ff-only"], capture=True, check=False)
+        pulled = run(["git", "pull", "--ff-only"], cwd=root, capture=True, check=False)
         if pulled.returncode != 0:
             return False, git_error_reason(pulled)
-        head = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True, check=False)
+        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
         if head.returncode != 0:
             return False, git_error_reason(head)
         after = head.stdout.strip()
