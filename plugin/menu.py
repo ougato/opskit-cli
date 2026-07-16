@@ -145,23 +145,24 @@ def _manage() -> None:
             pass
 
 
-def _show_summary(manifest) -> None:
-    """信任确认前展示插件概要（名称 / 版本 / 形态 / 权限声明）"""
+def _summary_lines(manifest) -> list[str]:
+    """信任确认界面展示的插件概要（名称 / 版本 / 形态 / 权限声明）"""
     perms = ", ".join(manifest.permissions) if manifest.permissions else t("plugin.perm_none")
-    console.print(f"{t('plugin.col_name')}: {_display_name(manifest)}", style=get_color("info"))
-    console.print(f"{t('plugin.col_version')}: {manifest.version}", style=get_color("info"))
-    console.print(f"{t('plugin.col_kind')}: {manifest.kind}", style=get_color("info"))
-    console.print(f"{t('plugin.col_perms')}: {perms}", style=get_color("info"))
+    return [
+        f"{t('plugin.col_name')}: {_display_name(manifest)}",
+        f"{t('plugin.col_version')}: {manifest.version}",
+        f"{t('plugin.col_kind')}: {manifest.kind}",
+        f"{t('plugin.col_perms')}: {perms}",
+    ]
 
 
 def _confirm_trust(manifest, source: str = "") -> bool:
     """展示概要 + 用户确认信任，确认后记录指纹"""
-    clear_screen()
-    _show_summary(manifest)
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
         prompt=t("plugin.trust_confirm", name=_display_name(manifest)),
         theme_key=_THEME_KEY,
+        info_lines=_summary_lines(manifest),
     ):
         return False
     commands.grant_trust(manifest, source)
@@ -311,14 +312,12 @@ def _update() -> None:
     manifest = _pick("plugin.update")
     if manifest is None:
         return
-    # 手动 clone / 内容变化后未信任的插件：选中即走信任确认
+    # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
     if commands.trust_status(manifest) != commands.TRUST_OK:
-        if _confirm_trust(manifest):
-            print_success(t("plugin.trust_granted", name=_display_name(manifest)))
-        else:
+        if not _confirm_trust(manifest):
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
-        pause()
-        return
+            pause()
+            return
     ok, msg = commands.update(manifest)
     if not ok:
         if msg == "not_git":

@@ -490,15 +490,20 @@ def confirm(
     breadcrumb: list[str],
     prompt: str,
     theme_key: str = 'root',
+    info_lines: list[str] | None = None,
 ) -> bool:
     """Powerline 风格确认（y/N 单键）。
 
+    info_lines — 标题与选项之间的信息行（├─ 前缀，如插件概要）
     非交互模式（--yes）下直接返回 True。
     """
     if _auto_yes:
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
+    pipe = f'[{_PIPE_COLOR}]'
+    for line in info_lines or []:
+        console.print(f' {pipe}{_TEE}[/] {line}')
     from core.i18n import t as _t
     _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('menu.back'))
 
