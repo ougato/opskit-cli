@@ -647,6 +647,9 @@ def _fake_recipe(*, detected: str | None, versions: list[str] | None = None,
         def detect(self):
             return detected
 
+        def activate(self):
+            self.activated = True
+
         def versions(self):
             if versions is None:
                 raise RuntimeError("boom")
@@ -718,3 +721,46 @@ def test_ensure_installed_versions_error_returns_false(monkeypatch) -> None:
     cls = _fake_recipe(detected=None, versions=None)
     monkeypatch.setattr("software.registry.get", lambda key: cls)
     assert actions.ensure_installed("fake-soft") is False
+
+
+# ─── resolve_bin（SDK software_bin 后端）────────────────────────────────────────
+
+def test_resolve_bin_unknown_key(monkeypatch) -> None:
+    from software import actions
+
+    monkeypatch.setattr("software.registry.get", lambda key: None)
+    assert actions.resolve_bin("no-such-recipe", "go") is None
+
+
+def test_resolve_bin_not_installed(monkeypatch) -> None:
+    from software import actions
+
+    cls = _fake_recipe(detected=None)
+    monkeypatch.setattr("software.registry.get", lambda key: cls)
+    assert actions.resolve_bin("fake-soft", "go") is None
+
+
+def test_resolve_bin_activates_and_resolves(monkeypatch, tmp_path) -> None:
+    """已安装 → 先 activate（注入进程 PATH）再解析可执行文件"""
+    import os
+
+    from software import actions
+
+    exe = tmp_path / "fakego"
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+
+    class ActivatingRecipe:
+        key = "fake-soft"
+        description = ""
+        platforms = ["linux", "darwin", "windows"]
+
+        def detect(self):
+            return "1.0.0"
+
+        def activate(self):
+            os.environ["PATH"] = f"{tmp_path}{os.pathsep}{os.environ['PATH']}"
+
+    monkeypatch.setattr("software.registry.get", lambda key: ActivatingRecipe)
+    found = actions.resolve_bin("fake-soft", "fakego")
+    assert found == str(exe)

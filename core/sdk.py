@@ -62,6 +62,17 @@ def ensure_software(key: str) -> bool:
     return ensure_installed(key)
 
 
+def software_bin(key: str, cmd: str) -> str | None:
+    """返回已安装软件配方提供的可执行文件路径，未安装返回 None。
+
+    插件无需关心平台把软件装在哪（系统 PATH / 私有目录 / shim）：平台
+    会先激活该软件到当前进程 PATH，再解析 cmd，保证后续子进程可直接调用。
+    仅限注册表内配方（白名单）。
+    """
+    from software.actions import resolve_bin
+    return resolve_bin(key, cmd)
+
+
 __all__ = [
     "SDK_API_VERSION",
     "ModuleInfo",
@@ -74,4 +85,5 @@ __all__ = [
     "load_yaml", "save_yaml",
     "get_logger",
     "ensure_software",
+    "software_bin",
 ]

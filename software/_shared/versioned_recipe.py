@@ -106,6 +106,19 @@ class VersionedTarballRecipe(Recipe):
     def detect(self) -> str | None:
         return self._get_driver().detect_active()
 
+    def activate(self) -> None:
+        snap = self._load_snapshot()
+        bin_dir = snap.get(self._bin_dir_snap_key)
+        active = snap.get("active_version")
+        if not bin_dir and active:
+            bin_dir = str(self._bin_dir(active))
+        if not bin_dir or not Path(bin_dir).is_dir():
+            return
+        try:
+            self._get_driver().apply_version_link(bin_dir)
+        except Exception:
+            pass
+
     def _active_version(self) -> str | None:
         return self._load_snapshot().get("active_version")
 
