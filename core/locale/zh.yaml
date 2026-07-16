@@ -115,6 +115,8 @@ prompt:
   "yes": "确认"
   "no": "取消"
   pause: "按任意键返回菜单..."
+  prev_page: "上一页"
+  next_page: "下一页"
 
 error:
   permission: "权限不足，请以 root / 管理员身份运行"

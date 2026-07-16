@@ -250,7 +250,7 @@ mytool/
 | 协议 | `ModuleInfo` |
 | i18n | `t` / `current_lang` / `register_locale` |
 | 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `multi_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选） |
+| 交互 | `select` / `multi_select` / `paged_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选；`paged_select` 分页单选，每页最多 9 项、n/p 翻页） |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
@@ -364,6 +364,9 @@ svc = get_service("storage")
 - 界面一律用 SDK 交互组件（select / confirm / text_input / pause / print_*），
   禁止自造菜单渲染与交互流程；每个执行阶段必须 `clear_screen()` +
   `print_header(面包屑)` 保持标题常驻，与主程序风格一致；
+- 菜单列表每页最多展示 9 项：选项可能超过 9 个的列表必须用 `paged_select`
+  分页（n 下一页 / p 上一页，翻页文案缺省用平台通用「上一页 / 下一页」），
+  禁止一页堆超过 9 个序号选项；
 - 禁止调用 `sys.exit()` / `os._exit()`（会被守卫拦截，但属于违规行为）；
 - 用户可见文字一律走 `t()` + `register_locale()`，不硬编码单一语言；
 - 长时间操作要有进度提示，错误信息保持简短（详细内容写日志 `get_logger()`）；

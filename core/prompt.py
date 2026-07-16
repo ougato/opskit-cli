@@ -437,7 +437,7 @@ def paged_select(
     choice_of: Callable[[Any, int], dict[str, Any]],
     subtitle_of: Callable[[int, int], str],
     back_label: str,
-    nav_labels: tuple[str, str],
+    nav_labels: tuple[str, str] | None = None,
     theme_key: str = 'root',
     page_size: int = 9,
     on_select: Callable[[Any], None] | None = None,
@@ -451,13 +451,17 @@ def paged_select(
         choice_of: ``(item, idx_on_page) -> choice dict``；返回的 dict 若缺
             ``key`` 字段会自动补为页内序号（从 1 起）。
         subtitle_of: ``(page, total_pages) -> str``，由调用方决定副标题文案。
-        nav_labels: ``(上一页文案, 下一页文案)``，由调用方传入避免耦合命名空间。
+        nav_labels: ``(上一页文案, 下一页文案)``，缺省用 ``prompt.prev_page`` /
+            ``prompt.next_page`` 通用文案。
         on_select: 为 None → 选中即返回该 item（pick 模式）；否则对选中 item
             调用此回调并继续停留在列表（browse 模式，翻页状态保持）。
 
     Returns:
         pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
     """
+    if nav_labels is None:
+        from core.i18n import t
+        nav_labels = (t('prompt.prev_page'), t('prompt.next_page'))
     prev_label, next_label = nav_labels
     total = len(items)
     total_pages = (total + page_size - 1) // page_size

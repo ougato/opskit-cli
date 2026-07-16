@@ -29,6 +29,7 @@ from core.theme import (
 from core.prompt import (
     select,
     multi_select,
+    paged_select,
     confirm,
     text_input,
     pause,
@@ -106,7 +107,7 @@ __all__ = [
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "select", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
     "get_service", "open_service_menu",
     "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",

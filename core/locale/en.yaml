@@ -115,6 +115,8 @@ prompt:
   "yes": "Confirm"
   "no": "Cancel"
   pause: "Press any key to return..."
+  prev_page: "Prev Page"
+  next_page: "Next Page"
 
 error:
   permission: "Permission denied. Run as root / administrator"
