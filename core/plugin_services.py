@@ -95,7 +95,7 @@ def _guided_install(name: str, source: str) -> object | None:
     if not source:
         return None
     from plugin import commands as plugin_commands
-    from plugin.menu import confirm_trust
+    from plugin.menu import _display_name, confirm_trust
 
     clear_screen()
     print_header([APP_NAME, t("service.installing", service=name)])
@@ -107,10 +107,14 @@ def _guided_install(name: str, source: str) -> object | None:
         return None
     if not confirm_trust(manifest, source=source):
         plugin_commands.rollback_install(manifest)
-        print_error(t("plugin.trust_declined", name=manifest.name))
+        print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return None
-    return get_service(name)
+    svc = get_service(name)
+    if svc is None:
+        print_error(t("service.unavailable", service=name))
+        pause()
+    return svc
 
 
 def open_service_menu(
@@ -128,8 +132,11 @@ def open_service_menu(
     from core.theme import print_error
 
     svc = get_service(name)
-    if svc is None:
+    if svc is None and source:
         svc = _guided_install(name, source)
+        if svc is None:
+            # 引导安装内部已展示具体失败原因并等待返回，不再叠加提示
+            return False
     if svc is None:
         print_error(t("service.unavailable", service=name))
         pause()
