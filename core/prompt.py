@@ -742,6 +742,15 @@ def _read_line(secret: bool = False) -> str:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+def _mask_secret(value: str) -> str:
+    """敏感默认值脱敏显示：只露首尾各 4 位"""
+    if not value:
+        return ''
+    if len(value) <= 8:
+        return '****'
+    return f'{value[:4]}****{value[-4:]}'
+
+
 def text_input(
     breadcrumb: list[str],
     prompt: str,
@@ -779,7 +788,7 @@ def text_input(
         row.append(f' {line}')
         console.print(row)
 
-    _hint = hint or default
+    _hint = hint or (_mask_secret(default) if secret else default)
     hint_str = f'  ({_hint})' if _hint else ''
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
     sys.stdout.flush()
