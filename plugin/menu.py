@@ -199,21 +199,44 @@ def _install() -> None:
     pause()
 
 
-def _pick(subtitle_key: str):
-    """选择一个已安装插件（仅显示名称），返回 manifest 或 None"""
-    manifests = commands.manifests()
-    if not manifests:
-        clear_screen()
-        console.print(t("plugin.empty"), style=get_color("muted"))
-        pause()
-        return None
+def _manifest_grouped(manifests):
+    """把已安装插件清单按 group 归组：返回 (未分组列表, {group_id: 组内列表})"""
+    ungrouped = []
+    groups: dict[str, list] = {}
+    for m in manifests:
+        if m.group:
+            groups.setdefault(m.group, []).append(m)
+        else:
+            ungrouped.append(m)
+    return ungrouped, groups
+
+
+def _manifest_group_display(members) -> tuple[str, str]:
+    """分组入口的图标与显示名（取组内首个声明者）"""
+    lang = current_lang()
+    icon = next((m.group_icon for m in members if m.group_icon), None) or get_icon("plugin")
+    label = next(
+        (m.display_group_label(lang) for m in members if m.display_group_label(lang)),
+        members[0].group,
+    )
+    return icon, label
+
+
+def _manifest_item(m) -> str:
+    lang = current_lang()
+    return f"{m.icon or get_icon('plugin')} {m.display_label(lang) or m.name}"
+
+
+def _pick_member(subtitle_key: str, members):
+    """在分组内选择一个插件（显示插件显示名），返回 manifest 或 None"""
+    _icon, group_label = _manifest_group_display(members)
     choices = [
-        {"key": str(i + 1), "label": f"{m.icon or get_icon('plugin')} {m.name}"}
-        for i, m in enumerate(manifests)
+        {"key": str(i + 1), "label": _manifest_item(m)}
+        for i, m in enumerate(members)
     ]
     try:
         key = select(
-            breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key)],
+            breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key), group_label],
             subtitle=t("plugin.select"),
             choices=choices,
             theme_key=_THEME_KEY,
@@ -224,9 +247,56 @@ def _pick(subtitle_key: str):
     if key is None:
         return None
     idx = int(key) - 1
-    if 0 <= idx < len(manifests):
-        return manifests[idx]
+    if 0 <= idx < len(members):
+        return members[idx]
     return None
+
+
+def _pick(subtitle_key: str):
+    """选择一个已安装插件：与插件工具入口一致的分组结构 —
+    先显示入口名（group），进入后再显示组内插件显示名；未分组插件直接显示"""
+    manifests = commands.manifests()
+    if not manifests:
+        clear_screen()
+        console.print(t("plugin.empty"), style=get_color("muted"))
+        pause()
+        return None
+    while True:
+        ungrouped, groups = _manifest_grouped(manifests)
+        items: list[tuple[str, object]] = []          # ("plugin", manifest) | ("group", gid)
+        choices = []
+        for m in ungrouped:
+            items.append(("plugin", m))
+        for gid in groups:
+            items.append(("group", gid))
+        for i, (kind, payload) in enumerate(items):
+            if kind == "plugin":
+                label = _manifest_item(payload)
+            else:
+                icon, name = _manifest_group_display(groups[payload])
+                label = f"{icon} {name}"
+            choices.append({"key": str(i + 1), "label": label})
+        try:
+            key = select(
+                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key)],
+                subtitle=t("plugin.select"),
+                choices=choices,
+                theme_key=_THEME_KEY,
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            return None
+        if key is None:
+            return None
+        idx = int(key) - 1
+        if not (0 <= idx < len(items)):
+            continue
+        kind, payload = items[idx]
+        if kind == "plugin":
+            return payload
+        picked = _pick_member(subtitle_key, groups[payload])
+        if picked is not None:
+            return picked
 
 
 def _update() -> None:

@@ -386,3 +386,29 @@ def test_menu_grouping(plugins_root) -> None:
     icon, label = _group_display(groups["insight-flow"])
     assert icon == "📊"
     assert label == "Insight Flow"
+
+
+def test_manage_pick_grouping(plugins_root) -> None:
+    """插件管理（更新 / 卸载）选择列表按 group 归组并显示插件显示名"""
+    from plugin.menu import _manifest_grouped, _manifest_group_display, _manifest_item
+    d1 = _make_python_plugin(plugins_root, "srv3")
+    d2 = _make_python_plugin(plugins_root, "cli3")
+    for d, label_zh in ((d1, "服务端"), (d2, "客户端")):
+        manifest_path = d / "plugin.yaml"
+        manifest_path.write_text(
+            manifest_path.read_text(encoding="utf-8")
+            + f"label:\n  zh: {label_zh}\ngroup: insight-flow\ngroup_icon: \"📊\"\n"
+            + "group_label:\n  zh: Insight Flow\n",
+            encoding="utf-8",
+        )
+    from plugin import commands
+    manifests = [m for m in commands.manifests() if m.name in ("srv3", "cli3")]
+    ungrouped, groups = _manifest_grouped(manifests)
+    assert ungrouped == []
+    assert len(groups["insight-flow"]) == 2
+    icon, label = _manifest_group_display(groups["insight-flow"])
+    assert icon == "📊"
+    assert label == "Insight Flow"
+    items = {_manifest_item(m) for m in groups["insight-flow"]}
+    assert any("服务端" in i for i in items)
+    assert any("客户端" in i for i in items)
