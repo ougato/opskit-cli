@@ -87,9 +87,9 @@ def invalidate_service_cache() -> None:
 
 
 def _guided_install(name: str, source: str) -> object | None:
-    """提供方未安装时的引导安装：确认 → clone → 信任确认 → 返回服务对象"""
+    """提供方未安装时的引导安装：clone → 信任确认 → 返回服务对象"""
     from core.i18n import t
-    from core.prompt import confirm, pause, print_header, clear_screen
+    from core.prompt import pause, print_header, clear_screen
     from core.theme import print_error, print_info
 
     if not source:
@@ -97,12 +97,6 @@ def _guided_install(name: str, source: str) -> object | None:
     from plugin import commands as plugin_commands
     from plugin.menu import confirm_trust
 
-    if not confirm(
-        breadcrumb=[APP_NAME],
-        prompt=t("service.install_confirm", service=name),
-        info_lines=[source],
-    ):
-        return None
     clear_screen()
     print_header([APP_NAME, t("service.installing", service=name)])
     print_info(t("plugin.cloning"))
@@ -127,7 +121,7 @@ def open_service_menu(
 ) -> bool:
     """打开某服务的交互界面（供业务插件的菜单项一行接入）。
 
-    提供方未安装且给了 source 时先引导安装。返回是否成功打开。
+    提供方未安装且给了 source 时自动安装（仅信任确认一次交互）。返回是否成功打开。
     """
     from core.i18n import t
     from core.prompt import pause

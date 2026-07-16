@@ -285,7 +285,7 @@ uses:
 ```python
 from core.sdk import get_service, open_service_menu
 
-# 菜单项一行接入：未安装时按 source 引导用户确认安装（走标准信任流程）
+# 菜单项一行接入：未安装时按 source 自动 clone 安装（仅信任确认一次交互）
 open_service_menu(
     "storage",
     breadcrumb=[...],
@@ -298,7 +298,7 @@ svc = get_service("storage")
 ```
 
 安全模型与插件加载一致：提供方必须已通过信任确认与 CHECKSUMS 完整性校验才会
-被加载；引导安装同样展示概要并等待用户确认信任，拒绝则回滚删除。插件
+被加载；未安装时直接自动 clone，安装后展示概要并等待用户确认信任，拒绝则回滚删除。插件
 安装 / 更新 / 卸载后服务缓存自动失效。服务 API 变更时递增 `service_api_version`，
 调用方自行校验兼容性。
 
