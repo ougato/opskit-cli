@@ -218,7 +218,10 @@ def _read_key() -> str:
         old = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            ch = sys.stdin.read(1)
+            # 直接读 fd：sys.stdin 是带缓冲的 TextIOWrapper，会把后续字节
+            # （如方向键序列的 '[A'）预读进自己的缓冲区，导致 select 探不到
+            data = os.read(fd, 1)
+            ch = data.decode(errors='ignore')
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         return ch
@@ -411,7 +414,7 @@ def select(
                 console.print()
                 return None
             continue
-        if ch in ('UP', 'DOWN'):
+        if ch in ('UP', 'DOWN', 'NAV'):
             continue
         if ch == '0':
             console.print()
@@ -516,29 +519,37 @@ def _read_key_seq() -> str:
                 return 'DOWN'
             return ''
         return ch
-    ch = _read_key()
-    if ch != '\x1b':
-        return ch
+    if not _stdin_is_tty():
+        return _read_key()
     import select as _sel
-    if not _sel.select([sys.stdin], [], [], 0.05)[0]:
-        return ch
     import termios
     import tty
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
+        # 整个转义序列必须在同一个 raw 窗口内读完：恢复 canonical 模式后
+        # 缓冲区里的后续字节（如 '[A'）没有换行不会被 select 报告可读
         tty.setraw(fd)
-        seq = sys.stdin.read(1)
+        ch = os.read(fd, 1).decode(errors='ignore')
+        if ch != '\x1b':
+            return ch
+        if not _sel.select([fd], [], [], 0.05)[0]:
+            return ch
+        seq = os.read(fd, 1).decode(errors='ignore')
         if seq not in ('[', 'O'):  # 'O' = application mode 方向键（ESC O A 等）
             return ch
-        code = sys.stdin.read(1)
+        code = os.read(fd, 1).decode(errors='ignore')
+        # 吞掉序列剩余字节（如 Home/End/Delete 的 '~'）
+        while _sel.select([fd], [], [], 0)[0]:
+            if not os.read(fd, 1):
+                break
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
     if code == 'A':
         return 'UP'
     if code == 'B':
         return 'DOWN'
-    return ''
+    return 'NAV'
 
 
 def multi_select(
