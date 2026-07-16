@@ -332,11 +332,11 @@ def _update() -> None:
         print_error(t("plugin.install_no_manifest"))
         pause()
         return
-    if commands.trust_status(refreshed) == commands.TRUST_OK:
+    if msg == "unchanged":
         print_info(t("plugin.update_latest", name=_display_name(refreshed)))
         pause()
         return
-    if _confirm_trust(refreshed):
+    if commands.trust_status(refreshed) == commands.TRUST_OK or _confirm_trust(refreshed):
         commands.reload(refreshed)
         print_success(t("plugin.update_success", name=_display_name(refreshed)))
     else:

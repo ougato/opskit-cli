@@ -336,6 +336,48 @@ def test_hot_reload_after_update(plugins_root) -> None:
     assert sys.modules["demo_pkg"].register().order == 77
 
 
+def test_update_inherits_trust(plugins_root, tmp_path) -> None:
+    """已信任插件经平台更新流程拉取新内容后自动继承信任，不再重复确认"""
+    import subprocess
+
+    from plugin import commands
+
+    origin = _make_python_plugin(tmp_path / "origin_root")
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+
+    dest = plugins_root / "demo"
+    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
+    _trust(dest)
+    manifest = load_manifest(dest)
+    assert commands.trust_status(manifest) == commands.TRUST_OK
+
+    ok, msg = commands.update(manifest)
+    assert (ok, msg) == (True, "unchanged")
+
+    (origin / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v2"], check=True)
+
+    ok, msg = commands.update(manifest)
+    assert (ok, msg) == (True, "updated")
+    refreshed = load_manifest(dest)
+    assert commands.trust_status(refreshed) == commands.TRUST_OK  # 更新后自动继承信任
+
+
+def test_update_untrusted_change_still_requires_confirm(plugins_root) -> None:
+    """平台之外途径改动插件内容仍需重新确认信任"""
+    from plugin import commands
+
+    plugin_dir = _make_python_plugin(plugins_root)
+    _trust(plugin_dir)
+    (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    manifest = load_manifest(plugin_dir)
+    assert commands.trust_status(manifest) == commands.TRUST_CHANGED
+
+
 def test_list_manifests_and_load_manifest(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     manifests = list_manifests()

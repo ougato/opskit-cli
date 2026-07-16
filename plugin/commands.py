@@ -128,15 +128,28 @@ def rollback_install(manifest: PluginManifest) -> None:
 
 
 def update(manifest: PluginManifest) -> tuple[bool, str]:
-    """git pull 更新插件目录；内容变化后信任失效，需重新确认"""
+    """git pull 更新插件目录。
+
+    已信任插件经平台更新流程拉取的新内容自动继承信任（首次确认后
+    更新不再重复询问）；目录被平台之外途径改动仍需重新确认。
+    返回 (是否成功, "updated" / "unchanged" / 错误串)。
+    """
     root = Path(manifest.root)
     if not (root / ".git").exists():
         return False, "not_git"
+    was_trusted = trust_status(manifest) == TRUST_OK
     try:
+        before = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
         run(["git", "-C", str(root), "pull", "--ff-only"], capture=True)
+        after = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
     except Exception as e:
         return False, str(e)
-    return True, manifest.name
+    if before == after:
+        return True, "unchanged"
+    refreshed = load_manifest(root)
+    if was_trusted and refreshed is not None:
+        grant_trust(refreshed)
+    return True, "updated"
 
 
 def remove(manifest: PluginManifest) -> None:
