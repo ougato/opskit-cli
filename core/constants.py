@@ -16,6 +16,7 @@ DIR_THEMES = "core/themes"
 DIR_LOCALE = "core/locale"
 DIR_MIRRORS = "core/mirrors"
 DIR_PLUGINS = "plugins"
+DIR_PLUGIN_DATA = "plugin-data"
 
 # ─── 配置文件名 ──────────────────────────────────────────────────────────────
 FILE_CONFIG = "common.yaml"

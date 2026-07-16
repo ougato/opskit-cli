@@ -1,7 +1,7 @@
 """插件工具菜单 — 常驻主菜单：插件管理（安装 / 更新 / 卸载）+ 已安装插件入口（热插拔）"""
 from __future__ import annotations
 
-from core.i18n import t
+from core.i18n import current_lang, t
 from core.prompt import select, text_input, confirm, pause, clear_screen, UserCancel, console
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
@@ -11,14 +11,48 @@ _THEME_KEY = "plugin"
 _BREADCRUMB = ["OpsKit"]
 
 
+def _grouped(pairs):
+    """把已加载插件按清单 group 归组：返回 (未分组列表, {group_id: 组内列表})"""
+    ungrouped = []
+    groups: dict[str, list] = {}
+    for pair in pairs:
+        gid = pair[0].group
+        if gid:
+            groups.setdefault(gid, []).append(pair)
+        else:
+            ungrouped.append(pair)
+    return ungrouped, groups
+
+
+def _group_display(members) -> tuple[str, str]:
+    """分组入口的图标与显示名（取组内首个声明者）"""
+    lang = current_lang()
+    icon = next((m.group_icon for m, _ in members if m.group_icon), None) or get_icon("plugin")
+    label = next(
+        (m.display_group_label(lang) for m, _ in members if m.display_group_label(lang)),
+        members[0][0].group,
+    )
+    return icon, label
+
+
 def entry() -> None:
-    """插件工具主循环：每次进入实时重新扫描插件目录（热插拔）"""
+    """插件工具主循环：每次进入实时重新扫描插件目录（热插拔），同 group 插件聚合为一个入口"""
     while True:
         pairs = commands.loaded_plugins()
+        ungrouped, groups = _grouped(pairs)
         choices = [{"key": "1", "label": f"{get_icon('plugin_manage')} {t('plugin.manage')}"}]
-        for i, (_manifest, info) in enumerate(pairs):
-            icon = info.icon or get_icon("plugin")
-            label = info.label or info.key
+        items: list[tuple[str, object]] = []          # ("plugin", pair) | ("group", gid)
+        for pair in ungrouped:
+            items.append(("plugin", pair))
+        for gid in groups:
+            items.append(("group", gid))
+        for i, (kind, payload) in enumerate(items):
+            if kind == "plugin":
+                _manifest, info = payload
+                icon = info.icon or get_icon("plugin")
+                label = info.label or info.key
+            else:
+                icon, label = _group_display(groups[payload])
             choices.append({"key": str(i + 2), "label": f"{icon} {label}"})
         try:
             key = select(
@@ -37,8 +71,45 @@ def entry() -> None:
                 _manage()
             else:
                 idx = int(key) - 2
-                if 0 <= idx < len(pairs):
-                    pairs[idx][1].entry()
+                if 0 <= idx < len(items):
+                    kind, payload = items[idx]
+                    if kind == "plugin":
+                        payload[1].entry()
+                    else:
+                        _group_menu(payload)
+        except (KeyboardInterrupt, UserCancel):
+            pass
+
+
+def _group_menu(group_id: str) -> None:
+    """分组子菜单：列出该 group 下全部插件（每轮循环重新扫描，热插拔）"""
+    while True:
+        pairs = commands.loaded_plugins()
+        members = [(m, info) for m, info in pairs if m.group == group_id]
+        if not members:
+            break
+        _icon, group_label = _group_display(members)
+        choices = []
+        for i, (_manifest, info) in enumerate(members):
+            icon = info.icon or get_icon("plugin")
+            label = info.label or info.key
+            choices.append({"key": str(i + 1), "label": f"{icon} {label}"})
+        try:
+            key = select(
+                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), group_label],
+                subtitle=t("prompt.select"),
+                choices=choices,
+                theme_key=_THEME_KEY,
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            break
+        if key is None:
+            break
+        try:
+            idx = int(key) - 1
+            if 0 <= idx < len(members):
+                members[idx][1].entry()
         except (KeyboardInterrupt, UserCancel):
             pass
 

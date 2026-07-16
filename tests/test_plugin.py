@@ -318,3 +318,71 @@ def test_list_manifests_and_load_manifest(plugins_root) -> None:
     assert m.kind == "python"
     assert m.display_label("zh") == "演示插件"
     assert m.display_label("en") == "Demo Plugin"
+
+def test_manifest_group_fields(plugins_root) -> None:
+    plugin_dir = plugins_root / "grouped"
+    _write_manifest(plugin_dir, """\
+        name: grouped
+        version: 1.0.0
+        api_version: 1
+        kind: python
+        entry: grouped_pkg
+        group: insight-flow
+        group_icon: "📊"
+        group_label:
+          zh: Insight Flow
+          en: Insight Flow
+    """)
+    m = load_manifest(plugin_dir)
+    assert m is not None
+    assert m.group == "insight-flow"
+    assert m.group_icon == "📊"
+    assert m.display_group_label("zh") == "Insight Flow"
+
+
+def test_manifest_invalid_group_ignored(plugins_root) -> None:
+    plugin_dir = plugins_root / "badgroup"
+    _write_manifest(plugin_dir, """\
+        name: badgroup
+        version: 1.0.0
+        api_version: 1
+        kind: python
+        entry: badgroup_pkg
+        group: "Bad Group!"
+    """)
+    m = load_manifest(plugin_dir)
+    assert m is not None
+    assert m.group is None
+
+
+def test_plugin_data_dir(plugins_root) -> None:
+    from core.paths import data_dir, plugin_data_dir
+    path = plugin_data_dir("insight-flow")
+    assert path == data_dir() / "plugin-data" / "insight-flow"
+    assert path.is_dir()
+    with pytest.raises(ValueError):
+        plugin_data_dir("Bad_Namespace")
+
+
+def test_menu_grouping(plugins_root) -> None:
+    """同 group 的插件在插件工具菜单聚合为一个入口"""
+    from plugin.menu import _grouped, _group_display
+    d1 = _make_python_plugin(plugins_root, "srv")
+    d2 = _make_python_plugin(plugins_root, "cli2")
+    for d in (d1, d2):
+        manifest_path = d / "plugin.yaml"
+        manifest_path.write_text(
+            manifest_path.read_text(encoding="utf-8")
+            + "group: insight-flow\ngroup_icon: \"📊\"\ngroup_label:\n  zh: Insight Flow\n",
+            encoding="utf-8",
+        )
+        _trust(d)
+    from plugin import commands
+    pairs = commands.loaded_plugins()
+    ungrouped, groups = _grouped(pairs)
+    assert ungrouped == []
+    assert set(groups) == {"insight-flow"}
+    assert len(groups["insight-flow"]) == 2
+    icon, label = _group_display(groups["insight-flow"])
+    assert icon == "📊"
+    assert label == "Insight Flow"

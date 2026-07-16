@@ -115,6 +115,12 @@ description:
 permissions:             # 可选。权限声明（声明式，不强制），信任确认时展示给用户
   - network              # 建议值：network / filesystem / exec / root
   - exec
+group: insight-flow      # 可选。分组 id（^[a-z][a-z0-9-]*$），同 group 的插件在
+                         # 「插件工具」中聚合为一个入口，进入后再选具体插件
+group_icon: "📊"        # 可选。分组入口图标
+group_label:             # 可选。分组入口显示名（按语言）
+  zh: Insight Flow
+  en: Insight Flow
 ```
 
 `exec` 的 `entry` 支持按平台映射：
@@ -242,9 +248,9 @@ mytool/
 | 协议 | `ModuleInfo` |
 | i18n | `t` / `current_lang` / `register_locale` |
 | 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `UserCancel` / `console` |
+| 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console` |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
-| 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` |
+| 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | 日志 | `get_logger` |
 
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
@@ -297,6 +303,13 @@ mytool/
 - 只准 `from core.sdk import ...`，**禁止** import core 其他内部模块
   （内部模块随时重构，不保证兼容）；
 - 禁止修改 `sys.path`、`sys.modules`、全局钩子等进程级状态；
+- 插件的配置、缓存、构建产物一律落盘 `plugin_data_dir(<命名空间>)`
+  （`<data-dir>/plugin-data/<命名空间>/`），**禁止写入插件目录自身**（会破坏
+  信任指纹导致下次加载失效），也禁止污染其他任意路径；命名空间由开发者声明，
+  多个插件传同一命名空间即共享目录；
+- 界面一律用 SDK 交互组件（select / confirm / text_input / pause / print_*），
+  禁止自造菜单渲染与交互流程；每个执行阶段必须 `clear_screen()` +
+  `print_header(面包屑)` 保持标题常驻，与主程序风格一致；
 - 禁止调用 `sys.exit()` / `os._exit()`（会被守卫拦截，但属于违规行为）；
 - 用户可见文字一律走 `t()` + `register_locale()`，不硬编码单一语言；
 - 长时间操作要有进度提示，错误信息保持简短（详细内容写日志 `get_logger()`）；

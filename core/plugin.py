@@ -28,6 +28,9 @@ from core.plugin_trust import compute_fingerprint, is_trusted
 # 插件 name 合法格式（同时用作模块 key 与 i18n/config 命名空间）
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
+# 分组 id 合法格式（与 plugin_data_dir 命名空间一致，连字符分割）
+_GROUP_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+
 # 清单必填字段
 _REQUIRED_FIELDS = ("name", "version", "api_version", "kind", "entry")
 
@@ -57,10 +60,21 @@ class PluginManifest:
     label: dict[str, str] = field(default_factory=dict)
     description: dict[str, str] = field(default_factory=dict)
     permissions: list[str] = field(default_factory=list)
+    group: str | None = None                    # 分组 id（入口名称归属，开发者自定）
+    group_icon: str | None = None
+    group_label: dict[str, str] = field(default_factory=dict)
     root: Path = field(default_factory=Path)
 
     def display_label(self, lang: str) -> str | None:
         return self.label.get(lang) or self.label.get("en") or next(iter(self.label.values()), None)
+
+    def display_group_label(self, lang: str) -> str | None:
+        return (
+            self.group_label.get(lang)
+            or self.group_label.get("en")
+            or next(iter(self.group_label.values()), None)
+            or self.group
+        )
 
 
 def load_manifest(plugin_root: Path) -> PluginManifest | None:
@@ -125,6 +139,16 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
     if not isinstance(permissions, list):
         permissions = []
 
+    group = data.get("group")
+    if group is not None:
+        group = str(group)
+        if not _GROUP_PATTERN.match(group):
+            _log.warning("plugin %s: invalid group %r, ignored", name, group)
+            group = None
+    group_label = data.get("group_label") or {}
+    if not isinstance(group_label, dict):
+        group_label = {}
+
     return PluginManifest(
         name=name,
         version=str(data["version"]),
@@ -137,6 +161,9 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         label={str(k): str(v) for k, v in label.items()},
         description={str(k): str(v) for k, v in description.items()},
         permissions=[str(p) for p in permissions],
+        group=group,
+        group_icon=data.get("group_icon"),
+        group_label={str(k): str(v) for k, v in group_label.items()},
         root=plugin_root,
     )
 

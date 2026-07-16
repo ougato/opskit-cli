@@ -32,6 +32,7 @@ from core.prompt import (
     text_input,
     pause,
     clear_screen,
+    print_header,
     UserCancel,
     console,
 )
@@ -40,7 +41,7 @@ from core.prompt import (
 from core.runner import run, run_lines, which, cmd_ok
 
 # ─── 路径 ─────────────────────────────────────────────────────────────────────
-from core.paths import data_dir, cache_dir, log_dir, plugins_dir
+from core.paths import data_dir, cache_dir, log_dir, plugins_dir, plugin_data_dir
 
 # ─── 日志 ─────────────────────────────────────────────────────────────────────
 from core.logger import get_logger
@@ -51,8 +52,8 @@ __all__ = [
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "confirm", "text_input", "pause", "clear_screen", "UserCancel", "console",
+    "select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
     "run", "run_lines", "which", "cmd_ok",
-    "data_dir", "cache_dir", "log_dir", "plugins_dir",
+    "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
     "get_logger",
 ]
