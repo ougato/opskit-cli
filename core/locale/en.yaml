@@ -116,7 +116,7 @@ prompt:
   press_q: "Press q to quit"
   "yes": "Confirm"
   "no": "Cancel"
-  pause: "Press any key to return..."
+  pause: "Press any key to continue..."
   prev_page: "Prev Page"
   next_page: "Next Page"
 

@@ -116,7 +116,7 @@ prompt:
   press_q: "按 q 退出"
   "yes": "确认"
   "no": "取消"
-  pause: "按任意键返回菜单..."
+  pause: "按任意键继续..."
   prev_page: "上一页"
   next_page: "下一页"
 
