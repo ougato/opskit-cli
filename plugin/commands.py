@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
 from core.config import load_config, set_config_value
+from core.i18n import t
 from core.loader import builtin_module_keys
 from core.module import ModuleInfo
 from core.paths import plugins_dir
@@ -108,6 +110,25 @@ def is_trusted_source(url: str) -> bool:
     return bool(host) and host in [str(s) for s in sources]
 
 
+# git stderr 常见模式 → 可读原因的文案 key
+_GIT_ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("permission denied", "authentication failed", "could not read username", "could not read password"), "plugin.git_auth_failed"),
+    (("repository not found", "does not appear to be a git repository"), "plugin.git_repo_not_found"),
+    (("could not resolve", "connection reset", "connection refused", "timed out", "unable to access", "network is unreachable"), "plugin.git_network_failed"),
+)
+
+
+def git_error_reason(result: subprocess.CompletedProcess) -> str:
+    """git 非 0 退出转可读原因：识别常见 stderr 模式，未识别取 stderr 末行"""
+    stderr = (result.stderr or "").strip()
+    low = stderr.lower()
+    for keywords, key in _GIT_ERROR_PATTERNS:
+        if any(k in low for k in keywords):
+            return t(key)
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    return lines[-1] if lines else t("plugin.git_exit", code=result.returncode)
+
+
 def install(url: str) -> tuple[PluginManifest | None, str]:
     """git clone 到插件目录并校验清单。返回 (清单, 错误串)；信任确认由菜单层负责"""
     name = dir_name_from_url(url)
@@ -118,10 +139,13 @@ def install(url: str) -> tuple[PluginManifest | None, str]:
         return None, f"exists:{name}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        run(["git", "clone", "--depth", "1", url, str(dest)], capture=True)
+        result = run(["git", "clone", "--depth", "1", url, str(dest)], capture=True, check=False)
     except Exception as e:
         shutil.rmtree(dest, ignore_errors=True)
         return None, str(e)
+    if result.returncode != 0:
+        shutil.rmtree(dest, ignore_errors=True)
+        return None, git_error_reason(result)
     manifest = load_manifest(dest)
     if manifest is None:
         shutil.rmtree(dest, ignore_errors=True)
@@ -151,7 +175,9 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     was_trusted = trust_status(manifest) == TRUST_OK
     try:
         before = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
-        run(["git", "-C", str(root), "pull", "--ff-only"], capture=True)
+        pulled = run(["git", "-C", str(root), "pull", "--ff-only"], capture=True, check=False)
+        if pulled.returncode != 0:
+            return False, git_error_reason(pulled)
         after = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
     except Exception as e:
         return False, str(e)

@@ -432,6 +432,39 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
     assert commands.trust_status(refreshed) != commands.TRUST_OK
 
 
+def test_git_error_reason_maps_common_failures() -> None:
+    """git 失败转可读原因：认证 / 仓库不存在 / 网络，未识别取 stderr 末行"""
+    import subprocess
+
+    from core.i18n import t
+    from plugin import commands
+
+    def _result(stderr: str, code: int = 128) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(args=["git"], returncode=code, stdout="", stderr=stderr)
+
+    assert commands.git_error_reason(
+        _result("git@host: Permission denied (publickey).\nfatal: Could not read from remote repository.")
+    ) == t("plugin.git_auth_failed")
+    assert commands.git_error_reason(
+        _result("ERROR: Repository not found.\nfatal: Could not read from remote repository.")
+    ) == t("plugin.git_repo_not_found")
+    assert commands.git_error_reason(
+        _result("ssh: connect to host git.example.com port 22: Connection reset by peer\nfatal: ...")
+    ) == t("plugin.git_network_failed")
+    assert commands.git_error_reason(_result("fatal: some unknown failure")) == "fatal: some unknown failure"
+    assert commands.git_error_reason(_result("", code=130)) == t("plugin.git_exit", code=130)
+
+
+def test_install_failure_returns_readable_reason(plugins_root, tmp_path) -> None:
+    """clone 失败时返回可读原因而非 Python 异常原文"""
+    from plugin import commands
+
+    manifest, err = commands.install(str(tmp_path / "no-such-repo.git"))
+    assert manifest is None
+    assert "returned non-zero exit status" not in err
+    assert err
+
+
 def test_update_untrusted_change_still_requires_confirm(plugins_root) -> None:
     """平台之外途径改动插件内容仍需重新确认信任"""
     from plugin import commands
