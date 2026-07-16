@@ -588,16 +588,26 @@ def multi_select(
         row2.append_text(_seg_text(subtitle, _INPUT_SEG))
         row2.append_text(_tail_text(_INPUT_SEG))
         console.print(row2)
-        pipe = f'[{_PIPE_COLOR}]'
+        # Text 明文拼接（[x] 不参与 rich 标记解析）；光标行以 ❯ 指示
         for i, label in enumerate(options):
             mark = '[x]' if i in checked else '[ ]'
-            line = f'{mark} {_pad_label(label)}'
+            row = Text()
+            tee = Text(f' {_TEE} ')
+            tee.stylize(_PIPE_COLOR)
+            row.append_text(tee)
             if i == cursor:
-                console.print(f' {pipe}{_TEE}[/] [reverse]{line}[/]')
+                row.append('❯ ', style='bold cyan')
+                row.append(f'{mark} {_pad_label(label)}', style='bold')
             else:
-                console.print(f' {pipe}{_TEE}[/] {line}')
+                row.append(f'  {mark} {_pad_label(label)}')
+            console.print(row)
         if back_label:
-            console.print(f' {pipe}{_TEE}[/] [dim](0) {_pad_label(back_label)}[/]')
+            row = Text()
+            tee = Text(f' {_TEE} ')
+            tee.stylize(_PIPE_COLOR)
+            row.append_text(tee)
+            row.append(f'  (0) {_pad_label(back_label)}', style='dim')
+            console.print(row)
         sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
         sys.stdout.flush()
 
