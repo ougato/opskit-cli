@@ -14,6 +14,8 @@ installed_versions 签名与可见行为与原各 recipe 完全一致。
 from __future__ import annotations
 
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 from abc import abstractmethod
@@ -25,6 +27,9 @@ from software.base import InstallError, InstallStep, Recipe
 
 # 进度条占位推进上限：下载阶段无法获知真实百分比，用 ticker 线程推到此值后等真实完成
 _TICKER_MAX_PCT = 90
+
+# 验证阶段实际运行二进制的超时秒数
+_VERIFY_RUN_TIMEOUT = 10
 
 
 class VersionedTarballRecipe(Recipe):
@@ -229,9 +234,27 @@ class VersionedTarballRecipe(Recipe):
             except Exception:
                 pass
 
+            self._verify_runnable(bin_dir)
             if not self.detect():
                 raise InstallError(t(f"software.{self._error_ns}.verify_failed"))
             sp.complete()
+
+    def _verify_runnable(self, bin_dir: str) -> None:
+        """真正运行一次主命令 --version，捕获缺共享库等只有执行才暴露的问题"""
+        exe = Path(bin_dir) / (self._shim_cmd + (".exe" if sys.platform == "win32" else ""))
+        if not exe.exists():
+            return
+        try:
+            r = subprocess.run(
+                [str(exe), "--version"],
+                capture_output=True, text=True, timeout=_VERIFY_RUN_TIMEOUT,
+            )
+        except Exception as e:
+            raise InstallError(t(f"software.{self._error_ns}.verify_failed") + f"（{e}）") from e
+        if r.returncode != 0:
+            lines = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()]
+            detail = f"（{lines[-1]}）" if lines else ""
+            raise InstallError(t(f"software.{self._error_ns}.verify_failed") + detail)
 
     def upgrade(self, version: str) -> None:
         """升级：直接安装新版本（保留已有版本，不卸载）"""
