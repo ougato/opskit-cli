@@ -70,7 +70,7 @@ icons:
   network: "\U0001F310"       # 🌐
   toolkit: "\U0001F527"       # 🔧
   plugin: "\U0001F9E9"        # 🧩
-  plugin_manage: "\u2699\uFE0F"  # ⚙️
+  plugin_manage: "\U0001F9F0"  # 🧰
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧
@@ -97,7 +97,7 @@ icons:
   # 软件分类
   devtools: "\U0001F528"      # 🔨
   devops: "\U0001F4BB"        # 💻
-  systools: "\u2699\uFE0F"    # ⚙️
+  systools: "\U0001F9F0"    # 🧰
 
   # 软件 recipe 专用
   docker: "\U0001F433"        # 🐳
