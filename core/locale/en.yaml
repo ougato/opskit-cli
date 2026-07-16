@@ -43,6 +43,8 @@ plugin:
   install_success: "Plugin {name} installed and trusted"
   install_failed: "Install failed ({error})"
   install_no_manifest: "Missing/invalid plugin.yaml, rolled back"
+  update_all: "Update All"
+  update_all_downgrade: "{name} version downgrade, skipped (update individually to confirm)"
   update_success: "Plugin {name} updated to {version}"
   update_latest: "{name} is already up to date"
   update_failed: "Update failed ({error})"

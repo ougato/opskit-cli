@@ -261,9 +261,13 @@ def _pick_member(subtitle_key: str, members):
     return None
 
 
-def _pick(subtitle_key: str):
+_ALL = object()  # 「更新全部」哨兵（永远第一项）
+
+
+def _pick(subtitle_key: str, all_label: str = ""):
     """选择一个已安装插件：与插件工具入口一致的分组结构 —
-    先显示入口名（group），进入后再显示组内插件显示名；未分组插件直接显示"""
+    先显示入口名（group），进入后再显示组内插件显示名；未分组插件直接显示。
+    all_label 非空时列表第一项为该文案，选中返回哨兵 _ALL"""
     manifests = commands.manifests()
     if not manifests:
         clear_screen()
@@ -273,14 +277,18 @@ def _pick(subtitle_key: str):
         return None
     while True:
         ungrouped, groups = _manifest_grouped(manifests)
-        items: list[tuple[str, object]] = []          # ("plugin", manifest) | ("group", gid)
+        items: list[tuple[str, object]] = []          # ("all", None) | ("plugin", manifest) | ("group", gid)
         choices = []
+        if all_label:
+            items.append(("all", None))
         for m in ungrouped:
             items.append(("plugin", m))
         for gid in groups:
             items.append(("group", gid))
         for i, (kind, payload) in enumerate(items):
-            if kind == "plugin":
+            if kind == "all":
+                label = all_label
+            elif kind == "plugin":
                 label = _manifest_item(payload)
             else:
                 icon, name = _manifest_group_display(groups[payload])
@@ -302,6 +310,8 @@ def _pick(subtitle_key: str):
         if not (0 <= idx < len(items)):
             continue
         kind, payload = items[idx]
+        if kind == "all":
+            return _ALL
         if kind == "plugin":
             return payload
         picked = _pick_member(subtitle_key, groups[payload])
@@ -309,9 +319,49 @@ def _pick(subtitle_key: str):
             return picked
 
 
+def _update_all() -> None:
+    """依次更新全部已安装插件（含分组内成员），逐个显示结果，最后一次返回"""
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), t("plugin.update_all")]
+    clear_screen()
+    print_header(crumb)
+    for manifest in commands.manifests():
+        if commands.trust_status(manifest) != commands.TRUST_OK:
+            print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
+            continue
+        ok, msg = commands.update(manifest)
+        if not ok:
+            if msg == "not_git":
+                print_error(t("plugin.update_not_git", name=_display_name(manifest)))
+            else:
+                print_error(t("plugin.update_failed", error=msg))
+            continue
+        refreshed = next((m for m in commands.manifests() if m.name == manifest.name), None)
+        if refreshed is None:
+            print_error(t("plugin.install_no_manifest"))
+            continue
+        if msg == "unchanged":
+            print_info(t("plugin.update_latest", name=_display_name(refreshed)))
+            continue
+        if msg == "tampered":
+            print_error(t("plugin.update_tampered", name=_display_name(refreshed)))
+            continue
+        if msg == "downgrade":
+            print_warning(t("plugin.update_all_downgrade", name=_display_name(refreshed)))
+            continue
+        if commands.trust_status(refreshed) == commands.TRUST_OK:
+            commands.reload(refreshed)
+            print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
+        else:
+            print_warning(t("plugin.trust_needed", name=_display_name(refreshed)))
+    pause()
+
+
 def _update() -> None:
-    manifest = _pick("plugin.update")
+    manifest = _pick("plugin.update", all_label=f"{get_icon('update')} {t('plugin.update_all')}")
     if manifest is None:
+        return
+    if manifest is _ALL:
+        _update_all()
         return
     # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
     if commands.trust_status(manifest) != commands.TRUST_OK:

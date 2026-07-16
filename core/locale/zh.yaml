@@ -43,6 +43,8 @@ plugin:
   install_success: "插件 {name} 已安装并信任"
   install_failed: "安装失败（{error}）"
   install_no_manifest: "缺 plugin.yaml 或清单非法，已回滚"
+  update_all: "更新全部"
+  update_all_downgrade: "{name} 版本回退，已跳过（请单独更新确认）"
   update_success: "插件 {name} 已更新到 {version}"
   update_latest: "{name} 已是最新版本"
   update_failed: "更新失败（{error}）"
