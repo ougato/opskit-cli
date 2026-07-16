@@ -43,7 +43,7 @@ plugin:
   install_success: "插件 {name} 已安装并信任"
   install_failed: "安装失败（{error}）"
   install_no_manifest: "缺 plugin.yaml 或清单非法，已回滚"
-  update_success: "插件 {name} 已更新"
+  update_success: "插件 {name} 已更新到 {version}"
   update_latest: "{name} 已是最新版本"
   update_failed: "更新失败（{error}）"
   update_not_git: "{name} 非 git 仓库，无法更新"

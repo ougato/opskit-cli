@@ -362,7 +362,7 @@ def _update() -> None:
         print_header(crumb)
     if commands.trust_status(refreshed) == commands.TRUST_OK or _confirm_trust(refreshed):
         commands.reload(refreshed)
-        print_success(t("plugin.update_success", name=_display_name(refreshed)))
+        print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
     else:
         print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
     pause()
