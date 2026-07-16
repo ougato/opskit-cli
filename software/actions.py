@@ -118,6 +118,7 @@ def ensure_installed(key: str) -> bool:
     from core.platform import get_platform
     from core.progress import spinner
     from core.recipe_utils import recipe_display_name
+    from core.theme import console as base_console
     from core.theme import print_error
     from core.theme import print_success
     from software import registry
@@ -133,6 +134,7 @@ def ensure_installed(key: str) -> bool:
     if instance.detect():
         return True
     name = recipe_display_name(cls)
+    base_console.print()
     with spinner(t("software.fetching_versions")):
         try:
             versions = instance.versions()
