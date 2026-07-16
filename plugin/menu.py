@@ -156,8 +156,8 @@ def _summary_lines(manifest) -> list[str]:
     ]
 
 
-def _confirm_trust(manifest, source: str = "") -> bool:
-    """展示概要 + 用户确认信任，确认后记录指纹"""
+def confirm_trust(manifest, source: str = "") -> bool:
+    """展示概要 + 用户确认信任，确认后记录指纹（插件服务引导安装亦复用）"""
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
         prompt=t("plugin.trust_confirm", name=_display_name(manifest)),
@@ -191,7 +191,7 @@ def _install() -> None:
             print_error(t("plugin.install_failed", error=err))
         pause()
         return
-    if not _confirm_trust(manifest, source=url.strip()):
+    if not confirm_trust(manifest, source=url.strip()):
         commands.rollback_install(manifest)
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
@@ -315,7 +315,7 @@ def _update() -> None:
         return
     # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
     if commands.trust_status(manifest) != commands.TRUST_OK:
-        if not _confirm_trust(manifest):
+        if not confirm_trust(manifest):
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
             pause()
             return
@@ -361,7 +361,7 @@ def _update() -> None:
         commands.grant_trust(refreshed)
         clear_screen()
         print_header(crumb)
-    if commands.trust_status(refreshed) == commands.TRUST_OK or _confirm_trust(refreshed):
+    if commands.trust_status(refreshed) == commands.TRUST_OK or confirm_trust(refreshed):
         commands.reload(refreshed)
         print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
     else:

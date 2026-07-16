@@ -250,16 +250,57 @@ mytool/
 | 协议 | `ModuleInfo` |
 | i18n | `t` / `current_lang` / `register_locale` |
 | 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行） |
+| 交互 | `select` / `multi_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选） |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
 | 日志 | `get_logger` |
 | 软件安装 | `ensure_software(key)`（复用平台软件配方检测 + 按需安装推荐版本，如 golang / docker / nodejs；仅限注册表内配方，插件禁止自行实现安装器） |
+| Python 依赖 | `ensure_python_package(package, import_name="")`（已可导入静默返回 True，否则用应用 venv 的 pip 安装，失败返回 False；供插件按需声明重依赖，如 boto3） |
+| 插件间服务 | `get_service(name)` / `open_service_menu(name, breadcrumb, context, source)`（见下「插件间服务」章节） |
 
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
 `api_version` 不匹配的插件会被静默跳过（写日志），OpsKit 升级大版本后插件需适配
 并更新清单。
+
+## 插件间服务（provides / uses）
+
+插件可以向其他插件提供可复用能力（如通用云存储），调用方无需依赖提供方包名。
+
+**提供方**（仅限 python 插件）：
+
+1. 清单声明 `provides: [storage]`
+2. entry 包模块级暴露 `provide_service(name: str) -> object | None`
+3. 服务对象携带 `service_api_version: int`；带交互界面的服务实现
+   `open_menu(breadcrumb: list[str], context: dict) -> None`
+
+**调用方**：
+
+```yaml
+uses:
+  - service: storage
+    source: git@example.com:org/storage-hub.git   # 提供方建议安装来源（可选）
+```
+
+```python
+from core.sdk import get_service, open_service_menu
+
+# 菜单项一行接入：未安装时按 source 引导用户确认安装（走标准信任流程）
+open_service_menu(
+    "storage",
+    breadcrumb=[...],
+    context={"caller": "myplugin"},
+    source="git@example.com:org/storage-hub.git",
+)
+
+# 程序化使用：提供方未安装 / 未信任时返回 None
+svc = get_service("storage")
+```
+
+安全模型与插件加载一致：提供方必须已通过信任确认与 CHECKSUMS 完整性校验才会
+被加载；引导安装同样展示概要并等待用户确认信任，拒绝则回滚删除。插件
+安装 / 更新 / 卸载后服务缓存自动失效。服务 API 变更时递增 `service_api_version`，
+调用方自行校验兼容性。
 
 ## 信任模型与安全边界
 

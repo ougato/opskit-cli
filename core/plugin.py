@@ -67,6 +67,8 @@ class PluginManifest:
     group: str | None = None                    # 分组 id（入口名称归属，开发者自定）
     group_icon: str | None = None
     group_label: dict[str, str] = field(default_factory=dict)
+    provides: list[str] = field(default_factory=list)   # 对外提供的服务名（插件间服务）
+    uses: list[dict[str, str]] = field(default_factory=list)  # 依赖的服务 [{service, source}]
     root: Path = field(default_factory=Path)
 
     def display_label(self, lang: str) -> str | None:
@@ -158,6 +160,18 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
     if not isinstance(group_label, dict):
         group_label = {}
 
+    provides = data.get("provides") or []
+    if not isinstance(provides, list):
+        provides = []
+    uses_raw = data.get("uses") or []
+    uses: list[dict[str, str]] = []
+    if isinstance(uses_raw, list):
+        for u in uses_raw:
+            if isinstance(u, dict) and u.get("service"):
+                uses.append({"service": str(u["service"]), "source": str(u.get("source", ""))})
+            elif isinstance(u, str):
+                uses.append({"service": u, "source": ""})
+
     return PluginManifest(
         name=name,
         version=version,
@@ -173,6 +187,8 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         group=group,
         group_icon=data.get("group_icon"),
         group_label={str(k): str(v) for k, v in group_label.items()},
+        provides=[str(p) for p in provides],
+        uses=uses,
         root=plugin_root,
     )
 

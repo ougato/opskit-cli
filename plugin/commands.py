@@ -20,6 +20,7 @@ from core.plugin import (
     unload_plugin,
 )
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
+from core.plugin_services import invalidate_service_cache
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
 from core.runner import run
 
@@ -150,6 +151,7 @@ def install(url: str) -> tuple[PluginManifest | None, str]:
     if manifest is None:
         shutil.rmtree(dest, ignore_errors=True)
         return None, "no_manifest"
+    invalidate_service_cache()
     return manifest, ""
 
 
@@ -193,6 +195,7 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
         return True, "downgrade"
     if was_trusted:
         grant_trust(refreshed)
+    invalidate_service_cache()
     return True, "updated"
 
 
@@ -201,3 +204,4 @@ def remove(manifest: PluginManifest) -> None:
     unload_plugin(manifest)
     shutil.rmtree(manifest.root, ignore_errors=True)
     revoke(manifest.name)
+    invalidate_service_cache()

@@ -486,6 +486,124 @@ def paged_select(
         on_select(selected)
 
 
+def _read_key_seq() -> str:
+    """读取一个按键，方向键归一化为 'UP' / 'DOWN'（跨平台）。
+
+    Unix：ESC 后 50ms 内跟随 '[' 视为 ANSI 序列（方向键），否则视为 ESC。
+    Windows：msvcrt 前缀 '\\x00' / '\\xe0' 后跟 'H'（上）/ 'P'（下）。
+    """
+    if os.name == 'nt':
+        import msvcrt
+        ch = msvcrt.getwch()
+        if ch in ('\x00', '\xe0'):
+            ch2 = msvcrt.getwch()
+            if ch2 == 'H':
+                return 'UP'
+            if ch2 == 'P':
+                return 'DOWN'
+            return ''
+        return ch
+    ch = _read_key()
+    if ch != '\x1b':
+        return ch
+    import select as _sel
+    if not _sel.select([sys.stdin], [], [], 0.05)[0]:
+        return ch
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        seq = sys.stdin.read(1)
+        if seq != '[':
+            return ch
+        code = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    if code == 'A':
+        return 'UP'
+    if code == 'B':
+        return 'DOWN'
+    return ''
+
+
+def multi_select(
+    breadcrumb: list[str],
+    subtitle: str,
+    options: list[str],
+    theme_key: str = 'root',
+    back_label: str = '',
+) -> list[int] | None:
+    """Powerline 风格多选菜单：↑↓ 移动光标、空格勾选、回车确认。
+
+    subtitle — 标题下的提示 pill（与 text_input 的字段标签同款式）
+    options  — 选项文案列表
+
+    返回勾选项的下标列表（可为空）；用户按 0 返回 None；ESC 抛 UserCancel。
+    """
+    if _auto_yes:
+        return []
+    if not options:
+        return []
+    cursor = 0
+    checked: set[int] = set()
+
+    def _render() -> None:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        _render_header(breadcrumb)
+        row2 = Text()
+        tee = Text(f' {_TEE} ')
+        tee.stylize(_PIPE_COLOR)
+        row2.append_text(tee)
+        row2.append_text(_cap_text(_INPUT_SEG))
+        row2.append_text(_seg_text(subtitle, _INPUT_SEG))
+        row2.append_text(_tail_text(_INPUT_SEG))
+        console.print(row2)
+        pipe = f'[{_PIPE_COLOR}]'
+        for i, label in enumerate(options):
+            mark = '[x]' if i in checked else '[ ]'
+            line = f'{mark} {_pad_label(label)}'
+            if i == cursor:
+                console.print(f' {pipe}{_TEE}[/] [reverse]{line}[/]')
+            else:
+                console.print(f' {pipe}{_TEE}[/] {line}')
+        if back_label:
+            console.print(f' {pipe}{_TEE}[/] [dim](0) {_pad_label(back_label)}[/]')
+        sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
+        sys.stdout.flush()
+
+    while True:
+        _render()
+        ch = _read_key_seq()
+        if not ch:
+            if os.name != 'nt' and not os.isatty(sys.stdin.fileno()):
+                console.print()
+                return None
+            continue
+        if ch == 'UP':
+            cursor = (cursor - 1) % len(options)
+        elif ch == 'DOWN':
+            cursor = (cursor + 1) % len(options)
+        elif ch == ' ':
+            if cursor in checked:
+                checked.discard(cursor)
+            else:
+                checked.add(cursor)
+        elif ch in ('\r', '\n'):
+            console.print()
+            return sorted(checked)
+        elif ch == '0':
+            console.print()
+            return None
+        elif ch == CANCEL_KEY:
+            console.print()
+            raise UserCancel
+        elif ch in ('\x03', '\x04'):
+            console.print()
+            raise UserExit
+
+
 def confirm(
     breadcrumb: list[str],
     prompt: str,

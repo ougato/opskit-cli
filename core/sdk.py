@@ -28,6 +28,7 @@ from core.theme import (
 # ─── 交互 ─────────────────────────────────────────────────────────────────────
 from core.prompt import (
     select,
+    multi_select,
     confirm,
     text_input,
     pause,
@@ -36,6 +37,9 @@ from core.prompt import (
     UserCancel,
     console,
 )
+
+# ─── 插件间服务 ─────────────────────────────────────────────────────────────────
+from core.plugin_services import get_service, open_service_menu
 
 # ─── 子进程执行 ───────────────────────────────────────────────────────────────
 from core.runner import run, run_lines, which, cmd_ok
@@ -73,13 +77,38 @@ def software_bin(key: str, cmd: str) -> str | None:
     return resolve_bin(key, cmd)
 
 
+def ensure_python_package(package: str, import_name: str = "") -> bool:
+    """检测并按需 pip 安装 Python 包到应用 venv（供插件声明运行时依赖）。
+
+    已可导入 → 静默返回 True；否则用当前解释器 pip 安装，失败返回 False。
+    """
+    import importlib.util
+    import subprocess
+    import sys
+
+    name = import_name or package
+    if importlib.util.find_spec(name) is not None:
+        return True
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", package],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    importlib.invalidate_caches()
+    return importlib.util.find_spec(name) is not None
+
+
 __all__ = [
     "SDK_API_VERSION",
     "ModuleInfo",
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "get_service", "open_service_menu",
+    "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",
     "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
     "load_yaml", "save_yaml",

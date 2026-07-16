@@ -100,6 +100,11 @@ update:
   failed: "更新失败：{error}"
   rollback: "已回滚到 v{version}"
 
+service:
+  install_confirm: "需要提供「{service}」能力的通用插件，现在安装？"
+  installing: "安装服务插件"
+  unavailable: "服务 {service} 不可用，请先安装并信任对应插件"
+
 prompt:
   select: "请选择"
   confirm_yes: "[y/N]"

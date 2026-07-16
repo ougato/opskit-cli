@@ -100,6 +100,11 @@ update:
   failed: "Update failed: {error}"
   rollback: "Rolled back to v{version}"
 
+service:
+  install_confirm: "Plugin providing \"{service}\" is required, install now?"
+  installing: "Install service plugin"
+  unavailable: "Service {service} unavailable, install and trust the provider plugin first"
+
 prompt:
   select: "Select"
   confirm_yes: "[y/N]"
