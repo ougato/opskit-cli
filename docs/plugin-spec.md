@@ -255,6 +255,7 @@ mytool/
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
 | 日志 | `get_logger` |
+| 软件安装 | `ensure_software(key)`（复用平台软件配方检测 + 按需安装推荐版本，如 golang / docker / nodejs；仅限注册表内配方，插件禁止自行实现安装器） |
 
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
 `api_version` 不匹配的插件会被静默跳过（写日志），OpsKit 升级大版本后插件需适配
@@ -316,6 +317,8 @@ mytool/
 - 禁止调用 `sys.exit()` / `os._exit()`（会被守卫拦截，但属于违规行为）；
 - 用户可见文字一律走 `t()` + `register_locale()`，不硬编码单一语言；
 - 长时间操作要有进度提示，错误信息保持简短（详细内容写日志 `get_logger()`）；
+- 环境依赖安装一律走 `ensure_software(key)` 复用平台软件配方（安装进度与反馈
+  同软件菜单一致），插件禁止自行下载 / 脚本安装系统软件；
 - 文件读写使用 `data_dir()` / `cache_dir()` 下的自有子目录，不污染其他路径；
 - `permissions` 如实声明（network / filesystem / exec / root），获取用户信任。
 

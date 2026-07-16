@@ -144,6 +144,7 @@ software:
   detecting: "Detecting installed software..."
   fetching_versions: "Fetching version list..."
   no_versions: "Failed to get version list"
+  recipe_unknown: "Unknown software recipe: {name}"
   select_version: "Select version"
   recommended: "Recommended"
   current: "Current"

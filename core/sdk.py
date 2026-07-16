@@ -49,6 +49,19 @@ from core.yamlio import load_yaml, save_yaml
 # ─── 日志 ─────────────────────────────────────────────────────────────────────
 from core.logger import get_logger
 
+
+# ─── 软件安装（复用平台软件配方，插件不得自行实现安装器）───────────────
+def ensure_software(key: str) -> bool:
+    """检测并按需安装 OpsKit 自带软件配方（如 golang / docker / nodejs）。
+
+    已装 → 静默返回 True；未装 → 以平台统一安装流程（进度条 + 统一反馈）
+    安装推荐版本。只允许安装注册表内的配方（白名单），插件无法借此执行
+    任意安装逻辑。调用前应已渲染阶段标题（clear_screen + print_header）。
+    """
+    from software.actions import ensure_installed
+    return ensure_installed(key)
+
+
 __all__ = [
     "SDK_API_VERSION",
     "ModuleInfo",
@@ -60,4 +73,5 @@ __all__ = [
     "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
     "load_yaml", "save_yaml",
     "get_logger",
+    "ensure_software",
 ]

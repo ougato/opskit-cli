@@ -144,6 +144,7 @@ software:
   detecting: "检测已安装软件..."
   fetching_versions: "获取版本列表..."
   no_versions: "无法获取版本列表"
+  recipe_unknown: "未知软件配方：{name}"
   select_version: "选择版本"
   recommended: "推荐"
   current: "当前"
