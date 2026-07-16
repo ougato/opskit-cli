@@ -22,7 +22,7 @@ from core.logger import get_logger
 from core.paths import data_dir
 
 # 指纹计算跳过的目录（版本库元数据与运行时缓存，不属于插件代码内容）
-_SKIP_DIRS = frozenset({".git", "__pycache__"})
+_SKIP_DIRS = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
 
 _log = get_logger("opskit.plugin")
 

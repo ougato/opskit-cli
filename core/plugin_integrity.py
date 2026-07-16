@@ -20,7 +20,7 @@ from core.constants import FILE_PLUGIN_CHECKSUMS, FILE_PLUGIN_MANIFEST
 from core.logger import get_logger
 
 # 与信任指纹一致：版本库元数据与运行时缓存不属于插件代码内容
-_SKIP_DIRS = frozenset({".git", "__pycache__"})
+_SKIP_DIRS = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
 
 # 校验结果
 CHECK_OK = "ok"
