@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from core.i18n import current_lang, t
-from core.prompt import select, text_input, confirm, pause, clear_screen, UserCancel, console
+from core.prompt import select, text_input, confirm, pause, clear_screen, print_header, UserCancel, console
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
 from plugin import commands
@@ -318,7 +318,11 @@ def _update() -> None:
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
             pause()
             return
+    old_version = manifest.version
     ok, msg = commands.update(manifest)
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), _display_name(manifest)]
+    clear_screen()
+    print_header(crumb)
     if not ok:
         if msg == "not_git":
             print_error(t("plugin.update_not_git", name=_display_name(manifest)))
@@ -331,13 +335,39 @@ def _update() -> None:
         print_error(t("plugin.install_no_manifest"))
         pause()
         return
+    # 版本信息常驻结果界面，不再一闪而过
+    console.print(f"  {t('plugin.col_name')}: {_display_name(refreshed)}", style=get_color("info"))
+    console.print(f"  {t('plugin.ver_old')}: {old_version}", style=get_color("info"))
+    console.print(f"  {t('plugin.ver_new')}: {refreshed.version}", style=get_color("info"))
     if msg == "unchanged":
         print_info(t("plugin.update_latest", name=_display_name(refreshed)))
         pause()
         return
+    if msg == "tampered":
+        print_error(t("plugin.update_tampered", name=_display_name(refreshed)))
+        pause()
+        return
+    if msg == "downgrade":
+        try:
+            agreed = confirm(
+                breadcrumb=crumb,
+                prompt=t("plugin.downgrade_confirm", old=old_version, new=refreshed.version),
+                theme_key=_THEME_KEY,
+                info_lines=_summary_lines(refreshed),
+            )
+        except UserCancel:
+            agreed = False
+        if not agreed:
+            print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
+            pause()
+            return
+        commands.grant_trust(refreshed)
+        clear_screen()
+        print_header(crumb)
     if commands.trust_status(refreshed) == commands.TRUST_OK or _confirm_trust(refreshed):
         commands.reload(refreshed)
         print_success(t("plugin.update_success", name=_display_name(refreshed)))
+        console.print(f"  {old_version} → {refreshed.version}")
     else:
         print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
     pause()

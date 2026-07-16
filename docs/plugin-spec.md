@@ -99,7 +99,7 @@ python3 main.py
 
 ```yaml
 name: myplugin           # 必填。唯一标识，^[a-z][a-z0-9_]*$，与内置模块 key 不得冲突
-version: 1.0.0           # 必填。插件自身版本（semver）
+version: 1.0.0           # 必填。插件自身版本，必须是合法 semver（x.y.z，允许 -/+ 后缀），非法拒绝加载
 api_version: 1           # 必填。依赖的 SDK API 大版本，必须等于当前 OpsKit 的 SDK_API_VERSION
 kind: python             # 必填。python | exec
 entry: myplugin_pkg      # 必填。python: 插件目录内的包名; exec: 相对可执行文件路径
@@ -135,8 +135,8 @@ entry:
   windows: bin/run.exe
 ```
 
-校验失败（缺字段 / name 非法 / kind 非法 / api_version 不匹配 / entry 不存在）时插件被
-跳过并写入日志（`logs/opskit.log`），不影响主程序与其他插件。
+校验失败（缺字段 / name 非法 / version 非 semver / kind 非法 / api_version 不匹配 /
+entry 不存在）时插件被跳过并写入日志（`logs/opskit.log`），不影响主程序与其他插件。
 
 ## 形态一：python 插件（进程内加载）
 
@@ -268,8 +268,14 @@ mytool/
 - 首次信任：菜单安装时展示名称/版本/形态/权限声明，用户确认后记录插件目录内容指纹
   （全部文件 sha256 汇总，跳过 .git / __pycache__）到 `<data_dir>/plugin_trust.yaml`；
   手动 `git clone` 的插件在「更新插件」中选中即弹信任确认，确认后才会加载
-- 变化重确认：插件内容一旦变化（如 `git pull` 更新）指纹失效，重新信任前不加载，
-  防止「先发好版本、后续更新投毒」
+- 平台更新自动继承：已信任插件经「插件管理 → 更新插件」拉取的新内容自动继承信任，
+  首次确认后更新不再重复询问；例外：版本回退（防降级攻击）需用户显式确认，
+  内容与 CHECKSUMS.yaml 不符直接拒绝加载
+- 变化重确认：插件内容被平台更新流程之外的途径改动（如手动 `git pull` / 改文件）
+  时指纹失效，重新信任前不加载，防止「先发好版本、后续更新投毒」
+- 产物指纹清单：插件根目录存在 `CHECKSUMS.yaml`（文件级 sha256 清单，由
+  `opskit plugin fingerprint` 生成）时，平台在每次加载前校验目录实际内容与清单
+  一致，不一致即拒绝加载并告警（可能被篡改）；无清单的存量插件回落 TOFU 模型
 - 来源警告：安装时 URL 主机不在配置 `plugin.trusted_sources` 白名单时显示警告，
   真正的安全闸门是 clone 后的信任确认
 - 防崩隔离：插件 import / register / 菜单入口的任何异常（含 `sys.exit()`）只写日志 +
@@ -286,7 +292,8 @@ mytool/
 1. 源码运行 OpsKit：`python3 main.py`，插件放 `<项目根>/plugins/<name>/`
    （或 `export OPSKIT_PLUGINS_DIR=/path/to/dev-plugins` 指向任意目录）；
 2. 每次改动插件文件后内容指纹变化，需重新信任——进「插件工具 → 插件管理 → 更新插件」
-   选中该插件重新确认，确认后立即生效；
+   选中该插件重新确认，确认后立即生效；开发目录若存在 CHECKSUMS.yaml，改动后需
+   重新运行 `opskit plugin fingerprint`（或临时删除该文件），否则校验不符拒绝加载；
 3. 插件被跳过 / 不显示时，先看日志：`logs/opskit.log`（grep 插件名）。
 
 常见问题速查：
@@ -295,6 +302,8 @@ mytool/
 |---|---|---|
 | 插件工具不出现插件 | 未信任 / 内容变化后未重新信任 | 插件管理 → 更新插件 → 选中确认信任 |
 | 日志 `manifest missing fields` | plugin.yaml 缺必填字段 | 补齐 name/version/api_version/kind/entry |
+| 日志 `invalid version` | version 非 semver | 改为 x.y.z 格式 |
+| 日志 `integrity check failed` | 内容与 CHECKSUMS.yaml 不符 | 重新生成清单；若非自己改动警惕篡改 |
 | 日志 `api_version ... incompatible` | 与当前 SDK 大版本不符 | 适配后更新清单 api_version |
 | 日志 `entry ... shadows an existing module` | entry 包名与已有模块重名 | 改带后缀的包名（如 `xxx_pkg`） |
 | 日志 `entry package has no register()` | `__init__.py` 未暴露 register | 按模板补 register() |
@@ -326,11 +335,18 @@ mytool/
 
 - 仓库命名建议：`opskit-plugin-<name>`
 - 安装：菜单「插件工具 → 插件管理 → 安装插件」输入 URL，或 `git clone <repo> <plugins_dir>/<name>`
-- 更新：菜单「插件管理 → 更新插件」，或 `git pull`（更新后需重新信任）；确认后热重载立即生效
+- 更新：菜单「插件管理 → 更新插件」，已信任插件自动继承信任并热重载；手动 `git pull`
+  属平台外改动，需重新信任
 - 卸载：菜单「插件管理 → 卸载插件」，删除目录 + 移除信任记录，列表即刻消失
-- 信任：安装/更新/手动 clone 后均需在菜单确认信任，否则插件不加载
-- 版本：清单 `version` 用 semver，每次发布递增；建议在仓库 README 标注兼容的
+- 信任：安装/手动 clone 后需在菜单确认信任，否则插件不加载
+- 版本：清单 `version` 是唯一权威版本来源，semver，每次发布必须递增（版本回退会触发
+  用户降级确认）；建议 git tag 与 version 对应（`v1.0.5`），并在仓库 README 标注兼容的
   `api_version`
+- 产物指纹：发布前在插件目录运行 `opskit plugin fingerprint <目录>` 生成
+  `CHECKSUMS.yaml` 并随仓库提交；`opskit plugin fingerprint <目录> --check` 可本地验证；
+  平台加载前校验不符即拒绝加载，防发布后篡改
+- 运行时数据禁止写入插件目录（会破坏指纹与 CHECKSUMS 校验），一律落盘
+  `plugin_data_dir(<命名空间>)`
 
 ## 发布前自查清单
 
@@ -340,5 +356,6 @@ mytool/
 - [ ] exec 插件：可执行文件在插件目录内且有可执行位；`platforms` 与提供的产物一致
 - [ ] `label` / `description` 提供 zh + en；自有文案通过 `register_locale()` 注册
 - [ ] `permissions` 如实声明
+- [ ] `version` 已递增，并运行 `opskit plugin fingerprint` 重新生成 CHECKSUMS.yaml
 - [ ] 在干净环境 clone → 信任 → 验证「插件工具」菜单立即出现、功能可用
 - [ ] 菜单入口内抛异常只显示短错误、能正常返回主菜单（不会杀死 OpsKit）

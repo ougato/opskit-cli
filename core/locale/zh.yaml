@@ -58,6 +58,14 @@ plugin:
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
   source_warning: "来源不在可信来源白名单，代码未经审查"
+  ver_old: "更新前版本"
+  ver_new: "更新后版本"
+  update_tampered: "插件 {name} 内容与发布清单 CHECKSUMS.yaml 不符，可能被篡改，已拒绝加载"
+  downgrade_confirm: "版本回退 {old} → {new}，确认信任并加载？"
+  fingerprint_written: "已生成 {path}"
+  fingerprint_ok: "校验通过，内容与 CHECKSUMS.yaml 一致"
+  fingerprint_missing: "未找到 CHECKSUMS.yaml，先生成（不带 --check）"
+  fingerprint_mismatch: "校验失败，内容与 CHECKSUMS.yaml 不符（可能被篡改或未重新生成）"
 
 install:
   progress: "[{step}/{total}] {desc}..."
@@ -763,6 +771,10 @@ cli:
   sw_token: "WireGuard 客户端连接令牌（跳过交互输入）"
   sw_version: "指定安装版本（跳过版本选择器）"
   sw_all_versions: "卸载该软件的全部已安装版本"
+  plugin: "插件工具"
+  plugin_fingerprint: "生成 / 校验插件产物指纹清单 CHECKSUMS.yaml（发布前必做）"
+  plugin_path: "插件目录路径（默认当前目录）"
+  plugin_check: "校验目录内容与 CHECKSUMS.yaml 是否一致（不生成）"
   system_package_version: "{name} 使用系统包管理器安装，实际版本由发行版仓库决定，安装后自动检测。"
   error:
     software_not_found: "未找到软件：{name}"

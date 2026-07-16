@@ -17,6 +17,7 @@ from core.plugin import (
     load_plugin,
     unload_plugin,
 )
+from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
 from core.runner import run
 
@@ -27,6 +28,14 @@ _URL_NAME_PATTERN = re.compile(r"([^/]+?)(?:\.git)?/?$")
 TRUST_OK = "trusted"
 TRUST_NONE = "untrusted"
 TRUST_CHANGED = "changed"
+
+_SEMVER_CORE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+
+
+def semver_key(version: str) -> tuple[int, int, int] | None:
+    """semver 主体部分 (x, y, z)，非法返回 None"""
+    m = _SEMVER_CORE.match(version.strip())
+    return tuple(int(g) for g in m.groups()) if m else None
 
 
 def manifests() -> list[PluginManifest]:
@@ -131,8 +140,10 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     """git pull 更新插件目录。
 
     已信任插件经平台更新流程拉取的新内容自动继承信任（首次确认后
-    更新不再重复询问）；目录被平台之外途径改动仍需重新确认。
-    返回 (是否成功, "updated" / "unchanged" / 错误串)。
+    更新不再重复询问）；以下情况不继承，交回菜单层处置：
+      - tampered：内容与 CHECKSUMS.yaml 发布清单不符（可能被篡改）
+      - downgrade：版本回退（防降级攻击，需用户显式确认）
+    返回 (是否成功, "updated" / "unchanged" / "tampered" / "downgrade" / 错误串)。
     """
     root = Path(manifest.root)
     if not (root / ".git").exists():
@@ -147,7 +158,14 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     if before == after:
         return True, "unchanged"
     refreshed = load_manifest(root)
-    if was_trusted and refreshed is not None:
+    if refreshed is None:
+        return True, "updated"
+    if verify_checksums(root) == CHECK_MISMATCH:
+        return True, "tampered"
+    old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
+    if old_key is not None and new_key is not None and new_key < old_key:
+        return True, "downgrade"
+    if was_trusted:
         grant_trust(refreshed)
     return True, "updated"
 

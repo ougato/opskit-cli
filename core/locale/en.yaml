@@ -57,6 +57,14 @@ plugin:
   trust_granted: "Plugin {name} trusted"
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
+  ver_old: "Previous version"
+  ver_new: "Updated version"
+  update_tampered: "Plugin {name} content does not match CHECKSUMS.yaml, possible tampering, refused to load"
+  downgrade_confirm: "Version downgrade {old} → {new}, trust and load anyway?"
+  fingerprint_written: "Generated {path}"
+  fingerprint_ok: "Verified, content matches CHECKSUMS.yaml"
+  fingerprint_missing: "CHECKSUMS.yaml not found, generate it first (without --check)"
+  fingerprint_mismatch: "Verification failed, content does not match CHECKSUMS.yaml (tampered or not regenerated)"
   source_warning: "Source not in trusted-source allowlist, code is unreviewed"
 
 install:
@@ -764,6 +772,10 @@ cli:
   sw_token: "WireGuard client token (skip interactive input)"
   sw_version: "Specify install version (skip version picker)"
   sw_all_versions: "Uninstall all installed versions of this software"
+  plugin: "Plugin tools"
+  plugin_fingerprint: "Generate / verify plugin checksums manifest CHECKSUMS.yaml (required before release)"
+  plugin_path: "Plugin directory path (default: current directory)"
+  plugin_check: "Verify directory content against CHECKSUMS.yaml (no generation)"
   system_package_version: "{name} is installed by the system package manager. The actual version is decided by the distribution repository and detected after installation."
   error:
     software_not_found: "Software not found: {name}"

@@ -367,6 +367,71 @@ def test_update_inherits_trust(plugins_root, tmp_path) -> None:
     assert commands.trust_status(refreshed) == commands.TRUST_OK  # 更新后自动继承信任
 
 
+def test_checksums_write_and_verify(plugins_root) -> None:
+    from core.plugin_integrity import CHECK_MISMATCH, CHECK_MISSING, CHECK_OK, verify_checksums, write_checksums
+
+    plugin_dir = _make_python_plugin(plugins_root)
+    assert verify_checksums(plugin_dir) == CHECK_MISSING
+    write_checksums(plugin_dir)
+    assert verify_checksums(plugin_dir) == CHECK_OK
+    (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    assert verify_checksums(plugin_dir) == CHECK_MISMATCH
+
+
+def test_checksums_mismatch_blocks_load(plugins_root) -> None:
+    """内容与 CHECKSUMS.yaml 不符（可能被篡改）时即使已信任也拒绝加载"""
+    from core.plugin_integrity import write_checksums
+
+    plugin_dir = _make_python_plugin(plugins_root)
+    write_checksums(plugin_dir)
+    _trust(plugin_dir)
+    assert len(discover_plugins()) == 1
+    (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    _trust(plugin_dir)  # 即便用户重新信任，清单不符仍拒绝
+    assert discover_plugins() == []
+
+
+def test_invalid_semver_version_rejected(plugins_root) -> None:
+    plugin_dir = _make_python_plugin(plugins_root)
+    manifest_path = plugin_dir / "plugin.yaml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace("version: 1.0.0", "version: abc"),
+        encoding="utf-8",
+    )
+    assert load_manifest(plugin_dir) is None
+
+
+def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
+    """更新后版本回退不自动继承信任，交由用户显式确认（防降级攻击）"""
+    import subprocess
+
+    from plugin import commands
+
+    origin = _make_python_plugin(tmp_path / "origin_root")
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+
+    dest = plugins_root / "demo"
+    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
+    _trust(dest)
+    manifest = load_manifest(dest)
+
+    manifest_path = origin / "plugin.yaml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace("version: 1.0.0", "version: 0.9.0"),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "downgrade"], check=True)
+
+    ok, msg = commands.update(manifest)
+    assert (ok, msg) == (True, "downgrade")
+    refreshed = load_manifest(dest)
+    assert commands.trust_status(refreshed) != commands.TRUST_OK
+
+
 def test_update_untrusted_change_still_requires_confirm(plugins_root) -> None:
     """平台之外途径改动插件内容仍需重新确认信任"""
     from plugin import commands

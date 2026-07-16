@@ -23,10 +23,14 @@ from core.constants import FILE_PLUGIN_MANIFEST, PLUGIN_API_VERSION
 from core.logger import get_logger
 from core.module import ModuleInfo
 from core.paths import plugins_dir
+from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, is_trusted
 
 # 插件 name 合法格式（同时用作模块 key 与 i18n/config 命名空间）
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# 插件版本合法格式（semver x.y.z，允许预发布/构建后缀）
+_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-+]+)?$")
 
 # 分组 id 合法格式（与 plugin_data_dir 命名空间一致，连字符分割）
 _GROUP_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -101,6 +105,11 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         _log.warning("plugin %s: invalid name %r", plugin_root.name, name)
         return None
 
+    version = str(data["version"])
+    if not _VERSION_PATTERN.match(version):
+        _log.warning("plugin %s: invalid version %r (expect semver x.y.z)", name, version)
+        return None
+
     kind = str(data["kind"])
     if kind not in _VALID_KINDS:
         _log.warning("plugin %s: invalid kind %r", name, kind)
@@ -151,7 +160,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
 
     return PluginManifest(
         name=name,
-        version=str(data["version"]),
+        version=version,
         api_version=api_version,
         kind=kind,
         entry=data["entry"],
@@ -323,7 +332,10 @@ def list_manifests() -> list[PluginManifest]:
 
 
 def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
-    """加载单个已信任插件，未信任或加载失败返回 None（写日志）"""
+    """加载单个已信任插件，未信任 / 完整性校验失败 / 加载失败返回 None（写日志）"""
+    if verify_checksums(manifest.root) == CHECK_MISMATCH:
+        _log.error("plugin %s: integrity check failed, refused to load", manifest.name)
+        return None
     if not is_trusted(manifest.name, compute_fingerprint(manifest.root)):
         _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
         return None
