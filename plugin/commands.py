@@ -116,6 +116,7 @@ _GIT_ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("permission denied", "authentication failed", "could not read username", "could not read password"), "plugin.git_auth_failed"),
     (("repository not found", "does not appear to be a git repository"), "plugin.git_repo_not_found"),
     (("could not resolve", "connection reset", "connection refused", "timed out", "unable to access", "network is unreachable"), "plugin.git_network_failed"),
+    (("dubious ownership",), "plugin.git_dubious_ownership"),
 )
 
 
@@ -176,11 +177,17 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
         return False, "not_git"
     was_trusted = trust_status(manifest) == TRUST_OK
     try:
-        before = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
+        head = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True, check=False)
+        if head.returncode != 0:
+            return False, git_error_reason(head)
+        before = head.stdout.strip()
         pulled = run(["git", "-C", str(root), "pull", "--ff-only"], capture=True, check=False)
         if pulled.returncode != 0:
             return False, git_error_reason(pulled)
-        after = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).stdout.strip()
+        head = run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True, check=False)
+        if head.returncode != 0:
+            return False, git_error_reason(head)
+        after = head.stdout.strip()
     except Exception as e:
         return False, str(e)
     if before == after:
