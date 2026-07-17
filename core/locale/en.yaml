@@ -504,6 +504,7 @@ tailscale:
     uninstall_done: "Tailscale uninstalled"
     ip: "Tailscale IP"
     auth_url: "Login URL"
+    auth_url_missing: "No login URL yet. Retry via Manage → Login / connect"
     login_title: "Tailscale login"
     login_done: "Logged in"
     down_done: "Tailscale disconnected"

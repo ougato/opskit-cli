@@ -503,6 +503,7 @@ tailscale:
     uninstall_done: "Tailscale 已卸载"
     ip: "Tailscale IP"
     auth_url: "登录地址"
+    auth_url_missing: "未获取到登录地址，请在 管理 → 登录连接 重试"
     login_title: "Tailscale 登录"
     login_done: "已登录"
     down_done: "Tailscale 已断开"

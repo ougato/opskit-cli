@@ -1,11 +1,13 @@
 """Tailscale 安装、卸载、诊断与管理。"""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -28,10 +30,12 @@ from tailscale.constants import (
     TAILSCALE_INSTALL_ERROR_TAIL_LINES,
     SYSTEMCTL_COMMAND,
     SYSCTL_COMMAND,
+    TAILSCALE_AUTH_URL_POLL_INTERVAL_SECONDS,
+    TAILSCALE_AUTH_URL_POLL_TIMEOUT_SECONDS,
+    TAILSCALE_BACKEND_RUNNING,
     TAILSCALE_COMMAND,
     TAILSCALE_COMMAND_TIMEOUT_SECONDS,
     TAILSCALE_EXIT_NODE_OUTBOUND_INTERFACE,
-    TAILSCALE_EXIT_NODE_ROUTES,
     TAILSCALE_EXIT_NODE_SCRIPT_FILE,
     TAILSCALE_EXIT_NODE_SERVICE,
     TAILSCALE_EXIT_NODE_SERVICE_FILE,
@@ -206,6 +210,46 @@ def start_login() -> str:
         return output.strip()
 
 
+def _status_json() -> dict:
+    if not command_exists(TAILSCALE_COMMAND):
+        return {}
+    result = _run([TAILSCALE_COMMAND, "status", "--json"], check=False)
+    if result.returncode != 0 or not result.stdout:
+        return {}
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def is_logged_in() -> bool:
+    return _status_json().get("BackendState") == TAILSCALE_BACKEND_RUNNING
+
+
+def _poll_auth_url() -> str:
+    """从守护进程状态轮询登录地址（up 超时时登录流程仍在守护进程继续）。"""
+    deadline = time.monotonic() + TAILSCALE_AUTH_URL_POLL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        status = _status_json()
+        url = str(status.get("AuthURL") or "")
+        if url:
+            return url
+        if status.get("BackendState") == TAILSCALE_BACKEND_RUNNING:
+            return ""
+        time.sleep(TAILSCALE_AUTH_URL_POLL_INTERVAL_SECONDS)
+    return ""
+
+
+def obtain_auth_url() -> str:
+    """发起登录并拿到授权地址：先取 up 输出，拿不到再轮询状态；已登录返回空。"""
+    output = start_login()
+    auth_url = _extract_auth_url(output)
+    if auth_url or is_logged_in():
+        return auth_url
+    return _poll_auth_url()
+
+
 def configure_exit_node() -> None:
     _write_root_file(TAILSCALE_EXIT_NODE_SYSCTL_FILE, _exit_node_sysctl_content(), "0644")
     _run_root([SYSCTL_COMMAND, "-p", str(TAILSCALE_EXIT_NODE_SYSCTL_FILE)], check=False)
@@ -254,10 +298,10 @@ def install_client() -> None:
         configure_exit_node()
 
         sp.step(t("tailscale.step.login"))
-        login_output = start_login()
+        auth_url = obtain_auth_url()
 
     console.print()
-    _render_install_panel(login_output)
+    _render_install_panel(auth_url)
     pause()
 
 
@@ -340,15 +384,18 @@ def _render_panel(title: str, rows: list[str]) -> None:
     ))
 
 
-def _render_install_panel(login_output: str) -> None:
-    """安装完成后用面板输出关键信息：Tailscale IP + 登录地址。"""
+def _render_install_panel(auth_url: str) -> None:
+    """安装完成后用面板输出关键信息：Tailscale IP + 登录地址（或登录状态）。"""
     rows: list[str] = []
     ip = tailscale_ip()
     if ip:
         rows.append(f"{t('tailscale.output.ip')}: {ip}")
-    auth_url = _extract_auth_url(login_output)
     if auth_url:
         rows.append(f"{t('tailscale.output.auth_url')}: {auth_url}")
+    elif is_logged_in():
+        rows.append(t("tailscale.output.login_done"))
+    else:
+        rows.append(t("tailscale.output.auth_url_missing"))
     _render_panel(t("tailscale.output.install_done"), rows)
 
 
@@ -414,14 +461,16 @@ def manage_client() -> None:
             _render_status_panel()
             pause()
         elif key == "2":
-            output = start_login()
-            auth_url = _extract_auth_url(output)
+            auth_url = obtain_auth_url()
             if auth_url:
                 print_action_title(breadcrumb)
                 _render_login_panel(auth_url)
-            else:
+            elif is_logged_in():
                 print_action_title(breadcrumb, trailing_blank=False)
                 print_success(t("tailscale.output.login_done"))
+            else:
+                print_action_title(breadcrumb, trailing_blank=False)
+                print_warning(t("tailscale.output.auth_url_missing"))
             pause()
         elif key == "3":
             print_action_title(breadcrumb, trailing_blank=False)
