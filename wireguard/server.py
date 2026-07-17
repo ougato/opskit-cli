@@ -10,7 +10,7 @@ from wireguard.constants import ACME_INSTALL_MIRRORS
 
 
 def _detect_public_ip() -> str:
-    """检测本机公网 IP"""
+    """检测本机公网 IP（优先 IPv4，无 IPv4 时回退 IPv6）"""
     import concurrent.futures
     import ipaddress
     import urllib.request
@@ -25,18 +25,24 @@ def _detect_public_ip() -> str:
         except Exception:
             return ""
 
+    # 双栈机器优先返回 IPv4：客户端多为 IPv4-only，令牌若写入 IPv6 会连不通。
+    fallback = ""
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(PUBLIC_IP_APIS)) as pool:
         futures = [pool.submit(_probe, url) for url in PUBLIC_IP_APIS]
         try:
             for fut in concurrent.futures.as_completed(futures, timeout=6):
                 ip = fut.result()
-                if ip:
+                if not ip:
+                    continue
+                if isinstance(ipaddress.ip_address(ip), ipaddress.IPv4Address):
                     for pending in futures:
                         pending.cancel()
                     return ip
+                if not fallback:
+                    fallback = ip
         except Exception:
             pass
-    return ""
+    return fallback
 
 
 def _save_state(state: dict) -> None:
