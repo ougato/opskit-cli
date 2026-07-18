@@ -594,7 +594,7 @@ def multi_select(
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
             row.append_text(tee)
-            row.append('  [')
+            row.append('[')
             if i in checked:
                 mark_style = 'bold bright_cyan' if i == cursor else 'green'
                 row.append('✔', style=mark_style)
@@ -610,7 +610,7 @@ def multi_select(
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
             row.append_text(tee)
-            row.append(f'  (0) {_pad_label(back_label)}', style='dim')
+            row.append(f'(0) {_pad_label(back_label)}', style='dim')
             console.print(row)
         sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
         sys.stdout.flush()
