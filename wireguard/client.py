@@ -146,33 +146,34 @@ def _scan_listening_ports(port_min: int, port_max: int) -> set[int]:
 
 
 def _ensure_xray_template_service(xray_path: str) -> None:
-    """确保 systemd 模板单元 xray@.service 存在（多隧道独立实例用）"""
+    """确保 systemd 模板单元 xray@.service 存在且内容最新（多隧道独立实例用）"""
     from pathlib import Path
     from wireguard.constants import XRAY_DOC_URL
+    from wireguard.utils import _read_text
     tpl_path = Path("/etc/systemd/system/xray@.service")
-    if not tpl_path.exists():
-        write_root_file(
-            tpl_path,
-            "[Unit]\n"
-            "Description=Xray Service - %i\n"
-            f"Documentation={XRAY_DOC_URL}\n"
-            "After=network.target nss-lookup.target\n\n"
-            "[Service]\n"
-            "User=nobody\n"
-            "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "NoNewPrivileges=true\n"
-            f"ExecStart={xray_path} run -config /usr/local/etc/xray/%i.json\n"
-            "Restart=on-failure\n"
-            "RestartPreventExitStatus=23\n"
-            "LimitNPROC=10000\n"
-            "LimitNOFILE=1000000\n"
-            "RuntimeDirectory=xray\n"
-            "RuntimeDirectoryMode=0755\n\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n",
-            "0644",
-        )
+    unit = (
+        "[Unit]\n"
+        "Description=Xray Service - %i\n"
+        f"Documentation={XRAY_DOC_URL}\n"
+        "After=network.target nss-lookup.target\n\n"
+        "[Service]\n"
+        "User=nobody\n"
+        "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "NoNewPrivileges=true\n"
+        f"ExecStart={xray_path} run -config /usr/local/etc/xray/%i.json\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        "RestartPreventExitStatus=23\n"
+        "LimitNPROC=10000\n"
+        "LimitNOFILE=1000000\n"
+        "RuntimeDirectory=xray\n"
+        "RuntimeDirectoryMode=0755\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    if _read_text(tpl_path) != unit:
+        write_root_file(tpl_path, unit, "0644")
         run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 

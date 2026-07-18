@@ -204,33 +204,40 @@ def install_wireguard_pkg(os_id: str) -> None:
 
 
 def ensure_xray_service(xray_path: Path, service_name: str) -> None:
-    """确保 xray systemd service 文件存在（带 CAP_NET_ADMIN）并 daemon-reload"""
+    """确保 xray systemd service 文件存在且内容最新（带 CAP_NET_ADMIN）并 daemon-reload"""
     from core.paths import xray_config_file
     service_path = Path(f"/etc/systemd/system/{service_name}.service")
-    if not service_path.exists():
-        write_root_file(
-            service_path,
-            "[Unit]\n"
-            "Description=Xray Service\n"
-            f"Documentation={_XRAY_DOC_URL}\n"
-            "After=network.target nss-lookup.target\n\n"
-            "[Service]\n"
-            "User=nobody\n"
-            "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "NoNewPrivileges=true\n"
-            f"ExecStart={xray_path} run -config {xray_config_file()}\n"
-            "Restart=on-failure\n"
-            "RestartPreventExitStatus=23\n"
-            "LimitNPROC=10000\n"
-            "LimitNOFILE=1000000\n"
-            "RuntimeDirectory=xray\n"
-            "RuntimeDirectoryMode=0755\n\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n",
-            "0644",
-        )
+    unit = (
+        "[Unit]\n"
+        "Description=Xray Service\n"
+        f"Documentation={_XRAY_DOC_URL}\n"
+        "After=network.target nss-lookup.target\n\n"
+        "[Service]\n"
+        "User=nobody\n"
+        "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "NoNewPrivileges=true\n"
+        f"ExecStart={xray_path} run -config {xray_config_file()}\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        "RestartPreventExitStatus=23\n"
+        "LimitNPROC=10000\n"
+        "LimitNOFILE=1000000\n"
+        "RuntimeDirectory=xray\n"
+        "RuntimeDirectoryMode=0755\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    if _read_text(service_path) != unit:
+        write_root_file(service_path, unit, "0644")
         run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def install_xray() -> None:
