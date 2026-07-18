@@ -34,7 +34,10 @@
    有 source 时确认安装（`plugin.commands.install` + `confirm_trust`，拒绝回滚）→
    `isinstance(svc, MenuService)` 校验后调用 `svc.open_menu(breadcrumb, context)`。
 3. `multi_select`：raw 模式读键，Unix ESC 后 50ms 内跟 `[` 判为 ANSI 方向键，
-   Windows 走 msvcrt `\x00`/`\xe0` 前缀；渲染沿用 Powerline 风格（reverse 高亮光标行）。
+   Windows 走 msvcrt `\x00`/`\xe0` 前缀；渲染沿用 Powerline 风格。
+   勾选框三态：未选 `[ ]`、光标悬停 `[•]`（亮青加粗）、已选 `[✔]`（绿色，
+   悬停时亮青加粗），均为单列宽字符不跳动，不用行首 ❯/[x]；
+   样式规范见 docs/plugin-spec.md「多选交互规范」。
 
 ## 跨平台处理
 

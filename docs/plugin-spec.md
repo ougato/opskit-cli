@@ -250,7 +250,7 @@ mytool/
 | 协议 | `ModuleInfo` |
 | i18n | `t` / `current_lang` / `register_locale` |
 | 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `multi_select` / `paged_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选；`paged_select` 分页单选，每页最多 9 项、n/p 翻页） |
+| 交互 | `select` / `multi_select` / `paged_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选，样式见下「多选交互规范」；`paged_select` 分页单选，每页最多 9 项、n/p 翻页） |
 | 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
 | 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
 | YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
@@ -258,6 +258,28 @@ mytool/
 | 软件安装 | `ensure_software(key)`（复用平台软件配方检测 + 按需安装推荐版本，如 golang / docker / nodejs；仅限注册表内配方，插件禁止自行实现安装器） |
 | Python 依赖 | `ensure_python_package(package, import_name="")`（已可导入静默返回 True，否则用应用 venv 的 pip 安装，失败返回 False；供插件按需声明重依赖，如 boto3） |
 | 插件间服务 | `get_service(name)` / `open_service_menu(name, breadcrumb, context, source)`（见下「插件间服务」章节） |
+
+### 多选交互规范（multi_select）
+
+所有插件的多选场景**必须**直接使用 SDK 的 `multi_select`，禁止自绘勾选列表，
+保证全平台样式一致。统一样式：
+
+- 勾选框三态均为单列宽字符，光标移动不产生列跳动：
+  - 未选中：`[ ]`
+  - 光标悬停（未选中）：`[•]`（亮青加粗）
+  - 已选中：`[✔]`（绿色；被光标悬停时亮青加粗）
+- 不使用行首箭头（❯）或 `[x]` 标记；光标行文案加粗
+- 键位：↑↓ 移动、空格勾选/取消、回车确认（返回勾选下标列表，可为空）、
+  0 返回 None、ESC 抛 `UserCancel`
+- 提供「全部」快捷项时放在第一项，勾选它等价于全选（由调用方业务逻辑处理）
+
+```
+ ├─  选择服务（空格勾选，回车确认）
+ ├─   [ ] 全部
+ ├─   [✔] 主服务
+ ├─   [•] Cookie Worker 服务
+ ├─   (0) 🔙 返回
+```
 
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
 `api_version` 不匹配的插件会被静默跳过（写日志），OpsKit 升级大版本后插件需适配
