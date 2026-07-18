@@ -398,6 +398,7 @@ xui:
     panel_config_failed: "Panel configuration failed"
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
+    download_script_fail: "Failed to download X-UI install script, check network: {url}"
   output:
     install_done: "X-UI configured"
     no_systemd: "No systemd; service not started (WSL)\n↳ Enable systemd=true in /etc/wsl.conf, then restart WSL"
