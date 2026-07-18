@@ -562,11 +562,14 @@ def multi_select(
     options: list[str],
     theme_key: str = 'root',
     back_label: str = '',
+    all_index: int | None = None,
 ) -> list[int] | None:
     """Powerline 风格多选菜单：↑↓ 移动光标、空格勾选、回车确认。
 
-    subtitle — 标题下的提示 pill（与 text_input 的字段标签同款式）
-    options  — 选项文案列表
+    subtitle  — 标题下的提示 pill（与 text_input 的字段标签同款式）
+    options   — 选项文案列表
+    all_index — 「全选」项下标（可选）：勾选它全选、取消它全不选；
+                其余项全部勾上时自动连带勾上，任一项取消时自动连带取消
 
     返回勾选项的下标列表（可为空）；用户按 0 返回 None；ESC 抛 UserCancel。
     """
@@ -630,8 +633,18 @@ def multi_select(
         elif ch == ' ':
             if cursor in checked:
                 checked.discard(cursor)
+                if all_index is not None and cursor == all_index:
+                    checked.clear()
             else:
                 checked.add(cursor)
+                if all_index is not None and cursor == all_index:
+                    checked.update(range(len(options)))
+            if all_index is not None and cursor != all_index:
+                others = set(range(len(options))) - {all_index}
+                if others <= checked:
+                    checked.add(all_index)
+                else:
+                    checked.discard(all_index)
         elif ch in ('\r', '\n'):
             console.print()
             return sorted(checked)
