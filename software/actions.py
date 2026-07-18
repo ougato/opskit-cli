@@ -103,3 +103,71 @@ def execute_uninstall(instance, version: str | None = None) -> ActionResult:
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
+
+
+def resolve_bin(key: str, cmd: str) -> str | None:
+    """插件 SDK 入口：返回已安装软件的可执行文件路径，未安装返回 None。
+
+    先经 recipe 检测并激活（把私有安装目录注入本进程 PATH），再解析 cmd，
+    保证 golang / nodejs 等非系统路径安装的软件也能被插件子进程调用。
+    """
+    import shutil as _shutil
+
+    from software import registry
+
+    cls = registry.get(key)
+    if cls is None:
+        return None
+    instance = cls()
+    if not instance.detect():
+        return None
+    instance.activate()
+    return _shutil.which(cmd)
+
+
+def ensure_installed(key: str) -> bool:
+    """插件 SDK 入口：检测软件是否已装，未装则用平台统一安装流程安装推荐版本。
+
+    安全边界：只允许安装注册表内的配方（白名单），当前平台不支持直接失败，
+    插件无法借此执行任意安装逻辑。展示复用平台安装 UI（spinner 取版本 →
+    recipe 自带 MultiStepProgress 进度 → 统一成功 / 失败反馈），与软件菜单
+    安装流程一致。已装时静默返回 True，不重复安装。
+    """
+    from core.feedback import report_failure
+    from core.i18n import t
+    from core.platform import get_platform
+    from core.progress import spinner
+    from core.recipe_utils import recipe_display_name
+    from core.theme import console as base_console
+    from core.theme import print_error
+    from core.theme import print_success
+    from software import registry
+
+    cls = registry.get(key)
+    if cls is None:
+        print_error(t("software.recipe_unknown", name=key))
+        return False
+    if get_platform().os_type not in cls.platforms:
+        print_error(t("error.not_supported"))
+        return False
+    instance = cls()
+    if instance.detect():
+        instance.activate()
+        return True
+    name = recipe_display_name(cls)
+    base_console.print()
+    with spinner(t("software.fetching_versions")):
+        try:
+            versions = instance.versions()
+        except Exception as e:  # noqa: BLE001
+            report_failure(e, fail_key="install.failed", name=name, software=key, action="versions")
+            return False
+    if not versions:
+        print_error(t("software.no_versions"))
+        return False
+    r = execute_install(instance, versions[0])
+    if r.ok:
+        print_success(t("install.success", name=name, version=r.version, elapsed=r.elapsed))
+        return True
+    report_failure(r.error, fail_key="install.failed", name=name, software=key, version=versions[0], action="install")
+    return False

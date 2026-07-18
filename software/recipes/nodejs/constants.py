@@ -24,6 +24,15 @@ NODEJS_DL_WINDOWS_URLS = [
     "https://nodejs.org/dist/v{version}/node-v{version}-win-{arch}.zip",
 ]
 
+# ─── 老 glibc 兼容（CentOS 7 等，glibc < 2.28 跑不了官方 Node 18+ 包）─────────
+# unofficial-builds 提供 glibc-2.17 兼容包（仅 linux x64，最高到 22.x 主版本）
+NODEJS_GLIBC_MIN = (2, 28)
+NODEJS_GLIBC217_MAX_MAJOR = 22
+NODEJS_DL_LINUX_GLIBC217_URLS = [
+    "https://npmmirror.com/mirrors/node-unofficial-builds/v{version}/node-v{version}-linux-{arch}-glibc-217.tar.xz",
+    "https://unofficial-builds.nodejs.org/download/release/v{version}/node-v{version}-linux-{arch}-glibc-217.tar.xz",
+]
+
 # ─── opskit 私有安装目录（无 root 时 fallback） ───────────────────────────────
 NODEJS_PRIVATE_SUBDIR  = ".opskit/nodejs"
 

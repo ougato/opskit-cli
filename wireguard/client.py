@@ -146,33 +146,84 @@ def _scan_listening_ports(port_min: int, port_max: int) -> set[int]:
 
 
 def _ensure_xray_template_service(xray_path: str) -> None:
-    """确保 systemd 模板单元 xray@.service 存在（多隧道独立实例用）"""
+    """确保 systemd 模板单元 xray@.service 存在且内容最新（多隧道独立实例用）"""
     from pathlib import Path
     from wireguard.constants import XRAY_DOC_URL
+    from wireguard.utils import _read_text
     tpl_path = Path("/etc/systemd/system/xray@.service")
-    if not tpl_path.exists():
-        write_root_file(
-            tpl_path,
-            "[Unit]\n"
-            "Description=Xray Service - %i\n"
-            f"Documentation={XRAY_DOC_URL}\n"
-            "After=network.target nss-lookup.target\n\n"
-            "[Service]\n"
-            "User=nobody\n"
-            "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-            "NoNewPrivileges=true\n"
-            f"ExecStart={xray_path} run -config /usr/local/etc/xray/%i.json\n"
-            "Restart=on-failure\n"
-            "RestartPreventExitStatus=23\n"
-            "LimitNPROC=10000\n"
-            "LimitNOFILE=1000000\n"
-            "RuntimeDirectory=xray\n"
-            "RuntimeDirectoryMode=0755\n\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n",
-            "0644",
-        )
+    unit = (
+        "[Unit]\n"
+        "Description=Xray Service - %i\n"
+        f"Documentation={XRAY_DOC_URL}\n"
+        "After=network.target nss-lookup.target\n\n"
+        "[Service]\n"
+        "User=nobody\n"
+        "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
+        "NoNewPrivileges=true\n"
+        f"ExecStart={xray_path} run -config /usr/local/etc/xray/%i.json\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        "RestartPreventExitStatus=23\n"
+        "LimitNPROC=10000\n"
+        "LimitNOFILE=1000000\n"
+        "RuntimeDirectory=xray\n"
+        "RuntimeDirectoryMode=0755\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    if _read_text(tpl_path) != unit:
+        write_root_file(tpl_path, unit, "0644")
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+
+
+def _ensure_wg_watchdog(label: str) -> None:
+    """安装并启用隧道看门狗（脚本 + systemd 模板 service/timer，幂等）"""
+    from pathlib import Path
+    from wireguard.constants import (
+        WG_WATCHDOG_SCRIPT, WG_WATCHDOG_SERVICE_TPL,
+        WG_WATCHDOG_INTERVAL, WG_WATCHDOG_STALE_SECS, WG_WATCHDOG_ESCALATE_FAILS,
+    )
+    from wireguard.templates import (
+        wg_watchdog_script, wg_watchdog_service_unit, wg_watchdog_timer_unit,
+    )
+    write_root_file(
+        Path(WG_WATCHDOG_SCRIPT),
+        wg_watchdog_script(
+            stale_secs=WG_WATCHDOG_STALE_SECS,
+            escalate_fails=WG_WATCHDOG_ESCALATE_FAILS,
+        ),
+        "0755",
+    )
+    write_root_file(
+        Path(f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.service"),
+        wg_watchdog_service_unit(WG_WATCHDOG_SCRIPT),
+        "0644",
+    )
+    write_root_file(
+        Path(f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.timer"),
+        wg_watchdog_timer_unit(WG_WATCHDOG_INTERVAL),
+        "0644",
+    )
+    run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+    run_as_root(["systemctl", "enable", "--now", f"{WG_WATCHDOG_SERVICE_TPL}{label}.timer"],
+                check=False, capture_output=True)
+
+
+def _remove_wg_watchdog(label: str, last_tunnel: bool = False) -> None:
+    """停用隧道看门狗；最后一条隧道移除时清理脚本与模板单元"""
+    from wireguard.constants import WG_WATCHDOG_SCRIPT, WG_WATCHDOG_SERVICE_TPL
+    if label:
+        run_as_root(["systemctl", "disable", "--now", f"{WG_WATCHDOG_SERVICE_TPL}{label}.timer"],
+                    check=False, capture_output=True)
+        run_as_root(["rm", "-f", f"/run/opskit-wg-watchdog-{label}.fails"],
+                    check=False, capture_output=True)
+    if last_tunnel:
+        run_as_root(["rm", "-f",
+                     WG_WATCHDOG_SCRIPT,
+                     f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.service",
+                     f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.timer"],
+                    check=False, capture_output=True)
         run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 
@@ -376,6 +427,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         stop_and_disable(xray_svc)
         enable_and_start(xray_svc)
         enable_and_start(wg_svc)
+        _ensure_wg_watchdog(label)
 
         sp.step(t("wireguard.step.verify"))
         import time
@@ -397,6 +449,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             _pw(f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} {wg_svc}={'active' if _wg_ok else 'INACTIVE'}")
 
     if not (_xray_ok and _wg_ok):
+        _remove_wg_watchdog(label, last_tunnel=not _tunnels)
         print_error(t(
             "wireguard.error.client_service_start_fail",
             xray=xray_svc,
@@ -494,6 +547,7 @@ def uninstall_client() -> None:
     with MultiStepProgress(descs) as sp:
         sp.step(descs[0])
         for tn in tunnels:
+            _remove_wg_watchdog(tn.get("label", ""), last_tunnel=(tn is tunnels[-1]))
             wg_iface = tn.get("wg_iface", "wg0")
             wg_svc   = f"wg-quick@{wg_iface}"
             run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)

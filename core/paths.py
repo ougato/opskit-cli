@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -100,6 +101,29 @@ def cache_dir() -> Path:
     if pd and not (sys.platform == "linux" and _is_root()):
         return Path(pd.user_cache_dir("opskit", appauthor=False))
     return data_dir() / "cache"
+
+
+def plugins_dir() -> Path:
+    """外部插件目录（每个插件一个子目录，含 plugin.yaml 清单）"""
+    env = os.environ.get("OPSKIT_PLUGINS_DIR")
+    if env:
+        return Path(env)
+    from core.constants import DIR_PLUGINS
+    return data_dir() / DIR_PLUGINS
+
+
+def plugin_data_dir(namespace: str) -> Path:
+    """插件数据目录（配置 / 构建产物等一律落盘于此，禁止写入插件目录自身）
+
+    namespace 由插件开发者声明（如 "insight-flow"），多个插件传同一命名空间即共享。
+    仅允许小写字母 / 数字 / 连字符，目录自动创建。
+    """
+    if not re.match(r"^[a-z][a-z0-9-]*$", namespace):
+        raise ValueError(f"invalid plugin data namespace: {namespace!r}")
+    from core.constants import DIR_PLUGIN_DATA
+    path = data_dir() / DIR_PLUGIN_DATA / namespace
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def log_dir() -> Path:

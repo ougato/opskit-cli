@@ -1,6 +1,7 @@
 """Powerline 交互原语 — 菜单渲染、选择、确认、输入"""
 from __future__ import annotations
 
+import io
 import os
 import signal
 import sys
@@ -36,6 +37,13 @@ CANCEL_KEY: str = '\x1b'
 
 class UserCancel(Exception):
     """用户按 CANCEL_KEY（默认 ESC）主动取消，由调用方决定是返回上层还是退出"""
+
+
+class UserExit(SystemExit):
+    """用户按 Ctrl+C / Ctrl+D 主动退出程序，属正常退出（区别于插件 sys.exit()）"""
+
+    def __init__(self) -> None:
+        super().__init__(0)
 
 
 @contextmanager
@@ -183,6 +191,14 @@ def switch_scheme(name: str) -> None:
 
 # ─── 按键读取 ─────────────────────────────────────────────────────────────────
 
+def _stdin_is_tty() -> bool:
+    """stdin 是否为 TTY（fileno 不可用时视为非 TTY）"""
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (ValueError, OSError, AttributeError, io.UnsupportedOperation):
+        return False
+
+
 def _read_key() -> str:
     """读取单个按键（无需回车），跨平台"""
     if os.name == 'nt':
@@ -202,7 +218,10 @@ def _read_key() -> str:
         old = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            ch = sys.stdin.read(1)
+            # 直接读 fd：sys.stdin 是带缓冲的 TextIOWrapper，会把后续字节
+            # （如方向键序列的 '[A'）预读进自己的缓冲区，导致 select 探不到
+            data = os.read(fd, 1)
+            ch = data.decode(errors='ignore')
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         return ch
@@ -389,10 +408,14 @@ def select(
             pass
 
     while True:
-        ch = _read_key()
+        ch = _read_key_seq()
         if not ch:
-            console.print()
-            return None
+            if not _stdin_is_tty():
+                console.print()
+                return None
+            continue
+        if ch in ('UP', 'DOWN', 'NAV'):
+            continue
         if ch == '0':
             console.print()
             return None
@@ -401,7 +424,7 @@ def select(
             raise UserCancel
         if ch in ('\x03', '\x04'):
             console.print()
-            sys.exit(0)
+            raise UserExit
         if ch in valid:
             console.print(ch)
             return ch
@@ -414,7 +437,7 @@ def paged_select(
     choice_of: Callable[[Any, int], dict[str, Any]],
     subtitle_of: Callable[[int, int], str],
     back_label: str,
-    nav_labels: tuple[str, str],
+    nav_labels: tuple[str, str] | None = None,
     theme_key: str = 'root',
     page_size: int = 9,
     on_select: Callable[[Any], None] | None = None,
@@ -428,13 +451,17 @@ def paged_select(
         choice_of: ``(item, idx_on_page) -> choice dict``；返回的 dict 若缺
             ``key`` 字段会自动补为页内序号（从 1 起）。
         subtitle_of: ``(page, total_pages) -> str``，由调用方决定副标题文案。
-        nav_labels: ``(上一页文案, 下一页文案)``，由调用方传入避免耦合命名空间。
+        nav_labels: ``(上一页文案, 下一页文案)``，缺省用 ``prompt.prev_page`` /
+            ``prompt.next_page`` 通用文案。
         on_select: 为 None → 选中即返回该 item（pick 模式）；否则对选中 item
             调用此回调并继续停留在列表（browse 模式，翻页状态保持）。
 
     Returns:
         pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
     """
+    if nav_labels is None:
+        from core.i18n import t
+        nav_labels = (t('prompt.prev_page'), t('prompt.next_page'))
     prev_label, next_label = nav_labels
     total = len(items)
     total_pages = (total + page_size - 1) // page_size
@@ -479,21 +506,179 @@ def paged_select(
         on_select(selected)
 
 
+def _read_key_seq() -> str:
+    """读取一个按键，方向键归一化为 'UP' / 'DOWN'（跨平台）。
+
+    Unix：ESC 后 50ms 内跟随 '[' 视为 ANSI 序列（方向键），否则视为 ESC。
+    Windows：msvcrt 前缀 '\\x00' / '\\xe0' 后跟 'H'（上）/ 'P'（下）。
+    """
+    if os.name == 'nt':
+        import msvcrt
+        ch = msvcrt.getwch()
+        if ch in ('\x00', '\xe0'):
+            ch2 = msvcrt.getwch()
+            if ch2 == 'H':
+                return 'UP'
+            if ch2 == 'P':
+                return 'DOWN'
+            return ''
+        return ch
+    if not _stdin_is_tty():
+        return _read_key()
+    import select as _sel
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        # 整个转义序列必须在同一个 raw 窗口内读完：恢复 canonical 模式后
+        # 缓冲区里的后续字节（如 '[A'）没有换行不会被 select 报告可读
+        tty.setraw(fd)
+        ch = os.read(fd, 1).decode(errors='ignore')
+        if ch != '\x1b':
+            return ch
+        if not _sel.select([fd], [], [], 0.05)[0]:
+            return ch
+        seq = os.read(fd, 1).decode(errors='ignore')
+        if seq not in ('[', 'O'):  # 'O' = application mode 方向键（ESC O A 等）
+            return ch
+        code = os.read(fd, 1).decode(errors='ignore')
+        # 吞掉序列剩余字节（如 Home/End/Delete 的 '~'）
+        while _sel.select([fd], [], [], 0)[0]:
+            if not os.read(fd, 1):
+                break
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    if code == 'A':
+        return 'UP'
+    if code == 'B':
+        return 'DOWN'
+    return 'NAV'
+
+
+def multi_select(
+    breadcrumb: list[str],
+    subtitle: str,
+    options: list[str],
+    theme_key: str = 'root',
+    back_label: str = '',
+    all_index: int | None = None,
+) -> list[int] | None:
+    """Powerline 风格多选菜单：↑↓ 移动光标、空格勾选、回车确认。
+
+    subtitle  — 标题下的提示 pill（与 text_input 的字段标签同款式）
+    options   — 选项文案列表
+    all_index — 「全选」项下标（可选）：勾选它全选、取消它全不选；
+                其余项全部勾上时自动连带勾上，任一项取消时自动连带取消
+
+    返回勾选项的下标列表（可为空）；用户按 0 返回 None；ESC 抛 UserCancel。
+    """
+    if _auto_yes:
+        return []
+    if not options:
+        return []
+    cursor = 0
+    checked: set[int] = set()
+
+    def _render() -> None:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        _render_header(breadcrumb)
+        row2 = Text()
+        tee = Text(f' {_TEE} ')
+        tee.stylize(_PIPE_COLOR)
+        row2.append_text(tee)
+        row2.append_text(_cap_text(_INPUT_SEG))
+        row2.append_text(_seg_text(subtitle, _INPUT_SEG))
+        row2.append_text(_tail_text(_INPUT_SEG))
+        console.print(row2)
+        # Text 明文拼接（[ ] 不参与 rich 标记解析）；光标显示在括号内（[•]），勾选为 [✔]
+        for i, label in enumerate(options):
+            row = Text()
+            tee = Text(f' {_TEE} ')
+            tee.stylize(_PIPE_COLOR)
+            row.append_text(tee)
+            row.append('[')
+            if i in checked:
+                mark_style = 'bold bright_cyan' if i == cursor else 'green'
+                row.append('✔', style=mark_style)
+            elif i == cursor:
+                row.append('•', style='bold bright_cyan')
+            else:
+                row.append(' ')
+            row.append('] ')
+            row.append(_pad_label(label), style='bold' if i == cursor else '')
+            console.print(row)
+        if back_label:
+            row = Text()
+            tee = Text(f' {_TEE} ')
+            tee.stylize(_PIPE_COLOR)
+            row.append_text(tee)
+            row.append(f'(0) {_pad_label(back_label)}', style='dim')
+            console.print(row)
+        sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
+        sys.stdout.flush()
+
+    while True:
+        _render()
+        ch = _read_key_seq()
+        if not ch:
+            if not _stdin_is_tty():
+                console.print()
+                return None
+            continue
+        if ch == 'UP':
+            cursor = (cursor - 1) % len(options)
+        elif ch == 'DOWN':
+            cursor = (cursor + 1) % len(options)
+        elif ch == ' ':
+            if cursor in checked:
+                checked.discard(cursor)
+                if all_index is not None and cursor == all_index:
+                    checked.clear()
+            else:
+                checked.add(cursor)
+                if all_index is not None and cursor == all_index:
+                    checked.update(range(len(options)))
+            if all_index is not None and cursor != all_index:
+                others = set(range(len(options))) - {all_index}
+                if others <= checked:
+                    checked.add(all_index)
+                else:
+                    checked.discard(all_index)
+        elif ch in ('\r', '\n'):
+            console.print()
+            return sorted(checked)
+        elif ch == '0':
+            console.print()
+            return None
+        elif ch == CANCEL_KEY:
+            console.print()
+            raise UserCancel
+        elif ch in ('\x03', '\x04'):
+            console.print()
+            raise UserExit
+
+
 def confirm(
     breadcrumb: list[str],
     prompt: str,
     theme_key: str = 'root',
+    info_lines: list[str] | None = None,
 ) -> bool:
     """Powerline 风格确认（y/N 单键）。
 
+    info_lines — 标题与选项之间的信息行（├─ 前缀，如插件概要）
     非交互模式（--yes）下直接返回 True。
     """
     if _auto_yes:
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
+    pipe = f'[{_PIPE_COLOR}]'
+    for line in info_lines or []:
+        console.print(f' {pipe}{_TEE}[/] {line}')
     from core.i18n import t as _t
-    _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('prompt.no'))
+    _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('menu.back'))
 
     while True:
         ch = _read_key().lower()
@@ -508,11 +693,11 @@ def confirm(
             return False
         if ch in ('\x03', '\x04'):
             console.print()
-            sys.exit(0)
+            raise UserExit
 
 
-def _read_line() -> str:
-    """读取一行文本输入（带回显），Ctrl+C / ESC 安全。
+def _read_line(secret: bool = False) -> str:
+    """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
     Windows：msvcrt 逐字符读取。
     Unix：termios raw 模式逐字符读取，行为与 Windows 对齐。
@@ -530,7 +715,7 @@ def _read_line() -> str:
             if ch in ('\x03', '\x04'):
                 sys.stdout.write('\n')
                 sys.stdout.flush()
-                sys.exit(0)
+                raise UserExit
             if ch == '\x08':
                 if buf:
                     buf.pop()
@@ -542,7 +727,7 @@ def _read_line() -> str:
                 sys.stdout.flush()
                 raise UserCancel
             buf.append(ch)
-            sys.stdout.write(ch)
+            sys.stdout.write('*' if secret else ch)
             sys.stdout.flush()
     else:
         import termios
@@ -561,7 +746,7 @@ def _read_line() -> str:
                 if ch in ('\x03', '\x04'):
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
-                    sys.exit(0)
+                    raise UserExit
                 if ch in ('\x7f', '\x08'):
                     if buf:
                         buf.pop()
@@ -578,10 +763,19 @@ def _read_line() -> str:
                     raise UserCancel
                 if ch >= ' ':
                     buf.append(ch)
-                    sys.stdout.write(ch)
+                    sys.stdout.write('*' if secret else ch)
                     sys.stdout.flush()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _mask_secret(value: str) -> str:
+    """敏感默认值脱敏显示：只露首尾各 4 位"""
+    if not value:
+        return ''
+    if len(value) <= 8:
+        return '****'
+    return f'{value[:4]}****{value[-4:]}'
 
 
 def text_input(
@@ -590,12 +784,16 @@ def text_input(
     default: str = '',
     hint: str = '',
     theme_key: str = 'root',
+    info_lines: list[str] | None = None,
+    secret: bool = False,
 ) -> str:
     """Powerline 风格文本输入。
 
-    prompt  — 字段标签，显示在色块 pill 里
-    hint    — 输入行提示（如默认值），显示在 ╰─ 右侧
-    default — 回车时的返回值（未填写时使用）
+    prompt     — 字段标签，显示在色块 pill 里
+    hint       — 输入行提示（如默认值），显示在 ╰─ 右侧
+    default    — 回车时的返回值（未填写时使用）
+    info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
+    secret     — 敏感输入（如密码），回显 *
     """
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
@@ -609,11 +807,19 @@ def text_input(
     row2.append_text(_tail_text(_INPUT_SEG))
     console.print(row2)
 
-    _hint = hint or default
+    for line in info_lines or []:
+        row = Text()
+        tee = Text(f' {_TEE} ')
+        tee.stylize(_PIPE_COLOR)
+        row.append_text(tee)
+        row.append(f' {line}')
+        console.print(row)
+
+    _hint = hint or (_mask_secret(default) if secret else default)
     hint_str = f'  ({_hint})' if _hint else ''
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
     sys.stdout.flush()
-    raw = _read_line()
+    raw = _read_line(secret=secret)
     return raw if raw else default
 
 

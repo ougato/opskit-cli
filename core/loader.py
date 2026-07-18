@@ -16,7 +16,7 @@ _REGISTRY_MODULE = "_registry"
 # 不属于插件的顶层目录/包名（扫描时跳过）
 _SKIP_NAMES = frozenset({
     "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env",
+    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
 })
 
 
@@ -96,6 +96,7 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
 
     最终：按 order 排序，过滤当前平台不支持的模块 + 未启用的模块。
     """
+    # 外部插件不进主菜单，由「插件工具」菜单进入时实时扫描加载（热插拔）
     if _is_frozen():
         modules = _discover_frozen()
     else:
@@ -117,6 +118,12 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
 
     filtered.sort(key=lambda m: m.order)
     return filtered
+
+
+def builtin_module_keys() -> set[str]:
+    """内置模块 key 集合（供插件 key 冲突检查）"""
+    modules = _discover_frozen() if _is_frozen() else _discover_dev()
+    return {m.key for m in modules}
 
 
 def _current_platform() -> str:

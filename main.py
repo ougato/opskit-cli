@@ -411,7 +411,7 @@ def _main_menu(cfg: dict) -> None:
         choices = [
             {
                 "key": str(i + 1),
-                "label": f"{get_icon(m.key)} {t(f'menu.{m.key}')}",
+                "label": f"{m.icon or get_icon(m.key)} {m.label or t(f'menu.{m.key}')}",
             }
             for i, m in enumerate(modules)
         ]
@@ -550,9 +550,39 @@ def _on_exit(cfg: dict) -> None:
 sw_app = typer.Typer(help=_ct("software"), context_settings=_CONTEXT_SETTINGS)
 mon_app = typer.Typer(help=_ct("monitor"), context_settings=_CONTEXT_SETTINGS)
 net_app = typer.Typer(help=_ct("network"), context_settings=_CONTEXT_SETTINGS)
+plugin_app = typer.Typer(help=_ct("plugin"), context_settings=_CONTEXT_SETTINGS)
 app.add_typer(sw_app, name="software")
 app.add_typer(mon_app, name="monitor")
 app.add_typer(net_app, name="network")
+app.add_typer(plugin_app, name="plugin")
+
+
+# ─── plugin 子命令 ────────────────────────────────────────────────────────────
+
+@plugin_app.command("fingerprint", help=_ct("plugin_fingerprint"))
+def plugin_fingerprint(
+    path: str = typer.Argument(".", help=_ct("plugin_path")),
+    check: bool = typer.Option(False, "--check", "-c", help=_ct("plugin_check")),
+) -> None:
+    _boot()
+    from pathlib import Path
+    from core.plugin_integrity import CHECK_MISSING, CHECK_OK, verify_checksums, write_checksums
+    from core.theme import print_success
+
+    root = Path(path).resolve()
+    if not root.is_dir():
+        _direct_fail(t("cli.error.software_not_found", name=str(root)), _EXIT_USAGE)
+    if check:
+        status = verify_checksums(root)
+        if status == CHECK_OK:
+            print_success(t("plugin.fingerprint_ok"))
+        elif status == CHECK_MISSING:
+            _direct_fail(t("plugin.fingerprint_missing"), _EXIT_RUNTIME)
+        else:
+            _direct_fail(t("plugin.fingerprint_mismatch"), _EXIT_RUNTIME)
+        return
+    out = write_checksums(root)
+    print_success(t("plugin.fingerprint_written", path=str(out)))
 
 
 # ─── software 子命令 ──────────────────────────────────────────────────────────

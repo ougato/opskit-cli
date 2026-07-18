@@ -56,6 +56,13 @@ class LinuxDriver(PlatformDriver):
                     target = dest / rel
                     if member.isdir():
                         target.mkdir(parents=True, exist_ok=True)
+                    elif member.issym():
+                        # bin/npm、bin/npx 是指向 lib/node_modules 的符号链接，
+                        # 丢掉会导致装完没有 npm
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if target.is_symlink() or target.exists():
+                            target.unlink()
+                        target.symlink_to(member.linkname)
                     elif member.isfile():
                         target.parent.mkdir(parents=True, exist_ok=True)
                         with tf.extractfile(member) as src, open(target, "wb") as out:
@@ -66,8 +73,9 @@ class LinuxDriver(PlatformDriver):
             raise InstallError(t("software.nodejs_error.extract_failed", version=version, error=e)) from e
 
         bin_d = node_bin_dir(version)
-        if not (bin_d / "node").exists():
-            raise InstallError(t("software.nodejs_error.bad_structure", version=version, file="bin/node"))
+        for cmd in ("node", "npm"):
+            if not (bin_d / cmd).exists():
+                raise InstallError(t("software.nodejs_error.bad_structure", version=version, file=f"bin/{cmd}"))
         return str(bin_d)
 
     # ─── shim ─────────────────────────────────────────────────────────────────
