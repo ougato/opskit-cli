@@ -176,6 +176,56 @@ def _ensure_xray_template_service(xray_path: str) -> None:
         run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
 
 
+def _ensure_wg_watchdog(label: str) -> None:
+    """安装并启用隧道看门狗（脚本 + systemd 模板 service/timer，幂等）"""
+    from pathlib import Path
+    from wireguard.constants import (
+        WG_WATCHDOG_SCRIPT, WG_WATCHDOG_SERVICE_TPL,
+        WG_WATCHDOG_INTERVAL, WG_WATCHDOG_STALE_SECS, WG_WATCHDOG_ESCALATE_FAILS,
+    )
+    from wireguard.templates import (
+        wg_watchdog_script, wg_watchdog_service_unit, wg_watchdog_timer_unit,
+    )
+    write_root_file(
+        Path(WG_WATCHDOG_SCRIPT),
+        wg_watchdog_script(
+            stale_secs=WG_WATCHDOG_STALE_SECS,
+            escalate_fails=WG_WATCHDOG_ESCALATE_FAILS,
+        ),
+        "0755",
+    )
+    write_root_file(
+        Path(f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.service"),
+        wg_watchdog_service_unit(WG_WATCHDOG_SCRIPT),
+        "0644",
+    )
+    write_root_file(
+        Path(f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.timer"),
+        wg_watchdog_timer_unit(WG_WATCHDOG_INTERVAL),
+        "0644",
+    )
+    run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+    run_as_root(["systemctl", "enable", "--now", f"{WG_WATCHDOG_SERVICE_TPL}{label}.timer"],
+                check=False, capture_output=True)
+
+
+def _remove_wg_watchdog(label: str, last_tunnel: bool = False) -> None:
+    """停用隧道看门狗；最后一条隧道移除时清理脚本与模板单元"""
+    from wireguard.constants import WG_WATCHDOG_SCRIPT, WG_WATCHDOG_SERVICE_TPL
+    if label:
+        run_as_root(["systemctl", "disable", "--now", f"{WG_WATCHDOG_SERVICE_TPL}{label}.timer"],
+                    check=False, capture_output=True)
+        run_as_root(["rm", "-f", f"/run/opskit-wg-watchdog-{label}.fails"],
+                    check=False, capture_output=True)
+    if last_tunnel:
+        run_as_root(["rm", "-f",
+                     WG_WATCHDOG_SCRIPT,
+                     f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.service",
+                     f"/etc/systemd/system/{WG_WATCHDOG_SERVICE_TPL}.timer"],
+                    check=False, capture_output=True)
+        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+
+
 def install_client(token: str | None = None) -> None:
     """私网客户端安装向导"""
     from core.i18n import t
@@ -376,6 +426,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         stop_and_disable(xray_svc)
         enable_and_start(xray_svc)
         enable_and_start(wg_svc)
+        _ensure_wg_watchdog(label)
 
         sp.step(t("wireguard.step.verify"))
         import time
@@ -397,6 +448,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             _pw(f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} {wg_svc}={'active' if _wg_ok else 'INACTIVE'}")
 
     if not (_xray_ok and _wg_ok):
+        _remove_wg_watchdog(label, last_tunnel=not _tunnels)
         print_error(t(
             "wireguard.error.client_service_start_fail",
             xray=xray_svc,
@@ -494,6 +546,7 @@ def uninstall_client() -> None:
     with MultiStepProgress(descs) as sp:
         sp.step(descs[0])
         for tn in tunnels:
+            _remove_wg_watchdog(tn.get("label", ""), last_tunnel=(tn is tunnels[-1]))
             wg_iface = tn.get("wg_iface", "wg0")
             wg_svc   = f"wg-quick@{wg_iface}"
             run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
