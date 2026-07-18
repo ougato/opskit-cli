@@ -588,18 +588,22 @@ def multi_select(
         row2.append_text(_seg_text(subtitle, _INPUT_SEG))
         row2.append_text(_tail_text(_INPUT_SEG))
         console.print(row2)
-        # Text 明文拼接（[x] 不参与 rich 标记解析）；光标行以 ❯ 指示
+        # Text 明文拼接（[ ] 不参与 rich 标记解析）；光标显示在括号内（[•]），勾选为 [✔]
         for i, label in enumerate(options):
-            mark = '[x]' if i in checked else '[ ]'
             row = Text()
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
             row.append_text(tee)
-            if i == cursor:
-                row.append('❯ ', style='bold cyan')
-                row.append(f'{mark} {_pad_label(label)}', style='bold')
+            row.append('  [')
+            if i in checked:
+                mark_style = 'bold bright_cyan' if i == cursor else 'green'
+                row.append('✔', style=mark_style)
+            elif i == cursor:
+                row.append('•', style='bold bright_cyan')
             else:
-                row.append(f'  {mark} {_pad_label(label)}')
+                row.append(' ')
+            row.append('] ')
+            row.append(_pad_label(label), style='bold' if i == cursor else '')
             console.print(row)
         if back_label:
             row = Text()
