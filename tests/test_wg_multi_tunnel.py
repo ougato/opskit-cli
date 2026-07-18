@@ -168,6 +168,17 @@ class TestWireGuardRecipeSafety:
 
         assert "/etc/sysctl.d/99-wg.conf" not in source
 
+    def test_xray_log_permissions_use_runtime_nobody_group(self):
+        import inspect
+        from wireguard import utils
+
+        source = inspect.getsource(utils.install_xray)
+        helper_source = inspect.getsource(utils.ensure_xray_runtime_permissions)
+
+        assert "nobody:nogroup" not in source
+        assert "id -gn nobody" in helper_source
+        assert "chown -R" in helper_source
+
     def test_server_uninstall_removes_server_state(self):
         import inspect
         from wireguard import server
@@ -219,6 +230,20 @@ class TestWireGuardRecipeSafety:
 
 
 # ─── _alloc_local_port ────────────────────────────────────────────────────────
+
+class TestPublicIpDetection:
+    def test_uses_parallel_valid_ip_sources(self):
+        import inspect
+        from core.constants import PUBLIC_IP_APIS
+        from wireguard import server
+
+        source = inspect.getsource(server._detect_public_ip)
+
+        assert "https://ip.sb" in PUBLIC_IP_APIS
+        assert "ThreadPoolExecutor" in source
+        assert "ipaddress.ip_address" in source
+        assert '"." in ip' not in source
+
 
 class TestAllocLocalPort:
     """客户端本地端口自动分配测试"""

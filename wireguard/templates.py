@@ -79,6 +79,71 @@ def xray_client_config(
     return json.dumps(config, indent=2, ensure_ascii=False)
 
 
+def wg_watchdog_script(
+    stale_secs: int = 180,
+    escalate_fails: int = 3,
+) -> str:
+    """生成隧道看门狗脚本（按 label 检测握手新鲜度，过期重启 xray，连续失败升级重启 WG）"""
+    return f"""#!/bin/sh
+# OpsKit WireGuard 隧道看门狗
+# 用法: opskit-wg-watchdog.sh <label>
+label="$1"
+[ -n "$label" ] || exit 1
+iface="wg-$label"
+stale={stale_secs}
+state="/run/opskit-wg-watchdog-$label.fails"
+
+hs=$(wg show "$iface" latest-handshakes 2>/dev/null | awk 'NR==1{{print $2}}')
+if [ -z "$hs" ]; then
+    logger -t opskit-wg-watchdog "$iface missing, restarting wg-quick@$iface"
+    systemctl restart "xray@$label"
+    systemctl restart "wg-quick@$iface"
+    exit 0
+fi
+now=$(date +%s)
+if [ "$hs" -gt 0 ] && [ $((now - hs)) -le "$stale" ]; then
+    rm -f "$state"
+    exit 0
+fi
+fails=$(cat "$state" 2>/dev/null || echo 0)
+fails=$((fails + 1))
+echo "$fails" > "$state"
+logger -t opskit-wg-watchdog "$iface handshake stale (fails=$fails), restarting xray@$label"
+systemctl restart "xray@$label"
+if [ "$fails" -ge {escalate_fails} ]; then
+    logger -t opskit-wg-watchdog "$iface still stale, restarting wg-quick@$iface"
+    systemctl restart "wg-quick@$iface"
+    echo 0 > "$state"
+fi
+"""
+
+
+def wg_watchdog_service_unit(script_path: str) -> str:
+    """生成看门狗 systemd 模板 service 单元（%i 为隧道 label）"""
+    return f"""[Unit]
+Description=OpsKit WireGuard tunnel watchdog - %i
+
+[Service]
+Type=oneshot
+ExecStart={script_path} %i
+"""
+
+
+def wg_watchdog_timer_unit(interval: int = 30) -> str:
+    """生成看门狗 systemd 模板 timer 单元（%i 为隧道 label）"""
+    return f"""[Unit]
+Description=OpsKit WireGuard tunnel watchdog timer - %i
+
+[Timer]
+OnBootSec={interval}
+OnUnitActiveSec={interval}
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+"""
+
+
 def wg_server_config(
     server_private_key: str,
     server_ip: str,

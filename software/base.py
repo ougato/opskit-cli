@@ -67,6 +67,14 @@ class Recipe(ABC):
         version 为 None 表示卸载全部；单版本类配方可忽略该参数。
         """
 
+    def activate(self) -> None:
+        """把已安装软件的可执行目录注入当前进程 PATH（未安装时无副作用）。
+
+        默认无操作。多版本共存类配方（golang / nodejs 等私有目录安装）
+        应覆盖此方法，保证本进程内的子进程能直接调用到该软件。
+        """
+        pass
+
     def system_version(self) -> str | None:
         """
         检测系统中该软件当前版本（供依赖链调用）。

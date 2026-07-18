@@ -67,6 +67,13 @@ SNI_WHITELIST = [
 CLIENT_XRAY_LOCAL_PORT_MIN = 4000
 CLIENT_XRAY_LOCAL_PORT_MAX = 4099
 
+# ─── 隧道看门狗（客户端断线自愈）──────────────────────────────────────────────
+WG_WATCHDOG_SCRIPT = "/usr/local/bin/opskit-wg-watchdog.sh"
+WG_WATCHDOG_SERVICE_TPL = "opskit-wg-watchdog@"
+WG_WATCHDOG_INTERVAL = 30
+WG_WATCHDOG_STALE_SECS = 180
+WG_WATCHDOG_ESCALATE_FAILS = 3
+
 # ─── 服务名 ───────────────────────────────────────────────────────────────────
 WG_SERVICE = "wg-quick@wg0"
 XRAY_SERVICE = "xray"

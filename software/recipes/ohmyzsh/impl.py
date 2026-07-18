@@ -20,6 +20,7 @@ from rich.console import Console
 
 from core.http import get_bytes
 from core.i18n import t
+from core.privilege import is_root, prime_sudo, run_as_root, sudo_passwordless
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select
 from core.theme import (
@@ -56,6 +57,7 @@ from software.recipes.ohmyzsh.constants import (
     P10K_REPO_URL,
     P10K_THEME_NAME,
     SH_COMMAND,
+    SUDO_COMMAND,
     SUPPORTED_PLATFORMS,
     ZSH_COMMAND,
     ZSH_PACKAGE,
@@ -89,7 +91,10 @@ def _ensure_supported() -> None:
 
 
 def _run(command: list[str], check: bool = False, timeout: int = COMMAND_TIMEOUT_SECONDS,
-         env: dict | None = None) -> subprocess.CompletedProcess:
+         env: dict | None = None, detach_tty: bool = False) -> subprocess.CompletedProcess:
+    # stdin 关闭：输出被捕获时子进程若等待交互输入（如 chsh 要密码）会挂死到超时。
+    # detach_tty：脱离控制终端执行，PAM 类程序（chsh/sudo）无法从 /dev/tty 要密码，
+    # 会立即失败而不是静默挂到超时。
     return subprocess.run(
         command,
         check=check,
@@ -99,6 +104,8 @@ def _run(command: list[str], check: bool = False, timeout: int = COMMAND_TIMEOUT
         errors="replace",
         timeout=timeout,
         env=env,
+        stdin=subprocess.DEVNULL,
+        start_new_session=detach_tty,
     )
 
 
@@ -297,6 +304,14 @@ def _install_plugins() -> None:
             raise InstallError(detail or t("ohmyzsh.error.plugin_clone_failed", name=name))
 
 
+def _prime_privilege_if_needed() -> None:
+    """非 root 且无免密 sudo 时，进度开始前交互式预热 sudo 凭据（提示一次密码），
+    供安装依赖与切换默认 Shell 使用；失败不阻断安装，后续步骤优雅降级。"""
+    if is_root() or not command_exists(SUDO_COMMAND) or sudo_passwordless():
+        return
+    prime_sudo()
+
+
 # ─── 默认 Shell 切换 ──────────────────────────────────────────────────────────
 
 def _switch_default_shell() -> bool:
@@ -309,17 +324,23 @@ def _switch_default_shell() -> bool:
         return True
 
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
-    result = _run([CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path])
-    if result.returncode == 0:
-        return True
-
-    # 普通用户无权限时尝试提权。
+    cmd = [CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path]
+    # 非 root 时 chsh 经 PAM 向 /dev/tty 要密码，输出被捕获看不到提示会挂到超时，
+    # 脱离控制终端执行使其立即失败。
     try:
-        from core.privilege import run_as_root
+        result = _run(cmd, detach_tty=True)
+        if result.returncode == 0:
+            return True
+    except subprocess.TimeoutExpired:
+        pass
 
-        cmd = [CHSH_COMMAND, "-s", zsh_path, user] if user else [CHSH_COMMAND, "-s", zsh_path]
+    # 尝试提权：仅在已是 root 或免密 sudo 可用时执行，避免 sudo 密码提示挂到超时。
+    try:
+        if not is_root() and not sudo_passwordless():
+            return False
         r2 = run_as_root(cmd, check=False, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_SECONDS)
+                         encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_SECONDS,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
         return r2.returncode == 0
     except Exception:
         return False
@@ -340,6 +361,7 @@ def install_ohmyzsh() -> None:
     breadcrumb = _breadcrumb("software.install")
     clear_screen()
     print_action_title(breadcrumb)
+    _prime_privilege_if_needed()
 
     descs = [
         t("ohmyzsh.step.check_env"),
@@ -553,6 +575,7 @@ def _manage_p10k_apply_preset(breadcrumb: list[str]) -> None:
 def _manage_switch_shell(breadcrumb: list[str]) -> None:
     clear_screen()
     print_action_title(breadcrumb, trailing_blank=False)
+    _prime_privilege_if_needed()
     if _switch_default_shell():
         print_success(t("ohmyzsh.output.shell_switched"))
     else:

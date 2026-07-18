@@ -1,7 +1,6 @@
 """跨平台共用工具：路径、快照、版本查找、版本列表、tarball 赛马下载"""
 from __future__ import annotations
 
-import os
 import platform
 import sys
 from pathlib import Path
@@ -26,6 +25,29 @@ def _node_arch() -> str:
     if m in ("i386", "i686", "x86"):
         return "x86"
     return "x64"
+
+
+# ─── 老 glibc 兼容检测 ───────────────────────────────────────────────────────────
+
+def _system_glibc() -> tuple[int, int] | None:
+    """当前系统 glibc 版本；非 glibc / 非 Linux 返回 None"""
+    if sys.platform != "linux":
+        return None
+    try:
+        name, ver = platform.libc_ver()
+        if name != "glibc" or not ver:
+            return None
+        parts = ver.split(".")
+        return int(parts[0]), int(parts[1])
+    except Exception:
+        return None
+
+
+def needs_compat_glibc() -> bool:
+    """是否需要 glibc-2.17 兼容包（老 glibc 且 x64，unofficial-builds 仅提供 x64）"""
+    from .constants import NODEJS_GLIBC_MIN
+    glibc = _system_glibc()
+    return glibc is not None and glibc < NODEJS_GLIBC_MIN and _node_arch() == "x64"
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────
@@ -134,7 +156,14 @@ def version_list() -> list[str]:
         return raw
 
     fallback = sorted(NODEJS_VERSIONS_FALLBACK, key=_ver_key, reverse=True)
-    return resolve_versions("nodejs", _fetch, fallback)
+    versions = resolve_versions("nodejs", _fetch, fallback)
+    if needs_compat_glibc():
+        from .constants import NODEJS_GLIBC217_MAX_MAJOR
+        versions = [
+            v for v in versions
+            if v.split(".")[0].isdigit() and int(v.split(".")[0]) <= NODEJS_GLIBC217_MAX_MAJOR
+        ]
+    return versions
 
 
 # ─── 赛马下载 Node.js tarball ─────────────────────────────────────────────────
@@ -164,6 +193,9 @@ def download_nodejs_tarball(
         url_templates = NODEJS_DL_WINDOWS_URLS
     elif sys.platform == "darwin":
         url_templates = NODEJS_DL_DARWIN_URLS
+    elif needs_compat_glibc():
+        from .constants import NODEJS_DL_LINUX_GLIBC217_URLS
+        url_templates = NODEJS_DL_LINUX_GLIBC217_URLS
     else:
         url_templates = NODEJS_DL_LINUX_URLS
 

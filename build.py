@@ -321,7 +321,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
 _SKIP_PKG = frozenset({
     "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env",
+    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
 })
 
 _REGISTRY_FILE = ROOT / "_registry.py"
