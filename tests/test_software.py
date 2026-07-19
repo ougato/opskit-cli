@@ -798,3 +798,22 @@ def test_golang_install_tarball_handles_non_ascii_member_names(tmp_path, monkeyp
     weird_b = str(dest / "test" / "fixedbugs" / "issue27836.dir" / "\u00defoo.go").encode("utf-8")
     with open(weird_b, "rb") as f:
         assert f.read() == b"stub"
+
+
+def test_golang_verify_uses_version_subcommand(tmp_path) -> None:
+    """go 不支持 --version，验证阶段必须用 go version 子命令"""
+    from software.recipes.golang.recipe import GoRecipe
+
+    assert GoRecipe._version_args == ("version",)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "go"
+    exe.write_text(
+        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "go version go1.26.3 linux/amd64"; exit 0; fi\n'
+        'echo "Use \\"go help <topic>\\" for more information about that topic." >&2; exit 2\n',
+        encoding="utf-8",
+    )
+    exe.chmod(0o755)
+
+    GoRecipe()._verify_runnable(str(bin_dir))

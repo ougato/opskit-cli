@@ -35,6 +35,7 @@ class GoRecipe(VersionedTarballRecipe):
     _tmpdir_prefix: ClassVar[str] = "opskit-go-"
     _dir_prefix: ClassVar[str] = "go"
     _tarball_stem: ClassVar[str] = "go{version}"
+    _version_args: ClassVar[tuple[str, ...]] = ("version",)
 
     def _get_driver(self):
         return get_driver()
