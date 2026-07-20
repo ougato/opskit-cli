@@ -84,6 +84,35 @@ def dir_name_from_url(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def parse_install_input(raw: str) -> tuple[str, str | None]:
+    """解析安装输入，支持 git 风格的分支参数：`<url> -b <branch>` / `--branch <branch>` / `--branch=<branch>`。
+
+    返回 (仓库地址, 分支或 None)。分支省略时按远端默认分支克隆。
+    """
+    tokens = raw.split()
+    url = ""
+    branch: str | None = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("-b", "--branch") and i + 1 < len(tokens):
+            branch = tokens[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--branch="):
+            branch = tok.split("=", 1)[1]
+        elif not url:
+            url = tok
+        i += 1
+    return url, (branch or None)
+
+
+def plugin_branch(name: str) -> str | None:
+    """插件安装时记录的分支（更新时据此 pull），未记录返回 None"""
+    record = trusted_record(name)
+    return record.get("branch") if record else None
+
+
 def trust_status(manifest: PluginManifest) -> str:
     """插件信任状态：trusted / untrusted / changed"""
     if is_trusted(manifest.name, compute_fingerprint(manifest.root)):
@@ -93,12 +122,12 @@ def trust_status(manifest: PluginManifest) -> str:
     return TRUST_NONE
 
 
-def grant_trust(manifest: PluginManifest, source: str = "") -> None:
-    """记录用户对插件当前内容的信任"""
+def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None) -> None:
+    """记录用户对插件当前内容的信任（branch 为 None 时沿用已存分支）"""
     record = trusted_record(manifest.name)
     if not source and record is not None:
         source = str(record.get("source", ""))
-    grant(manifest.name, compute_fingerprint(manifest.root), manifest.version, source)
+    grant(manifest.name, compute_fingerprint(manifest.root), manifest.version, source, branch)
 
 
 def is_trusted_source(url: str) -> bool:
@@ -132,8 +161,9 @@ def git_error_reason(result: subprocess.CompletedProcess) -> str:
     return lines[-1] if lines else t("plugin.git_exit", code=result.returncode)
 
 
-def install(url: str) -> tuple[PluginManifest | None, str]:
-    """git clone 到插件目录并校验清单。返回 (清单, 错误串)；信任确认由菜单层负责"""
+def install(url: str, branch: str | None = None) -> tuple[PluginManifest | None, str]:
+    """git clone 到插件目录并校验清单。指定 branch 时克隆该分支（git clone --branch）。
+    返回 (清单, 错误串)；信任确认由菜单层负责"""
     name = dir_name_from_url(url)
     if not name:
         return None, "invalid url"
@@ -141,8 +171,12 @@ def install(url: str) -> tuple[PluginManifest | None, str]:
     if dest.exists():
         return None, f"exists:{name}"
     dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["git", "clone", "--depth", "1"]
+    if branch:
+        cmd += ["--branch", branch]
+    cmd += [url, str(dest)]
     try:
-        result = run(["git", "clone", "--depth", "1", url, str(dest)], capture=True, check=False)
+        result = run(cmd, capture=True, check=False)
     except Exception as e:
         shutil.rmtree(dest, ignore_errors=True)
         return None, str(e)
@@ -165,7 +199,7 @@ def rollback_install(manifest: PluginManifest) -> None:
 
 
 def update(manifest: PluginManifest) -> tuple[bool, str]:
-    """git pull 更新插件目录。
+    """git pull 更新插件目录（安装时指定过分支则固定 pull 该分支）。
 
     已信任插件经平台更新流程拉取的新内容自动继承信任（首次确认后
     更新不再重复询问）；以下情况不继承，交回菜单层处置：
@@ -177,12 +211,16 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     if not (root / ".git").exists():
         return False, "not_git"
     was_trusted = trust_status(manifest) == TRUST_OK
+    branch = plugin_branch(manifest.name)
+    pull_cmd = ["git", "pull", "--ff-only"]
+    if branch:
+        pull_cmd += ["origin", branch]
     try:
         head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
         if head.returncode != 0:
             return False, git_error_reason(head)
         before = head.stdout.strip()
-        pulled = run(["git", "pull", "--ff-only"], cwd=root, capture=True, check=False)
+        pulled = run(pull_cmd, cwd=root, capture=True, check=False)
         if pulled.returncode != 0:
             return False, git_error_reason(pulled)
         head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)

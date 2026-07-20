@@ -9,6 +9,7 @@
       fingerprint: <sha256>
       version: <清单版本>
       source: <安装来源 URL，可为空>
+      branch: <安装时指定的分支，可为空；更新时按此分支 pull>
 """
 from __future__ import annotations
 
@@ -87,10 +88,18 @@ def trusted_record(name: str) -> dict | None:
     return _load().get(name)
 
 
-def grant(name: str, fingerprint: str, version: str, source: str = "") -> None:
-    """记录用户对插件当前内容的信任"""
+def grant(name: str, fingerprint: str, version: str, source: str = "", branch: str | None = None) -> None:
+    """记录用户对插件当前内容的信任。
+
+    branch 为 None 时保留原记录已存的分支（更新重确认不丢失安装分支）。
+    """
     data = _load()
-    data[name] = {"fingerprint": fingerprint, "version": version, "source": source}
+    if branch is None:
+        branch = (data.get(name) or {}).get("branch")
+    record = {"fingerprint": fingerprint, "version": version, "source": source}
+    if branch:
+        record["branch"] = branch
+    data[name] = record
     _save(data)
     _log.info("plugin %s: trusted (version %s)", name, version)
 

@@ -1,6 +1,7 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入"""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tarfile
@@ -32,6 +33,10 @@ class LinuxDriver(PlatformDriver):
         from .common import go_version_dir, go_bin_dir
         dest = go_version_dir(version)
         dest.mkdir(parents=True, exist_ok=True)
+        # 路径统一用 UTF-8 字节串操作：Go 发行包含非 ASCII 文件名的测试
+        # 夹具（如 test/fixedbugs/issue27836.dir/Þfoo.go），打包运行时文件系统
+        # 编码可能退化为 ascii，str 路径会在 open/stat 时编码失败。
+        dest_b = str(dest).encode("utf-8")
         try:
             with tarfile.open(str(tarball), "r:gz") as tf:
                 for member in tf.getmembers():
@@ -40,15 +45,15 @@ class LinuxDriver(PlatformDriver):
                     rel = member.name[3:]
                     if not rel:
                         continue
-                    target = dest / rel
+                    target_b = os.path.join(dest_b, rel.encode("utf-8"))
                     if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
+                        os.makedirs(target_b, exist_ok=True)
                     elif member.isfile():
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
+                        os.makedirs(os.path.dirname(target_b), exist_ok=True)
+                        with tf.extractfile(member) as src, open(target_b, "wb") as out:
                             shutil.copyfileobj(src, out)
                         if member.mode & 0o111:
-                            target.chmod(target.stat().st_mode | 0o111)
+                            os.chmod(target_b, os.stat(target_b).st_mode | 0o111)
         except Exception as e:
             raise InstallError(t("software.golang_error.extract_failed", version=version, error=e)) from e
 

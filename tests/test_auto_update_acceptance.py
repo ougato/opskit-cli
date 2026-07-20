@@ -458,6 +458,121 @@ class TestDownloadExceptions:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 坏镜像回退（复现线上 v5→v6 卡死事故）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPoisonedMirrorFallback:
+    """镜像排名坍缩为唯一坏源时必须自动回退到其它候选源。
+
+    线上事故：mirror_cache 的 github_releases 排名只剩 gh.con.sh，该代理对
+    HEAD 探针秒回、却对真实下载返回 48 字节封禁页，SHA256 恒不匹配；旧逻辑
+    5 次全打这一个坏源、从不回退，导致 v5 永远升不到 v6。
+    """
+
+    _ASSET = "https://github.com/ougato/opskit-cli/releases/download/v6/opskit-linux-x64"
+
+    @staticmethod
+    def _good():
+        import hashlib
+        body = b"\x7fELF" + b"\x00" * (256 * 1024)
+        return body, hashlib.sha256(body).hexdigest()
+
+    @staticmethod
+    def _resp(body):
+        class FakeResp:
+            status_code = 200
+            headers = {"ETag": ""}
+            def __init__(self, b): self._b = b
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def iter_bytes(self, cs):
+                yield self._b
+        return FakeResp(body)
+
+    def _wire(self, tmp_data, monkeypatch):
+        import core.updater as upd
+        monkeypatch.setattr("core.updater._get_pending_path", lambda: tmp_data / "cache" / "opskit.pending")
+        monkeypatch.setattr("core.updater._get_pending_tmp_path", lambda: tmp_data / "cache" / "opskit.pending.tmp")
+        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
+        return upd, tmp_data / "cache" / "opskit.pending"
+
+    def test_R01_falls_back_to_direct_when_only_mirror_is_poisoned(self, tmp_data, monkeypatch):
+        """R01: 唯一排名源是吐封禁页的坏代理 → 回退 GitHub 直连并校验成功"""
+        upd, pending = self._wire(tmp_data, monkeypatch)
+        good_bytes, good_sha = self._good()
+        ban_page = b"Suspent due to abuse report.\n\n@ 2024 gh.con.sh"
+        seen: list[str] = []
+
+        def fake_stream(method, url, timeout, follow_redirects, headers=None):
+            seen.append(url)
+            return self._resp(ban_page if "gh.con.sh" in url else good_bytes)
+
+        with patch("httpx.stream", side_effect=fake_stream), \
+             patch("core.mirror.get_sources", return_value=["https://gh.con.sh"]), \
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("time.sleep"):
+            result = upd._download_update(self._ASSET, good_sha, remote_ver=6)
+
+        assert result == pending
+        assert pending.read_bytes() == good_bytes
+        assert any("gh.con.sh" in u for u in seen), "坏源应被尝试过"
+        assert self._ASSET in seen, "必须回退到 GitHub 直连"
+
+    def test_R02_direct_github_always_a_candidate(self, tmp_data, monkeypatch):
+        """R02: get_sources 只返回一个挂掉的代理时，GitHub 直连仍是兜底候选"""
+        import httpx
+        upd, pending = self._wire(tmp_data, monkeypatch)
+        good_bytes, good_sha = self._good()
+
+        def fake_stream(method, url, timeout, follow_redirects, headers=None):
+            if "ghproxy" in url:
+                raise httpx.ConnectError("mirror down")
+            return self._resp(good_bytes)
+
+        with patch("httpx.stream", side_effect=fake_stream), \
+             patch("core.mirror.get_sources", return_value=["https://mirror.ghproxy.com"]), \
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("time.sleep"):
+            result = upd._download_update(self._ASSET, good_sha, remote_ver=6)
+
+        assert result == pending
+        assert pending.read_bytes() == good_bytes
+
+    def test_R03_partial_discarded_when_switching_source(self, tmp_data, monkeypatch):
+        """R03: 一个源写了残包后失败，切换到另一个源时丢弃残包，不做跨源 Range 续传"""
+        import httpx
+        upd, pending = self._wire(tmp_data, monkeypatch)
+        good_bytes, good_sha = self._good()
+        direct_headers: list[dict] = []
+
+        class PartialResp:
+            status_code = 200
+            headers = {"ETag": ""}
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def iter_bytes(self, cs):
+                yield b"\x00" * (128 * 1024)
+                raise httpx.ReadError("boom mid-stream")
+
+        def fake_stream(method, url, timeout, follow_redirects, headers=None):
+            if "ghproxy" in url:
+                return PartialResp()
+            direct_headers.append(headers or {})
+            return self._resp(good_bytes)
+
+        with patch("httpx.stream", side_effect=fake_stream), \
+             patch("core.mirror.get_sources", return_value=["https://mirror.ghproxy.com"]), \
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("time.sleep"):
+            result = upd._download_update(self._ASSET, good_sha, remote_ver=6)
+
+        assert result == pending
+        assert pending.read_bytes() == good_bytes
+        assert direct_headers, "GitHub 直连应被请求"
+        assert all("Range" not in h for h in direct_headers), "切换源后不应做跨源 Range 续传"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 文件替换层异常（Windows）
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -708,6 +708,10 @@ def _read_line(secret: bool = False) -> str:
         buf: list[str] = []
         while True:
             ch = msvcrt.getwch()
+            if ch in ('\x00', '\xe0'):
+                # 导航键（方向/Home/End/Del 等）为双字符序列：吞掉第二字符并忽略
+                msvcrt.getwch()
+                continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
                 sys.stdout.flush()
@@ -726,20 +730,43 @@ def _read_line(secret: bool = False) -> str:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserCancel
+            if ch < ' ':
+                continue
             buf.append(ch)
             sys.stdout.write('*' if secret else ch)
             sys.stdout.flush()
     else:
+        import select as _sel
         import termios
         import tty
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         buf: list[str] = []
+
+        def _read_char() -> str:
+            # 直接读 fd（同 _read_key）：sys.stdin 缓冲会吞掉后续字节导致
+            # select 探不到；首字节为多字节 UTF-8 前缀时补齐剩余字节
+            data = os.read(fd, 1)
+            if not data:
+                return ''
+            first = data[0]
+            need = 0
+            if first >= 0xF0:
+                need = 3
+            elif first >= 0xE0:
+                need = 2
+            elif first >= 0xC0:
+                need = 1
+            while need > 0 and _sel.select([fd], [], [], 0.05)[0]:
+                data += os.read(fd, 1)
+                need -= 1
+            return data.decode(errors='ignore')
+
         try:
             tty.setraw(fd)
             while True:
-                ch = sys.stdin.read(1)
-                if ch in ('\r', '\n'):
+                ch = _read_char()
+                if not ch or ch in ('\r', '\n'):
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     return ''.join(buf).strip()
@@ -754,10 +781,23 @@ def _read_line(secret: bool = False) -> str:
                         sys.stdout.flush()
                     continue
                 if ch == CANCEL_KEY:
-                    # 吞掉 ESC 后可能跟随的 ANSI 序列字节（如方向键）
-                    import select as _sel
-                    while _sel.select([sys.stdin], [], [], 0.05)[0]:
-                        sys.stdin.read(1)
+                    # 与 _read_key_seq 对齐：ESC 后 50ms 内跟随 '[' / 'O' 视为
+                    # 导航键序列（方向 / Home / End / PgUp / Del 等），
+                    # 按 CSI 语法读到终止字节（'@'~'~'）为止吞掉整个序列并忽略，
+                    # 不多吞后续正常输入；只有单独的 ESC 才视为取消
+                    if _sel.select([fd], [], [], 0.05)[0]:
+                        seq = os.read(fd, 1).decode(errors='ignore')
+                        if seq == '[':
+                            while _sel.select([fd], [], [], 0.05)[0]:
+                                b = os.read(fd, 1).decode(errors='ignore')
+                                if not b or '@' <= b <= '~':
+                                    break
+                            continue
+                        if seq == 'O':
+                            if _sel.select([fd], [], [], 0.05)[0]:
+                                os.read(fd, 1)
+                            continue
+                        # ESC + 其他字符（如 Alt 组合键）：忽略该字符，视为取消
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     raise UserCancel

@@ -55,6 +55,8 @@ class VersionedTarballRecipe(Recipe):
     _tmpdir_prefix: ClassVar[str]
     _dir_prefix: ClassVar[str]
     _tarball_stem: ClassVar[str]
+    # 验证阶段运行主命令的版本参数（go 等工具用子命令 version 而非 --version）
+    _version_args: ClassVar[tuple[str, ...]] = ("--version",)
 
     # ── 子类必须实现的钩子 ───────────────────────────────────────────────────
     @abstractmethod
@@ -246,7 +248,7 @@ class VersionedTarballRecipe(Recipe):
             return
         try:
             r = subprocess.run(
-                [str(exe), "--version"],
+                [str(exe), *self._version_args],
                 capture_output=True, text=True, timeout=_VERIFY_RUN_TIMEOUT,
             )
         except Exception as e:

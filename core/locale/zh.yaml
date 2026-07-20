@@ -37,8 +37,9 @@ plugin:
   col_kind: "形态"
   select: "选择插件"
   cloning: "正在克隆…"
+  cloning_branch: "正在克隆分支 {branch}…"
   install_prompt: "Git 仓库地址"
-  install_hint: "如 https://git.example.com/opskit-plugin-xxx.git"
+  install_hint: "如 https://git.example.com/opskit-plugin-xxx.git（可加 -b 分支）"
   install_exists: "目录已存在：{name}"
   install_success: "插件 {name} 已安装并信任"
   install_failed: "安装失败（{error}）"
@@ -397,6 +398,7 @@ xui:
     panel_config_failed: "面板配置失败"
     reality_key_failed: "REALITY 密钥生成失败"
     panel_api_failed: "面板 API 调用失败：{error}"
+    download_script_fail: "X-UI 安装脚本下载失败，请检查网络：{url}"
   output:
     install_done: "X-UI 配置完成"
     no_systemd: "无 systemd，服务未启动（WSL）\n↳ 在 /etc/wsl.conf 开启 systemd=true 后重启 WSL"

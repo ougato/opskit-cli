@@ -156,7 +156,7 @@ def _summary_lines(manifest) -> list[str]:
     ]
 
 
-def confirm_trust(manifest, source: str = "") -> bool:
+def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool:
     """展示概要 + 用户确认信任，确认后记录指纹（插件服务引导安装亦复用）"""
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
@@ -165,23 +165,24 @@ def confirm_trust(manifest, source: str = "") -> bool:
         info_lines=_summary_lines(manifest),
     ):
         return False
-    commands.grant_trust(manifest, source)
+    commands.grant_trust(manifest, source, branch)
     return True
 
 
 def _install() -> None:
-    url = text_input(
+    raw = text_input(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.install")],
         prompt=t("plugin.install_prompt"),
         hint=t("plugin.install_hint"),
         theme_key=_THEME_KEY,
     )
-    if not url.strip():
+    url, branch = commands.parse_install_input(raw)
+    if not url:
         return
     if not commands.is_trusted_source(url):
         print_warning(t("plugin.source_warning"))
-    print_info(t("plugin.cloning"))
-    manifest, err = commands.install(url)
+    print_info(t("plugin.cloning_branch", branch=branch) if branch else t("plugin.cloning"))
+    manifest, err = commands.install(url, branch)
     if manifest is None:
         if err.startswith("exists:"):
             print_error(t("plugin.install_exists", name=err.split(":", 1)[1]))
@@ -191,7 +192,7 @@ def _install() -> None:
             print_error(t("plugin.install_failed", error=err))
         pause()
         return
-    if not confirm_trust(manifest, source=url.strip()):
+    if not confirm_trust(manifest, source=url.strip(), branch=branch):
         commands.rollback_install(manifest)
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
