@@ -5,7 +5,8 @@ from pathlib import Path
 
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
-APP_VERSION = 6
+APP_VERSION = 7
+
 # ─── 目录名 ──────────────────────────────────────────────────────────────────
 DIR_CONFIG = "config"
 DIR_DATA = "data"
