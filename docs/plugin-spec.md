@@ -282,6 +282,28 @@ mytool/
  ├─   (0) 🔙 返回
 ```
 
+### 按键交互规范（全插件强制）
+
+所有插件的按键行为**必须**与平台一致，且只能通过 SDK 交互原语（`select` /
+`multi_select` / `paged_select` / `confirm` / `text_input` / `pause`）实现，
+**禁止**自行调用 `msvcrt` / `termios` / `input()` 读键，避免行为不一致：
+
+- **ESC 是唯一的取消 / 返回键**：菜单抛 `UserCancel`，由调用方决定返回上层还是退出
+- **Ctrl+C / Ctrl+D 是唯一的终止键**：抛 `UserExit` 正常退出程序
+- **导航键必须被忽略**：方向键 / Home / End / PgUp / PgDn / Delete 等
+  ESC 前缀序列（`ESC [ ...` / `ESC O ...`）与 Windows 双字符序列
+  （`\x00` / `\xe0` 前缀）不得触发取消、返回或写入输入缓冲——
+  SDK 原语已统一吞掉整个序列，插件不得绕过
+- **数字键 0 返回上一级**，与菜单序号规范一致
+
+### 敏感输入规范（全插件强制）
+
+Token / SecretKey / 密码等敏感字段**必须**用 `text_input(..., secret=True)`：
+
+- 输入回显为 `*`
+- 已保存的默认值在提示中自动脱敏（只露首尾各 4 位，如 `abcd****wxyz`）
+- 禁止在界面、日志、报错信息中输出敏感字段明文
+
 不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
 `api_version` 不匹配的插件会被静默跳过（写日志），OpsKit 升级大版本后插件需适配
 并更新清单。
