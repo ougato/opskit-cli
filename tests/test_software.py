@@ -764,3 +764,56 @@ def test_resolve_bin_activates_and_resolves(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("software.registry.get", lambda key: ActivatingRecipe)
     found = actions.resolve_bin("fake-soft", "fakego")
     assert found == str(exe)
+
+
+def test_golang_install_tarball_handles_non_ascii_member_names(tmp_path, monkeypatch) -> None:
+    """Go 发行包含非 ASCII 文件名（issue27836.dir/Þfoo.go），
+    解压必须不依赖进程文件系统编码，全部落盘成功"""
+    import io
+    import tarfile
+
+    from software.recipes.golang.linux import LinuxDriver
+    import software.recipes.golang.common as gocommon
+
+    version = "1.26.3"
+    dest = tmp_path / f"go{version}"
+    monkeypatch.setattr(gocommon, "go_version_dir", lambda v: dest)
+    monkeypatch.setattr(gocommon, "go_bin_dir", lambda v: dest / "bin")
+
+    tarball = tmp_path / "go.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tf:
+        for name, mode in (
+            ("go/bin/go", 0o755),
+            ("go/test/fixedbugs/issue27836.dir/\u00defoo.go", 0o644),
+        ):
+            data = b"stub"
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = mode
+            tf.addfile(info, io.BytesIO(data))
+
+    bin_dir = LinuxDriver().install_tarball(version, tarball)
+    assert bin_dir == str(dest / "bin")
+    assert (dest / "bin" / "go").exists()
+    weird_b = str(dest / "test" / "fixedbugs" / "issue27836.dir" / "\u00defoo.go").encode("utf-8")
+    with open(weird_b, "rb") as f:
+        assert f.read() == b"stub"
+
+
+def test_golang_verify_uses_version_subcommand(tmp_path) -> None:
+    """go 不支持 --version，验证阶段必须用 go version 子命令"""
+    from software.recipes.golang.recipe import GoRecipe
+
+    assert GoRecipe._version_args == ("version",)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "go"
+    exe.write_text(
+        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "go version go1.26.3 linux/amd64"; exit 0; fi\n'
+        'echo "Use \\"go help <topic>\\" for more information about that topic." >&2; exit 2\n',
+        encoding="utf-8",
+    )
+    exe.chmod(0o755)
+
+    GoRecipe()._verify_runnable(str(bin_dir))

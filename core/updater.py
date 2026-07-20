@@ -610,6 +610,13 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
         else:
             proxied = f"{m.rstrip('/')}/{asset_url.lstrip('/')}"
             urls.append(proxied)
+    # GitHub 直连始终作为兜底候选：镜像排名坍缩到单一坏源时（例如被封禁、
+    # 只对 HEAD 探针秒回却对真实下载吐错误页的代理），仍保留可用回退路径。
+    if asset_url not in urls:
+        urls.append(asset_url)
+    # 去重保序，避免同一坏源占满整个重试预算、挤掉其它可用源
+    seen_urls: set[str] = set()
+    urls = [u for u in urls if not (u in seen_urls or seen_urls.add(u))]
     if not urls:
         urls = [asset_url]
 
@@ -644,9 +651,16 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
         pool=TIMEOUT_HTTP,
     )
 
+    last_url: str | None = None
     for attempt in range(MAX_RETRY_DOWNLOAD):
         url = urls[attempt % len(urls)]
         _log.info("download attempt %d/%d: %s", attempt + 1, MAX_RETRY_DOWNLOAD, url)
+
+        # 切换到不同候选源时丢弃残包：跨源 Range 续传会把不同来源的字节拼在
+        # 一起，导致 SHA256 必然失败、白白耗费重试预算。
+        if last_url is not None and url != last_url:
+            actual_tmp.unlink(missing_ok=True)
+        last_url = url
 
         # 指数退避（第 0 次不等待）
         if attempt > 0:

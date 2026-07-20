@@ -20,7 +20,10 @@ import uuid
 from pathlib import Path
 
 from core.constants import PUBLIC_IP_APIS
+from core.http import get_bytes
+from core.i18n import t
 from core.privilege import run_as_root, write_root_file
+from software.base import InstallError
 from xui.constants import (
     HTTP_CONTENT_TYPE_FORM,
     HTTP_CONTENT_TYPE_JSON,
@@ -192,8 +195,11 @@ def install_xui_script() -> None:
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as script:
         script_path = Path(script.name)
     try:
-        with urllib.request.urlopen(XUI_INSTALL_SCRIPT_URL, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-            script_path.write_bytes(resp.read())
+        # 用 httpx + certifi 下载，打包二进制 / 缺系统 CA 的环境也能完成 TLS 校验
+        content = get_bytes(XUI_INSTALL_SCRIPT_URL, timeout=HTTP_TIMEOUT_SECONDS)
+        if content is None:
+            raise InstallError(t("xui.error.download_script_fail", url=XUI_INSTALL_SCRIPT_URL))
+        script_path.write_bytes(content)
         script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         # env 前缀确保 DEBIAN_FRONTEND 透传（sudo 默认会清理环境变量）。
         run_as_root(

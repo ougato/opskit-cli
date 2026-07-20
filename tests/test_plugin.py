@@ -455,6 +455,59 @@ def test_git_error_reason_maps_common_failures() -> None:
     assert commands.git_error_reason(_result("", code=130)) == t("plugin.git_exit", code=130)
 
 
+def test_parse_install_input_branch_forms() -> None:
+    """安装输入解析：支持 git 风格 -b / --branch / --branch= 指定分支"""
+    from plugin import commands
+
+    assert commands.parse_install_input("https://x/y.git") == ("https://x/y.git", None)
+    assert commands.parse_install_input("https://x/y.git -b develop") == ("https://x/y.git", "develop")
+    assert commands.parse_install_input("-b develop git@h:g/y.git") == ("git@h:g/y.git", "develop")
+    assert commands.parse_install_input("https://x/y.git --branch main") == ("https://x/y.git", "main")
+    assert commands.parse_install_input("https://x/y.git --branch=f/x") == ("https://x/y.git", "f/x")
+    assert commands.parse_install_input("") == ("", None)
+
+
+def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> None:
+    """-b 指定分支安装：clone 该分支，之后更新固定 pull 安装时的分支"""
+    import subprocess
+
+    from plugin import commands
+
+    origin = _make_python_plugin(tmp_path / "origin_root")
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+    subprocess.run(["git", "-C", str(origin), "checkout", "-q", "-b", "develop"], check=True)
+    manifest_path = origin / "plugin.yaml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace("version: 1.0.0", "version: 1.1.0"),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-qam", "v1.1"], check=True)
+    subprocess.run(["git", "-C", str(origin), "checkout", "-q", "main"], check=True)
+
+    manifest, err = commands.install(str(origin), "develop")
+    assert err == "" and manifest is not None
+    assert manifest.version == "1.1.0"  # 克隆的是 develop 分支
+    commands.grant_trust(manifest, source=str(origin), branch="develop")
+    assert commands.plugin_branch(manifest.name) == "develop"
+
+    subprocess.run(["git", "-C", str(origin), "checkout", "-q", "develop"], check=True)
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace("version: 1.1.0", "version: 1.2.0"),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-qam", "v1.2"], check=True)
+    subprocess.run(["git", "-C", str(origin), "checkout", "-q", "main"], check=True)
+
+    ok, msg = commands.update(manifest)
+    assert (ok, msg) == (True, "updated")
+    refreshed = load_manifest(plugins_root / manifest.name)
+    assert refreshed.version == "1.2.0"  # 更新拉的仍是 develop
+    assert commands.plugin_branch(manifest.name) == "develop"  # 再授信后分支不丢
+
+
 def test_install_failure_returns_readable_reason(plugins_root, tmp_path) -> None:
     """clone 失败时返回可读原因而非 Python 异常原文"""
     from plugin import commands

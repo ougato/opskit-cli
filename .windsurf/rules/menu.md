@@ -63,8 +63,19 @@ OpsKit 主菜单
 - 面包屑路径显示在菜单顶部（Powerline 风格色块）
 - 已安装软件在分类列表中显示版本号（灰色）
 
-## 四、快捷键规范
+## 四、快捷键规范（全平台 + 全插件强制）
 
 - 数字键 `1-9`：选择菜单项（单键无需回车）
 - `0`：返回上一级
-- `Ctrl+C`：抛出 UserCancel，由调用方决定返回还是退出
+- `ESC`：**唯一**的取消 / 返回键，抛出 UserCancel，由调用方决定返回还是退出
+- `Ctrl+C` / `Ctrl+D`：**唯一**的终止键，抛出 UserExit 正常退出程序
+- 方向键 / Home / End / PgUp / PgDn / Delete 等导航键**必须被忽略**：
+  它们是 ESC 前缀序列（Unix `ESC [ ...` / `ESC O ...`）或双字符序列
+  （Windows `\x00` / `\xe0` 前缀），不得触发取消、返回或写入输入缓冲；
+  菜单与文本输入必须吞掉整个序列（core/prompt.py 的 `_read_key_seq` /
+  `_read_line` 已统一实现）
+- 插件禁止自行调用 `msvcrt` / `termios` / `input()` 读键，一律使用
+  SDK 交互原语（select / multi_select / paged_select / confirm /
+  text_input / pause），保证按键行为全平台一致
+- Token / SecretKey / 密码等敏感输入必须 `text_input(..., secret=True)`：
+  回显 `*`，默认值提示自动脱敏（只露首尾各 4 位）

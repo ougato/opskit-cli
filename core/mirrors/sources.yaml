@@ -74,8 +74,6 @@ github_releases:
       name: ghproxy
     - url: https://ghproxy.net
       name: ghproxy.net
-    - url: https://gh.con.sh
-      name: gh.con.sh
   global:
     - url: https://github.com
       name: GitHub 原生
