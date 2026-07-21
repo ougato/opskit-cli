@@ -321,14 +321,19 @@ def _pick(subtitle_key: str, all_label: str = ""):
 
 
 def _update_all() -> None:
-    """依次更新全部已安装插件（含分组内成员），逐个显示结果，最后一次返回"""
+    """依次更新全部已安装插件（含分组内成员），逐个显示结果，最后一次返回。
+    内容变化 / 未信任的插件就地弹交互式信任确认，确认后继续更新，拒绝才跳过"""
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), t("plugin.update_all")]
     clear_screen()
     print_header(crumb)
     for manifest in commands.manifests():
         if commands.trust_status(manifest) != commands.TRUST_OK:
-            print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
-            continue
+            declined = not confirm_trust(manifest)
+            clear_screen()
+            print_header(crumb)
+            if declined:
+                print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
+                continue
         ok, msg = commands.update(manifest)
         if not ok:
             if msg == "not_git":
