@@ -378,6 +378,27 @@ def test_checksums_write_and_verify(plugins_root) -> None:
     assert verify_checksums(plugin_dir) == CHECK_MISMATCH
 
 
+def test_checksums_ignore_eol_differences(plugins_root) -> None:
+    """跨平台换行差异（Windows git autocrlf 检出 CRLF vs Unix LF）不得误报「内容不符」"""
+    from core.plugin_integrity import CHECK_OK, verify_checksums, write_checksums
+
+    plugin_dir = _make_python_plugin(plugins_root)
+    write_checksums(plugin_dir)
+    assert verify_checksums(plugin_dir) == CHECK_OK
+    src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))  # 模拟 Windows CRLF 检出
+    assert verify_checksums(plugin_dir) == CHECK_OK
+
+
+def test_fingerprint_ignores_eol_differences(plugins_root) -> None:
+    """信任指纹对 CRLF/LF 不敏感：同一份代码在 Windows 检出后不应被判为「内容已变化」"""
+    plugin_dir = _make_python_plugin(plugins_root)
+    fp_lf = compute_fingerprint(plugin_dir)
+    src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))
+    assert compute_fingerprint(plugin_dir) == fp_lf
+
+
 def test_checksums_mismatch_blocks_load(plugins_root) -> None:
     """内容与 CHECKSUMS.yaml 不符（可能被篡改）时即使已信任也拒绝加载"""
     from core.plugin_integrity import write_checksums
