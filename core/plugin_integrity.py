@@ -30,6 +30,20 @@ CHECK_MISMATCH = "mismatch"
 _log = get_logger("opskit.plugin")
 
 
+def content_digest(path: Path) -> bytes:
+    """文件内容 sha256（raw digest）。
+
+    文本文件先把 CRLF / 单独 CR 规范化为 LF 再计算，消除同一份代码在 Windows
+    （git autocrlf 检出为 CRLF）与 Unix（LF）之间的字节差异，避免跨平台校验误报
+    「内容与清单不符」。含 NUL 字节者按二进制原样计算，不做规范化。
+    对 LF 内容而言规范化是空操作，因此与旧清单/信任记录完全向后兼容。
+    """
+    data = path.read_bytes()
+    if b"\x00" not in data:
+        data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(data).digest()
+
+
 def _file_hashes(plugin_root: Path) -> dict[str, str]:
     """插件目录内所有代码文件的 {相对路径: sha256}（跳过清单自身）"""
     hashes: dict[str, str] = {}
@@ -41,7 +55,7 @@ def _file_hashes(plugin_root: Path) -> dict[str, str]:
             continue
         if str(rel) == FILE_PLUGIN_CHECKSUMS:
             continue
-        hashes[rel.as_posix()] = hashlib.sha256(f.read_bytes()).hexdigest()
+        hashes[rel.as_posix()] = content_digest(f).hex()
     return hashes
 
 

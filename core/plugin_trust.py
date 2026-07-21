@@ -21,6 +21,7 @@ import yaml
 from core.constants import FILE_PLUGIN_TRUST
 from core.logger import get_logger
 from core.paths import data_dir
+from core.plugin_integrity import content_digest
 
 # 指纹计算跳过的目录（版本库元数据与运行时缓存，不属于插件代码内容）
 _SKIP_DIRS = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
@@ -39,7 +40,7 @@ def compute_fingerprint(plugin_root: Path) -> str:
         for f in files:
             digest.update(str(f.relative_to(plugin_root)).encode("utf-8"))
             digest.update(b"\0")
-            digest.update(hashlib.sha256(f.read_bytes()).digest())
+            digest.update(content_digest(f))
     except OSError as e:
         _log.warning("plugin %s: fingerprint failed: %s", plugin_root.name, e)
         return ""
