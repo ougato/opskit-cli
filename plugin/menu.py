@@ -273,6 +273,7 @@ def _pick(subtitle_key: str, all_label: str = ""):
     if not manifests:
         clear_screen()
         print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key)])
+        console.print()
         console.print(t("plugin.empty"), style=get_color("muted"))
         pause()
         return None
