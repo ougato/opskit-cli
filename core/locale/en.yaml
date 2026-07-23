@@ -501,6 +501,7 @@ tailscale:
   error:
     unsupported_os: "Linux / macOS only"
     brew_missing: "Homebrew not found. Install Homebrew (https://brew.sh) and try again."
+    brew_timeout: "brew install timed out ({seconds}s). Check your network or run brew install tailscale manually, then retry."
     download_failed: "Failed to download the Tailscale install script. Check your network and try again."
   output:
     install_done: "Tailscale installed"

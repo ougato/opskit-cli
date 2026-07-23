@@ -23,7 +23,14 @@ from tailscale.constants import (
     APT_GET_COMMAND,
     APT_PURGE_COMMAND,
     BASH_COMMAND,
+    BREW_CN_API_DOMAIN,
+    BREW_CN_BOTTLE_DOMAIN,
     BREW_COMMAND,
+    BREW_ENV_API_DOMAIN,
+    BREW_ENV_BOTTLE_DOMAIN,
+    BREW_ENV_NO_AUTO_UPDATE,
+    BREW_ENV_NO_ENV_HINTS,
+    BREW_ENV_NO_INSTALL_CLEANUP,
     BREW_SERVICES_SUBCOMMAND,
     TAILSCALE_BREW_FORMULA,
     TAILSCALE_DARWIN_PLATFORM,
@@ -94,8 +101,8 @@ def install_step_keys() -> list[str]:
     return keys
 
 
-def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=env)
 
 
 def _run_root(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
@@ -218,12 +225,33 @@ def _install_script() -> None:
         script_path.unlink(missing_ok=True)
 
 
+def _brew_env() -> dict[str, str]:
+    """brew 安装环境：禁用 auto-update/cleanup 防静默卡死；cn 区域未配置镜像时用国内 bottle 镜像。"""
+    env = {**os.environ}
+    env.setdefault(BREW_ENV_NO_AUTO_UPDATE, "1")
+    env.setdefault(BREW_ENV_NO_INSTALL_CLEANUP, "1")
+    env.setdefault(BREW_ENV_NO_ENV_HINTS, "1")
+    try:
+        from core import mirror
+        mirror.init()
+        if mirror._region == "cn":
+            env.setdefault(BREW_ENV_API_DOMAIN, BREW_CN_API_DOMAIN)
+            env.setdefault(BREW_ENV_BOTTLE_DOMAIN, BREW_CN_BOTTLE_DOMAIN)
+    except Exception:
+        pass
+    return env
+
+
 def _install_brew() -> None:
-    result = _run(
-        [BREW_COMMAND, "install", TAILSCALE_BREW_FORMULA],
-        check=False,
-        timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
-    )
+    try:
+        result = _run(
+            [BREW_COMMAND, "install", TAILSCALE_BREW_FORMULA],
+            check=False,
+            timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
+            env=_brew_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise InstallError(t("tailscale.error.brew_timeout", seconds=TAILSCALE_INSTALL_TIMEOUT_SECONDS)) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         tail = "\n".join(detail.splitlines()[-TAILSCALE_INSTALL_ERROR_TAIL_LINES:])
@@ -382,7 +410,7 @@ def uninstall_client() -> None:
             sp.step(descs[1])
             if _is_darwin():
                 _run([BREW_COMMAND, "uninstall", TAILSCALE_BREW_FORMULA], check=False,
-                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS)
+                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS, env=_brew_env())
             elif command_exists(APT_GET_COMMAND):
                 from core.privilege import run_as_root
 
