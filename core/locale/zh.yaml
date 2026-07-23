@@ -498,7 +498,9 @@ tailscale:
     exit_node: "配置出口节点"
     login: "登录"
   error:
-    unsupported_os: "仅支持 Linux"
+    unsupported_os: "仅支持 Linux / macOS"
+    brew_missing: "未检测到 Homebrew，请先安装 Homebrew（https://brew.sh）后重试。"
+    brew_timeout: "brew 安装超时（{seconds}s），请检查网络或先手动执行 brew install tailscale 后重试。"
     download_failed: "下载 Tailscale 安装脚本失败，请检查网络后重试。"
   output:
     install_done: "Tailscale 已安装"

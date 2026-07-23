@@ -23,6 +23,17 @@ from tailscale.constants import (
     APT_GET_COMMAND,
     APT_PURGE_COMMAND,
     BASH_COMMAND,
+    BREW_CN_API_DOMAIN,
+    BREW_CN_BOTTLE_DOMAIN,
+    BREW_COMMAND,
+    BREW_ENV_API_DOMAIN,
+    BREW_ENV_BOTTLE_DOMAIN,
+    BREW_ENV_NO_AUTO_UPDATE,
+    BREW_ENV_NO_ENV_HINTS,
+    BREW_ENV_NO_INSTALL_CLEANUP,
+    BREW_SERVICES_SUBCOMMAND,
+    TAILSCALE_BREW_FORMULA,
+    TAILSCALE_DARWIN_PLATFORM,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
     INSTALL_COMMAND,
@@ -63,13 +74,35 @@ def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
 
 
-def _ensure_linux() -> None:
+def _is_darwin() -> bool:
+    return sys.platform == TAILSCALE_DARWIN_PLATFORM
+
+
+def _ensure_supported() -> None:
+    if _is_darwin():
+        if not command_exists(BREW_COMMAND):
+            raise InstallError(t("tailscale.error.brew_missing"))
+        return
     if sys.platform not in TAILSCALE_LINUX_PLATFORMS:
         raise InstallError(t("tailscale.error.unsupported_os"))
 
 
-def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+def install_step_keys() -> list[str]:
+    """安装步骤 key 列表；macOS 仅私网接入，无出口节点步骤。"""
+    keys = [
+        "tailscale.step.check_os",
+        "tailscale.step.install",
+        "tailscale.step.start",
+        "tailscale.step.exit_node",
+        "tailscale.step.login",
+    ]
+    if _is_darwin():
+        keys.remove("tailscale.step.exit_node")
+    return keys
+
+
+def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=env)
 
 
 def _run_root(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
@@ -156,6 +189,8 @@ def tailscale_ip() -> str:
 
 
 def is_service_active() -> bool:
+    if _is_darwin():
+        return bool(_status_json())
     result = _run([SYSTEMCTL_COMMAND, "is-active", TAILSCALED_SERVICE], check=False)
     return result.stdout.strip() == "active"
 
@@ -190,14 +225,62 @@ def _install_script() -> None:
         script_path.unlink(missing_ok=True)
 
 
+def _brew_env() -> dict[str, str]:
+    """brew 安装环境：禁用 auto-update/cleanup 防静默卡死；cn 区域未配置镜像时用国内 bottle 镜像。"""
+    env = {**os.environ}
+    env.setdefault(BREW_ENV_NO_AUTO_UPDATE, "1")
+    env.setdefault(BREW_ENV_NO_INSTALL_CLEANUP, "1")
+    env.setdefault(BREW_ENV_NO_ENV_HINTS, "1")
+    try:
+        from core import mirror
+        mirror.init()
+        if mirror._region == "cn":
+            env.setdefault(BREW_ENV_API_DOMAIN, BREW_CN_API_DOMAIN)
+            env.setdefault(BREW_ENV_BOTTLE_DOMAIN, BREW_CN_BOTTLE_DOMAIN)
+    except Exception:
+        pass
+    return env
+
+
+def _install_brew() -> None:
+    try:
+        result = _run(
+            [BREW_COMMAND, "install", TAILSCALE_BREW_FORMULA],
+            check=False,
+            timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
+            env=_brew_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise InstallError(t("tailscale.error.brew_timeout", seconds=TAILSCALE_INSTALL_TIMEOUT_SECONDS)) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        tail = "\n".join(detail.splitlines()[-TAILSCALE_INSTALL_ERROR_TAIL_LINES:])
+        raise InstallError(tail or f"exit {result.returncode}")
+
+
+def _start_service() -> None:
+    if _is_darwin():
+        _run_root([BREW_COMMAND, BREW_SERVICES_SUBCOMMAND, "start", TAILSCALE_BREW_FORMULA], check=False)
+        return
+    _run_root([SYSTEMCTL_COMMAND, "enable", "--now", TAILSCALED_SERVICE], check=False)
+
+
+def restart_service() -> None:
+    if _is_darwin():
+        _run_root([BREW_COMMAND, BREW_SERVICES_SUBCOMMAND, "restart", TAILSCALE_BREW_FORMULA], check=False)
+        return
+    _run_root([SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE], check=False)
+
+
 def start_login() -> str:
     command = [
         TAILSCALE_COMMAND,
         "up",
         "--hostname",
         TAILSCALE_HOSTNAME,
-        "--advertise-exit-node",
     ]
+    if not _is_darwin():
+        command.append("--advertise-exit-node")
     try:
         result = _run_root(command, check=False, timeout=TAILSCALE_UP_TIMEOUT_SECONDS)
         return (result.stdout + result.stderr).strip()
@@ -276,26 +359,24 @@ def install_client() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.tailscale"), t("software.install")]
     clear_screen()
     print_action_title(breadcrumb)
-    step_descs = [
-        t("tailscale.step.check_os"),
-        t("tailscale.step.install"),
-        t("tailscale.step.start"),
-        t("tailscale.step.exit_node"),
-        t("tailscale.step.login"),
-    ]
+    step_descs = [t(key) for key in install_step_keys()]
     with MultiStepProgress(step_descs) as sp:
         sp.step(t("tailscale.step.check_os"))
-        _ensure_linux()
+        _ensure_supported()
 
         sp.step(t("tailscale.step.install"))
         if not command_exists(TAILSCALE_COMMAND):
-            _install_script()
+            if _is_darwin():
+                _install_brew()
+            else:
+                _install_script()
 
         sp.step(t("tailscale.step.start"))
-        _run_root([SYSTEMCTL_COMMAND, "enable", "--now", TAILSCALED_SERVICE], check=False)
+        _start_service()
 
-        sp.step(t("tailscale.step.exit_node"))
-        configure_exit_node()
+        if not _is_darwin():
+            sp.step(t("tailscale.step.exit_node"))
+            configure_exit_node()
 
         sp.step(t("tailscale.step.login"))
         auth_url = obtain_auth_url()
@@ -317,13 +398,20 @@ def uninstall_client() -> None:
     try:
         with MultiStepProgress(descs) as sp:
             sp.step(descs[0])
-            cleanup_exit_node()
+            if not _is_darwin():
+                cleanup_exit_node()
             if command_exists(TAILSCALE_COMMAND):
                 _run_root([TAILSCALE_COMMAND, "down"], check=False)
-            _run_root([SYSTEMCTL_COMMAND, "disable", "--now", TAILSCALED_SERVICE], check=False)
+            if _is_darwin():
+                _run_root([BREW_COMMAND, BREW_SERVICES_SUBCOMMAND, "stop", TAILSCALE_BREW_FORMULA], check=False)
+            else:
+                _run_root([SYSTEMCTL_COMMAND, "disable", "--now", TAILSCALED_SERVICE], check=False)
 
             sp.step(descs[1])
-            if command_exists(APT_GET_COMMAND):
+            if _is_darwin():
+                _run([BREW_COMMAND, "uninstall", TAILSCALE_BREW_FORMULA], check=False,
+                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS, env=_brew_env())
+            elif command_exists(APT_GET_COMMAND):
                 from core.privilege import run_as_root
 
                 env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
@@ -337,10 +425,12 @@ def uninstall_client() -> None:
                     env=env,
                     timeout=TAILSCALE_INSTALL_TIMEOUT_SECONDS,
                 )
-            remove_tailscale_artifacts()
+            if not _is_darwin():
+                remove_tailscale_artifacts()
 
             sp.step(descs[2])
-            _run_root([SYSTEMCTL_COMMAND, "daemon-reload"], check=False)
+            if not _is_darwin():
+                _run_root([SYSTEMCTL_COMMAND, "daemon-reload"], check=False)
             sp.complete()
     except Exception as exc:
         raise UninstallError(str(exc)) from exc
@@ -479,6 +569,6 @@ def manage_client() -> None:
             pause()
         elif key == "4":
             print_action_title(breadcrumb, trailing_blank=False)
-            _run_root([SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE], check=False)
+            restart_service()
             print_success(t("tailscale.output.restart_done"))
             pause()

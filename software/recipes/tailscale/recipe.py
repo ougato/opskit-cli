@@ -6,7 +6,14 @@ from typing import ClassVar
 from software.base import InstallStep, Recipe
 from software.registry import register
 from tailscale.constants import TAILSCALE_INSTALLED_VERSION, TAILSCALE_VERSION_LATEST
-from tailscale.server import detect_tailscale_version, diagnose_client, install_client, manage_client, uninstall_client
+from tailscale.server import (
+    detect_tailscale_version,
+    diagnose_client,
+    install_client,
+    install_step_keys,
+    manage_client,
+    uninstall_client,
+)
 
 
 @register
@@ -14,7 +21,7 @@ class TailscaleRecipe(Recipe):
     key: ClassVar[str] = "tailscale"
     category: ClassVar[str] = "devops"
     description: ClassVar[str] = "Tailscale WireGuard 组网"
-    platforms: ClassVar[list[str]] = ["linux"]
+    platforms: ClassVar[list[str]] = ["linux", "darwin"]
     dependencies: ClassVar[list] = []
     requires_root: ClassVar[bool] = True
 
@@ -38,13 +45,7 @@ class TailscaleRecipe(Recipe):
                 InstallStep("software.step.remove_files"),
                 InstallStep("software.step.cleanup"),
             ]
-        return [
-            InstallStep("tailscale.step.check_os"),
-            InstallStep("tailscale.step.install"),
-            InstallStep("tailscale.step.start"),
-            InstallStep("tailscale.step.exit_node"),
-            InstallStep("tailscale.step.login"),
-        ]
+        return [InstallStep(key) for key in install_step_keys()]
 
     def install(self, version: str) -> None:
         install_client()
