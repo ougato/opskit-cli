@@ -107,6 +107,11 @@ class WindowsDriver(PlatformDriver):
             # os.path.lexists 检测 junction 自身是否存在（不解析目标，
             # 处理目标目录已删除但 junction 文件本身仍存在的情况）
             if os.path.lexists(str(junction)):
+                try:
+                    if os.path.realpath(str(junction)) == os.path.realpath(target_dir):
+                        return True
+                except OSError:
+                    pass
                 subprocess.run(
                     ["cmd", "/c", "rmdir", str(junction)],
                     capture_output=True,
@@ -223,10 +228,10 @@ class WindowsDriver(PlatformDriver):
             if shims_path not in sys_parts:
                 winreg.SetValueEx(sys_key, "PATH", 0, sys_type,
                                   ";".join([shims_path] + sys_parts))
+                ctypes.windll.user32.SendMessageTimeoutW(
+                    0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
+                )
             winreg.CloseKey(sys_key)
-            ctypes.windll.user32.SendMessageTimeoutW(
-                0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
-            )
         except Exception:
             pass
 
@@ -244,10 +249,10 @@ class WindowsDriver(PlatformDriver):
             if shims_path not in parts:
                 winreg.SetValueEx(key, "PATH", 0, reg_type,
                                   ";".join([shims_path] + parts))
+                ctypes.windll.user32.SendMessageTimeoutW(
+                    0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
+                )
             winreg.CloseKey(key)
-            ctypes.windll.user32.SendMessageTimeoutW(
-                0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
-            )
         except Exception:
             pass
 
