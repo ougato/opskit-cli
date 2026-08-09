@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,8 +25,11 @@ from core.plugin_services import invalidate_service_cache
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
 from core.runner import run
 
-# git URL 末段提取插件目录名：去掉 .git 后缀
-_URL_NAME_PATTERN = re.compile(r"([^/]+?)(?:\.git)?/?$")
+# 插件安装目录名：URL 路径分段转小写连字符，避免不同仓库同 basename 冲突
+_URL_NAME_PATTERN = re.compile(r"([^/\\]+?)(?:\.git)?[/\\]?$")
+_SCP_URL_PATTERN = re.compile(r"^[^@\s]+@[^:\s]+:(?P<path>.+)$")
+_INSTALL_DIR_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
+_REMOTE_URL_SCHEMES = {"http", "https", "ssh", "git", "file"}
 
 # 信任状态
 TRUST_OK = "trusted"
@@ -78,20 +82,59 @@ def set_enabled(key: str, enabled: bool) -> None:
     set_config_value(cfg, f"modules.{key}.enabled", enabled)
 
 
+def _strip_git_suffix(value: str) -> str:
+    return value[:-4] if value.endswith(".git") else value
+
+
+def _slug_part(value: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value.lower())).strip("-")
+
+
+def valid_install_dir_name(name: str | None) -> bool:
+    """安装目录别名是否合法。目录名仅作为本地容器，不等同于 plugin.yaml name。"""
+    return bool(name and _INSTALL_DIR_PATTERN.match(name))
+
+
 def dir_name_from_url(url: str) -> str | None:
-    """从 git URL 提取插件目录名"""
-    m = _URL_NAME_PATTERN.search(url.strip())
-    return m.group(1) if m else None
+    """从 git URL 生成稳定安装目录名。
+
+    远端 URL 使用仓库路径分段生成目录，例如 org/team/tool.git -> org-team-tool。
+    本地路径保留历史行为，仅使用路径末段，方便测试和本地开发。
+    """
+    raw = url.strip().rstrip("/\\")
+    if not raw:
+        return None
+
+    path_text: str | None = None
+    scp_match = _SCP_URL_PATTERN.match(raw)
+    if scp_match:
+        path_text = scp_match.group("path")
+    else:
+        parsed = urlparse(raw)
+        if parsed.scheme in _REMOTE_URL_SCHEMES and parsed.path:
+            path_text = parsed.path
+
+    if path_text:
+        parts = [_slug_part(_strip_git_suffix(part)) for part in path_text.replace("\\", "/").split("/")]
+        name = "-".join(part for part in parts if part)
+        return name if valid_install_dir_name(name) else None
+
+    m = _URL_NAME_PATTERN.search(raw)
+    if not m:
+        return None
+    name = _slug_part(_strip_git_suffix(m.group(1)))
+    return name if valid_install_dir_name(name) else None
 
 
-def parse_install_input(raw: str) -> tuple[str, str | None]:
-    """解析安装输入，支持 git 风格的分支参数：`<url> -b <branch>` / `--branch <branch>` / `--branch=<branch>`。
+def parse_install_input(raw: str) -> tuple[str, str | None, str | None]:
+    """解析安装输入，支持 `-b/--branch` 指定分支、`--as` 指定本地安装目录。
 
-    返回 (仓库地址, 分支或 None)。分支省略时按远端默认分支克隆。
+    返回 (仓库地址, 分支或 None, 安装目录别名或 None)。分支省略时按远端默认分支克隆。
     """
     tokens = raw.split()
     url = ""
     branch: str | None = None
+    alias: str | None = None
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -99,12 +142,18 @@ def parse_install_input(raw: str) -> tuple[str, str | None]:
             branch = tokens[i + 1]
             i += 2
             continue
+        if tok == "--as" and i + 1 < len(tokens):
+            alias = tokens[i + 1]
+            i += 2
+            continue
         if tok.startswith("--branch="):
             branch = tok.split("=", 1)[1]
+        elif tok.startswith("--as="):
+            alias = tok.split("=", 1)[1]
         elif not url:
             url = tok
         i += 1
-    return url, (branch or None)
+    return url, (branch or None), (alias or None)
 
 
 def plugin_branch(name: str) -> str | None:
@@ -161,10 +210,37 @@ def git_error_reason(result: subprocess.CompletedProcess) -> str:
     return lines[-1] if lines else t("plugin.git_exit", code=result.returncode)
 
 
-def install(url: str, branch: str | None = None) -> tuple[PluginManifest | None, str]:
+def _manifest_name_conflict(manifest: PluginManifest) -> PluginManifest | None:
+    target = Path(manifest.root).resolve()
+    for installed in list_manifests():
+        if Path(installed.root).resolve() == target:
+            continue
+        if installed.name == manifest.name:
+            return installed
+    return None
+
+
+def _remove_tree(path: Path) -> None:
+    """删除 git clone 目录；Windows 上 .git 内只读文件也要能回滚。"""
+    if not path.exists():
+        return
+
+    def _clear_readonly(func, target, _exc_info):
+        Path(target).chmod(stat.S_IWRITE)
+        func(target)
+
+    try:
+        shutil.rmtree(path, onerror=_clear_readonly)
+    except FileNotFoundError:
+        pass
+
+
+def install(url: str, branch: str | None = None, alias: str | None = None) -> tuple[PluginManifest | None, str]:
     """git clone 到插件目录并校验清单。指定 branch 时克隆该分支（git clone --branch）。
     返回 (清单, 错误串)；信任确认由菜单层负责"""
-    name = dir_name_from_url(url)
+    if alias is not None and not valid_install_dir_name(alias):
+        return None, f"bad_alias:{alias}"
+    name = alias or dir_name_from_url(url)
     if not name:
         return None, "invalid url"
     dest = plugins_dir() / name
@@ -178,15 +254,19 @@ def install(url: str, branch: str | None = None) -> tuple[PluginManifest | None,
     try:
         result = run(cmd, capture=True, check=False)
     except Exception as e:
-        shutil.rmtree(dest, ignore_errors=True)
+        _remove_tree(dest)
         return None, str(e)
     if result.returncode != 0:
-        shutil.rmtree(dest, ignore_errors=True)
+        _remove_tree(dest)
         return None, git_error_reason(result)
     manifest = load_manifest(dest)
     if manifest is None:
-        shutil.rmtree(dest, ignore_errors=True)
+        _remove_tree(dest)
         return None, "no_manifest"
+    conflict = _manifest_name_conflict(manifest)
+    if conflict is not None:
+        _remove_tree(dest)
+        return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
     invalidate_service_cache()
     return manifest, ""
 
@@ -195,7 +275,7 @@ def rollback_install(manifest: PluginManifest) -> None:
     """用户拒绝信任时回滚删除刚安装的插件目录"""
     root = Path(manifest.root).resolve()
     if root.parent == plugins_dir().resolve():
-        shutil.rmtree(root, ignore_errors=True)
+        _remove_tree(root)
 
 
 def update(manifest: PluginManifest) -> tuple[bool, str]:
@@ -248,6 +328,6 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
 def remove(manifest: PluginManifest) -> None:
     """删除插件目录、移除信任记录并清除进程内残留（立即生效）"""
     unload_plugin(manifest)
-    shutil.rmtree(manifest.root, ignore_errors=True)
+    _remove_tree(manifest.root)
     revoke(manifest.name)
     invalidate_service_cache()

@@ -35,6 +35,12 @@ alwaysApply: true
 - 引入 linter 错误必须立即修复
 - 禁止在代码注释中解释修改意图
 
+### G1.6 插件身份与目录规则
+- 插件安装目录不得只由仓库 basename 推导；远端仓库必须使用仓库路径分段生成稳定目录名，例如 `mydea/insight-flow/client-tools.git` → `mydea-insight-flow-client-tools`
+- 安装命令必须支持 `--as <目录名>` 显式指定本地目录；`--as` 只影响目录，不得修改 `plugin.yaml name`
+- `plugin.yaml name` 是插件全局身份，必须与内置模块和已安装插件唯一；安装后发现重复必须回滚刚克隆目录并给出明确错误
+- 信任、启用状态、更新记录、插件间引用一律以 `plugin.yaml name` 为准，不得用仓库名或目录名代替
+
 ## G2. 技能体系（8 分类 64 技能 · 本地化）
 
 ### G2.1 加载机制

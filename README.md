@@ -648,4 +648,4 @@ MIT License — 详见 [LICENSE](LICENSE)
 
 新增软件安装配方：参考 `software/recipes/docker/recipe.py`，实现 `Recipe` 抽象类，使用 `@register` 装饰器注册即可自动发现。
 
-新增插件模块：在项目根目录新建包（含 `__init__.py`），实现 `register() -> ModuleInfo` 函数，`loader.py` 启动时自动扫描发现，无需修改任何现有代码。
+新增外部插件：参考 [docs/plugin-spec.md](docs/plugin-spec.md)。菜单安装时默认用仓库路径生成本地目录名（如 `mydea/insight-flow/client-tools.git` → `mydea-insight-flow-client-tools`），也可追加 `--as <目录名>` 指定；`plugin.yaml` 的 `name` 是插件全局身份，必须与内置模块和其它已安装插件都不冲突。

@@ -383,9 +383,10 @@ def test_checksums_ignore_eol_differences(plugins_root) -> None:
     from core.plugin_integrity import CHECK_OK, verify_checksums, write_checksums
 
     plugin_dir = _make_python_plugin(plugins_root)
+    src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_text(src.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
     write_checksums(plugin_dir)
     assert verify_checksums(plugin_dir) == CHECK_OK
-    src = plugin_dir / "demo_pkg" / "__init__.py"
     src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))  # 模拟 Windows CRLF 检出
     assert verify_checksums(plugin_dir) == CHECK_OK
 
@@ -393,8 +394,9 @@ def test_checksums_ignore_eol_differences(plugins_root) -> None:
 def test_fingerprint_ignores_eol_differences(plugins_root) -> None:
     """信任指纹对 CRLF/LF 不敏感：同一份代码在 Windows 检出后不应被判为「内容已变化」"""
     plugin_dir = _make_python_plugin(plugins_root)
-    fp_lf = compute_fingerprint(plugin_dir)
     src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_text(src.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+    fp_lf = compute_fingerprint(plugin_dir)
     src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))
     assert compute_fingerprint(plugin_dir) == fp_lf
 
@@ -480,12 +482,78 @@ def test_parse_install_input_branch_forms() -> None:
     """安装输入解析：支持 git 风格 -b / --branch / --branch= 指定分支"""
     from plugin import commands
 
-    assert commands.parse_install_input("https://x/y.git") == ("https://x/y.git", None)
-    assert commands.parse_install_input("https://x/y.git -b develop") == ("https://x/y.git", "develop")
-    assert commands.parse_install_input("-b develop git@h:g/y.git") == ("git@h:g/y.git", "develop")
-    assert commands.parse_install_input("https://x/y.git --branch main") == ("https://x/y.git", "main")
-    assert commands.parse_install_input("https://x/y.git --branch=f/x") == ("https://x/y.git", "f/x")
-    assert commands.parse_install_input("") == ("", None)
+    assert commands.parse_install_input("https://x/y.git") == ("https://x/y.git", None, None)
+    assert commands.parse_install_input("https://x/y.git -b develop") == ("https://x/y.git", "develop", None)
+    assert commands.parse_install_input("-b develop git@h:g/y.git") == ("git@h:g/y.git", "develop", None)
+    assert commands.parse_install_input("https://x/y.git --branch main") == ("https://x/y.git", "main", None)
+    assert commands.parse_install_input("https://x/y.git --branch=f/x") == ("https://x/y.git", "f/x", None)
+    assert commands.parse_install_input("https://x/y.git --as client-tools") == ("https://x/y.git", None, "client-tools")
+    assert commands.parse_install_input("https://x/y.git --as=client-tools -b develop") == ("https://x/y.git", "develop", "client-tools")
+    assert commands.parse_install_input("") == ("", None, None)
+
+
+def test_plugin_install_dir_from_source_path() -> None:
+    """远端仓库安装目录使用仓库路径分段，避免不同项目同 basename 冲突"""
+    from plugin import commands
+
+    assert commands.dir_name_from_url(
+        "git@git.icerror.top:mydea/insight-flow/client-tools.git"
+    ) == "mydea-insight-flow-client-tools"
+    assert commands.dir_name_from_url(
+        "https://git.icerror.top/mydea/ghost/client-tools.git"
+    ) == "mydea-ghost-client-tools"
+    assert commands.dir_name_from_url("https://git.icerror.top/client-tools.git") == "client-tools"
+
+
+def test_install_alias_validation(plugins_root, tmp_path) -> None:
+    """--as 只允许安全的本地目录名，拒绝路径逃逸和特殊字符"""
+    from plugin import commands
+
+    manifest, err = commands.install(str(tmp_path / "repo.git"), alias="../escape")
+    assert manifest is None
+    assert err == "bad_alias:../escape"
+
+
+def test_install_alias_overrides_directory(plugins_root, tmp_path) -> None:
+    """--as 覆盖自动生成目录，但不改变 plugin.yaml name"""
+    import subprocess
+
+    from plugin import commands
+
+    origin = _make_python_plugin(tmp_path / "origin_root", name="aliased")
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+
+    manifest, err = commands.install(str(origin), alias="custom-client-tools")
+    assert err == "" and manifest is not None
+    assert manifest.name == "aliased"
+    assert manifest.root == plugins_root / "custom-client-tools"
+
+
+def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path) -> None:
+    """不同安装目录里的 plugin.yaml name 仍必须全局唯一，冲突时回滚刚克隆目录"""
+    import subprocess
+
+    from plugin import commands
+
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    origins = []
+    for repo in ("origin1", "origin2"):
+        origin = _make_python_plugin(tmp_path / repo, name="same_plugin")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+        subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+        subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+        origins.append(origin)
+
+    manifest, err = commands.install(str(origins[0]), alias="first-client-tools")
+    assert err == "" and manifest is not None
+
+    manifest, err = commands.install(str(origins[1]), alias="second-client-tools")
+    assert manifest is None
+    assert err == "manifest_name_exists:same_plugin:first-client-tools"
+    assert not (plugins_root / "second-client-tools").exists()
 
 
 def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> None:
@@ -524,7 +592,7 @@ def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> 
 
     ok, msg = commands.update(manifest)
     assert (ok, msg) == (True, "updated")
-    refreshed = load_manifest(plugins_root / manifest.name)
+    refreshed = load_manifest(manifest.root)
     assert refreshed.version == "1.2.0"  # 更新拉的仍是 develop
     assert commands.plugin_branch(manifest.name) == "develop"  # 再授信后分支不丢
 

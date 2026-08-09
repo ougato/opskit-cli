@@ -95,10 +95,31 @@ python3 main.py
 每个插件是插件目录下的**一个子目录**，根部必须有 `plugin.yaml` 清单。
 以 `.` 或 `_` 开头的目录被忽略。
 
+### 安装目录命名规则
+
+通过菜单「安装插件」安装时，OpsKit 不再只使用仓库末段作为目录名，而是使用仓库路径分段生成稳定目录名：
+
+| 仓库地址 | 默认安装目录 |
+|---|---|
+| `git@git.icerror.top:mydea/ghost/client-tools.git` | `mydea-ghost-client-tools` |
+| `git@git.icerror.top:mydea/insight-flow/client-tools.git` | `mydea-insight-flow-client-tools` |
+| `https://git.example.com/org/opskit-plugin-demo.git` | `org-opskit-plugin-demo` |
+
+这样可以避免多个不同项目都叫 `client-tools.git` 时抢同一个 `plugins/client-tools` 目录。
+
+如需人为指定本地目录，可在安装输入后追加 `--as <目录名>`：
+
+```bash
+git@git.icerror.top:mydea/insight-flow/client-tools.git -b develop --as insight-flow-client-tools
+```
+
+`--as` 只改变本地安装目录，目录名仅允许小写字母、数字、连字符，且必须以字母开头。
+它**不会**改变插件身份；插件身份始终以 `plugin.yaml` 的 `name` 为准。
+
 ## 清单规范（plugin.yaml）
 
 ```yaml
-name: myplugin           # 必填。唯一标识，^[a-z][a-z0-9_]*$，与内置模块 key 不得冲突
+name: myplugin           # 必填。全局唯一标识，^[a-z][a-z0-9_]*$，与内置模块 key 和已安装插件不得冲突
 version: 1.0.0           # 必填。插件自身版本，必须是合法 semver（x.y.z，允许 -/+ 后缀），非法拒绝加载
 api_version: 1           # 必填。依赖的 SDK API 大版本，必须等于当前 OpsKit 的 SDK_API_VERSION
 kind: python             # 必填。python | exec
@@ -137,6 +158,9 @@ entry:
 
 校验失败（缺字段 / name 非法 / version 非 semver / kind 非法 / api_version 不匹配 /
 entry 不存在）时插件被跳过并写入日志（`logs/opskit.log`），不影响主程序与其他插件。
+
+`name` 是插件的全局身份，用于加载、信任、启用状态、更新记录和插件间引用。安装目录只是本地容器，
+同一个 OpsKit 环境中不允许出现两个相同 `name` 的插件；安装后若发现 `name` 已存在，OpsKit 会回滚刚克隆的目录并提示修改 `plugin.yaml name`。
 
 ## 形态一：python 插件（进程内加载）
 
@@ -388,6 +412,8 @@ svc = get_service("storage")
 |---|---|---|
 | 插件工具不出现插件 | 未信任 / 内容变化后未重新信任 | 插件管理 → 更新插件 → 选中确认信任 |
 | 日志 `manifest missing fields` | plugin.yaml 缺必填字段 | 补齐 name/version/api_version/kind/entry |
+| 安装提示 `目录已存在` | 本地安装目录已被占用 | 使用不同仓库路径，或追加 `--as <目录名>` 指定唯一目录 |
+| 安装提示 `插件标识已存在` | 新插件的 `plugin.yaml name` 与已安装插件重复 | 修改其中一个插件的 `name`，发布后再安装 |
 | 日志 `invalid version` | version 非 semver | 改为 x.y.z 格式 |
 | 日志 `integrity check failed` | 内容与 CHECKSUMS.yaml 不符 | 重新生成清单；若非自己改动警惕篡改 |
 | 日志 `api_version ... incompatible` | 与当前 SDK 大版本不符 | 适配后更新清单 api_version |
@@ -423,7 +449,9 @@ svc = get_service("storage")
 ## 发布约定
 
 - 仓库命名建议：`opskit-plugin-<name>`
-- 安装：菜单「插件工具 → 插件管理 → 安装插件」输入 URL，或 `git clone <repo> <plugins_dir>/<name>`
+- 安装：菜单「插件工具 → 插件管理 → 安装插件」输入 URL；默认目录来自仓库路径分段，可追加 `--as <目录名>` 覆盖。
+  手动安装时使用 `git clone <repo> <plugins_dir>/<目录名>`，目录名可不同于 `plugin.yaml name`
+- 身份：`plugin.yaml name` 是全局唯一身份，必须与内置模块 key、其它已安装插件都不冲突；不要用仓库 basename 代替插件身份
 - 更新：菜单「插件管理 → 更新插件」，已信任插件自动继承信任并热重载；手动 `git pull`
   属平台外改动，需重新信任
 - 卸载：菜单「插件管理 → 卸载插件」，删除目录 + 移除信任记录，列表即刻消失
@@ -439,7 +467,8 @@ svc = get_service("storage")
 
 ## 发布前自查清单
 
-- [ ] `plugin.yaml` 五个必填字段齐全，name 合法且不与内置模块冲突
+- [ ] `plugin.yaml` 五个必填字段齐全，name 合法且与内置模块、已安装插件全局不冲突
+- [ ] 仓库路径、默认安装目录或 `--as` 目录不会与已有插件目录冲突；不要依赖仓库 basename 唯一
 - [ ] `api_version` 与目标 OpsKit 的 SDK 版本一致
 - [ ] python 插件：entry 包名带特征后缀；只 import `core.sdk`；无第三方依赖
 - [ ] exec 插件：可执行文件在插件目录内且有可执行位；`platforms` 与提供的产物一致

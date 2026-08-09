@@ -176,16 +176,21 @@ def _install() -> None:
         hint=t("plugin.install_hint"),
         theme_key=_THEME_KEY,
     )
-    url, branch = commands.parse_install_input(raw)
+    url, branch, alias = commands.parse_install_input(raw)
     if not url:
         return
     if not commands.is_trusted_source(url):
         print_warning(t("plugin.source_warning"))
     print_info(t("plugin.cloning_branch", branch=branch) if branch else t("plugin.cloning"))
-    manifest, err = commands.install(url, branch)
+    manifest, err = commands.install(url, branch, alias)
     if manifest is None:
         if err.startswith("exists:"):
             print_error(t("plugin.install_exists", name=err.split(":", 1)[1]))
+        elif err.startswith("bad_alias:"):
+            print_error(t("plugin.install_bad_alias", name=err.split(":", 1)[1]))
+        elif err.startswith("manifest_name_exists:"):
+            _prefix, name, directory = err.split(":", 2)
+            print_error(t("plugin.install_manifest_name_exists", name=name, dir=directory))
         elif err == "no_manifest":
             print_error(t("plugin.install_no_manifest"))
         else:
