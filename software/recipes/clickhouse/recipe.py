@@ -14,9 +14,10 @@ from .common import (
     download_clickhouse_tarball,
     fetch_versions,
     load_snapshot,
+    parse_release_versions,
     save_snapshot,
 )
-from .constants import CLICKHOUSE_VERSIONS_FALLBACK
+from .constants import CLICKHOUSE_RELEASES_API_URL, CLICKHOUSE_VERSIONS_FALLBACK
 from .driver import get_driver
 
 
@@ -29,6 +30,8 @@ class ClickHouseRecipe(VersionedTarballRecipe):
     dependencies: ClassVar[list[str]] = []
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
+    version_source: ClassVar[str] = "custom_api"
+    version_api_url: ClassVar[str] = CLICKHOUSE_RELEASES_API_URL
 
     _error_ns: ClassVar[str] = "clickhouse_error"
     _shim_cmd: ClassVar[str] = "clickhouse"
@@ -66,6 +69,9 @@ class ClickHouseRecipe(VersionedTarballRecipe):
 
     def _tarball_ext(self) -> str:
         return ".tgz"
+
+    def parse_versions(self, data: object) -> list[str]:
+        return parse_release_versions(data)
 
     def versions(self) -> list[str]:
         from core.version_cache import get_cached_versions, get_cached_versions_stale, update_cache

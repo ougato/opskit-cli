@@ -15,11 +15,28 @@ def test_clickhouse_registered_linux_darwin_only() -> None:
 
 
 def test_clickhouse_release_tag_parse() -> None:
-    from software.recipes.clickhouse.common import parse_release_version
+    from software.recipes.clickhouse.common import parse_release_version, parse_release_versions
 
     assert parse_release_version("v26.7.3.19-stable") == "26.7.3.19"
     assert parse_release_version("v26.3.17.110-lts") == "26.3.17.110"
     assert parse_release_version("bad") is None
+    assert parse_release_versions([
+        {"tag_name": "v26.3.17.110-lts"},
+        {"tag_name": "v26.7.3.19-stable"},
+        {"tag_name": "bad"},
+    ]) == ["26.7.3.19", "26.3.17.110"]
+
+
+def test_clickhouse_background_cache_uses_real_versions(monkeypatch) -> None:
+    from core.version_cache import fetch_versions_online
+    from software.recipes.clickhouse.recipe import ClickHouseRecipe
+
+    monkeypatch.setattr(
+        "core.http.get_json",
+        lambda *args, **kwargs: [{"tag_name": "v26.7.3.19-stable"}],
+    )
+
+    assert fetch_versions_online(ClickHouseRecipe()) == ["26.7.3.19"]
 
 
 def test_clickhouse_extracts_binary_and_aliases(tmp_path: Path, monkeypatch) -> None:

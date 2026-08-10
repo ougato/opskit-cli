@@ -76,6 +76,20 @@ def parse_release_version(tag: str) -> str | None:
     return raw
 
 
+def parse_release_versions(payload: object) -> list[str]:
+    if not isinstance(payload, list):
+        return []
+    versions: list[str] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        version = parse_release_version(str(item.get("tag_name", "")))
+        if version and version not in versions:
+            versions.append(version)
+    versions.sort(key=_version_sort_key, reverse=True)
+    return versions
+
+
 def fetch_versions() -> list[str]:
     import httpx
     from core.constants import TIMEOUT_VERSION_FETCH
@@ -88,15 +102,7 @@ def fetch_versions() -> list[str]:
     )
     if resp.status_code != 200:
         return []
-    versions: list[str] = []
-    for item in resp.json():
-        if not isinstance(item, dict):
-            continue
-        version = parse_release_version(str(item.get("tag_name", "")))
-        if version and version not in versions:
-            versions.append(version)
-    versions.sort(key=_version_sort_key, reverse=True)
-    return versions
+    return parse_release_versions(resp.json())
 
 
 def download_clickhouse_tarball(version: str, dest: Path, progress_callback=None) -> Path:
