@@ -32,7 +32,10 @@ class WindowsDriver(PlatformDriver):
         """
         from .common import pgsql_version_dir, pgsql_bin_dir
         dest = pgsql_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
+        staging = dest.with_name(dest.name + ".installing")
+        if staging.exists():
+            shutil.rmtree(str(staging), ignore_errors=True)
+        staging.mkdir(parents=True, exist_ok=True)
         try:
             with zipfile.ZipFile(str(tarball), "r") as zf:
                 for member in zf.infolist():
@@ -42,19 +45,27 @@ class WindowsDriver(PlatformDriver):
                     if len(parts) < 2 or not parts[1]:
                         continue
                     rel = parts[1]
-                    target = dest / rel.replace("/", os.sep)
+                    target = staging / rel.replace("/", os.sep)
                     if name.endswith("/"):
                         target.mkdir(parents=True, exist_ok=True)
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
                         with zf.open(member) as src, open(target, "wb") as out:
                             shutil.copyfileobj(src, out)
+
+            if not (staging / "bin" / "psql.exe").exists():
+                raise InstallError(t("software.postgresql_error.win_bad_structure", version=version))
+
+            if dest.exists():
+                shutil.rmtree(str(dest), ignore_errors=True)
+            staging.replace(dest)
         except Exception as e:
+            shutil.rmtree(str(staging), ignore_errors=True)
+            if isinstance(e, InstallError):
+                raise
             raise InstallError(t("software.postgresql_error.win_extract_failed", version=version, error=e)) from e
 
         bin_dir = pgsql_bin_dir(version)
-        if not (bin_dir / "psql.exe").exists():
-            raise InstallError(t("software.postgresql_error.win_bad_structure", version=version))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────

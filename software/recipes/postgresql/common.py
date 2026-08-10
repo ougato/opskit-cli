@@ -107,6 +107,16 @@ def pgsql_versions_dir() -> Path:
     return Path.home() / PGSQL_PRIVATE_SUBDIR
 
 
+def pgsql_download_cache_path(version: str, filename: str) -> Path:
+    """Return a persistent PostgreSQL download cache path outside system temp."""
+    from core.paths import cache_dir
+
+    safe_version = version.replace("/", "_").replace("\\", "_")
+    base = cache_dir() / "downloads" / "postgresql" / f"v{safe_version}"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / filename
+
+
 def pgsql_version_dir(version: str) -> Path:
     """指定版本的安装目录：~/.opskit/postgresql/postgresql{version}/"""
     return pgsql_versions_dir() / f"postgresql{version}"
@@ -431,6 +441,7 @@ def download_pgsql_tarball(version: str, dest: Path) -> Path:
         return mirror.download_file(
             urls=urls,
             dest=dest,
+            cache_path=pgsql_download_cache_path(version, dest.name),
         )
     except Exception as e:
         from core.i18n import t as _t4

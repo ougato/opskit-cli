@@ -634,6 +634,7 @@ def test_rustdesk_xui_tailscale_labels_and_icons() -> None:
     assert get_icon("xui_server") != "•"
     assert get_icon("tailscale") != "•"
     assert get_icon("rustdesk") != "•"
+    assert get_icon("clickhouse") != "•"
 
 
 # ─── ensure_installed（SDK ensure_software 后端）────────────────────────────
@@ -746,7 +747,7 @@ def test_resolve_bin_activates_and_resolves(monkeypatch, tmp_path) -> None:
 
     from software import actions
 
-    exe = tmp_path / "fakego"
+    exe = tmp_path / ("fakego.exe" if os.name == "nt" else "fakego")
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
 
@@ -762,7 +763,7 @@ def test_resolve_bin_activates_and_resolves(monkeypatch, tmp_path) -> None:
             os.environ["PATH"] = f"{tmp_path}{os.pathsep}{os.environ['PATH']}"
 
     monkeypatch.setattr("software.registry.get", lambda key: ActivatingRecipe)
-    found = actions.resolve_bin("fake-soft", "fakego")
+    found = actions.resolve_bin("fake-soft", exe.name)
     assert found == str(exe)
 
 

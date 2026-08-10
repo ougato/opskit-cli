@@ -242,6 +242,14 @@ software:
     extract_failed: "MongoDB {version} extraction failed: {error}"
     bad_structure: "MongoDB {version} install directory structure invalid, missing {file}"
     download_failed: "MongoDB {version} download failed: {error}"
+  clickhouse: "ClickHouse"
+  clickhouse_error:
+    platform_not_supported: "ClickHouse does not support platform ({platform}), supported: linux / darwin"
+    verify_failed: "clickhouse --version check failed after install"
+    not_installed: "ClickHouse {version} is not installed, please install first before switching"
+    download_failed: "ClickHouse {version} download failed: {error}"
+    extract_failed: "ClickHouse {version} extraction failed: {error}"
+    bad_structure: "ClickHouse {version} package layout invalid, usr/bin/clickhouse not found"
   redis: "Redis"
   redis_error:
     platform_not_supported: "Redis does not support platform ({platform}), supported: linux / darwin / windows"

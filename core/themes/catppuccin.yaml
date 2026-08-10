@@ -109,6 +109,7 @@ icons:
   mysql: "\U0001F42C"         # 🐬
   postgresql: "\U0001F418"    # 🐘
   mongodb: "\U0001F343"       # 🍃
+  clickhouse: "\U0001F4CA"    # 📊
   redis: "\U0001F534"         # 🔴
   ohmyzsh: "\U0001F41A"       # 🐚
 

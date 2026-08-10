@@ -242,6 +242,14 @@ software:
     extract_failed: "MongoDB {version} 解压失败：{error}"
     bad_structure: "MongoDB {version} 安装目录结构异常，未找到 {file}"
     download_failed: "MongoDB {version} 下载失败：{error}"
+  clickhouse: "ClickHouse"
+  clickhouse_error:
+    platform_not_supported: "ClickHouse 当前平台（{platform}）暂不支持，支持平台：linux / darwin"
+    verify_failed: "安装后 clickhouse --version 检测失败"
+    not_installed: "ClickHouse {version} 未安装，请先安装后再切换"
+    download_failed: "ClickHouse {version} 下载失败：{error}"
+    extract_failed: "ClickHouse {version} 解压失败：{error}"
+    bad_structure: "ClickHouse {version} 安装包结构异常，未找到 usr/bin/clickhouse"
   redis: "Redis"
   redis_error:
     platform_not_supported: "Redis 当前平台（{platform}）暂不支持，支持平台：linux / darwin / windows"

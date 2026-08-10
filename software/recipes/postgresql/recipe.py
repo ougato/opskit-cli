@@ -53,7 +53,9 @@ class PostgreSQLRecipe(Recipe):
                 continue
             ver = name[len("postgresql"):]
             if ver and ver[0].isdigit():
-                versions.append(ver)
+                bin_name = "psql.exe" if sys.platform == "win32" else "psql"
+                if (entry / "bin" / bin_name).exists():
+                    versions.append(ver)
         versions.sort(
             key=lambda v: [int(x) for x in v.split(".") if x.isdigit()],
             reverse=True,
@@ -161,8 +163,14 @@ class PostgreSQLRecipe(Recipe):
                     _bin = download_pgsql_tarball(version, Path("/dev/null"))
                     bin_dir = str(_bin)
                 else:
+                    from core.paths import cache_dir
+
+                    work_base = cache_dir() / "work"
+                    work_base.mkdir(parents=True, exist_ok=True)
                     with tempfile.TemporaryDirectory(
-                        prefix="opskit-pgsql-", ignore_cleanup_errors=True
+                        prefix="opskit-pgsql-",
+                        dir=str(work_base),
+                        ignore_cleanup_errors=True,
                     ) as tmpdir:
                         tarball = Path(tmpdir) / f"postgresql-{version}{ext}"
                         download_pgsql_tarball(version, tarball)
