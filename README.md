@@ -19,7 +19,8 @@ No web UI, no agent, no daemon. Just run it and go.
 
 | 模块 | 功能 | Platforms |
 |---|---|---|
-| 📦 **软件管理** | Docker / Nginx / MySQL / Redis / PostgreSQL / MongoDB / Go / Python / Java / Node.js / WireGuard / Tailscale / RustDesk / x-ui 一键安装 / 卸载 / 升级，多版本共存切换，搜索 + 分类浏览 | Linux, macOS, Windows |
+| 📦 **软件管理** | Docker / Nginx / MySQL / Redis / PostgreSQL / MongoDB / ClickHouse / Go / Python / Java / Node.js / WireGuard / Tailscale / RustDesk / x-ui 一键安装 / 卸载 / 升级，多版本共存切换，搜索 + 分类浏览 | Linux, macOS, Windows |
+| 🧩 **插件工具** | 外部插件安装 / 更新 / 卸载，可信来源提醒，信任确认与校验，热插拔入口 | 依插件声明 |
 | 📊 **系统监控** | CPU / 内存 / 磁盘 / 网络实时面板，进程列表（Top 15），实时刷新 | All |
 | 🌐 **网络工具** | Ping / Traceroute / DNS 正反解析 / 端口扫描 / 下载测速 / 公网 IP | All |
 
@@ -182,6 +183,7 @@ opskit software install mysql --version 8.0.36
 opskit software install redis --version 7.2.4
 opskit software install postgresql --version 16.2
 opskit software install mongodb --version 7.0.8
+opskit software install clickhouse --version 26.7.3.19
 opskit software install golang --version 1.22.2
 opskit software install python --version 3.12.3
 opskit software install java --version 21.0.3
@@ -232,9 +234,10 @@ opskit software upgrade nodejs --version 20.12.2
 ```bash
 opskit software switch python --version 3.12.3
 opskit software switch nodejs --version 20.12.2
+opskit software switch clickhouse --version 26.7.3.19
 ```
 
-> 支持版本切换的软件：mysql / redis / postgresql / mongodb / golang / python / java / nodejs
+> 支持版本切换的软件：mysql / redis / postgresql / mongodb / clickhouse / golang / python / java / nodejs
 
 #### 诊断 `opskit software diagnose <NAME>`
 
@@ -296,6 +299,7 @@ opskit software manage xui            # x-ui 面板管理
 | `redis` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `postgresql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `mongodb` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `clickhouse` | DevOps | Linux / macOS | ✅ | ✅ | ✅ | ✅ | — | — |
 | `wireguard` | DevOps | Linux | ✅ 子菜单 | ✅ | — | — | — | — |
 | `wg_server` | DevOps | Linux | ✅ 交互向导 | ✅ | — | — | ✅ | ✅ |
 | `wg_client` | DevOps | Linux | ✅ 向导 / `--token` | ✅ | — | — | ✅ | ✅ |
@@ -303,7 +307,7 @@ opskit software manage xui            # x-ui 面板管理
 | `python` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `java` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `nodejs` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
-| `tailscale` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
+| `tailscale` | DevOps | Linux / macOS | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
 | `rustdesk` | DevOps | Linux | ✅ | ✅ | — | — | ✅ | — |
 | `xui` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
 
@@ -363,6 +367,32 @@ opskit network speed-test             # 下载测速
 opskit network public-ip              # 查询公网 IP
 ```
 
+### 🧩 插件工具
+
+外部插件通过交互式菜单管理：`OpsKit → 插件工具 → 插件管理`。插件安装、更新或卸载后会立即重新扫描，无需重启 OpsKit。
+
+| 操作 | 菜单路径 | 说明 |
+|---|---|---|
+| 安装 | `插件管理 → 安装插件` | 输入 Git 仓库地址；可在地址后追加 `-b <分支>` 指定分支，或追加 `--as <本地目录名>` 指定安装目录 |
+| 更新 | `插件管理 → 更新插件` | 可更新单个插件或全部插件；已信任插件正常升级会继承信任，校验异常、版本回退或平台外手动改动时需重新确认 |
+| 卸载 | `插件管理 → 卸载插件` | 确认后删除插件目录与对应的信任记录，不删除插件运行数据 |
+
+安装时会显示来源不在可信白名单的提醒，并要求确认信任。插件代码会以当前用户权限运行；未被信任、内容发生变化，或 `CHECKSUMS.yaml` 校验不通过的插件都不会被加载。
+
+```bash
+# 安装指定开发分支，并使用自定义本地目录名
+# 在“安装插件”的输入框中填写这一整行
+git@git.example.com:team/client-tools.git -b develop --as insight-client-tools
+
+# 插件开发/发布：生成文件指纹清单
+opskit plugin fingerprint ./my-plugin
+
+# 发布前校验当前内容是否与指纹清单一致
+opskit plugin fingerprint ./my-plugin --check
+```
+
+> 安装目录与插件身份是两回事：`--as` 只决定本机目录，用来避免同名仓库目录冲突；`plugin.yaml` 中的 `name` 才是全局插件身份，必须与内置模块及其他插件保持唯一。完整的开发规范见 [docs/plugin-spec.md](docs/plugin-spec.md)。
+
 ### 查看帮助
 
 ```bash
@@ -370,6 +400,7 @@ opskit --help                         # 查看所有可用命令
 opskit software --help                # 查看软件管理所有子命令
 opskit monitor --help                 # 查看系统监控所有子命令
 opskit network --help                 # 查看网络工具所有子命令
+opskit plugin fingerprint --help      # 查看插件指纹命令参数说明
 opskit software install --help        # 查看 install 命令参数说明
 ```
 
@@ -388,6 +419,7 @@ $env:OPSKIT_YES="1"; opskit software install docker  # PowerShell
 opskit -y software install mysql --version 8.0.36
 opskit -y software install python --version 3.12.3
 opskit -y software install nodejs --version 20.12.2
+opskit -y software install clickhouse --version 26.7.3.19
 
 # ── WireGuard 客户端（令牌直装，零交互）──────────────────────────────
 opskit -y software install wg_client --token "eJy0VE1v2zAM..."
@@ -600,8 +632,9 @@ opskit-cli/
 │       ├── redis/            # Redis 多版本（Linux / macOS / Windows）
 │       ├── postgresql/       # PostgreSQL 多版本（Linux / macOS / Windows）
 │       ├── mongodb/          # MongoDB 多版本（Linux / macOS / Windows）
+│       ├── clickhouse/       # ClickHouse 多版本（Linux / macOS）
 │       ├── wireguard/        # WireGuard VPN（Linux，含服务端 / 客户端子菜单）
-│       ├── tailscale/        # Tailscale 组网（Linux）
+│       ├── tailscale/        # Tailscale 组网（Linux / macOS）
 │       ├── rustdesk/         # RustDesk 远程桌面服务（Linux）
 │       └── xui/              # x-ui / 3x-ui VLESS REALITY 面板（Linux）
 ├── monitor/                  # 📊 系统监控模块
