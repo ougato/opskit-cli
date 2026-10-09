@@ -174,11 +174,11 @@ def print_warning(msg: str) -> None:
     console.print(f"[{color}]{icon} {escape(msg)}[/{color}]")
 
 
-def print_info(msg: str) -> None:
+def print_info(msg: str, *, show_icon: bool = True) -> None:
     color = get_color("info")
-    icon = get_icon("info")
+    icon = get_icon("info") + " " if show_icon else ""
     console.print()
-    console.print(f"[{color}]{icon} {escape(msg)}[/{color}]")
+    console.print(f"[{color}]{icon}{escape(msg)}[/{color}]")
 
 
 def print_action_title(breadcrumb: list[str], trailing_blank: bool = True) -> None:

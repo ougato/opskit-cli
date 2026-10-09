@@ -370,6 +370,7 @@ def select(
     show_shortcuts: list[tuple[str, str, str]] | None = None,
     back_label: str = '',
     on_ready=None,
+    description: str = '',
 ) -> str | None:
     """
     Powerline 风格选择菜单（单键无回车）。
@@ -384,6 +385,12 @@ def select(
     os.system('cls' if os.name == 'nt' else 'clear')
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
+    if description:
+        row = Text(f' {_TEE} ', style=_PIPE_COLOR)
+        row.append_text(_cap_text(_INPUT_SEG))
+        row.append_text(_seg_text(description, _INPUT_SEG))
+        row.append_text(_tail_text(_INPUT_SEG))
+        console.print(row)
 
     numeric_items: list[tuple[str, str]] = [
         (c['key'], c['label']) for c in choices if c['key'] != '0'
