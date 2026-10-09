@@ -270,7 +270,7 @@ def _drain_input() -> None:
 # ─── 渲染原语 ─────────────────────────────────────────────────────────────────
 
 def _seg_text(text: str, s: Seg) -> Text:
-    t = Text(f' {text} ')
+    t = Text(text.strip().rstrip('。．.').rstrip())
     t.stylize(s.style())
     return t
 
