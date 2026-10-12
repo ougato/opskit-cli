@@ -173,7 +173,7 @@ def download_redis_linux(version: str, dest: Path) -> list[Path]:
     for pkg_url_tpl, base_url in sources:
         try:
             pkg_url = pkg_url_tpl.format(codename=codename, arch=arch)
-            resp = httpx.get(pkg_url, timeout=15, follow_redirects=True, verify=False)
+            resp = httpx.get(pkg_url, timeout=15, follow_redirects=True)
             if resp.status_code != 200:
                 continue
 

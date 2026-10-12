@@ -48,7 +48,7 @@ jobs:
           cache: 'pip'
 
       - name: install deps
-        run: pip install -r requirements.txt pytest-timeout
+        run: pip install -r requirements.txt pytest pytest-timeout
 
       - name: sync version from tag
         run: python scripts/release_bump.py "${GITHUB_REF_NAME}"
@@ -91,6 +91,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+
+      - name: pin release verification key
+        env:
+          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
+        run: python scripts/pin_release_key.py
 
       - name: install deps (non-manylinux)
         if: ${{ !matrix.manylinux }}
@@ -149,6 +154,23 @@ jobs:
         with:
           path: artifacts/
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: sign release assets
+        env:
+          OPSKIT_RELEASE_SIGNING_KEY: ${{ secrets.OPSKIT_RELEASE_SIGNING_KEY }}
+          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          python -m pip install 'cryptography>=44.0'
+          BUILD="${GITHUB_REF_NAME#v}"
+          for f in artifacts/*/opskit-*; do
+            [[ "$f" == *.sha256 || "$f" == *.sig.json || "$f" == *.sig || "$f" == *.signed ]] && continue
+            python scripts/sign_release.py --build "$BUILD" "$f"
+          done
+
       - name: create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -165,23 +187,26 @@ jobs:
         run: |
           for f in artifacts/*/opskit-*; do
             [ -f "$f" ] || continue
-            [[ "$f" == *.sha256 ]] && continue
+            [[ "$f" == *.sha256 || "$f" == *.sig.json || "$f" == *.sig || "$f" == *.signed ]] && continue
             sha256sum "$f" | awk '{print $1, $2}'
           done
 
       # 发布控制面：把 tag 对应的 build 写回默认分支的 constants.py + bootstrap.json，
       # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本
       - name: publish bootstrap manifest
+        env:
+          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          python scripts/pin_release_key.py
           python scripts/release_bump.py "${GITHUB_REF_NAME}"
           python scripts/release_bump.py "${GITHUB_REF_NAME}" --check
-          if git diff --quiet -- core/constants.py bootstrap.json; then
+          if git diff --quiet -- core/constants.py bootstrap.json install.sh install.ps1; then
             echo "[bootstrap] 无变更，跳过提交"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add core/constants.py bootstrap.json
+          git add core/constants.py bootstrap.json install.sh install.ps1
           git commit -m "chore(release): bump to ${GITHUB_REF_NAME} [skip ci]"
           git push origin HEAD:"${{ github.event.repository.default_branch }}"

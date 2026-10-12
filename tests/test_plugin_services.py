@@ -115,7 +115,7 @@ def test_get_service_from_trusted_provider(plugins_root) -> None:
     _trust(_make_provider(plugins_root))
     svc = services.get_service("storage")
     assert svc is not None
-    assert svc.service_api_version == 1
+    assert svc.service_api_version == 2
     # 缓存命中同一对象
     assert services.get_service("storage") is svc
 
@@ -129,12 +129,14 @@ def test_get_service_unknown_none(plugins_root) -> None:
     assert services.get_service("nope") is None
 
 
-def test_open_service_menu_calls_open_menu(plugins_root, monkeypatch) -> None:
+def test_open_service_menu_calls_rpc(plugins_root, monkeypatch) -> None:
     _trust(_make_provider(plugins_root))
-    ok = services.open_service_menu("storage", breadcrumb=["OpsKit", "X"], context={"k": "v"})
-    assert ok is True
-    svc = services.get_service("storage")
-    assert svc.opened == (["OpsKit", "X"], {"k": "v"})
+    calls = []
+    monkeypatch.setattr("core.plugin_sandbox.invoke", lambda manifest, action, **kw: calls.append((action, kw)))
+    assert services.open_service_menu("storage", breadcrumb=["OpsKit", "X"], context={"caller": "spoof", "k": "v"})
+    assert calls[0][0] == "service.call"
+    assert calls[0][1]["caller"] == "platform"
+    assert calls[0][1]["args"][1] == {"caller": "platform", "k": "v"}
 
 
 def test_open_service_menu_missing_no_source(plugins_root, monkeypatch) -> None:

@@ -12,15 +12,12 @@
 """
 from __future__ import annotations
 
-import importlib
-import sys
+import re
 from typing import Protocol, runtime_checkable
 
 from core.constants import APP_NAME
 from core.logger import get_logger
 from core.plugin import PluginManifest, list_manifests
-from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
-from core.plugin_trust import compute_fingerprint, is_trusted
 
 _log = get_logger("opskit.services")
 
@@ -38,47 +35,65 @@ _cache: dict[str, object] = {}
 
 def _find_provider(name: str) -> PluginManifest | None:
     """在已安装插件清单中查找声明 provides 包含 name 的提供方"""
-    for manifest in list_manifests():
-        if name in manifest.provides:
-            return manifest
-    return None
+    providers = [manifest for manifest in list_manifests() if name in manifest.provides]
+    return providers[0] if len(providers) == 1 else None
 
 
-def _resolve(manifest: PluginManifest, name: str) -> object | None:
-    """加载提供方插件包并调用 provide_service(name)，失败返回 None（写日志）"""
-    if verify_checksums(manifest.root) == CHECK_MISMATCH:
-        _log.error("service %s: provider %s integrity check failed", name, manifest.name)
-        return None
-    if not is_trusted(manifest.name, compute_fingerprint(manifest.root)):
-        _log.warning("service %s: provider %s not trusted", name, manifest.name)
-        return None
-    root_str = str(manifest.root.resolve())
-    if root_str not in sys.path:
-        sys.path.append(root_str)
-    try:
-        mod = importlib.import_module(str(manifest.entry))
-        try:
-            provide = mod.provide_service
-        except AttributeError:
-            _log.warning("service %s: provider %s has no provide_service()", name, manifest.name)
-            return None
-        return provide(name)
-    except (Exception, SystemExit) as e:
-        _log.warning("service %s: provider %s load failed: %r", name, manifest.name, e)
-        return None
+class ServiceProxy:
+    """JSON RPC proxy; no provider code or Python object enters the platform."""
+    service_api_version = 2
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def open_menu(self, breadcrumb, context):
+        return call_service(self.name, "open_menu", [breadcrumb, context])
+
+    def __getattr__(self, method: str):
+        if method.startswith("_"):
+            raise AttributeError(method)
+        return lambda *args, **kwargs: call_service(self.name, method, list(args), kwargs)
+
+
+def call_service(name: str, method: str, args: list | None = None,
+                 kwargs: dict | None = None, *, caller: str = "platform"):
+    from core.plugin_sandbox import SandboxError, check_authorization, invoke
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", caller):
+        raise SandboxError("invalid caller identity")
+    if caller != "platform":
+        callers = [m for m in list_manifests() if m.name == caller]
+        if len(callers) != 1:
+            raise SandboxError("caller identity is ambiguous")
+        check_authorization(callers[0])
+        if name not in {u["service"] for u in callers[0].uses}:
+            raise SandboxError("service access not declared and authorized")
+    manifest = _find_provider(name)
+    if manifest is None:
+        raise SandboxError("service provider unavailable")
+    check_authorization(manifest)
+    if not method.isidentifier() or method.startswith("_"):
+        raise SandboxError("private service method denied")
+    if method == "open_menu":
+        args = list(args or [])
+        context = dict(args[1] if len(args) > 1 else {})
+        context["caller"] = caller
+        args = [args[0], context]
+    return invoke(manifest, "service.call", service=name, method=method,
+                  args=args, kwargs=kwargs, caller=caller)
 
 
 def get_service(name: str) -> object | None:
     """获取插件间服务对象；提供方未安装 / 未信任 / 加载失败返回 None"""
-    if name in _cache:
-        return _cache[name]
     manifest = _find_provider(name)
     if manifest is None:
         return None
-    svc = _resolve(manifest, name)
-    if svc is not None:
-        _cache[name] = svc
-    return svc
+    from core.plugin_sandbox import SandboxError, check_authorization
+    try:
+        check_authorization(manifest)
+    except SandboxError:
+        _cache.pop(name, None)
+        return None
+    return _cache.setdefault(name, ServiceProxy(name))
 
 
 def invalidate_service_cache() -> None:

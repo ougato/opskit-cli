@@ -52,6 +52,8 @@ def init(level: str = "WARNING") -> None:
         backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
+    from core.secrets import RedactionFilter
+    file_handler.addFilter(RedactionFilter())
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(fmt)
 
@@ -62,6 +64,7 @@ def init(level: str = "WARNING") -> None:
     console_level = getattr(logging, level.upper(), logging.WARNING)
     if console_level <= logging.INFO:
         console_handler = logging.StreamHandler()
+        console_handler.addFilter(RedactionFilter())
         console_handler.setLevel(console_level)
         console_handler.setFormatter(fmt)
         _logger.addHandler(console_handler)

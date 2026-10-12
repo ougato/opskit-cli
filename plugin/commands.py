@@ -22,7 +22,7 @@ from core.plugin import (
 )
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_services import invalidate_service_cache
-from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
+from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record, invalidate
 from core.runner import run
 
 # 插件安装目录名：URL 路径分段转小写连字符，避免不同仓库同 basename 冲突
@@ -68,7 +68,7 @@ def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
 
 
 def reload(manifest: PluginManifest) -> None:
-    """清除插件旧模块缓存，下次扫描时重新 import 新代码"""
+    """清除插件入口与服务代理缓存，下次扫描重新核对元数据"""
     unload_plugin(manifest)
 
 
@@ -281,8 +281,7 @@ def rollback_install(manifest: PluginManifest) -> None:
 def update(manifest: PluginManifest) -> tuple[bool, str]:
     """git pull 更新插件目录（安装时指定过分支则固定 pull 该分支）。
 
-    已信任插件经平台更新流程拉取的新内容自动继承信任（首次确认后
-    更新不再重复询问）；以下情况不继承，交回菜单层处置：
+    新内容撤销旧指纹授权，需要重新核对权限并确认信任；以下异常交回菜单层处置：
       - tampered：内容与 CHECKSUMS.yaml 发布清单不符（可能被篡改）
       - downgrade：版本回退（防降级攻击，需用户显式确认）
     返回 (是否成功, "updated" / "unchanged" / "tampered" / "downgrade" / 错误串)。
@@ -320,7 +319,7 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     if old_key is not None and new_key is not None and new_key < old_key:
         return True, "downgrade"
     if was_trusted:
-        grant_trust(refreshed)
+        invalidate(manifest.name)
     invalidate_service_cache()
     return True, "updated"
 

@@ -23,9 +23,6 @@ from core.logger import get_logger
 from core.paths import data_dir
 from core.plugin_integrity import content_digest
 
-# 指纹计算跳过的目录（版本库元数据与运行时缓存，不属于插件代码内容）
-_SKIP_DIRS = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
-
 _log = get_logger("opskit.plugin")
 
 
@@ -33,15 +30,18 @@ def compute_fingerprint(plugin_root: Path) -> str:
     """插件目录内容指纹：所有文件（相对路径 + 内容 sha256）汇总 hash"""
     digest = hashlib.sha256()
     try:
-        files = sorted(
-            p for p in plugin_root.rglob("*")
-            if p.is_file() and not any(part in _SKIP_DIRS for part in p.relative_to(plugin_root).parts)
-        )
-        for f in files:
-            digest.update(str(f.relative_to(plugin_root)).encode("utf-8"))
+        from core.plugin_integrity import _file_hashes
+        for name, checksum in _file_hashes(plugin_root).items():
+            digest.update(name.encode("utf-8"))
             digest.update(b"\0")
-            digest.update(content_digest(f))
-    except OSError as e:
+            digest.update(bytes.fromhex(checksum))
+        checksums = plugin_root / "CHECKSUMS.yaml"
+        if checksums.exists():
+            if checksums.is_symlink() or checksums.stat().st_size > 1024 * 1024:
+                raise ValueError("invalid checksum manifest")
+            digest.update(b"CHECKSUMS.yaml\0")
+            digest.update(content_digest(checksums))
+    except (OSError, ValueError) as e:
         _log.warning("plugin %s: fingerprint failed: %s", plugin_root.name, e)
         return ""
     return digest.hexdigest()
@@ -70,8 +70,8 @@ def _save(data: dict[str, dict]) -> None:
     path = _trust_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=True)
+        from core.secrets import atomic_write
+        atomic_write(path, yaml.safe_dump(data, allow_unicode=True, sort_keys=True))
     except OSError as e:
         _log.warning("plugin trust store write failed: %s", e)
 
@@ -110,4 +110,12 @@ def revoke(name: str) -> None:
     data = _load()
     if name in data:
         del data[name]
+        _save(data)
+
+
+def invalidate(name: str) -> None:
+    """Revoke authorization while preserving installation source and branch."""
+    data = _load()
+    if name in data:
+        data[name]["fingerprint"] = ""
         _save(data)

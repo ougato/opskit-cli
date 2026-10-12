@@ -46,8 +46,13 @@ def content_digest(path: Path) -> bytes:
 
 def _file_hashes(plugin_root: Path) -> dict[str, str]:
     """插件目录内所有代码文件的 {相对路径: sha256}（跳过清单自身）"""
+    if plugin_root.is_symlink():
+        raise ValueError("linked plugin roots forbidden")
+    size = 0
     hashes: dict[str, str] = {}
     for f in sorted(plugin_root.rglob("*")):
+        if f.is_symlink() or (hasattr(f, "is_junction") and f.is_junction()):
+            raise ValueError("plugin links forbidden")
         if not f.is_file():
             continue
         rel = f.relative_to(plugin_root)
@@ -55,6 +60,9 @@ def _file_hashes(plugin_root: Path) -> dict[str, str]:
             continue
         if str(rel) == FILE_PLUGIN_CHECKSUMS:
             continue
+        size += f.stat().st_size
+        if size > 128 * 1024**2 or len(hashes) >= 4096:
+            raise ValueError("plugin integrity limits exceeded")
         hashes[rel.as_posix()] = content_digest(f).hex()
     return hashes
 

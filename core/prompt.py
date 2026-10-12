@@ -201,6 +201,11 @@ def _stdin_is_tty() -> bool:
 
 def _read_key() -> str:
     """读取单个按键（无需回车），跨平台"""
+    if not _stdin_is_tty():
+        try:
+            return sys.stdin.read(1)
+        except (OSError, EOFError):
+            return ""
     if os.name == 'nt':
         import msvcrt
         return msvcrt.getwch()
@@ -519,6 +524,8 @@ def _read_key_seq() -> str:
     Unix：ESC 后 50ms 内跟随 '[' 视为 ANSI 序列（方向键），否则视为 ESC。
     Windows：msvcrt 前缀 '\\x00' / '\\xe0' 后跟 'H'（上）/ 'P'（下）。
     """
+    if not _stdin_is_tty():
+        return _read_key()
     if os.name == 'nt':
         import msvcrt
         ch = msvcrt.getwch()
@@ -530,8 +537,6 @@ def _read_key_seq() -> str:
                 return 'DOWN'
             return ''
         return ch
-    if not _stdin_is_tty():
-        return _read_key()
     import select as _sel
     import termios
     import tty

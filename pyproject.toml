@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "opskit"
@@ -25,6 +25,9 @@ dependencies = [
     "pyyaml>=6.0",
     "psutil>=5.9",
     "httpx>=0.27",
+    "platformdirs>=4.0",
+    "sentry-sdk>=2.0,<3",
+    "cryptography>=44.0",
 ]
 
 [project.scripts]
@@ -33,15 +36,12 @@ opskit = "main:app"
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0",
-    "pytest-anyio>=0.0",
+    "pytest-timeout>=2.3",
+    "build>=1.2",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v --tb=short"
+[tool.setuptools]
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -49,13 +49,11 @@ include = [
     "core*",
     "monitor*",
     "software*",
-    "service*",
-    "firewall*",
     "network*",
-    "security*",
-    "loganalysis*",
     "xui*",
     "tailscale*",
+    "wireguard*",
+    "plugin",
 ]
 
 [tool.setuptools.package-data]

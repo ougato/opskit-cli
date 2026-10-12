@@ -1,6 +1,8 @@
 """WireGuard 部署工具函数"""
 from __future__ import annotations
 
+from core.archive import extract_zip
+
 import secrets
 import subprocess
 import re
@@ -332,7 +334,7 @@ def install_xray() -> None:
         extract_dir = Path(tmpdir) / "xray"
         extract_dir.mkdir()
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+            extract_zip(zf, extract_dir)
 
         src = extract_dir / "xray"
         if not src.exists():

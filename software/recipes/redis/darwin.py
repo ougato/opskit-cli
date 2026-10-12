@@ -35,7 +35,8 @@ class DarwinDriver(PlatformDriver):
         with tempfile.TemporaryDirectory(prefix="opskit-redis-src-", ignore_cleanup_errors=True) as tmp:
             try:
                 with tarfile.open(str(src), "r:gz") as tf:
-                    tf.extractall(tmp)
+                    from core.archive import extract_tar
+                    extract_tar(tf, tmp)
             except Exception as e:
                 raise InstallError(t("software.redis_error.src_extract_failed", error=e)) from e
             src_dirs = [d for d in Path(tmp).iterdir() if d.is_dir() and d.name.startswith("redis")]

@@ -79,26 +79,13 @@ def software_bin(key: str, cmd: str) -> str | None:
 
 
 def ensure_python_package(package: str, import_name: str = "") -> bool:
-    """检测并按需 pip 安装 Python 包到应用 venv（供插件声明运行时依赖）。
+    """Only inspect dependencies baked into the plugin's immutable runtime.
 
-    已可导入 → 静默返回 True；否则用当前解释器 pip 安装，失败返回 False。
+    This API never installs into the platform environment. Prepare dependencies
+    through scripts/build_plugin_runtime.py before execution.
     """
     import importlib.util
-    import subprocess
-    import sys
-
-    name = import_name or package
-    if importlib.util.find_spec(name) is not None:
-        return True
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--quiet", package],
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        return False
-    importlib.invalidate_caches()
-    return importlib.util.find_spec(name) is not None
+    return importlib.util.find_spec(import_name or package) is not None
 
 
 __all__ = [

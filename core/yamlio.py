@@ -23,5 +23,5 @@ def save_yaml(path: Path | str, data: dict) -> None:
     """把 dict 写入 YAML 文件（UTF-8，保持键序，自动建父目录）"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    from core.secrets import atomic_write
+    atomic_write(p, yaml.safe_dump(data, allow_unicode=True, sort_keys=False))

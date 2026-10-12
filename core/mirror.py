@@ -292,14 +292,26 @@ def _is_cached_valid(path: Path, suffix: str | None = None) -> bool:
     """
     通用缓存完整性校验：
     - .zip 文件：用 _is_zip_valid
-    - 其他文件：仅检查 size > 0
+    - 所有文件：核对完成下载后记录的摘要，不接受仅大小非零的旧缓存
     """
     if not path.exists():
+        return False
+    try:
+        from core.release_signature import file_digest
+        if file_digest(path) != path.with_name(path.name + ".cache-sha256").read_text(encoding="ascii").strip():
+            return False
+    except OSError:
         return False
     ext = (suffix or path.suffix).lower()
     if ext == ".zip":
         return _is_zip_valid(path)
     return path.stat().st_size > 0
+
+
+def _record_download_cache(path: Path) -> None:
+    from core.release_signature import file_digest
+    from core.secrets import atomic_write
+    atomic_write(path.with_name(path.name + ".cache-sha256"), file_digest(path))
 
 
 # ─── 下载（两阶段：HEAD 探针 + 赛马下载 + 低速切换 + fallback 兜底） ──────────
@@ -525,6 +537,7 @@ def download(
                 try:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(dest, cache_path)
+                    _record_download_cache(cache_path)
                 except Exception:
                     pass
             return dest
@@ -537,6 +550,7 @@ def download(
             window_start = time.monotonic()
             window_bytes = 0
             last_chunk_time = time.monotonic()
+            completed = False
             with httpx.stream(
                 "GET", fallback_url,
                 timeout=httpx.Timeout(
@@ -564,12 +578,15 @@ def download(
                                     break
                                 window_start = now
                                 window_bytes = 0
-            if tmp.exists() and tmp.stat().st_size > 0:
+                        else:
+                            completed = True
+            if completed and tmp.exists() and tmp.stat().st_size > 0:
                 tmp.replace(dest)
                 if cache_path is not None and cache_path != dest:
                     try:
                         cache_path.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(dest, cache_path)
+                        _record_download_cache(cache_path)
                     except Exception:
                         pass
                 return dest
@@ -602,7 +619,7 @@ def download_file(
     1. 缓存命中检查 → 直接返回
     2. 并发 HEAD 探针 → 过滤 404/不可达，按延迟排序
     3. 逐源顺序尝试（无总时长限制）：
-       - 支持 Range: bytes=N- 断点续传（.part 文件已存在时自动续传）
+       - 各源独立下载，避免不同镜像内容拼接
        - 停滞超时：stall_timeout 秒无任何字节 → 切换下一源
        - 低速检测：slow_window 秒内 < min_speed_kbps KB/s → 切换
     4. 全部源失败 → IOError
@@ -610,7 +627,7 @@ def download_file(
     优于赛马方案：
     - 无 join(timeout) 上限，适合任意大小文件
     - 单线程无带宽浪费
-    - 断点续传减少重试成本
+    - 中断文件不视为完成
     """
     import shutil as _shutil
 
@@ -644,35 +661,31 @@ def download_file(
     # 阶段二：逐源顺序尝试
     for url in ordered:
         # 断点续传：读取已下载大小
-        resume_pos = tmp.stat().st_size if tmp.exists() else 0
-        headers = {}
-        if resume_pos > 0:
-            headers["Range"] = f"bytes={resume_pos}-"
+        # Different mirrors may serve different content; never splice their bytes.
+        tmp.unlink(missing_ok=True)
 
         try:
             window_start = time.monotonic()
             window_bytes = 0
             last_chunk_time = time.monotonic()
-            got_any = False
 
             with httpx.stream(
                 "GET", url,
-                headers=headers,
-                timeout=httpx.Timeout(connect=TIMEOUT_HTTP, read=None, write=None, pool=None),
+                timeout=httpx.Timeout(connect=TIMEOUT_HTTP, read=stall_timeout,
+                                      write=TIMEOUT_HTTP, pool=TIMEOUT_HTTP),
                 follow_redirects=True,
             ) as resp:
-                # 206 = 续传，200 = 全量（服务器不支持 Range 时重置）
-                if resp.status_code == 200 and resume_pos > 0:
-                    resume_pos = 0  # 服务器不支持 Range，从头下载
-                if resp.status_code not in (200, 206):
+                if resp.status_code != 200:
                     last_err = f"HTTP {resp.status_code}"
                     continue
 
-                mode = "ab" if resume_pos > 0 else "wb"
-                with tmp.open(mode) as f:
+                completed = False
+                received = 0
+                expected_size = int(resp.headers.get("content-length", "0"))
+                with tmp.open("wb") as f:
                     for chunk in resp.iter_bytes(DOWNLOAD_CHUNK_SIZE):
-                        got_any = True
                         f.write(chunk)
+                        received += len(chunk)
                         window_bytes += len(chunk)
                         if progress_callback:
                             progress_callback(len(chunk))
@@ -693,9 +706,12 @@ def download_file(
                                 break
                             window_start = now
                             window_bytes = 0
+                    else:
+                        completed = True
 
             # 验证下载结果
-            if tmp.exists() and tmp.stat().st_size > 1024:
+            if (completed and (not expected_size or received == expected_size)
+                    and tmp.exists() and tmp.stat().st_size > 1024):
                 for _retry in range(5):
                     try:
                         tmp.replace(dest)
@@ -709,6 +725,7 @@ def download_file(
                     try:
                         cache_path.parent.mkdir(parents=True, exist_ok=True)
                         _shutil.copy2(dest, cache_path)
+                        _record_download_cache(cache_path)
                     except Exception:
                         pass
                 return dest

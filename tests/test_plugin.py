@@ -154,7 +154,8 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     (pkg / "__init__.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
     _trust(broken)
     modules = discover_plugins()
-    assert [m.key for m in modules] == ["good"]
+    assert [m.key for m in modules] == ["broken", "good"]
+    assert "broken_pkg" not in sys.modules
 
 
 def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
@@ -171,7 +172,8 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
     _trust(exiting)
-    assert discover_plugins() == []
+    assert len(discover_plugins()) == 1
+    assert "exiting_pkg" not in sys.modules
 
 
 def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> None:
@@ -195,7 +197,10 @@ def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> Non
     modules = discover_plugins()
     assert len(modules) == 1
     monkeypatch.setattr("core.prompt.pause", lambda *a, **k: None)
-    modules[0].entry()  # 不得抛出 SystemExit
+    def fail(*args, **kwargs):
+        raise RuntimeError("sandbox worker exited")
+    monkeypatch.setattr("core.plugin_sandbox.invoke", fail)
+    modules[0].entry()  # worker failure returns to the menu
 
 
 def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
@@ -223,6 +228,9 @@ def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
     modules = discover_plugins()
     assert len(modules) == 1
     from core.prompt import UserExit
+    def cancel(*args, **kwargs):
+        raise UserExit()
+    monkeypatch.setattr("core.plugin_sandbox.invoke", cancel)
     with pytest.raises(UserExit):
         modules[0].entry()
 
@@ -312,7 +320,7 @@ def test_unload_plugin_purges_modules(plugins_root) -> None:
     _trust(plugin_dir)
     manifest = load_manifest(plugin_dir)
     assert load_plugin(manifest) is not None
-    assert "demo_pkg" in sys.modules
+    assert "demo_pkg" not in sys.modules
     unload_plugin(manifest)
     assert "demo_pkg" not in sys.modules
     assert str(plugin_dir.resolve()) not in sys.path
@@ -333,10 +341,11 @@ def test_hot_reload_after_update(plugins_root) -> None:
     unload_plugin(manifest)
     info = load_plugin(manifest)
     assert info is not None
-    assert sys.modules["demo_pkg"].register().order == 77
+    assert "demo_pkg" not in sys.modules
+    assert info.order == 55
 
 
-def test_update_inherits_trust(plugins_root, tmp_path) -> None:
+def test_update_invalidates_trust(plugins_root, tmp_path) -> None:
     """已信任插件经平台更新流程拉取新内容后自动继承信任，不再重复确认"""
     import subprocess
 
@@ -364,7 +373,7 @@ def test_update_inherits_trust(plugins_root, tmp_path) -> None:
     ok, msg = commands.update(manifest)
     assert (ok, msg) == (True, "updated")
     refreshed = load_manifest(dest)
-    assert commands.trust_status(refreshed) == commands.TRUST_OK  # 更新后自动继承信任
+    assert commands.trust_status(refreshed) == commands.TRUST_CHANGED
 
 
 def test_checksums_write_and_verify(plugins_root) -> None:

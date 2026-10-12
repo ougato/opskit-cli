@@ -151,3 +151,19 @@ class TestNginxWebroot:
             MockPath.side_effect = side_effect
             result = nginx_webroot()
         assert result is not None
+
+
+def test_wheel_paths_do_not_write_into_site_packages(monkeypatch, tmp_path):
+    from core import paths
+    monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
+    monkeypatch.setattr(paths, "_source_root", lambda: None)
+    monkeypatch.setattr(paths, "_is_root", lambda: False)
+    class Directories:
+        @staticmethod
+        def user_data_dir(*args, **kwargs): return str(tmp_path / "data")
+        @staticmethod
+        def user_cache_dir(*args, **kwargs): return str(tmp_path / "cache")
+    monkeypatch.setattr(paths, "_get_platformdirs", lambda: Directories)
+    assert paths.data_dir() == tmp_path / "data"
+    assert paths.config_dir() == tmp_path / "data/config"
+    assert paths.cache_dir() == tmp_path / "cache"

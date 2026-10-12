@@ -1,9 +1,8 @@
-"""模块自动发现 + 加载器（双模式：开发扫描 / 打包静态注册）"""
+"""模块自动发现 + 加载器（双模式：源码显式登记 / 打包静态注册）"""
 from __future__ import annotations
 
 import importlib
 import sys
-from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -13,20 +12,9 @@ from core.module import ModuleInfo
 # 打包后的静态注册表文件名（build.py 打包时自动生成）
 _REGISTRY_MODULE = "_registry"
 
-# 不属于插件的顶层目录/包名（扫描时跳过）
-_SKIP_NAMES = frozenset({
-    "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
-})
-
-
 def _is_frozen() -> bool:
     from core.config import _is_frozen as frozen
     return frozen()
-
-
-def _get_project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def _load_module_safe(pkg_name: str) -> ModuleInfo | None:
@@ -44,22 +32,10 @@ def _load_module_safe(pkg_name: str) -> ModuleInfo | None:
 
 
 def _discover_dev() -> list[ModuleInfo]:
-    """开发模式：扫描项目根目录下所有含 register() 的包"""
-    root = _get_project_root()
-    modules: list[ModuleInfo] = []
-    for path in sorted(root.iterdir()):
-        if not path.is_dir():
-            continue
-        name = path.name
-        if name in _SKIP_NAMES or name.startswith(".") or name.startswith("_"):
-            continue
-        init_file = path / "__init__.py"
-        if not init_file.exists():
-            continue
-        info = _load_module_safe(name)
-        if info is not None:
-            modules.append(info)
-    return modules
+    """源码模式：仅加载显式登记的官方模块"""
+    from core.builtins import MODULES
+    return [info for _, package in MODULES if (info := _load_module_safe(package)) is not None]
+
 
 
 def _discover_frozen() -> list[ModuleInfo]:
@@ -91,7 +67,7 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
     """
     双模式加载入口：
 
-    1. 开发模式（源码运行）→ 扫描项目根目录
+    1. 源码模式 → 官方登记表
     2. 打包模式（单文件）→ 读取 _registry.py 静态注册表
 
     最终：按 order 排序，过滤当前平台不支持的模块 + 未启用的模块。
@@ -122,8 +98,8 @@ def discover_modules(config: dict | None = None) -> list[ModuleInfo]:
 
 def builtin_module_keys() -> set[str]:
     """内置模块 key 集合（供插件 key 冲突检查）"""
-    modules = _discover_frozen() if _is_frozen() else _discover_dev()
-    return {m.key for m in modules}
+    from core.builtins import MODULES
+    return {key for key, _ in MODULES}
 
 
 def _current_platform() -> str:

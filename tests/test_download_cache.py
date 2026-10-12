@@ -51,28 +51,30 @@ def test_is_zip_valid_empty(tmp_path):
 # ─── 测试 2：_is_cached_valid ─────────────────────────────────────────────────
 
 def test_is_cached_valid_zip_good(tmp_path):
-    from core.mirror import _is_cached_valid
+    from core.mirror import _is_cached_valid, _record_download_cache
     p = tmp_path / "file.zip"
     _make_valid_zip(p)
+    _record_download_cache(p)
     assert _is_cached_valid(p) is True
 
 
 def test_is_cached_valid_zip_corrupt(tmp_path):
-    from core.mirror import _is_cached_valid
+    from core.mirror import _is_cached_valid, _record_download_cache
     p = tmp_path / "file.zip"
     _make_corrupt_zip(p)
     assert _is_cached_valid(p) is False
 
 
 def test_is_cached_valid_nonzip(tmp_path):
-    from core.mirror import _is_cached_valid
+    from core.mirror import _is_cached_valid, _record_download_cache
     p = tmp_path / "file.bin"
     p.write_bytes(b"binary data")
+    _record_download_cache(p)
     assert _is_cached_valid(p) is True
 
 
 def test_is_cached_valid_missing(tmp_path):
-    from core.mirror import _is_cached_valid
+    from core.mirror import _is_cached_valid, _record_download_cache
     assert _is_cached_valid(tmp_path / "no.zip") is False
 
 
@@ -98,6 +100,8 @@ def test_download_cache_hit_skips_download(tmp_path):
     cache = tmp_path / "cache" / "Xray-linux-64.zip"
     cache.parent.mkdir(parents=True)
     _make_valid_zip(cache)
+    from core.mirror import _record_download_cache
+    _record_download_cache(cache)
 
     dest = tmp_path / "dest" / "Xray-linux-64.zip"
 

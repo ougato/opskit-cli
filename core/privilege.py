@@ -142,7 +142,7 @@ def run_as_root(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
     if shutil.which("sudo"):
         return subprocess.run(["sudo"] + list(cmd), **kwargs)
 
-    return subprocess.run(list(cmd), **kwargs)
+    raise PermissionError("root privileges required and sudo is unavailable")
 
 
 def write_root_file(path, content, mode: str = "0644") -> None:
@@ -169,7 +169,11 @@ def write_root_file(path, content, mode: str = "0644") -> None:
     parent = p.parent
     if is_root() or sys.platform == "win32" or (parent.exists() and os.access(parent, os.W_OK)):
         parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(data)
+        if mode == "0600":
+            from core.secrets import atomic_write
+            atomic_write(p, data)
+        else:
+            p.write_bytes(data)
         try:
             os.chmod(path, int(mode, 8))
         except OSError:

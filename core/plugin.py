@@ -1,18 +1,14 @@
 """外部插件发现与加载 — 扫描 plugins 目录，读 plugin.yaml 清单
 
 两种插件形态：
-  - python：进程内加载，import 清单 entry 指向的包并调用 register() -> ModuleInfo
-  - exec：  子进程执行，菜单项被选中后以继承 stdio 的子进程运行 entry 可执行文件
+  - python：只读清单发现，代码在受限容器执行
+  - exec：可执行程序在同样的受限容器执行
 
 隔离原则：单个插件任何一步失败只写日志并跳过，绝不抛出影响主程序。
 """
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import re
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,6 +81,8 @@ class PluginManifest:
 
 def load_manifest(plugin_root: Path) -> PluginManifest | None:
     """读取并校验单个插件清单，失败返回 None（写日志）"""
+    if plugin_root.is_symlink() or (hasattr(plugin_root, "is_junction") and plugin_root.is_junction()):
+        return None
     manifest_path = plugin_root / FILE_PLUGIN_MANIFEST
     try:
         with manifest_path.open("r", encoding="utf-8") as f:
@@ -103,7 +101,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         return None
 
     name = str(data["name"])
-    if not _NAME_PATTERN.match(name):
+    if not _NAME_PATTERN.fullmatch(name) or name == "platform":
         _log.warning("plugin %s: invalid name %r", plugin_root.name, name)
         return None
 
@@ -122,7 +120,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
     except (TypeError, ValueError):
         _log.warning("plugin %s: api_version is not an integer", name)
         return None
-    if api_version != PLUGIN_API_VERSION:
+    if api_version not in (1, PLUGIN_API_VERSION):
         _log.warning(
             "plugin %s: api_version %s incompatible with SDK %s, skipped",
             name, api_version, PLUGIN_API_VERSION,
@@ -172,6 +170,9 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
             elif isinstance(u, str):
                 uses.append({"service": u, "source": ""})
 
+    if any(p not in {"network", "filesystem", "exec"} for p in permissions):
+        _log.warning("plugin %s: unsupported permissions", name)
+        return None
     return PluginManifest(
         name=name,
         version=version,
@@ -216,24 +217,6 @@ def _resolve_exec_path(manifest: PluginManifest) -> Path | None:
     return path
 
 
-def _make_exec_entry(manifest: PluginManifest, exec_path: Path):
-    """构造 exec 插件的菜单入口：子进程继承 stdio 运行，结束后等待按键"""
-
-    def _entry() -> None:
-        from core.prompt import clear_screen, pause
-        clear_screen()
-        try:
-            subprocess.call([str(exec_path)], cwd=str(manifest.root))
-        except Exception as e:
-            from core.i18n import t
-            from core.theme import print_error
-            _log.error("plugin %s: exec failed: %s", manifest.name, e)
-            print_error(t("plugin.exec_failed", name=manifest.name, error=str(e)))
-        pause()
-
-    return _entry
-
-
 def _guard_entry(name: str, fn):
     """插件菜单入口守卫：运行期任何异常（含 SystemExit）只报错回菜单，绝不杀死主程序"""
 
@@ -253,80 +236,24 @@ def _guard_entry(name: str, fn):
     return _entry
 
 
-def _entry_shadows_existing(entry_name: str, plugin_root: Path) -> bool:
-    """entry 包名是否与已有模块重名（防插件遮蔽/劫持 core、rich 等主程序依赖）"""
-    if entry_name in sys.modules:
-        mod = sys.modules[entry_name]
-        mod_file = getattr(mod, "__file__", None) or ""
-        return not mod_file.startswith(str(plugin_root.resolve()))
-    try:
-        spec = importlib.util.find_spec(entry_name)
-    except (ImportError, ValueError):
-        return False
-    if spec is None or not spec.origin:
-        return False
-    return not str(spec.origin).startswith(str(plugin_root.resolve()))
-
-
-def _load_python_plugin(manifest: PluginManifest) -> ModuleInfo | None:
-    """进程内加载 python 插件：sys.path 注入插件目录 → import → register()"""
-    entry_name = str(manifest.entry)
-    if not _NAME_PATTERN.match(entry_name):
-        _log.warning("plugin %s: invalid python entry name %r", manifest.name, entry_name)
-        return None
-    if _entry_shadows_existing(entry_name, manifest.root):
-        _log.warning("plugin %s: entry %r shadows an existing module, skipped", manifest.name, entry_name)
-        return None
-    root_str = str(manifest.root.resolve())
-    if root_str not in sys.path:
-        sys.path.append(root_str)
-    try:
-        mod = importlib.import_module(entry_name)
-        register_fn = getattr(mod, "register", None)
-        if not callable(register_fn):
-            _log.warning("plugin %s: entry package has no register()", manifest.name)
-            return None
-        info = register_fn()
-        if not isinstance(info, ModuleInfo):
-            _log.warning("plugin %s: register() did not return ModuleInfo", manifest.name)
-            return None
-        info.entry = _guard_entry(manifest.name, info.entry)
-        return info
-    except (Exception, SystemExit) as e:  # 插件 import 期 sys.exit() 也不得杀死主程序
-        _log.warning("plugin %s: import/register failed: %r", manifest.name, e)
-        return None
-
-
 def _to_module_info(manifest: PluginManifest) -> ModuleInfo | None:
-    """清单 → ModuleInfo（python: register() 结果 + 清单覆盖；exec: 直接构造）"""
+    """Construct menu metadata without importing or executing third-party code."""
     from core.i18n import current_lang
-
-    label = manifest.display_label(current_lang())
-
     if manifest.kind == KIND_PYTHON:
-        info = _load_python_plugin(manifest)
-        if info is None:
+        entry = str(manifest.entry)
+        if not _NAME_PATTERN.fullmatch(entry) or entry in {"core", "sys", "os", "yaml", "rich", "typer", "utils"}:
             return None
-        info.key = manifest.name
-        info.order = manifest.order
-        info.platforms = manifest.platforms
-        if label and not info.label:
-            info.label = label
-        if manifest.icon and not info.icon:
-            info.icon = manifest.icon
-        return info
-
-    exec_path = _resolve_exec_path(manifest)
-    if exec_path is None:
+        if not (manifest.root / entry / "__init__.py").is_file():
+            return None
+    elif _resolve_exec_path(manifest) is None:
         return None
+    def execute():
+        from core.plugin_sandbox import invoke
+        invoke(manifest, "entry")
     return ModuleInfo(
-        key=manifest.name,
-        description_key=f"plugin.{manifest.name}.desc",
-        order=manifest.order,
-        entry=_make_exec_entry(manifest, exec_path),
-        platforms=manifest.platforms,
-        label=label,
-        icon=manifest.icon,
+        key=manifest.name, description_key=f"plugin.{manifest.name}.desc",
+        order=manifest.order, entry=_guard_entry(manifest.name, execute),
+        platforms=manifest.platforms, label=manifest.display_label(current_lang()), icon=manifest.icon,
     )
 
 
@@ -359,16 +286,9 @@ def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
 
 
 def unload_plugin(manifest: PluginManifest) -> None:
-    """卸载插件的进程内残留（sys.modules / sys.path），供热插拔更新与卸载"""
-    root_str = str(manifest.root.resolve())
-    for name, mod in list(sys.modules.items()):
-        mod_file = getattr(mod, "__file__", None) or ""
-        if mod_file.startswith(root_str):
-            sys.modules.pop(name, None)
-    try:
-        sys.path.remove(root_str)
-    except ValueError:
-        pass
+    """No in-process plugin modules exist; revoke cached service proxies."""
+    from core.plugin_services import invalidate_service_cache
+    invalidate_service_cache()
 
 
 def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:

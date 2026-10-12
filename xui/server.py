@@ -100,10 +100,11 @@ from xui.traffic import compute_stats, human_bytes
 console = Console()
 
 
-def _read_text(breadcrumb: list[str], key: str, default: str) -> str:
+def _read_text(breadcrumb: list[str], key: str, default: str, *, secret: bool = False) -> str:
     value = text_input(
         breadcrumb=breadcrumb,
-        prompt=t(key, default=default),
+        prompt=t(key),
+        secret=secret,
         default=default,
         theme_key="software",
     )
@@ -257,7 +258,7 @@ def install_server() -> None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
     panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
     panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
-    panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password())
+    panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password(), secret=True)
     panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
     host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
     vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
@@ -398,7 +399,7 @@ def install_server() -> None:
     panel_url = HTTP_URL_TEMPLATE.format(host=host or LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
     console.print(f"{t('xui.output.panel')}: {panel_url}")
     console.print(f"{t('xui.output.panel_user')}: {panel_user}")
-    console.print(f"{t('xui.output.panel_password')}: {panel_password}")
+    console.print(f"{t('xui.output.panel_password')}: ********")
     console.print(f"{t('xui.output.vless_link')}: {vless_link}")
     pause()
 

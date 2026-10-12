@@ -164,7 +164,13 @@ def test_xui_state_redacts_sensitive_fields_and_uses_0600(tmp_path) -> None:
         "vless": {"private_key": "reality-private", "public_key": "pub"},
     }
     write_secret_json(target, state)
-    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    import os
+    if os.name != "nt":
+        assert oct(target.stat().st_mode & 0o777) == "0o600"
+    else:
+        import subprocess
+        acl = subprocess.check_output(["icacls", str(target)], text=True)
+        assert "(I)" not in acl and "(F)" in acl
     redacted = redact_state(state)
     assert isinstance(redacted, dict)
     assert redacted["panel_password"] == "<redacted>"
@@ -187,6 +193,10 @@ def test_generate_reality_keypair_uses_3x_ui_xray_binary(tmp_path, monkeypatch) 
     from xui import utils
 
     monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", [str(xray)])
+    import os
+    if os.name == "nt":
+        import pytest
+        pytest.skip("Linux xray shell binary requires a Linux test host")
     assert utils.generate_reality_keypair() == ("private-key", "public-key")
 
 
@@ -315,6 +325,7 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
 
         return Result()
 
+    monkeypatch.setattr(utils, "systemd_available", lambda: True)
     monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
     monkeypatch.setattr(utils, "run_as_root", fake_run)

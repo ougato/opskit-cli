@@ -6,6 +6,8 @@ from pathlib import Path
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
 APP_VERSION = 7
+# Base64 raw Ed25519 public key supplied by the release owner, never by a download.
+UPDATE_SIGNING_PUBLIC_KEY = ""
 
 # ─── 目录名 ──────────────────────────────────────────────────────────────────
 DIR_CONFIG = "config"
@@ -28,7 +30,7 @@ FILE_PLUGIN_TRUST = "plugin_trust.yaml"
 FILE_PLUGIN_CHECKSUMS = "CHECKSUMS.yaml"
 
 # ─── 插件 SDK API 版本（不兼容变更才递增，见 core/sdk.py 与 docs/plugin-spec.md） ──
-PLUGIN_API_VERSION = 1
+PLUGIN_API_VERSION = 2
 
 # ─── 默认配置模板（首次运行时写入） ─────────────────────────────────────────
 DEFAULT_CONFIG: dict = {
@@ -59,7 +61,7 @@ DEFAULT_CONFIG: dict = {
         "trusted_sources": [],
     },
     "telemetry": {
-        "enabled": True,
+        "enabled": False,
         "dsn": "https://f1b67ed44be18705828ccf6d6f44e37c@o4511342957297664.ingest.us.sentry.io/4511342960574464",
     },
 }

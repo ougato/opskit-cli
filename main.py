@@ -557,7 +557,33 @@ app.add_typer(net_app, name="network")
 app.add_typer(plugin_app, name="plugin")
 
 
+@plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help="Run a plugin's own CLI: plugin run NAME -- ARGS")
+def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
+    from plugin.cli import run_plugin
+    from core.plugin_sandbox import SandboxError
+    try:
+        code = run_plugin(name, list(ctx.args))
+    except SandboxError as exc:
+        _direct_fail(str(exc), _EXIT_RUNTIME)
+        return
+    raise typer.Exit(code)
+
+
 # ─── plugin 子命令 ────────────────────────────────────────────────────────────
+
+@plugin_app.command("prepare", help="Build an isolated plugin runtime with operator-approved pinned dependencies")
+def plugin_prepare(
+    path: str = typer.Argument(...),
+    dependency: list[str] = typer.Option([], "--dependency"),
+    base_image: str = typer.Option("python:3.12-slim", "--base-image"),
+) -> None:
+    from pathlib import Path
+    from core.plugin_runtime import build
+    try:
+        typer.echo(build(Path(path).resolve(), dependency, base_image))
+    except (ValueError, RuntimeError, OSError) as exc:
+        _direct_fail(str(exc), _EXIT_RUNTIME)
+
 
 @plugin_app.command("fingerprint", help=_ct("plugin_fingerprint"))
 def plugin_fingerprint(

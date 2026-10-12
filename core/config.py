@@ -72,7 +72,8 @@ def load_config() -> dict[str, Any]:
     """加载配置文件，不存在时返回默认配置（不写入磁盘）"""
     path = get_config_path()
     if not path.exists():
-        return DEFAULT_CONFIG.copy()
+        import copy
+        return copy.deepcopy(DEFAULT_CONFIG)
     with path.open("r", encoding="utf-8") as f:
         user_cfg = yaml.safe_load(f) or {}
     return _deep_merge(DEFAULT_CONFIG, user_cfg)
@@ -82,8 +83,8 @@ def save_config(config: dict[str, Any]) -> None:
     """保存配置到磁盘"""
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from core.secrets import atomic_write
+    atomic_write(path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
 
 
 def ensure_config() -> dict[str, Any]:
@@ -98,7 +99,8 @@ def ensure_config() -> dict[str, Any]:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+        import copy
+        return copy.deepcopy(DEFAULT_CONFIG)
     cfg = load_config()
     # 如果磁盘配置缺少新字段，补充默认值并写回
     merged = _deep_merge(DEFAULT_CONFIG, cfg)
@@ -151,6 +153,7 @@ def migrate_config(config: dict[str, Any], from_version: int, to_version: int) -
             if path.exists():
                 import shutil
                 shutil.copy2(path, bak)
-            return DEFAULT_CONFIG.copy()
+            import copy
+        return copy.deepcopy(DEFAULT_CONFIG)
         current += 1
     return config

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import logging
 import os
@@ -316,6 +317,11 @@ def _apply_update_pending_path() -> bool:
             _log.warning("update_pending_path: pending file missing, clearing marker")
             marker.unlink(missing_ok=True)
             return False
+        if (pending.resolve() != _get_pending_path().resolve()
+                or target.resolve() != _self_path().resolve()
+                or not _verify_pending_signature(pending, version)):
+            _log.warning("invalid or unsigned pending replacement marker")
+            return False
         _log.info("update_pending_path: retrying rename %s -> %s", pending, target)
         old_path = target.parent / (target.stem + ".old.exe")
         if old_path.exists():
@@ -513,6 +519,52 @@ def _asset_filename() -> str:
 
 # ─── 下载与校验 ───────────────────────────────────────────────────────────────
 
+def _signing_key(cfg: dict) -> str:
+    from core.constants import UPDATE_SIGNING_PUBLIC_KEY
+    return cfg.get("signing_public_key", "") or UPDATE_SIGNING_PUBLIC_KEY
+
+
+def _fetch_release_signature(pending: Path, asset_url: str, build: int, cfg: dict) -> bool:
+    from urllib.parse import urlparse
+    from core.release_signature import verify
+    from core.secrets import atomic_write
+    key = _signing_key(cfg)
+    if not key or urlparse(asset_url).scheme != "https" or build <= APP_VERSION:
+        return False
+    try:
+        with httpx.Client(timeout=10) as client:
+            with client.stream("GET", asset_url + ".sig.json", follow_redirects=True) as response:
+                response.raise_for_status()
+                body = bytearray()
+                for chunk in response.iter_bytes(4096):
+                    body.extend(chunk)
+                    if len(body) > 4096:
+                        return False
+                envelope = json.loads(body)
+        if not verify(envelope, key, build=build, filename=_asset_filename(), digest=_sha256_file(pending)):
+            return False
+        atomic_write(pending.with_name(pending.name + ".sig.json"), json.dumps(envelope))
+        return True
+    except Exception:
+        return False
+
+
+def _verify_pending_signature(pending: Path, build: int) -> bool:
+    from core.config import load_config
+    from core.release_signature import verify
+    if build <= APP_VERSION:
+        return False
+    try:
+        sidecar = pending.with_name(pending.name + ".sig.json")
+        if sidecar.stat().st_size > 4096:
+            return False
+        envelope = json.loads(sidecar.read_text(encoding="utf-8"))
+        return verify(envelope, _signing_key(load_config().get("update", {})),
+                      build=build, filename=_asset_filename(), digest=_sha256_file(pending))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -627,6 +679,11 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
         if sha256_expected:
             _log.info("download: got SHA256 from .sha256 file: %s", sha256_expected)
 
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", sha256_expected):
+        _log.error("download: valid SHA256 required; update refused")
+        _report("download_no_sha256", level="error")
+        return None
+
     # ETag 协商：发送 If-None-Match 头，服务器 304 则跳过下载
     cache = _load_check_cache()
     cached_etag: str = cache.get("etag", "")
@@ -682,7 +739,7 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
                               follow_redirects=True, headers=headers) as resp:
                 if resp.status_code == 304:
                     _log.info("download: ETag matched (304), pending still valid")
-                    if pending_path.exists():
+                    if pending_path.exists() and _sha256_file(pending_path) == sha256_expected.lower():
                         return pending_path
                     # pending 被删除但 ETag 命中，清除缓存重下
                     _save_check_cache({"etag": ""})
@@ -710,20 +767,15 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
                     for chunk in resp.iter_bytes(DOWNLOAD_CHUNK_SIZE):
                         f.write(chunk)
 
-            if sha256_expected:
-                actual_hash = _sha256_file(actual_tmp)
-                if actual_hash != sha256_expected:
-                    _log.warning("SHA256 mismatch: expected %s got %s", sha256_expected, actual_hash)
-                    _report("download_sha256_mismatch", level="error",
-                            expected_sha256=sha256_expected, actual_sha256=actual_hash,
-                            mirror_url=url, asset_url=asset_url, attempt=str(attempt + 1),
-                            file_size=str(actual_tmp.stat().st_size) if actual_tmp.exists() else "0")
-                    actual_tmp.unlink(missing_ok=True)
-                    continue
-            else:
-                _log.warning("download: no SHA256 available, skipping integrity check")
-                _report("download_no_sha256", level="warning",
-                        asset_url=asset_url, mirror_url=url)
+            actual_hash = _sha256_file(actual_tmp)
+            if actual_hash != sha256_expected.lower():
+                _log.warning("SHA256 mismatch: expected %s got %s", sha256_expected, actual_hash)
+                _report("download_sha256_mismatch", level="error",
+                        expected_sha256=sha256_expected, actual_sha256=actual_hash,
+                        mirror_url=url, asset_url=asset_url, attempt=str(attempt + 1),
+                        file_size=str(actual_tmp.stat().st_size) if actual_tmp.exists() else "0")
+                actual_tmp.unlink(missing_ok=True)
+                continue
 
             actual_tmp.replace(pending_path)
             if new_etag:
@@ -780,6 +832,10 @@ def check_update_background(cfg: dict) -> None:
 
             pending = _download_update(asset_url, sha256, remote_ver)
             if pending:
+                if not _fetch_release_signature(pending, asset_url, remote_ver, update_cfg):
+                    pending.unlink(missing_ok=True)
+                    _log.warning("release signature missing or invalid; update refused")
+                    return
                 _pending_version = remote_ver
                 _save_check_cache({
                     "latest": remote_ver,
@@ -879,6 +935,9 @@ def _do_apply(pending: Path, remote_ver: int) -> bool:
     4. 更新 cache（merge 写，保留 pending_version 等字段）
     返回 True 表示替换已成功（Unix 同步）或已调度（Windows 异步）
     """
+    if not _verify_pending_signature(pending, remote_ver):
+        _log.warning("unsigned, changed or outdated pending release refused")
+        return False
     self_path = _self_path()
     backup = _get_backup_path()
     backup.parent.mkdir(parents=True, exist_ok=True)

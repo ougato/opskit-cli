@@ -319,26 +319,13 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
-_SKIP_PKG = frozenset({
-    "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
-})
-
 _REGISTRY_FILE = ROOT / "_registry.py"
 
 
 def write_registry() -> list[str]:
     """扫描插件包并生成 _registry.py（打包模式静态注册表），返回包名列表"""
-    entries: list[tuple[str, str]] = []
-    for path in sorted(ROOT.iterdir()):
-        if not path.is_dir():
-            continue
-        name = path.name
-        if name in _SKIP_PKG or name.startswith(".") or name.startswith("_"):
-            continue
-        if not (path / "__init__.py").exists():
-            continue
-        entries.append((name, name))
+    from core.builtins import MODULES
+    entries = list(MODULES)
     lines = ["MODULE_LIST = ["]
     for key, pkg in entries:
         lines.append(f"    ({key!r}, {pkg!r}),")

@@ -253,7 +253,7 @@ def test_help_flag_case_insensitive(flag) -> None:
     result = runner.invoke(main.app, [flag])
 
     assert result.exit_code == 0
-    assert "Usage" in result.stdout
+    assert "root" in result.stdout and "plugin" in result.stdout
 
 
 @pytest.mark.parametrize("cmd", ["software", "SOFTWARE", "Software"])

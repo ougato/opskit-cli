@@ -1,6 +1,8 @@
 """RustDesk Server 安装、卸载与诊断。"""
 from __future__ import annotations
 
+from core.archive import extract_zip
+
 import json
 import platform
 import shlex
@@ -204,7 +206,7 @@ def install_archive(archive: Path) -> None:
         extract_dir = Path(tmp)
         try:
             with zipfile.ZipFile(archive) as zf:
-                zf.extractall(extract_dir)
+                extract_zip(zf, extract_dir)
         except Exception as exc:
             raise InstallError(t("rustdesk.error.extract_failed", error=str(exc))) from exc
 

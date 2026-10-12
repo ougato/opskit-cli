@@ -145,7 +145,7 @@ class TestDownloadExceptions:
         with patch("httpx.stream", side_effect=raise_connect), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""):
-            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "")
+            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "a" * 64)
 
         assert result is None
         assert not fake_pending.exists()
@@ -185,7 +185,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("core.updater._sha256_file", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "")
+            upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "a" * 64)
 
         assert any("Range" in h for h in range_headers_sent), "Range header should be sent"
         assert range_headers_sent[0].get("Range") == f"bytes={len(initial_data)}-"
@@ -256,7 +256,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            upd._download_update("https://example.com/opskit", "")
+            upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert timeout_used, "httpx.stream should have been called"
         t = timeout_used[0]
@@ -289,8 +289,9 @@ class TestDownloadExceptions:
         with patch("httpx.stream", return_value=FakeResp()), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater._sha256_file", return_value="a" * 64), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result == fake_pending
 
@@ -345,7 +346,7 @@ class TestDownloadExceptions:
         with patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=10 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert not fake_tmp.exists()
@@ -391,7 +392,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("core.updater._sha256_file", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         sys_tmp.unlink(missing_ok=True)
 
@@ -421,10 +422,10 @@ class TestDownloadExceptions:
         with patch("httpx.stream", return_value=FakeResp()), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value="wronghash"), \
+             patch("core.updater._sha256_file", return_value="b" * 64), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            result = upd._download_update("https://example.com/opskit", "correcthash")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert len(attempt_count) == 5, f"Expected 5 attempts (MAX_RETRY_DOWNLOAD), got {len(attempt_count)}"
@@ -452,7 +453,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep", side_effect=mock_sleep):
-            upd._download_update("https://example.com/opskit", "")
+            upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert sleep_calls == [1, 2, 4, 8], f"Expected [1,2,4,8], got {sleep_calls}"
 
@@ -738,10 +739,27 @@ class TestWindowsReplacement:
         cache_path = tmp_data / "cache" / "update_check.json"
         marker = tmp_data / "cache" / "update_pending_path.json"
         with marker.open("w") as f:
-            json.dump({"pending": str(fake_pending), "target": str(fake_self), "version": 2}, f)
+            json.dump({"pending": str(fake_pending), "target": str(fake_self), "version": upd.APP_VERSION + 1}, f)
 
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
+
+        # Validate a real signature, not a mocked security gate.
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        from core.release_signature import payload, file_digest
+        key = Ed25519PrivateKey.generate()
+        public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+        build = upd.APP_VERSION + 1
+        digest = file_digest(fake_pending)
+        filename = upd._asset_filename()
+        envelope = {"build": build, "filename": filename, "sha256": digest,
+                    "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
+        fake_pending.with_name(fake_pending.name + ".sig.json").write_text(json.dumps(envelope))
+        monkeypatch.setattr("core.config.load_config", lambda: {"update": {"signing_public_key": public}})
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        monkeypatch.setattr(upd, "_get_pending_path", lambda: fake_pending)
 
         result = upd._apply_update_pending_path()
         assert result is True
@@ -1015,7 +1033,7 @@ class TestEnvironment:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert not fake_pending.exists()
@@ -1291,7 +1309,7 @@ class TestGapCoverage:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("core.updater._sha256_file", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://example.com/opskit", "")
+            upd._download_update("https://example.com/opskit", "a" * 64)
 
         # httpx 默认从环境变量读取代理，无需额外配置
         # 验证：httpx.stream 被调用（不因代理而提前 crash）
