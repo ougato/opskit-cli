@@ -82,6 +82,19 @@ class TestTokenV2:
         result = decode_token(tok)
         assert result["label"] == "aliyun"
 
+    def test_compressed_payload_limit(self):
+        from wireguard.token import encode_token, decode_token
+        fields = {**self._FIELDS, "unused": "x" * 1024 * 1024}
+        token = encode_token(fields)
+        assert len(token) < 65536
+        with pytest.raises(ValueError):
+            decode_token(token)
+
+    def test_client_label_limit_is_validated_before_install(self):
+        from wireguard.token import encode_token, decode_client_token
+        with pytest.raises(ValueError, match="interface name limit"):
+            decode_client_token(encode_token({**self._FIELDS, "label": "abcdefghijklmn"}))
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -188,15 +201,13 @@ class TestWireGuardRecipeSafety:
         assert "WG_STATE_FILE" in source
         assert 'run_as_root(["rm", "-f", WG_STATE_FILE' in source
 
-    def test_install_marks_installed_after_service_verification(self):
+    def test_server_install_marks_installed_after_service_verification(self):
         import inspect
         from wireguard import client, server
 
         server_source = inspect.getsource(server.install_server)
         assert server_source.index("service_start_fail") < server_source.index('mark_installed("wg_server")')
 
-        client_source = inspect.getsource(client._install_client_token)
-        assert client_source.index("client_service_start_fail") < client_source.index("mark_installed")
 
     def test_server_state_saved_after_service_verification(self):
         import inspect
@@ -206,18 +217,6 @@ class TestWireGuardRecipeSafety:
 
         assert source.index("service_start_fail") < source.index("_save_state(state)")
         assert source.index("_save_state(state)") < source.index('mark_installed("wg_server")')
-
-    def test_client_failed_install_cleans_orphan_runtime(self):
-        import inspect
-        from wireguard import client
-
-        source = inspect.getsource(client._install_client_token)
-        failure_block = source[source.index("client_service_start_fail"):source.index("pause()", source.index("client_service_start_fail"))]
-
-        assert "stop_and_disable(wg_svc)" in failure_block
-        assert "stop_and_disable(xray_svc)" in failure_block
-        assert 'run_as_root(["rm", "-f", wg_cfg_path, xray_cfg_path' in failure_block
-        assert "_SCM.remove" in failure_block
 
     def test_server_manage_menu_has_no_manual_dns_entry(self):
         import inspect

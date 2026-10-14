@@ -1,10 +1,10 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入"""
 from __future__ import annotations
 
-import os
+from core.archive_reader import open_tar
+
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -31,50 +31,24 @@ class LinuxDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import java_version_dir, java_bin_dir
+        from core.archive import extract_tar
+        from software._shared.archive_install import staged_directory
         dest = java_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
+        mode = "r:gz"
         try:
-            with tarfile.open(str(tarball), "r:gz") as tf:
-                # 找出顶层目录前缀（如 "jdk-21.0.11+10/"）
-                prefix = ""
-                for member in tf.getmembers():
-                    if "/" in member.name:
-                        prefix = member.name.split("/")[0] + "/"
-                        break
-                    elif member.isdir():
-                        prefix = member.name.rstrip("/") + "/"
-                        break
-                for member in tf.getmembers():
-                    if prefix and not member.name.startswith(prefix):
-                        continue
-                    rel = member.name[len(prefix):]
-                    if not rel:
-                        continue
-                    target = dest / rel
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    elif member.isfile():
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
-                        if member.mode & 0o111:
-                            target.chmod(target.stat().st_mode | 0o111)
-                    elif member.issym():
-                        # 处理 symlink（Temurin 包中 legal/ 目录下含大量 symlink）
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        try:
-                            if target.is_symlink() or target.exists():
-                                target.unlink()
-                            os.symlink(member.linkname, target)
-                        except Exception:
-                            pass
-        except Exception as e:
-            raise InstallError(t("software.java_error.extract_failed", version=version, error=e)) from e
-
-        bin_d = java_bin_dir(version)
-        if not (bin_d / "java").exists():
-            raise InstallError(t("software.java_error.bad_structure", version=version, file="bin/java"))
-        return str(bin_d)
+            with staged_directory(dest, prefix=".opskit-java-") as staging:
+                with open_tar(str(tarball), mode) as archive:
+                    extract_tar(archive, staging, strip_components=1, allow_symlinks=True)
+                for binary in ('java',):
+                    if not (staging / "bin" / binary).is_file():
+                        raise InstallError(t("software.java_error.bad_structure", version=version, file="bin/" + binary))
+        except FileExistsError as error:
+            raise InstallError("java version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError(t("software.java_error.extract_failed", version=version, error=error)) from error
+        return str(java_bin_dir(version))
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 
@@ -123,7 +97,8 @@ class LinuxDriver(PlatformDriver):
         优先在 /usr/local/bin 创建/更新 java/javac/jar symlink（root 时立即全局生效）。
         非 root 时依赖 shim，同时注入当前进程 PATH。
         """
-        shell_path.link_into_system_bin(bin_dir, JAVA_SHIM_CMDS)
+        from .common import java_versions_dir
+        shell_path.link_into_system_bin(bin_dir, JAVA_SHIM_CMDS, managed_root=java_versions_dir())
         from .common import shim_dir as _shim_dir
         shell_path.prepend_process_path(str(_shim_dir()))
 

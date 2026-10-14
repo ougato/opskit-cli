@@ -1,9 +1,10 @@
 """MySQL Windows 平台驱动：zip 解压、shim cmd、注册表 PATH 注入（对齐 mongodb/windows.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_zip
+
 import os
-import shutil
-import zipfile
+import subprocess
 from pathlib import Path
 
 from software.base import InstallError
@@ -30,29 +31,23 @@ class WindowsDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import mysql_version_dir, mysql_bin_dir
+        from core.archive import extract_zip
+        from software._shared.archive_install import staged_directory
         dest = mysql_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
         try:
-            with zipfile.ZipFile(str(tarball), "r") as zf:
-                for member in zf.infolist():
-                    name = member.filename
-                    parts = name.split("/", 1)
-                    if len(parts) < 2 or not parts[1]:
-                        continue
-                    rel = parts[1]
-                    target = dest / rel.replace("/", os.sep)
-                    if name.endswith("/"):
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
+            with staged_directory(dest, prefix=".opskit-mysql-") as staging:
+                with open_zip(str(tarball), "r") as zf:
+                    extract_zip(zf, staging, strip_components=1)
+                if not (staging / "bin/mysql.exe").is_file():
+                    raise InstallError(t("software.mysql_error.win_bad_structure", version=version))
+        except FileExistsError as e:
+            raise InstallError("MySQL version directory already exists; refusing to overwrite") from e
+        except InstallError:
+            raise
         except Exception as e:
             raise InstallError(t("software.mysql_error.extract_failed", version=version, error=e)) from e
 
         bin_dir = mysql_bin_dir(version)
-        if not (bin_dir / "mysql.exe").exists():
-            raise InstallError(t("software.mysql_error.win_bad_structure", version=version))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────
@@ -93,11 +88,11 @@ class WindowsDriver(PlatformDriver):
         try:
             if os.path.lexists(str(junction)):
                 subprocess.run(
-                    ["cmd", "/c", "rmdir", str(junction)],
+                    ["cmd", "/d", "/c", "rmdir", str(junction)],
                     capture_output=True,
                 )
             r = subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(junction), target_dir],
+                ["cmd", "/d", "/c", "mklink", "/J", str(junction), target_dir],
                 capture_output=True,
             )
             return r.returncode == 0
@@ -139,7 +134,7 @@ class WindowsDriver(PlatformDriver):
         try:
             if os.path.lexists(str(junction)):
                 subprocess.run(
-                    ["cmd", "/c", "rmdir", str(junction)],
+                    ["cmd", "/d", "/c", "rmdir", str(junction)],
                     capture_output=True,
                 )
         except Exception:

@@ -1,8 +1,6 @@
 """全局常量定义 — 所有路径 / 超时 / 重试 / 网络配置统一管理"""
 from __future__ import annotations
 
-from pathlib import Path
-
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
 APP_VERSION = 7

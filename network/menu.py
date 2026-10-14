@@ -5,18 +5,16 @@ import ctypes
 import signal
 import sys
 import threading
-import time
 from contextlib import contextmanager
 from typing import Iterator
 
 from rich import box as rich_box
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, text_input, pause, console, UserCancel, clear_screen, shield_ctrlc
-from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
+from core.prompt import select, text_input, pause, UserCancel, clear_screen
+from core.theme import get_color, get_icon, print_error
 
 console = Console()
 _THEME_KEY = "network"
@@ -203,8 +201,6 @@ def show_dns(host: str | None = None, pause_after: bool = True) -> None:
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")
-    error_c = get_color("error")
-    muted = get_color("muted")
 
     # 非交互模式：host 已传入，自动判断正查 / 反查
     if host:
@@ -317,7 +313,6 @@ def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")
     muted = get_color("muted")
-    error_c = get_color("error")
 
     tbl = Table(
         title=f"[{title_color}]{t('network.port_scan')}: {host}[/{title_color}]",

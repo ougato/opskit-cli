@@ -341,7 +341,7 @@ opskit monitor processes              # 查看进程列表（Top 15）
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `opskit network ping [HOST]` | 可选 | Ping 测试（显示延迟 / 丢包率） |
-| `opskit network traceroute [HOST]` | 可选 | 路由追踪（逐跳显示路径） |
+| `opskit network traceroute [HOST]` | 可选 | 路由追踪（逐行输出，最后报告是否到达目标） |
 | `opskit network dns [HOST]` | 可选 | DNS 查询（域名→正查，IP→反查，自动判断） |
 | `opskit network port-scan [HOST]` | 可选 | 端口扫描（扫描常用端口状态） |
 | `opskit network speed-test` | 无 | 下载测速（天然非交互） |
@@ -366,6 +366,8 @@ opskit network port-scan 192.168.1.1  # 扫描 192.168.1.1 的常用端口
 opskit network speed-test             # 下载测速
 opskit network public-ip              # 查询公网 IP
 ```
+
+显式 `network traceroute HOST` 的 `--timeout` 包含 DNS 和命令执行。JSON 输出保留逐行记录，最后一条 `data.event=complete` 给出 `status`：`reached`、`not_reached`、`failed`、`timeout` 或 `cancelled`。仅实际数字跳地址匹配目标且命令退出成功时返回 0；未到达、失败和超时返回 1，取消返回 130。部分路径输出不代表已经到达目标。
 
 ### 🧩 插件工具
 

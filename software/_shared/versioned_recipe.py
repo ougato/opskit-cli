@@ -24,6 +24,7 @@ from typing import ClassVar
 
 from core.i18n import t
 from software.base import InstallError, InstallStep, Recipe
+from software._shared.mutation import versioned_mutation
 
 # 进度条占位推进上限：下载阶段无法获知真实百分比，用 ticker 线程推到此值后等真实完成
 _TICKER_MAX_PCT = 90
@@ -160,6 +161,7 @@ class VersionedTarballRecipe(Recipe):
             InstallStep("software.step.verify"),
         ]
 
+    @versioned_mutation
     def install(self, version: str) -> None:
         from core.platform import get_platform
         from core.progress import MultiStepProgress
@@ -226,15 +228,8 @@ class VersionedTarballRecipe(Recipe):
 
             sp.step(t("software.step.verify"))
             fallback = shutil.which(self._shim_cmd) or self._shim_cmd
-            try:
-                driver.install_shim(fallback)
-            except Exception:
-                pass
-
-            try:
-                driver.apply_version_link(bin_dir)
-            except Exception:
-                pass
+            driver.install_shim(fallback)
+            driver.apply_version_link(bin_dir)
 
             self._verify_runnable(bin_dir)
             if not self.detect():
@@ -245,7 +240,7 @@ class VersionedTarballRecipe(Recipe):
         """真正运行一次主命令 --version，捕获缺共享库等只有执行才暴露的问题"""
         exe = Path(bin_dir) / (self._shim_cmd + (".exe" if sys.platform == "win32" else ""))
         if not exe.exists():
-            return
+            raise InstallError("installed command is unavailable")
         try:
             r = subprocess.run(
                 [str(exe), *self._version_args],
@@ -258,10 +253,12 @@ class VersionedTarballRecipe(Recipe):
             detail = f"（{lines[-1]}）" if lines else ""
             raise InstallError(t(f"software.{self._error_ns}.verify_failed") + detail)
 
+    @versioned_mutation
     def upgrade(self, version: str) -> None:
         """升级：直接安装新版本（保留已有版本，不卸载）"""
         self.install(version)
 
+    @versioned_mutation
     def switch(self, version: str) -> None:
         installed = self.installed_versions()
         if version not in installed:
@@ -269,15 +266,21 @@ class VersionedTarballRecipe(Recipe):
 
         bin_dir = self._switch_bin_dir(version)
         snap = self._load_snapshot()
-        snap["active_version"] = version
-        snap[self._bin_dir_snap_key] = bin_dir
-        self._save_snapshot(snap)
+        previous_bin = snap.get(self._bin_dir_snap_key)
+        if not previous_bin and snap.get("active_version"):
+            previous_bin = self._switch_bin_dir(snap["active_version"])
+        driver = self._get_driver()
+        from software._shared.activation import activate_version, verify_command_version
+        activate_version(snap, {"active_version": version, self._bin_dir_snap_key: bin_dir},
+                         save=self._save_snapshot,
+                         apply=lambda: driver.apply_version_link(bin_dir),
+                         restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(),
+                         verify=lambda: verify_command_version(self._shim_cmd, self._activation_version(version), self._version_args))
 
-        try:
-            self._get_driver().apply_version_link(bin_dir)
-        except Exception:
-            pass
+    def _activation_version(self, version: str) -> str:
+        return version
 
+    @versioned_mutation
     def uninstall(self, version: str | None = None) -> None:
         from core.progress import MultiStepProgress
 

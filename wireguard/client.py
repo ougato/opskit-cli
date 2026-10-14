@@ -92,17 +92,28 @@ def _save_client_state(data: dict) -> None:
     write_secret_file(WG_CLIENT_STATE_FILE, json.dumps(data, indent=2, ensure_ascii=False))
 
 
-def _load_client_state() -> dict:
+def _load_client_state(*, timeout=None) -> dict:
     """加载客户端 state 文件"""
     import json
     from wireguard.constants import WG_CLIENT_STATE_FILE
     from core.privilege import read_root_file
-    content = read_root_file(WG_CLIENT_STATE_FILE)
-    if content:
+    if timeout is None:
+        content = read_root_file(WG_CLIENT_STATE_FILE)
+    else:
+        from core.privilege import read_unix_root_file
+        content = read_unix_root_file(WG_CLIENT_STATE_FILE, timeout=timeout)
+    if content is not None:
         try:
-            return json.loads(content)
-        except Exception:
-            pass
+            state = json.loads(content)
+        except (ValueError, TypeError):
+            raise ValueError("invalid WireGuard client state") from None
+        if not isinstance(state, dict) or not isinstance(state.get("tunnels", []), list):
+            raise ValueError("invalid WireGuard client state")
+        for tunnel in state.get("tunnels", []):
+            if not isinstance(tunnel, dict):
+                raise ValueError("invalid WireGuard client state")
+            _validate_tunnel(tunnel)
+        return state
     return {}
 
 
@@ -232,7 +243,7 @@ def install_client(token: str | None = None) -> None:
     from core.i18n import t
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.wg_client")]
-    _install_client_token(breadcrumb, token=token)
+    return _install_client_token(breadcrumb, token=token)
 
 
 def _install_client_token(breadcrumb: list[str], token: str | None = None) -> None:
@@ -253,13 +264,13 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     )
     from wireguard.utils import (
         detect_default_iface, enable_and_start, stop_and_disable, write_file, write_secret_file,
-        get_os_id, install_wireguard_pkg, install_xray, normalize_tunnel_label,
+        get_os_id, install_wireguard_pkg, install_xray,
     )
     from wireguard.templates import xray_client_config, wg_client_config
-    from wireguard.token import decode_token
+    from wireguard.token import decode_client_token as decode_token
 
     # ── 获取令牌（CLI 传入或交互输入）───────────────────────────────
-    if token:
+    if token is not None:
         raw_token = token.strip()
     else:
         try:
@@ -271,6 +282,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         except UserCancel:
             return
     if not raw_token or not raw_token.strip():
+        if token is not None:
+            raise ValueError("token is empty")
         print_error(t("wireguard.token_required"))
         pause()
         return
@@ -278,6 +291,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     try:
         data = decode_token(raw_token.strip())
     except ValueError as e:
+        if token is not None:
+            raise ValueError("invalid WireGuard token") from None
         print_error(str(e))
         pause()
         return
@@ -295,7 +310,6 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     label         = data.get("label",       "default")
     dns           = data.get("dns")
 
-    label = normalize_tunnel_label(label, default="default")
     wg_iface      = f"wg-{label}"
     xray_instance = label
 
@@ -307,6 +321,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     _tunnels: list[dict] = _state.get("tunnels", [])
     _dup = next((t_ for t_ in _tunnels if t_.get("label") == label), None)
     if _dup:
+        if token is not None:
+            raise ValueError("tunnel already installed")
         from core.theme import print_warning
         print_warning(t("wireguard.tunnel_label_dup", label=label))
         pause()
@@ -315,6 +331,8 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     # ── 自动分配本地端口 ────────────────────────────────────────────
     local_port = _alloc_local_port(_tunnels)
     if local_port is None:
+        if token is not None:
+            raise RuntimeError("local tunnel ports exhausted")
         from wireguard.constants import CLIENT_XRAY_LOCAL_PORT_MIN, CLIENT_XRAY_LOCAL_PORT_MAX
         print_error(t(
             "wireguard.error.local_port_exhausted",
@@ -354,143 +372,129 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     clear_screen()
     print_action_title(breadcrumb)
 
-    with MultiStepProgress([t(s) for s in step_keys]) as sp:
-        import subprocess
-        from pathlib import Path as _Path
+    with _client_install_transaction(label, last_tunnel=not _tunnels):
+        with MultiStepProgress([t(s) for s in step_keys]) as sp:
+            import subprocess
+            from pathlib import Path as _Path
 
-        sp.step(t("wireguard.step.check_os"))
-        os_id = get_os_id()
-        if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
-            raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
+            sp.step(t("wireguard.step.check_os"))
+            os_id = get_os_id()
+            if os_id not in ("debian", "ubuntu", "centos", "rocky", "almalinux", "rhel", "fedora"):
+                raise InstallError(t("wireguard.error.unsupported_os", os_id=os_id))
 
-        from core.sysconfig import SysConfigManager as _SCM
-        _SCM.save(f"wg_client_{label}", sysparams=None, pre_install={})
+            from core.sysconfig import SysConfigManager as _SCM
+            _SCM.save(f"wg_client_{label}", sysparams=None, pre_install={})
 
-        sp.step(t("wireguard.step.install_wg"))
-        install_wireguard_pkg(os_id)
-        if os_id in ("debian", "ubuntu"):
-            run_as_root(
-                ["apt-get", "install", "-y", "openresolv"],
-                check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            sp.step(t("wireguard.step.install_wg"))
+            install_wireguard_pkg(os_id)
+            if os_id in ("debian", "ubuntu"):
+                run_as_root(
+                    ["apt-get", "install", "-y", "openresolv"],
+                    check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                )
+
+            sp.step(t("wireguard.step.install_xray"))
+            install_xray()
+            _ensure_xray_template_service(XRAY_BINARY)
+
+            # ── 写入 Xray 配置（/usr/local/etc/xray/{label}.json）
+            sp.step(t("wireguard.step.write_xray_config"))
+            xray_cfg_path = f"/usr/local/etc/xray/{xray_instance}.json"
+            xray_cfg = xray_client_config(
+                sni=sni,
+                server_port=server_port,
+                uuid=uuid,
+                local_port=local_port,
+                wg_port=wg_port,
             )
+            write_file(xray_cfg_path, xray_cfg)
 
-        sp.step(t("wireguard.step.install_xray"))
-        install_xray()
-        _ensure_xray_template_service(XRAY_BINARY)
-
-        # ── 写入 Xray 配置（/usr/local/etc/xray/{label}.json）
-        sp.step(t("wireguard.step.write_xray_config"))
-        xray_cfg_path = f"/usr/local/etc/xray/{xray_instance}.json"
-        xray_cfg = xray_client_config(
-            sni=sni,
-            server_port=server_port,
-            uuid=uuid,
-            local_port=local_port,
-            wg_port=wg_port,
-        )
-        write_file(xray_cfg_path, xray_cfg)
-
-        # ── 写入 WireGuard 配置（/etc/wireguard/{wg_iface}.conf）
-        sp.step(t("wireguard.step.write_wg_config"))
-        wg_cfg_path = f"/etc/wireguard/{wg_iface}.conf"
-        if _has_local_dns_service():
-            _final_dns = None
-        else:
-            _local_dns = _detect_local_dns(iface, vpn_dns=dns)
-            _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
-        wg_cfg = wg_client_config(
-            client_private_key=wg_client_priv,
-            client_ip=client_ip,
-            server_public_key=wg_server_pub,
-            psk=wg_psk,
-            server_endpoint=f"127.0.0.1:{local_port}",
-            mtu=WG_CLIENT_MTU,
-            keepalive=WG_KEEPALIVE,
-            vpn_subnet=vpn_subnet,
-            dns=_final_dns,
-        )
-        write_secret_file(wg_cfg_path, wg_cfg)
-
-        # ── 启动服务（xray@{label} 先起，再起 wg-quick@{wg_iface}）
-        sp.step(t("wireguard.step.start_services"))
-        xray_svc = f"xray@{xray_instance}"
-        wg_svc   = f"wg-quick@{wg_iface}"
-        _dropin_dir = _Path(f"/etc/systemd/system/{wg_svc}.service.d")
-        write_root_file(
-            _dropin_dir / "after-xray.conf",
-            f"[Unit]\nAfter={xray_svc}.service\nWants={xray_svc}.service\n",
-            "0644",
-        )
-        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
-        stop_and_disable(wg_svc)
-        stop_and_disable(xray_svc)
-        enable_and_start(xray_svc)
-        enable_and_start(wg_svc)
-        _ensure_wg_watchdog(label)
-
-        sp.step(t("wireguard.step.verify"))
-        import time
-        time.sleep(2)
-        from wireguard.utils import is_service_active
-        _xray_ok = is_service_active(xray_svc)
-        _wg_ok   = is_service_active(wg_svc)
-        ping_ok = False
-        try:
-            r = subprocess.run(
-                ["ping", "-c", "2", "-W", "2", vpn_gateway],
-                capture_output=True, text=True, check=False,
+            # ── 写入 WireGuard 配置（/etc/wireguard/{wg_iface}.conf）
+            sp.step(t("wireguard.step.write_wg_config"))
+            wg_cfg_path = f"/etc/wireguard/{wg_iface}.conf"
+            if _has_local_dns_service():
+                _final_dns = None
+            else:
+                _local_dns = _detect_local_dns(iface, vpn_dns=dns)
+                _final_dns = _merge_dns(vpn_dns=dns, local_dns=_local_dns)
+            wg_cfg = wg_client_config(
+                client_private_key=wg_client_priv,
+                client_ip=client_ip,
+                server_public_key=wg_server_pub,
+                psk=wg_psk,
+                server_endpoint=f"127.0.0.1:{local_port}",
+                mtu=WG_CLIENT_MTU,
+                keepalive=WG_KEEPALIVE,
+                vpn_subnet=vpn_subnet,
+                dns=_final_dns,
             )
-            ping_ok = (r.returncode == 0)
-        except Exception:
-            pass
+            write_secret_file(wg_cfg_path, wg_cfg)
+
+            # ── 启动服务（xray@{label} 先起，再起 wg-quick@{wg_iface}）
+            sp.step(t("wireguard.step.start_services"))
+            xray_svc = f"xray@{xray_instance}"
+            wg_svc   = f"wg-quick@{wg_iface}"
+            _dropin_dir = _Path(f"/etc/systemd/system/{wg_svc}.service.d")
+            write_root_file(
+                _dropin_dir / "after-xray.conf",
+                f"[Unit]\nAfter={xray_svc}.service\nWants={xray_svc}.service\n",
+                "0644",
+            )
+            run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
+            run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+            stop_and_disable(wg_svc)
+            stop_and_disable(xray_svc)
+            enable_and_start(xray_svc)
+            enable_and_start(wg_svc)
+            _ensure_wg_watchdog(label)
+
+            sp.step(t("wireguard.step.verify"))
+            import time
+            time.sleep(2)
+            from wireguard.utils import is_service_active
+            _xray_ok = is_service_active(xray_svc)
+            _wg_ok   = is_service_active(wg_svc)
+            ping_ok = False
+            try:
+                r = subprocess.run(
+                    ["ping", "-c", "2", "-W", "2", vpn_gateway],
+                    capture_output=True, text=True, check=False, timeout=8,
+                )
+                ping_ok = (r.returncode == 0)
+            except Exception:
+                pass
+            if not (_xray_ok and _wg_ok):
+                from core.theme import print_warning as _pw
+                _pw(f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} {wg_svc}={'active' if _wg_ok else 'INACTIVE'}")
+
         if not (_xray_ok and _wg_ok):
-            from core.theme import print_warning as _pw
-            _pw(f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} {wg_svc}={'active' if _wg_ok else 'INACTIVE'}")
+            raise RuntimeError("tunnel services failed health check")
 
-    if not (_xray_ok and _wg_ok):
-        _remove_wg_watchdog(label, last_tunnel=not _tunnels)
-        print_error(t(
-            "wireguard.error.client_service_start_fail",
-            xray=xray_svc,
-            xray_status="active" if _xray_ok else "INACTIVE",
-            wg=wg_svc,
-            wg_status="active" if _wg_ok else "INACTIVE",
-        ))
-        stop_and_disable(wg_svc)
-        stop_and_disable(xray_svc)
-        run_as_root(["rm", "-f", wg_cfg_path, xray_cfg_path,
-                     str(_dropin_dir / "after-xray.conf")], check=False, capture_output=True)
-        run_as_root(["rmdir", str(_dropin_dir)], check=False, capture_output=True)
         from core.sysconfig import SysConfigManager as _SCM
-        _SCM.restore(f"wg_client_{label}")
-        _SCM.remove(f"wg_client_{label}")
-        run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
-        pause()
-        return
+        _SCM.mark_installed(f"wg_client_{label}")
 
-    from core.sysconfig import SysConfigManager as _SCM
-    _SCM.mark_installed(f"wg_client_{label}")
+        # ── 保存 tunnels state ──────────────────────────────────────────────
+        _tunnels.append({
+            "label":       label,
+            "wg_iface":    wg_iface,
+            "xray_svc":    f"xray@{xray_instance}",
+            "local_port":  local_port,
+            "client_ip":   client_ip,
+            "vpn_gateway": vpn_gateway,
+            "vpn_subnet":  vpn_subnet,
+            "server_ip":   server_ip,
+            "server_port": server_port,
+            "sni":         sni,
+            "uuid":        uuid,
+            "wg_server_pub": wg_server_pub,
+            "dns":         _final_dns or "",
+            "token":       raw_token.strip(),
+        })
+        _state["tunnels"] = _tunnels
+        _save_client_state(_state)
 
-    # ── 保存 tunnels state ──────────────────────────────────────────────
-    _tunnels.append({
-        "label":       label,
-        "wg_iface":    wg_iface,
-        "xray_svc":    f"xray@{xray_instance}",
-        "local_port":  local_port,
-        "client_ip":   client_ip,
-        "vpn_gateway": vpn_gateway,
-        "vpn_subnet":  vpn_subnet,
-        "server_ip":   server_ip,
-        "server_port": server_port,
-        "sni":         sni,
-        "uuid":        uuid,
-        "wg_server_pub": wg_server_pub,
-        "dns":         _final_dns or "",
-        "token":       raw_token.strip(),
-    })
-    _state["tunnels"] = _tunnels
-    _save_client_state(_state)
+    if token is not None:
+        return {"id": wg_iface, "label": label, "installed": True}
 
     # ── 安装成功 Panel ────────────────────────────────────────────────
     from rich.panel import Panel
@@ -535,6 +539,9 @@ def uninstall_client() -> None:
 
     state = _load_client_state()
     tunnels: list[dict] = state.get("tunnels", [])
+    # Validate the complete batch before the first privileged side effect.
+    for tunnel in tunnels:
+        _validate_tunnel(tunnel)
 
     step_keys = [
         "wireguard.step.client_uninstall_stop_wg",
@@ -816,26 +823,167 @@ def view_client_info(breadcrumb: list[str]) -> None:
     pause()
 
 
-def remove_tunnel(breadcrumb: list[str]) -> None:
+from contextlib import contextmanager
+
+
+@contextmanager
+def _client_install_transaction(label, *, last_tunnel):
+    from core.privilege import read_root_file
+    from core.sysconfig import SysConfigManager
+    from wireguard.constants import WG_CLIENT_STATE_FILE
+    from wireguard.utils import write_secret_file
+    paths = (
+        f"/etc/wireguard/wg-{label}.conf", f"/usr/local/etc/xray/{label}.json",
+        f"/etc/systemd/system/wg-quick@wg-{label}.service.d/after-xray.conf",
+    )
+    for path in paths:
+        for test in ("-e", "-L"):
+            code = run_as_root(["test", test, path], check=False, capture_output=True).returncode
+            if code == 0:
+                raise RuntimeError("existing tunnel configuration would be overwritten")
+            if code != 1:
+                raise RuntimeError("unable to verify tunnel configuration destination")
+    old_state = read_root_file(WG_CLIENT_STATE_FILE)
+    try:
+        yield
+    except BaseException:
+        errors = []
+        operations = [
+            lambda: _remove_wg_watchdog(label, last_tunnel=last_tunnel),
+            lambda: run_as_root(["systemctl", "stop", f"wg-quick@wg-{label}", f"xray@{label}"], check=True, capture_output=True),
+            lambda: run_as_root(["systemctl", "disable", f"wg-quick@wg-{label}", f"xray@{label}"], check=True, capture_output=True),
+            lambda: run_as_root(["rm", "-f", *paths], check=True, capture_output=True),
+            lambda: SysConfigManager.restore(f"wg_client_{label}"),
+            lambda: SysConfigManager.remove(f"wg_client_{label}"),
+            lambda: run_as_root(["systemctl", "daemon-reload"], check=True, capture_output=True),
+            lambda: write_secret_file(WG_CLIENT_STATE_FILE, old_state) if old_state is not None else run_as_root(["rm", "-f", WG_CLIENT_STATE_FILE], check=True, capture_output=True),
+        ]
+        for operation in operations:
+            try:
+                operation()
+            except Exception:
+                errors.append(True)
+        if errors:
+            raise RuntimeError("tunnel installation failed; cleanup incomplete") from None
+        raise
+
+
+@contextmanager
+def _token_update_transaction(paths, services, *, service_readable_paths=()):
+    """Restore previous configuration and service state on any update failure."""
+    from core.privilege import read_root_file
+    from wireguard.utils import write_file, write_secret_file
+    backups = {path: read_root_file(path) for path in paths}
+    if any(not content for content in backups.values()):
+        raise RuntimeError("existing tunnel configuration missing; update refused")
+    prior = {}
+    for service in services:
+        prior[service] = tuple(
+            run_as_root(["systemctl", verb, service], check=False, capture_output=True).returncode == 0
+            for verb in ("is-active", "is-enabled")
+        )
+    try:
+        yield
+    except BaseException:
+        errors = []
+        for path, content in backups.items():
+            try:
+                writer = write_file if path in service_readable_paths else write_secret_file
+                writer(path, content)
+            except Exception:
+                errors.append("configuration")
+        for service, (active, enabled) in prior.items():
+            try:
+                run_as_root(["systemctl", "enable" if enabled else "disable", service], check=True, capture_output=True)
+                run_as_root(["systemctl", "restart" if active else "stop", service], check=True, capture_output=True)
+            except Exception:
+                errors.append("service")
+        if errors:
+            raise RuntimeError("tunnel update failed; rollback incomplete") from None
+        raise
+
+
+def _validate_tunnel(tunnel: dict) -> tuple[str, str, str]:
+    """Reject persisted identifiers before using them in root paths or services."""
+    import re
+    label = tunnel.get("label")
+    iface = tunnel.get("wg_iface")
+    service = tunnel.get("xray_svc")
+    if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,23}", label):
+        raise ValueError("invalid stored tunnel label")
+    if iface != f"wg-{label}" or service != f"xray@{label}":
+        raise ValueError("invalid stored tunnel identifiers")
+    return label, iface, service
+
+
+def _select_tunnel(tunnels: list[dict], tunnel_id: str) -> int:
+    matches = [i for i, item in enumerate(tunnels) if item.get("wg_iface") == tunnel_id]
+    if len(matches) != 1:
+        raise ValueError("tunnel ID missing or ambiguous")
+    _validate_tunnel(tunnels[matches[0]])
+    return matches[0]
+
+
+def remove_tunnel(breadcrumb: list[str], *, tunnel_id: str | None = None):
     """移除单条隧道（停止服务 + 删除配置 + 更新 state）"""
-    import subprocess
-    import shutil
-    from pathlib import Path as _Path
     from core.i18n import t
-    from core.prompt import pause, select, UserCancel
-    from core.theme import print_error, print_action_title, print_success
-    from wireguard.utils import stop_and_disable
+    from core.prompt import pause
+    from core.theme import print_error, print_success
 
     mk = "wireguard.client_manage"
     sub = [*breadcrumb, t(f"{mk}.remove_tunnel")]
 
     state   = _load_client_state()
     tunnels = state.get("tunnels", [])
+    if not tunnels and tunnel_id is not None:
+        raise ValueError("tunnel ID not found")
     if not tunnels:
         print_error(t(f"{mk}.no_state"))
         pause()
         return
 
+    if tunnel_id is not None:
+        idx = _select_tunnel(tunnels, tunnel_id)
+        key = str(idx + 1)
+    else:
+        key = _pick_tunnel(tunnels, sub)
+    if key is None:
+        return
+
+    idx = int(key) - 1
+    tn = tunnels[idx]
+    lbl, wg_iface, xray_svc = _validate_tunnel(tn)
+
+    if wg_iface:
+        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+        for verb in ("stop", "disable"):
+            run_as_root(["systemctl", verb, f"wg-quick@{wg_iface}"], check=True, capture_output=True)
+        run_as_root(["rm", "-rf", f"/etc/systemd/system/wg-quick@{wg_iface}.service.d"],
+                    check=True, capture_output=True)
+        run_as_root(["rm", "-f", f"/etc/wireguard/{wg_iface}.conf"], check=True, capture_output=True)
+    if xray_svc:
+        for verb in ("stop", "disable"):
+            run_as_root(["systemctl", verb, xray_svc], check=True, capture_output=True)
+    if lbl:
+        run_as_root(["rm", "-f", f"/usr/local/etc/xray/{lbl}.json"], check=True, capture_output=True)
+        from core.sysconfig import SysConfigManager as _SCM
+        _SCM.restore(f"wg_client_{lbl}")
+        _SCM.remove(f"wg_client_{lbl}")
+    _remove_wg_watchdog(lbl, last_tunnel=len(tunnels) == 1)
+    run_as_root(["systemctl", "daemon-reload"], check=True, capture_output=True)
+
+    tunnels.pop(idx)
+    state["tunnels"] = tunnels
+    _save_client_state(state)
+    if tunnel_id is not None:
+        return {"id": wg_iface, "removed": True}
+    print_success(t(f"{mk}.remove_tunnel_ok").format(label=lbl))
+    pause()
+
+
+def _pick_tunnel(tunnels, sub):
+    from core.i18n import t
+    from core.prompt import select, UserCancel
     choices = [{"key": str(i + 1), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
     try:
         key = select(
@@ -850,39 +998,13 @@ def remove_tunnel(breadcrumb: list[str]) -> None:
     if key is None:
         return
 
-    idx = int(key) - 1
-    tn = tunnels[idx]
-    wg_iface = tn.get("wg_iface", "")
-    xray_svc = tn.get("xray_svc", "")
-    lbl      = tn.get("label",    "")
-
-    if wg_iface:
-        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
-        stop_and_disable(f"wg-quick@{wg_iface}")
-        run_as_root(["rm", "-rf", f"/etc/systemd/system/wg-quick@{wg_iface}.service.d"],
-                    check=False, capture_output=True)
-        run_as_root(["rm", "-f", f"/etc/wireguard/{wg_iface}.conf"], check=False, capture_output=True)
-    if xray_svc:
-        stop_and_disable(xray_svc)
-    if lbl:
-        run_as_root(["rm", "-f", f"/usr/local/etc/xray/{lbl}.json"], check=False, capture_output=True)
-        from core.sysconfig import SysConfigManager as _SCM
-        _SCM.restore(f"wg_client_{lbl}")
-        _SCM.remove(f"wg_client_{lbl}")
-    run_as_root(["systemctl", "daemon-reload"], check=False, capture_output=True)
-
-    tunnels.pop(idx)
-    state["tunnels"] = tunnels
-    _save_client_state(state)
-    print_success(t(f"{mk}.remove_tunnel_ok").format(label=lbl))
-    pause()
+    return key
 
 
-def update_client_token(breadcrumb: list[str]) -> None:
+def update_client_token(breadcrumb: list[str], *, tunnel_id: str | None = None, token: str | None = None):
     """更新指定隧道令牌：选择隧道 → 解析新令牌 → 重写配置并重启服务"""
-    import subprocess
     from core.i18n import t
-    from core.prompt import pause, clear_screen, text_input, select, UserCancel
+    from core.prompt import pause, clear_screen, text_input, UserCancel
     from core.theme import print_error, print_action_title, print_success
     from core.progress import MultiStepProgress
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
@@ -895,47 +1017,36 @@ def update_client_token(breadcrumb: list[str]) -> None:
 
     state   = _load_client_state()
     tunnels = state.get("tunnels", [])
+    if not tunnels and tunnel_id is not None:
+        raise ValueError("tunnel ID not found")
     if not tunnels:
         print_error(t(f"{mk}.no_state"))
         pause()
         return
 
-    choices = [{"key": str(i + 1), "label": tn.get("label", f"tunnel-{i}")} for i, tn in enumerate(tunnels)]
-    try:
-        key = select(
-            breadcrumb=sub,
-            subtitle=t("prompt.select"),
-            choices=choices,
-            theme_key="software",
-            back_label=t("menu.back"),
-        )
-    except UserCancel:
-        return
-    if key is None:
-        return
-
-    idx = int(key) - 1
-    tn  = tunnels[idx]
-
-    try:
-        raw_token = text_input(
-            breadcrumb=sub,
-            prompt=t(f"{mk}.input_token"),
-            theme_key="software",
-        )
-    except UserCancel:
-        return
+    if tunnel_id is not None:
+        idx = _select_tunnel(tunnels, tunnel_id)
+    else:
+        key = _pick_tunnel(tunnels, sub)
+        if key is None:
+            return
+        idx = int(key) - 1
+    tn = dict(tunnels[idx])
+    lbl, wg_iface, xray_svc = _validate_tunnel(tn)
+    if token is not None:
+        raw_token = token
+    else:
+        try:
+            raw_token = text_input(breadcrumb=sub, prompt=t(f"{mk}.input_token"), theme_key="software")
+        except UserCancel:
+            return
     if not raw_token or not raw_token.strip():
-        print_error(t(f"{mk}.token_empty"))
-        pause()
-        return
+        raise ValueError("token is empty")
 
     try:
         data = decode_token(raw_token.strip())
-    except ValueError as e:
-        print_error(t(f"{mk}.update_fail", detail=str(e)))
-        pause()
-        return
+    except ValueError:
+        raise ValueError("invalid WireGuard token") from None
 
     server_ip      = data["server_ip"]
     server_port    = data["server_port"]
@@ -948,11 +1059,10 @@ def update_client_token(breadcrumb: list[str]) -> None:
     vpn_subnet     = data.get("vpn_subnet",  tn.get("vpn_subnet",  "10.10.10.0/24"))
     vpn_gateway    = data.get("vpn_gateway", tn.get("vpn_gateway", "10.10.10.1"))
 
-    wg_iface   = tn.get("wg_iface",   f"wg-{tn.get('label', 'default')}")
-    xray_svc   = tn.get("xray_svc",   f"xray@{tn.get('label', 'default')}")
-    local_port = tn.get("local_port",  4000)
-    wg_svc     = f"wg-quick@{wg_iface}"
-    lbl        = tn.get("label",       "default")
+    local_port = tn.get("local_port", 4000)
+    if type(local_port) is not int or not 1 <= local_port <= 65535:
+        raise ValueError("invalid stored tunnel port")
+    wg_svc = f"wg-quick@{wg_iface}"
     xray_cfg_path = f"/usr/local/etc/xray/{lbl}.json"
     wg_cfg_path   = f"/etc/wireguard/{wg_iface}.conf"
 
@@ -966,69 +1076,70 @@ def update_client_token(breadcrumb: list[str]) -> None:
     clear_screen()
     print_action_title(sub)
 
-    with MultiStepProgress(step_descs) as sp:
-        sp.step(step_descs[0])
-        xray_cfg = xray_client_config(
-            sni=sni, server_port=server_port, uuid=uuid,
-            local_port=local_port, wg_port=WG_UDP_PORT,
-        )
-        write_file(xray_cfg_path, xray_cfg)
+    from wireguard.constants import WG_CLIENT_STATE_FILE
+    with _token_update_transaction((xray_cfg_path, wg_cfg_path, WG_CLIENT_STATE_FILE), (xray_svc, wg_svc), service_readable_paths=(xray_cfg_path,)):
+        with MultiStepProgress(step_descs) as sp:
+            sp.step(step_descs[0])
+            xray_cfg = xray_client_config(
+                sni=sni, server_port=server_port, uuid=uuid,
+                local_port=local_port, wg_port=WG_UDP_PORT,
+            )
+            write_file(xray_cfg_path, xray_cfg)
 
-        sp.step(step_descs[1])
-        _upd_vpn_dns = data.get("dns")
-        if _has_local_dns_service():
-            _upd_dns = None
-        else:
-            _upd_iface = detect_default_iface()
-            _upd_local = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
-            _upd_dns   = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
-        wg_cfg = wg_client_config(
-            client_private_key=wg_client_priv, client_ip=client_ip,
-            server_public_key=wg_server_pub, psk=wg_psk,
-            server_endpoint=f"127.0.0.1:{local_port}",
-            mtu=WG_CLIENT_MTU, keepalive=WG_KEEPALIVE, vpn_subnet=vpn_subnet,
-            dns=_upd_dns,
-        )
-        write_secret_file(wg_cfg_path, wg_cfg)
+            sp.step(step_descs[1])
+            _upd_vpn_dns = data.get("dns")
+            if _has_local_dns_service():
+                _upd_dns = None
+            else:
+                _upd_iface = detect_default_iface()
+                _upd_local = _detect_local_dns(_upd_iface, vpn_dns=_upd_vpn_dns)
+                _upd_dns   = _merge_dns(vpn_dns=_upd_vpn_dns, local_dns=_upd_local)
+            wg_cfg = wg_client_config(
+                client_private_key=wg_client_priv, client_ip=client_ip,
+                server_public_key=wg_server_pub, psk=wg_psk,
+                server_endpoint=f"127.0.0.1:{local_port}",
+                mtu=WG_CLIENT_MTU, keepalive=WG_KEEPALIVE, vpn_subnet=vpn_subnet,
+                dns=_upd_dns,
+            )
+            write_secret_file(wg_cfg_path, wg_cfg)
 
-        sp.step(step_descs[2])
-        run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
-        stop_and_disable(wg_svc)
-        stop_and_disable(xray_svc)
-        enable_and_start(xray_svc)
-        enable_and_start(wg_svc)
+            sp.step(step_descs[2])
+            run_as_root(["wg-quick", "down", wg_iface], check=False, capture_output=True)
+            for service in (wg_svc, xray_svc):
+                run_as_root(["systemctl", "stop", service], check=True, capture_output=True)
+            enable_and_start(xray_svc)
+            enable_and_start(wg_svc)
 
-        sp.step(step_descs[3])
-        import time
-        time.sleep(2)
-        from wireguard.utils import is_service_active
-        _xray_ok = is_service_active(xray_svc)
-        _wg_ok   = is_service_active(wg_svc)
+            sp.step(step_descs[3])
+            import time
+            time.sleep(2)
+            from wireguard.utils import is_service_active
+            _xray_ok = is_service_active(xray_svc)
+            _wg_ok   = is_service_active(wg_svc)
 
-    tn.update({
-        "token":       raw_token.strip(),
-        "client_ip":   client_ip,
-        "server_ip":   server_ip,
-        "server_port": server_port,
-        "sni":         sni,
-        "uuid":        uuid,
-        "wg_server_pub": wg_server_pub,
-        "vpn_subnet":  vpn_subnet,
-        "vpn_gateway": vpn_gateway,
-        "dns":         _upd_dns or "",
-    })
-    tunnels[idx] = tn
-    state["tunnels"] = tunnels
-    _save_client_state(state)
+        if not (_xray_ok and _wg_ok):
+            raise RuntimeError("updated tunnel services failed health check")
+
+        tn.update({
+            "token":       raw_token.strip(),
+            "client_ip":   client_ip,
+            "server_ip":   server_ip,
+            "server_port": server_port,
+            "sni":         sni,
+            "uuid":        uuid,
+            "wg_server_pub": wg_server_pub,
+            "vpn_subnet":  vpn_subnet,
+            "vpn_gateway": vpn_gateway,
+            "dns":         _upd_dns or "",
+        })
+        tunnels[idx] = tn
+        state["tunnels"] = tunnels
+        _save_client_state(state)
+
+    if tunnel_id is not None:
+        return {"id": wg_iface, "updated": True}
 
     clear_screen()
     print_action_title(sub)
-    if _xray_ok and _wg_ok:
-        print_success(t(f"{mk}.update_success"))
-    else:
-        from core.theme import print_warning
-        print_warning(
-            f"{xray_svc}={'active' if _xray_ok else 'INACTIVE'} "
-            f"{wg_svc}={'active' if _wg_ok else 'INACTIVE'}"
-        )
+    print_success(t(f"{mk}.update_success"))
     pause()

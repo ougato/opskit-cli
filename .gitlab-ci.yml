@@ -1,5 +1,47 @@
 stages:
+  - test
   - release
+
+# GitLab is the origin forge; branch/MR checks must not depend on a mirror.
+# Windows/macOS remain covered by the GitHub matrix only when mirror syncing
+# and those runs are verified. This Linux job is not a six-platform acceptance.
+regression_linux:
+  stage: test
+  image: "python:${PYTHON_VERSION}-slim"
+  timeout: 20m
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.12"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v.*/'
+  variables:
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PIP_NO_INPUT: "1"
+  before_script:
+    - apt-get update
+    - apt-get install --no-install-recommends -y git
+    - python -m pip install --isolated --only-binary=:all: --index-url https://pypi.org/simple -e ".[dev]"
+  script:
+    - python -m pip check
+    - python -m ruff check .
+    - python scripts/check_static_debt.py
+    - python -I -m build --wheel --outdir cache/wheels
+    - python scripts/verify_wheel.py cache/wheels
+    - python -m venv cache/wheel-environment
+    - cache/wheel-environment/bin/python -m pip install --isolated --only-binary=:all: --index-url https://pypi.org/simple cache/wheels/*.whl
+    - cache/wheel-environment/bin/python -m pip check
+    - python scripts/verify_installed_cli.py cache/wheel-environment cache/installed-cli
+    - python -m pytest -q --timeout=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml
+  artifacts:
+    when: always
+    paths:
+      - cache/ci-results.xml
+      - cache/installed-cli/verification.json
+    reports:
+      junit: cache/ci-results.xml
+    expire_in: 7 days
 
 # ─── release: 创建 GitLab Release，所有平台链接指向 GitHub Releases ─────────
 release_job:

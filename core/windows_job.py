@@ -24,31 +24,45 @@ class ExtendedLimits(ctypes.Structure):
                 ("peak_process", ctypes.c_size_t), ("peak_job", ctypes.c_size_t)]
 
 
-def attach_and_resume(process):
-    import psutil
+def attach_running(process_handle):
+    """Attach an existing process; caller gates work until assignment succeeds."""
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
     kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        limits = ExtendedLimits()
+        limits.basic.flags = 0x2000
+        if not kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel.AssignProcessToJobObject(job, int(process_handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+    except BaseException:
+        kernel.CloseHandle(job)
+        raise
+    return job
+
+
+def attach_and_resume(process):
+    import psutil
+    try:
+        job = attach_running(process._handle)
+    except BaseException:
+        process.kill()
+        process.wait(timeout=5)
+        raise
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenThread.restype = wintypes.HANDLE
     kernel.ResumeThread.argtypes = [wintypes.HANDLE]
     kernel.ResumeThread.restype = wintypes.DWORD
-    job = kernel.CreateJobObjectW(None, None)
-    if not job:
-        error = ctypes.WinError(ctypes.get_last_error())
-        process.kill()
-        process.wait(timeout=5)
-        raise error
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     try:
-        limits = ExtendedLimits()
-        limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        if not kernel.AssignProcessToJobObject(job, int(process._handle)):
-            raise ctypes.WinError(ctypes.get_last_error())
         for info in psutil.Process(process.pid).threads():
             thread = kernel.OpenThread(2, False, info.id)
             if not thread:

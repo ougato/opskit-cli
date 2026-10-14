@@ -1,0 +1,3 @@
+schema_version: 1
+with_p10k: true
+switch_shell: false

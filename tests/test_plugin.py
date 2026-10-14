@@ -346,7 +346,7 @@ def test_hot_reload_after_update(plugins_root) -> None:
 
 
 def test_update_invalidates_trust(plugins_root, tmp_path) -> None:
-    """已信任插件经平台更新流程拉取新内容后自动继承信任，不再重复确认"""
+    """未变内容保留信任，拉取不同内容后必须撤销旧指纹授权。"""
     import subprocess
 
     from plugin import commands
@@ -358,7 +358,8 @@ def test_update_invalidates_trust(plugins_root, tmp_path) -> None:
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
 
     dest = plugins_root / "demo"
-    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
+    cloned = subprocess.run(["git", "clone", "-q", str(origin), str(dest)], capture_output=True, text=True)
+    assert cloned.returncode == 0, cloned.stderr
     _trust(dest)
     manifest = load_manifest(dest)
     assert commands.trust_status(manifest) == commands.TRUST_OK

@@ -142,17 +142,12 @@ def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
     return result
 
 
-def is_service_active(service: str = XUI_SERVICE) -> bool:
+def is_service_active(service: str = XUI_SERVICE, *, timeout: float = SERVICE_RESTART_TIMEOUT) -> bool:
     try:
-        result = subprocess.run(
-            [SYSTEMCTL_COMMAND, "is-active", service],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
-        return result.stdout.strip() == "active"
-    except Exception:
+        from core.process import capture
+        result = capture([SYSTEMCTL_COMMAND, "is-active", service], timeout=timeout)
+        return result.returncode == 0 and result.stdout.strip() == "active"
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -170,24 +165,24 @@ def is_port_listening(port: int) -> bool:
         return False
 
 
-def detect_xui_version() -> str | None:
-    if is_service_active() or command_exists(XUI_COMMAND):
+def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = False) -> str | None:
+    from core.deadline import Deadline
+    budget = Deadline(timeout, "XUI version")
+    if is_service_active(timeout=budget.remaining()) or command_exists(XUI_COMMAND):
         try:
-            result = subprocess.run(
-                [XUI_BINARY_COMMAND, "-v"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
+            from core.process import capture
+            result = capture([XUI_BINARY_COMMAND, "-v"], timeout=budget.remaining())
+            budget.remaining()
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
                 match = re.search(r"v?\d+\.\d+(?:\.\d+)?", output)
                 if match:
                     return match.group(0)
-        except Exception:
+        except (TimeoutError, subprocess.TimeoutExpired):
+            raise
+        except OSError:
             pass
-        return XUI_INSTALLED_VERSION
+        return None if strict else XUI_INSTALLED_VERSION
     return None
 
 
@@ -268,7 +263,7 @@ def redact_state(value: object) -> object:
         redacted: dict[str, object] = {}
         for key, item in value.items():
             key_text = str(key)
-            if key_text in SENSITIVE_STATE_KEYS:
+            if key_text in SENSITIVE_STATE_KEYS or key_text in {"uuid", "link", "vless_link"}:
                 redacted[key_text] = REDACTED_VALUE
             else:
                 redacted[key_text] = redact_state(item)
@@ -318,7 +313,7 @@ def configure_panel_settings(
     return result.returncode == 0
 
 
-def get_panel_settings() -> dict[str, object]:
+def get_panel_settings(*, timeout: float = HTTP_TIMEOUT_SECONDS) -> dict[str, object]:
     """读取 x-ui 实际生效的面板设置（port / webBasePath）。
 
     3x-ui 会为面板生成随机 webBasePath；`x-ui setting -webBasePath ""`
@@ -326,15 +321,13 @@ def get_panel_settings() -> dict[str, object]:
     """
     if not command_exists(XUI_BINARY_COMMAND):
         return {}
-    result = run_as_root(
+    from core.privilege import capture_as_root
+    result = capture_as_root(
         [XUI_BINARY_COMMAND, XUI_SETTING_SUBCOMMAND, XUI_SETTING_SHOW_ARG],
-        capture_output=True,
-        text=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        timeout=HTTP_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
+    if result.returncode:
+        raise RuntimeError("XUI panel settings query failed")
     settings: dict[str, object] = {}
     for line in result.stdout.splitlines():
         if XUI_SETTING_KV_SEPARATOR not in line:

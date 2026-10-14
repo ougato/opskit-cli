@@ -356,6 +356,7 @@ def test_python_package_manager_skips_build_only_versions(monkeypatch) -> None:
 
 
 def test_python_activate_install_updates_snapshot(monkeypatch) -> None:
+    from core import process
     from types import SimpleNamespace
     from software.recipes.python import recipe as python_recipe
     from software.recipes.python.recipe import PythonRecipe
@@ -370,9 +371,9 @@ def test_python_activate_install_updates_snapshot(monkeypatch) -> None:
             saved["fallback"] = fallback
 
     monkeypatch.setattr(
-        python_recipe.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(stdout="Python 3.12.9\n", stderr=""),
+        process,
+        "capture",
+        lambda *args, **kwargs: SimpleNamespace(stdout="Python 3.12.13\n", returncode=0),
     )
     monkeypatch.setattr(python_recipe, "save_snapshot", lambda data: saved.update(data))
 
@@ -391,6 +392,7 @@ def test_python_activate_install_updates_snapshot(monkeypatch) -> None:
 
 
 def test_python_activate_install_rejects_wrong_minor(monkeypatch) -> None:
+    from core import process
     from types import SimpleNamespace
     from software.recipes.python import recipe as python_recipe
     from software.recipes.python.recipe import PythonRecipe
@@ -399,15 +401,15 @@ def test_python_activate_install_rejects_wrong_minor(monkeypatch) -> None:
 
     class FakeDriver:
         def apply_version_link(self, new_bin: str) -> None:
-            pass
+            pytest.fail("invalid interpreter modified routing")
 
         def install_shim(self, fallback: str) -> None:
-            pass
+            pytest.fail("invalid interpreter modified shims")
 
     monkeypatch.setattr(
-        python_recipe.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(stdout="Python 3.11.9\n", stderr=""),
+        process,
+        "capture",
+        lambda *args, **kwargs: SimpleNamespace(stdout="Python 3.11.9\n", returncode=0),
     )
     monkeypatch.setattr(python_recipe, "save_snapshot", lambda data: saved.update(data))
 
@@ -466,15 +468,14 @@ def test_windows_python_shim_fallback_skips_itself() -> None:
     assert "( python %* )" not in SHIM_CMD_TEMPLATE
 
 
-def test_python_linux_uv_installer_output_is_captured() -> None:
+def test_python_linux_uv_bootstrap_never_executes_downloaded_script() -> None:
     import inspect
     from software.recipes.python.linux import LinuxDriver
 
     source = inspect.getsource(LinuxDriver.ensure_uv)
 
-    assert '["sh", script]' in source
-    assert "capture_output=True" in source
-    assert "text=True" in source
+    assert "ensure_uv_archive()" in source
+    assert "subprocess.run" not in source
 
 
 def test_nginx_enable_service_reports_failure(monkeypatch) -> None:
@@ -801,7 +802,7 @@ def test_golang_install_tarball_handles_non_ascii_member_names(tmp_path, monkeyp
         assert f.read() == b"stub"
 
 
-def test_golang_verify_uses_version_subcommand(tmp_path) -> None:
+def test_golang_verify_uses_version_subcommand(tmp_path, monkeypatch) -> None:
     """go 不支持 --version，验证阶段必须用 go version 子命令"""
     from software.recipes.golang.recipe import GoRecipe
 
@@ -809,6 +810,18 @@ def test_golang_verify_uses_version_subcommand(tmp_path) -> None:
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    import sys
+    if sys.platform == "win32":
+        from types import SimpleNamespace
+        (bin_dir / "go.exe").write_bytes(b"test executable")
+
+        def run(arguments, **kwargs):
+            assert arguments == [str(bin_dir / "go.exe"), "version"]
+            return SimpleNamespace(returncode=0, stdout="go version go1.26.3", stderr="")
+
+        monkeypatch.setattr("software._shared.versioned_recipe.subprocess.run", run)
+        GoRecipe()._verify_runnable(str(bin_dir))
+        return
     exe = bin_dir / "go"
     exe.write_text(
         '#!/bin/sh\nif [ "$1" = "version" ]; then echo "go version go1.26.3 linux/amd64"; exit 0; fi\n'

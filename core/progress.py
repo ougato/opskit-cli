@@ -18,7 +18,6 @@ from rich.progress import (
     Task,
     TaskID,
     TextColumn,
-    TimeElapsedColumn,
     TransferSpeedColumn,
 )
 from rich.text import Text

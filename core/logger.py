@@ -17,6 +17,14 @@ _logger: logging.Logger | None = None
 _initialized: bool = False
 
 
+class _DeferredRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Resolve logging during import, create its directory only on first record."""
+
+    def _open(self):
+        Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
+        return super()._open()
+
+
 def _get_log_path() -> Path:
     from core.config import get_data_dir
     return get_data_dir() / DIR_LOGS / "opskit.log"
@@ -38,7 +46,6 @@ def init(level: str = "WARNING") -> None:
         return
 
     log_path = _get_log_path()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     fmt = logging.Formatter(
         LOG_FORMAT,
@@ -46,11 +53,12 @@ def init(level: str = "WARNING") -> None:
         style="{",
     )
 
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = _DeferredRotatingFileHandler(
         log_path,
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
+        delay=True,
     )
     from core.secrets import RedactionFilter
     file_handler.addFilter(RedactionFilter())

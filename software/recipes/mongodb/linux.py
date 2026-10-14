@@ -1,9 +1,10 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入（对齐 golang/linux.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -28,31 +29,23 @@ class LinuxDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import mongo_version_dir, mongo_bin_dir
+        from core.archive import extract_tar
+        from software._shared.archive_install import staged_directory
         dest = mongo_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
         try:
-            with tarfile.open(str(tarball), "r:gz") as tf:
-                for member in tf.getmembers():
-                    # tarball 内顶层目录名如 mongodb-linux-x86_64-8.0.4
-                    parts = member.name.split("/", 1)
-                    if len(parts) < 2 or not parts[1]:
-                        continue
-                    rel = parts[1]
-                    target = dest / rel
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    elif member.isfile():
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
-                        if member.mode & 0o111:
-                            target.chmod(target.stat().st_mode | 0o111)
+            with staged_directory(dest, prefix=".opskit-mongo-") as staging:
+                with open_tar(str(tarball), "r:gz") as archive:
+                    extract_tar(archive, staging, strip_components=1)
+                if not (staging / "bin/mongod").is_file():
+                    raise InstallError(t("software.mongodb_error.bad_structure", version=version, file="bin/mongod"))
+        except FileExistsError as e:
+            raise InstallError("MongoDB version directory already exists; refusing to overwrite") from e
+        except InstallError:
+            raise
         except Exception as e:
             raise InstallError(t("software.mongodb_error.extract_failed", version=version, error=e)) from e
 
         bin_dir = mongo_bin_dir(version)
-        if not (bin_dir / "mongod").exists():
-            raise InstallError(t("software.mongodb_error.bad_structure", version=version, file="bin/mongod"))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────
@@ -100,7 +93,8 @@ class LinuxDriver(PlatformDriver):
         root 时在 /usr/local/bin 创建/更新 mongod/mongos symlink，立即全局生效。
         非 root 时依赖 shim，注入当前进程 PATH。
         """
-        shell_path.link_into_system_bin(bin_dir, ("mongod", "mongos"))
+        from .common import mongo_versions_dir
+        shell_path.link_into_system_bin(bin_dir, ("mongod", "mongos"), managed_root=mongo_versions_dir())
         from .common import shim_dir as _shim_dir
         shell_path.prepend_process_path(str(_shim_dir()))
 

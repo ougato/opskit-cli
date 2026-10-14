@@ -1,6 +1,8 @@
 """跨平台共用工具：路径、快照、版本查找、tarball 下载（对齐 mongodb/common.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import platform
 from pathlib import Path
 
@@ -118,26 +120,13 @@ def extract_tarball(tarball, dest: Path, version: str) -> None:
     将 tar（.tar.xz 或 .tar.gz）解压到 dest，自动剥除顶层目录。
     保留文件可执行位。失败时抛出 InstallError。
     """
-    import shutil
-    import tarfile as _tarfile
+    from core.archive import extract_tar
     from software.base import InstallError
     from core.i18n import t
     mode = "r:gz" if str(tarball).endswith(".tar.gz") else "r:xz"
     try:
-        with _tarfile.open(str(tarball), mode) as tf:
-            for member in tf.getmembers():
-                parts = member.name.split("/", 1)
-                if len(parts) < 2 or not parts[1]:
-                    continue
-                target = dest / parts[1]
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif member.isfile():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with tf.extractfile(member) as src, open(target, "wb") as out:
-                        shutil.copyfileobj(src, out)
-                    if member.mode & 0o111:
-                        target.chmod(target.stat().st_mode | 0o111)
+        with open_tar(str(tarball), mode) as tf:
+            extract_tar(tf, dest, strip_components=1, allow_symlinks=True)
     except InstallError:
         raise
     except Exception as e:
@@ -224,13 +213,13 @@ def download_mysql_tarball(
                     .replace(MYSQL_LINUX_EXT_NEW, MYSQL_LINUX_EXT_OLD)
                     for u in url_templates]
         elif major == 8 and minor < 4:
-            # 8.0-8.3：glibc2.17-minimal.tar.xz（bundled 私有库，无系统依赖）
+            # 8.0-8.3：glibc2.17-minimal.tar.xz，私有库与系统库由驱动检查
             urls = [u.format(version=version, major_minor=major_minor, arch=arch)
                     .replace(MYSQL_LINUX_GLIBC_NEW, MYSQL_LINUX_GLIBC_17)
                     .replace(".tar.xz", f"{MYSQL_LINUX_SUFFIX_MINIMAL}.tar.xz")
                     for u in url_templates]
         else:
-            # 8.4+ / 9.x：glibc2.28-minimal.tar.xz（bundled 私有库，无系统依赖）
+            # 8.4+ / 9.x：glibc2.28-minimal.tar.xz，私有库与系统库由驱动检查
             urls = [u.format(version=version, major_minor=major_minor, arch=arch)
                     .replace(".tar.xz", f"{MYSQL_LINUX_SUFFIX_MINIMAL}.tar.xz")
                     for u in url_templates]

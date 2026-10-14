@@ -39,29 +39,24 @@ class SnapshotStore:
         return self.path.exists()
 
     def load(self) -> dict:
-        """读取快照，文件不存在或解析失败均返回空 dict。"""
+        """Missing snapshots are empty; malformed snapshots must not be overwritten."""
         p = self.path
         if not p.exists():
             return {}
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except ValueError:
+            raise ValueError("invalid software snapshot") from None
+        if not isinstance(data, dict):
+            raise ValueError("invalid software snapshot")
+        return data
 
     def save(self, data: dict) -> None:
         """写入快照，自动创建父目录。"""
         p = self.path
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps(data, ensure_ascii=False, indent=SNAPSHOT_JSON_INDENT),
-            encoding="utf-8",
-        )
+        from core.secrets import atomic_write
+        atomic_write(p, json.dumps(data, ensure_ascii=False, indent=SNAPSHOT_JSON_INDENT))
 
     def delete(self) -> None:
-        """删除快照文件，不存在或删除失败均静默。"""
-        p = self.path
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception:
-                pass
+        """缺失可重复删除；权限或 I/O 失败必须交给调用方处理。"""
+        self.path.unlink(missing_ok=True)

@@ -85,3 +85,23 @@ def test_register_locale_refreshes_plugin_keys(tmp_path, _restore_lang) -> None:
     assert i18n.t("testplug2.build") == "编译"
     i18n.register_locale({"zh": {"testplug2": {"build": "编译构建"}}})
     assert i18n.t("testplug2.build") == "编译构建"
+
+
+def test_catalogue_cache_refreshes_when_file_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(i18n, "_get_locale_dir", lambda: tmp_path)
+    path = tmp_path / "en.yaml"
+    path.write_text("message: first\n", encoding="utf-8")
+    assert i18n._load_lang("en")["message"] == "first"
+    before = i18n._cached_lang.cache_info().hits
+    assert i18n._load_lang("en")["message"] == "first"
+    assert i18n._cached_lang.cache_info().hits == before + 1
+    path.write_text("message: changed-value\n", encoding="utf-8")
+    assert i18n._load_lang("en")["message"] == "changed-value"
+
+
+def test_catalogue_loader_rejects_python_tags(tmp_path, monkeypatch):
+    import yaml
+    monkeypatch.setattr(i18n, "_get_locale_dir", lambda: tmp_path)
+    (tmp_path / "en.yaml").write_text("!!python/object:builtins.object {}\n", encoding="utf-8")
+    with pytest.raises(yaml.constructor.ConstructorError):
+        i18n._load_lang("en")

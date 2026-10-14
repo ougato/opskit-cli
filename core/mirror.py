@@ -1,7 +1,8 @@
 """智能源管理 — IP 归属地检测、并发测速、无感切换、断点续传"""
 from __future__ import annotations
 
-import json
+from core.archive_reader import open_zip
+
 import tempfile
 import threading
 import time
@@ -19,12 +20,9 @@ from core.constants import (
     DOWNLOAD_MIN_SPEED_KBPS,
     DOWNLOAD_SLOW_WINDOW,
     FILE_MIRROR_CACHE,
-    GITHUB_API_RELEASES,
-    MAX_RETRY_DOWNLOAD,
     MIRROR_CACHE_TTL,
     MIRROR_PROBE_COUNT,
     MIRROR_RACE_COUNT,
-    TIMEOUT_DOWNLOAD_STALL,
     TIMEOUT_HTTP,
     TIMEOUT_MIRROR_PROBE,
     TIMEOUT_SOURCE_MAX,
@@ -281,7 +279,7 @@ def _is_zip_valid(path: Path) -> bool:
             return False
         if not zipfile.is_zipfile(path):
             return False
-        with zipfile.ZipFile(path, "r") as zf:
+        with open_zip(path, "r") as zf:
             bad = zf.testzip()
             return bad is None
     except Exception:

@@ -1,10 +1,11 @@
 """PostgreSQL Windows 平台驱动：zip 解压、shim cmd、注册表 PATH 注入（对齐 mongodb/windows.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_zip
+
 import os
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -31,36 +32,21 @@ class WindowsDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import pgsql_version_dir, pgsql_bin_dir
+        from core.archive import extract_zip
+        from software._shared.archive_install import staged_directory
         dest = pgsql_version_dir(version)
-        staging = dest.with_name(dest.name + ".installing")
-        if staging.exists():
-            shutil.rmtree(str(staging), ignore_errors=True)
-        staging.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(dest):
+            raise InstallError("PostgreSQL version directory already exists; refusing to overwrite")
         try:
-            with zipfile.ZipFile(str(tarball), "r") as zf:
-                for member in zf.infolist():
-                    name = member.filename
-                    # EDB zip 顶层目录名如 pgsql/，theseus-rs 为 postgresql-17.2.0-x86_64.../
-                    parts = name.split("/", 1)
-                    if len(parts) < 2 or not parts[1]:
-                        continue
-                    rel = parts[1]
-                    target = staging / rel.replace("/", os.sep)
-                    if name.endswith("/"):
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
-
-            if not (staging / "bin" / "psql.exe").exists():
-                raise InstallError(t("software.postgresql_error.win_bad_structure", version=version))
-
-            if dest.exists():
-                shutil.rmtree(str(dest), ignore_errors=True)
-            staging.replace(dest)
+            # Only this invocation's directory is owned and eligible for cleanup.
+            with staged_directory(dest, prefix=".opskit-pgsql-") as staging:
+                with open_zip(str(tarball), "r") as zf:
+                    extract_zip(zf, staging, strip_components=1)
+                if not (staging / "bin" / "psql.exe").is_file():
+                    raise InstallError(t("software.postgresql_error.win_bad_structure", version=version))
+        except FileExistsError as e:
+            raise InstallError("PostgreSQL version directory already exists; refusing to overwrite") from e
         except Exception as e:
-            shutil.rmtree(str(staging), ignore_errors=True)
             if isinstance(e, InstallError):
                 raise
             raise InstallError(t("software.postgresql_error.win_extract_failed", version=version, error=e)) from e

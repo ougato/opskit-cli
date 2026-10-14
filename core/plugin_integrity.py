@@ -18,9 +18,8 @@ import yaml
 
 from core.constants import FILE_PLUGIN_CHECKSUMS, FILE_PLUGIN_MANIFEST
 from core.logger import get_logger
-
-# 与信任指纹一致：版本库元数据与运行时缓存不属于插件代码内容
-_SKIP_DIRS = frozenset({".git", "__pycache__", ".ruff_cache", ".pytest_cache", ".mypy_cache"})
+from core.bounded_yaml import load_bounded_yaml as _metadata
+from core.plugin_tree import bounded_paths as _bounded_paths, SKIP_DIRS as _SKIP_DIRS
 
 # 校验结果
 CHECK_OK = "ok"
@@ -30,7 +29,7 @@ CHECK_MISMATCH = "mismatch"
 _log = get_logger("opskit.plugin")
 
 
-def content_digest(path: Path) -> bytes:
+def content_digest(path: Path, *, max_bytes=128 * 1024**2) -> bytes:
     """文件内容 sha256（raw digest）。
 
     文本文件先把 CRLF / 单独 CR 规范化为 LF 再计算，消除同一份代码在 Windows
@@ -38,19 +37,42 @@ def content_digest(path: Path) -> bytes:
     「内容与清单不符」。含 NUL 字节者按二进制原样计算，不做规范化。
     对 LF 内容而言规范化是空操作，因此与旧清单/信任记录完全向后兼容。
     """
-    data = path.read_bytes()
-    if b"\x00" not in data:
-        data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    return hashlib.sha256(data).digest()
+    return _content_digest(path, max_bytes)[0]
+
+
+def _content_digest(path, max_bytes):
+    if type(max_bytes) is not int or max_bytes < 0:
+        raise ValueError("invalid plugin digest budget")
+    raw, text = hashlib.sha256(), hashlib.sha256()
+    size, binary, pending_cr = 0, False, False
+    with path.open("rb") as stream:
+        while True:
+            chunk = stream.read(min(65536, max_bytes - size + 1))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise ValueError("plugin digest exceeds limit")
+            raw.update(chunk)
+            binary = binary or b"\x00" in chunk
+            if pending_cr:
+                chunk = b"\r" + chunk
+            pending_cr = chunk.endswith(b"\r")
+            if pending_cr:
+                chunk = chunk[:-1]
+            text.update(chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+    if pending_cr:
+        text.update(b"\n")
+    return (raw.digest() if binary else text.digest()), size
 
 
 def _file_hashes(plugin_root: Path) -> dict[str, str]:
     """插件目录内所有代码文件的 {相对路径: sha256}（跳过清单自身）"""
-    if plugin_root.is_symlink():
+    if plugin_root.is_symlink() or (hasattr(plugin_root, "is_junction") and plugin_root.is_junction()):
         raise ValueError("linked plugin roots forbidden")
     size = 0
     hashes: dict[str, str] = {}
-    for f in sorted(plugin_root.rglob("*")):
+    for f in sorted(_bounded_paths(plugin_root)):
         if f.is_symlink() or (hasattr(f, "is_junction") and f.is_junction()):
             raise ValueError("plugin links forbidden")
         if not f.is_file():
@@ -60,10 +82,11 @@ def _file_hashes(plugin_root: Path) -> dict[str, str]:
             continue
         if str(rel) == FILE_PLUGIN_CHECKSUMS:
             continue
-        size += f.stat().st_size
-        if size > 128 * 1024**2 or len(hashes) >= 4096:
+        if f.stat().st_size > 128 * 1024**2 - size or len(hashes) >= 4096:
             raise ValueError("plugin integrity limits exceeded")
-        hashes[rel.as_posix()] = content_digest(f).hex()
+        checksum, actual_size = _content_digest(f, 128 * 1024**2 - size)
+        size += actual_size
+        hashes[rel.as_posix()] = checksum.hex()
     return hashes
 
 
@@ -77,7 +100,7 @@ def write_checksums(plugin_root: Path) -> Path:
     manifest_path = plugin_root / FILE_PLUGIN_MANIFEST
     if manifest_path.exists():
         try:
-            data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            data = _metadata(manifest_path)
             if isinstance(data, dict):
                 version = str(data.get("version") or "")
         except Exception:
@@ -98,14 +121,14 @@ def verify_checksums(plugin_root: Path) -> str:
     if not path.exists():
         return CHECK_MISSING
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = _metadata(path)
         declared = data.get("files") if isinstance(data, dict) else None
         if not isinstance(declared, dict):
             _log.warning("plugin %s: CHECKSUMS.yaml malformed", plugin_root.name)
             return CHECK_MISMATCH
         actual = _file_hashes(plugin_root)
     except Exception as e:
-        _log.warning("plugin %s: checksum verify failed: %s", plugin_root.name, e)
+        _log.warning("plugin %s: checksum verify failed (%s)", plugin_root.name, type(e).__name__)
         return CHECK_MISMATCH
     if {str(k): str(v) for k, v in declared.items()} != actual:
         _log.error("plugin %s: content does not match CHECKSUMS.yaml — possible tampering", plugin_root.name)

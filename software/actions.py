@@ -1,11 +1,11 @@
 """统一软件操作执行核心。
 
-交互式菜单（``software/menu.py``）与非交互 CLI（``main.py``）共享同一套
+交互式菜单（``software/menu.py``）与非交互 CLI（``software/lifecycle_cli.py``）共享同一套
 install / switch / upgrade / uninstall 执行语义：调用 recipe → 计时 →
 安装后 detect → 捕获异常，统一返回 :class:`ActionResult`。
 
 各调用方只负责自身的「反馈出口」差异（菜单走 ``report_failure`` + ``pause``；
-CLI 走 ``_direct_fail`` 退出码），不再各自重复执行骨架，避免两套实现漂移。
+CLI 走 ``core.cli.emit/fail``），不再各自重复执行骨架，避免两套实现漂移。
 
 注意：``KeyboardInterrupt`` 属于 ``BaseException``，不会被 ``except Exception``
 捕获，调用方原有的中断处理语义保持不变。
@@ -31,7 +31,7 @@ class ActionResult:
 
     Attributes:
         ok: 是否成功。
-        version: 成功时的有效版本（install 取安装后 detect 结果，回落入参版本）。
+        version: 成功时的有效版本（install 必须取得安装后 detect 结果）。
         elapsed: 耗时（秒）。
         switched: upgrade 是否解析为「切换已装版本」而非重新安装。
         error: 失败时捕获的异常（成功为 ``None``）。
@@ -45,14 +45,16 @@ class ActionResult:
 
 
 def execute_install(instance, version: str) -> ActionResult:
-    """执行安装：``install(version)`` → 计时 → 安装后 ``detect()`` 回落版本。"""
+    """执行安装并检测结果；无法检测安装结果时不能报告成功。"""
     from core.privilege import ensure_root_for_action
     start = time.monotonic()
     try:
         ensure_root_for_action(instance, "install")
         instance.install(version)
-        detected = instance.detect() or version
         _invalidate_installed(instance)
+        detected = instance.detect()
+        if not detected:
+            raise RuntimeError("installed software was not detected after installation")
         return ActionResult(ok=True, version=detected, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001 — 统一交给调用方的反馈出口处理
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)

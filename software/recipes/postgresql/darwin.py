@@ -1,11 +1,11 @@
 """PostgreSQL macOS 平台驱动：tarball/zip 解压、shim sh、shell rc PATH 注入（对齐 linux.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar, open_zip
+
 import os
 import shutil
 import subprocess
-import tarfile
-import zipfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -29,49 +29,26 @@ class DarwinDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import pgsql_version_dir, pgsql_bin_dir
+        from core.archive import extract_tar, extract_zip
+        from software._shared.archive_install import staged_directory
         dest = pgsql_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-
-        name_lower = str(tarball).lower()
         try:
-            if name_lower.endswith(".zip"):
-                with zipfile.ZipFile(str(tarball), "r") as zf:
-                    for member in zf.infolist():
-                        name = member.filename
-                        parts = name.split("/", 1)
-                        if len(parts) < 2 or not parts[1]:
-                            continue
-                        rel = parts[1]
-                        target = dest / rel
-                        if name.endswith("/"):
-                            target.mkdir(parents=True, exist_ok=True)
-                        else:
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            with zf.open(member) as src, open(target, "wb") as out:
-                                shutil.copyfileobj(src, out)
-            else:
-                with tarfile.open(str(tarball), "r:gz") as tf:
-                    for member in tf.getmembers():
-                        parts = member.name.split("/", 1)
-                        if len(parts) < 2 or not parts[1]:
-                            continue
-                        rel = parts[1]
-                        target = dest / rel
-                        if member.isdir():
-                            target.mkdir(parents=True, exist_ok=True)
-                        elif member.isfile():
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            with tf.extractfile(member) as src, open(target, "wb") as out:
-                                shutil.copyfileobj(src, out)
-                            if member.mode & 0o111:
-                                target.chmod(target.stat().st_mode | 0o111)
-        except Exception as e:
-            raise InstallError(t("software.postgresql_error.macos_extract_failed", version=version, error=e)) from e
-
-        bin_dir = pgsql_bin_dir(version)
-        if not (bin_dir / "psql").exists():
-            raise InstallError(t("software.postgresql_error.macos_bad_structure", version=version))
-        return str(bin_dir)
+            with staged_directory(dest, prefix=".opskit-pgsql-") as staging:
+                if str(tarball).lower().endswith(".zip"):
+                    with open_zip(str(tarball), "r") as archive:
+                        extract_zip(archive, staging, strip_components=1, preserve_mode=True)
+                else:
+                    with open_tar(str(tarball), "r:gz") as archive:
+                        extract_tar(archive, staging, strip_components=1, allow_symlinks=True)
+                if not (staging / "bin/psql").is_file():
+                    raise InstallError(t("software.postgresql_error.macos_bad_structure", version=version))
+        except FileExistsError as error:
+            raise InstallError("PostgreSQL version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError(t("software.postgresql_error.macos_extract_failed", version=version, error=error)) from error
+        return str(pgsql_bin_dir(version))
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 

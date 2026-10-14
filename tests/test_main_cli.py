@@ -135,10 +135,17 @@ def test_wg_client_token_install_resolves_deps_first(monkeypatch) -> None:
             return "installed"
 
     fake_client = types.ModuleType("wireguard.client")
-    fake_client.install_client = lambda token="": events.append(f"install:{token}")
+    def install_client(token=""):
+        events.append(f"install:{token}")
+        return {"id": "wg-test", "installed": True}
+    fake_client.install_client = install_client
 
     monkeypatch.setitem(sys.modules, "wireguard.client", fake_client)
-    monkeypatch.setattr(main, "_resolve_deps_or_exit", lambda *args, **kwargs: events.append("deps"))
+    from software import lifecycle_cli
+    from wireguard import token
+    monkeypatch.setattr(token, "decode_token", lambda _: {})
+    monkeypatch.setattr(lifecycle_cli, "_resolve_deps_or_exit", lambda *args, **kwargs: events.append("deps"))
+    monkeypatch.setattr(lifecycle_cli, "_check_disk_or_exit", lambda: None)
     monkeypatch.setattr("core.theme.print_success", lambda *args, **kwargs: None)
 
     main._install_direct(["OpsKit"], FakeRecipe, FakeInstance(), token="TOKEN")
@@ -189,19 +196,21 @@ def test_switch_requires_installed_version() -> None:
     assert exc.value.exit_code == 1
 
 
-def test_network_direct_host_disables_pause(monkeypatch) -> None:
+def test_network_direct_host_uses_business_command(monkeypatch) -> None:
     import main
 
     _patch_boot(monkeypatch, main)
     seen: dict[str, object] = {}
-    fake_network_menu = types.ModuleType("network.menu")
-    fake_network_menu.show_ping = lambda **kwargs: seen.update(kwargs)
-    monkeypatch.setitem(sys.modules, "network.menu", fake_network_menu)
+    from network import commands
+    def ping(host, **kwargs):
+        seen.update(host=host, **kwargs)
+        return commands.PingResult(host, host, 4, 4, 1, 1, 1, True)
+    monkeypatch.setattr(commands, "ping", ping)
 
     result = runner.invoke(main.app, ["network", "ping", "example.com"])
 
     assert result.exit_code == 0
-    assert seen == {"host": "example.com", "pause_after": False}
+    assert seen == {"host": "example.com", "count": 4, "timeout": 30, "strict": True}
 
 
 def test_network_missing_host_keeps_interactive_pause(monkeypatch) -> None:
@@ -212,6 +221,8 @@ def test_network_missing_host_keeps_interactive_pause(monkeypatch) -> None:
     fake_network_menu = types.ModuleType("network.menu")
     fake_network_menu.show_ping = lambda **kwargs: seen.update(kwargs)
     monkeypatch.setitem(sys.modules, "network.menu", fake_network_menu)
+    import network
+    monkeypatch.setattr(network, "menu", fake_network_menu, raising=False)
 
     result = runner.invoke(main.app, ["network", "ping"])
 
@@ -219,19 +230,20 @@ def test_network_missing_host_keeps_interactive_pause(monkeypatch) -> None:
     assert seen == {"host": None, "pause_after": True}
 
 
-def test_monitor_disk_cli_disables_pause(monkeypatch) -> None:
+def test_monitor_disk_cli_uses_single_collection_without_menu(monkeypatch) -> None:
     import main
 
     _patch_boot(monkeypatch, main)
-    seen: dict[str, object] = {}
-    fake_monitor_menu = types.ModuleType("monitor.menu")
-    fake_monitor_menu.show_disk_detail = lambda **kwargs: seen.update(kwargs)
-    monkeypatch.setitem(sys.modules, "monitor.menu", fake_monitor_menu)
+    from monitor import commands
+    from monitor import cli
+    seen = []
+    monkeypatch.setattr(commands, "get_disks", lambda: ["sample"])
+    monkeypatch.setattr(cli, "emit", lambda data: seen.append(data))
 
     result = runner.invoke(main.app, ["monitor", "disk"])
 
     assert result.exit_code == 0
-    assert seen == {"pause_after": False}
+    assert seen == [["sample"]]
 
 
 # ─── CLI 参数大小写兼容 + 单字符别名 ──────────────────────────────────────────

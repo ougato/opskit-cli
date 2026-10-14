@@ -9,9 +9,9 @@ from pathlib import Path
 
 def ensure_venv(project_root: Path | None = None) -> None:
     """
-    确保当前进程运行在项目 .venv 内。
+    确保当前进程使用虚拟环境，尊重显式选择的外部环境。
 
-    - 已在 .venv 内 → 直接返回
+    - 已在实际虚拟环境内 → 直接返回
     - .venv 存在但未在其中 → exec 重入
     - .venv 不存在 → 创建 venv → 安装 requirements → exec 重入
 
@@ -23,8 +23,13 @@ def ensure_venv(project_root: Path | None = None) -> None:
     venv_dir = project_root / ".venv"
     venv_python = venv_dir / "bin" / "python"
 
+    # An explicitly selected external virtual environment is already isolated,
+    # even when its launcher did not export VIRTUAL_ENV.
+    if sys.prefix != sys.base_prefix:
+        return
+
     # ── 已在 .venv 内，直接返回 ──────────────────────────────────────────────
-    # 方法 1：VIRTUAL_ENV 环境变量（最可靠）
+    # 兼容外部启动器声明的 VIRTUAL_ENV。
     if os.environ.get("VIRTUAL_ENV"):
         return
 

@@ -4,21 +4,23 @@ from __future__ import annotations
 import base64
 import importlib
 import io
-import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from core import plugin_json
+from core.plugin_tree import bounded_paths
 
 PREFIX = "OPSKIT_RPC:"
 STATE_LIMIT = 16 * 1024**2
 
 
 def broker(method, *args, **kwargs):
-    print(PREFIX + json.dumps({"type": "call", "method": method, "args": args, "kwargs": kwargs}), flush=True)
-    reply = json.loads(sys.stdin.readline(1024 * 1024))
+    print(PREFIX + plugin_json.dumps_message({"type": "call", "method": method, "args": args, "kwargs": kwargs}), flush=True)
+    reply = plugin_json.require_reply(plugin_json.loads_message(sys.stdin.readline(plugin_json.MAX_TEXT + 1).rstrip("\r\n")))
     if reply.get("cancel"):
         from core.prompt import UserCancel
         raise UserCancel
@@ -28,7 +30,10 @@ def broker(method, *args, **kwargs):
 
 
 class RemoteService:
-    service_api_version = 2
+
+    @property
+    def service_api_version(self):
+        return broker("service.describe", self.name)["service_api_version"]
 
     def __init__(self, name):
         self.name = name
@@ -41,7 +46,6 @@ class RemoteService:
 
 def _adapt_sdk(name: str):
     from core import sdk, prompt
-    from core import plugin_services
     from core import paths
     import core.i18n as i18n
     import core.theme as theme
@@ -62,16 +66,12 @@ def _adapt_sdk(name: str):
 
     paths.plugin_data_dir = sdk.plugin_data_dir = owned_data
     paths.plugins_dir = sdk.plugins_dir = lambda: Path("/plugin")
-    sdk.get_service = plugin_services.get_service = lambda service: RemoteService(service)
-    def open_menu(service, breadcrumb, context=None, source=""):
+    sdk.get_service = lambda name: RemoteService(name)
+    def open_menu(name, breadcrumb, context=None, source=""):
         # Installing a new provider requires the platform's explicit lifecycle.
-        broker("service.call", service, "open_menu", [breadcrumb, context or {}], {})
+        broker("service.call", name, "open_menu", [breadcrumb, context or {}], {})
         return True
-    sdk.open_service_menu = plugin_services.open_service_menu = open_menu
-    def dependency(package, import_name=""):
-        import importlib.util
-        return importlib.util.find_spec(import_name or package) is not None
-    sdk.ensure_python_package = dependency
+    sdk.open_service_menu = open_menu
     def denied(*args, **kwargs):
         raise PermissionError("host software operations are not granted to plugins")
     sdk.ensure_software = sdk.software_bin = denied
@@ -79,10 +79,8 @@ def _adapt_sdk(name: str):
 
 def _pack_state() -> str:
     root = Path("/data")
-    files = list(root.rglob("*"))
+    files = bounded_paths(root, max_entries=4096, skip_dirs=frozenset())
     size = 0
-    if len(files) > 4096:
-        raise ValueError("state file count exceeded")
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:") as archive:
         for path in files:
@@ -118,10 +116,76 @@ def _decode(value):
     return value
 
 
+def _service_contract(contract):
+    if not isinstance(contract, dict) or set(contract) != {"api_version", "methods"}:
+        raise ValueError("service contract required")
+    version, methods = contract["api_version"], contract["methods"]
+    if (type(version) is not int or not 1 <= version <= 65535
+            or not isinstance(methods, list) or not 1 <= len(methods) <= 64
+            or any(not isinstance(value, str) or len(value) > 128 or not value.isascii()
+                   or not value.isidentifier() or value.startswith("_") for value in methods)
+            or len(set(methods)) != len(methods)):
+        raise ValueError("invalid service contract")
+    return version, methods
+
+
+def _service_description(service, contract, method=""):
+    version, methods = _service_contract(contract)
+    actual_version = getattr(service, "service_api_version", 1)
+    if type(actual_version) is not int or actual_version != version:
+        raise ValueError("service business version mismatch")
+    if method and method not in methods:
+        raise PermissionError("service method not declared")
+    for value in ([method] if method else methods):
+        if not callable(getattr(service, value, None)):
+            raise ValueError("declared service method is not callable")
+    return {"service_api_version": actual_version, "methods": list(methods)}
+
+
+def _request(value):
+    """Validate the host envelope before decoding paths or copying state."""
+    plugin_json.require_version(value)
+    fields = {"rpc_version", "action", "name", "entry", "kind", "args", "kwargs",
+              "service", "method", "caller", "service_contract"}
+    def identity(item):
+        return isinstance(item, str) and re.fullmatch(r"[a-z][a-z0-9_]*", item) is not None
+    if (set(value) != fields or value["action"] not in ("entry", "cli", "service.call", "service.describe")
+            or value["kind"] not in ("python", "exec") or not identity(value["name"])
+            or not identity(value["caller"]) or not isinstance(value["args"], list)
+            or not isinstance(value["kwargs"], dict)):
+        raise ValueError("invalid worker request")
+    if value["kind"] == "python":
+        if not identity(value["entry"]) or value["entry"] in {"core", "sys", "os", "yaml", "rich", "typer", "utils"}:
+            raise ValueError("invalid worker entry")
+    else:
+        entry = value["entry"]
+        if isinstance(entry, dict):
+            if set(entry) - {"linux", "windows", "darwin"} or not all(isinstance(item, str) for item in entry.values()):
+                raise ValueError("invalid worker entry")
+            entry = entry.get("linux")
+        if (not isinstance(entry, str) or not entry or "\x00" in entry or "\\" in entry
+                or PurePosixPath(entry).is_absolute() or ".." in PurePosixPath(entry).parts):
+            raise ValueError("invalid worker entry")
+    if value["action"].startswith("service."):
+        if value["kind"] != "python" or not identity(value["service"]):
+            raise ValueError("invalid worker service")
+        _, methods = _service_contract(value["service_contract"])
+        if value["action"] == "service.call":
+            if not isinstance(value["method"], str) or value["method"] not in methods:
+                raise ValueError("invalid worker method")
+        elif value["method"] != "" or value["args"] or value["kwargs"]:
+            raise ValueError("invalid worker description")
+    elif (value["service"] != "" or value["method"] != "" or value["service_contract"] is not None
+          or value["kwargs"] or any(not isinstance(item, str) for item in value["args"])
+          or (value["action"] == "entry" and value["args"])):
+        raise ValueError("invalid worker action arguments")
+    return value
+
+
 def main() -> None:
     if os.environ.get("OPSKIT_SANDBOX") != "1":
         raise RuntimeError("plugin worker must run in a platform sandbox")
-    request = _decode(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+    request = _decode(_request(plugin_json.loads_message(Path(sys.argv[1]).read_text(encoding="utf-8"))))
     shutil.copytree("/seed", "/data", dirs_exist_ok=True)
     Path("/data/state").mkdir(parents=True, exist_ok=True)
     _adapt_sdk(request["name"])
@@ -150,8 +214,10 @@ def main() -> None:
                 service = module.provide_service(request["service"])
                 if service is None:
                     raise ValueError("service unavailable")
+                description = _service_description(service, request.get("service_contract"),
+                                                   request.get("method", "") if action == "service.call" else "")
                 if action == "service.describe":
-                    value = {"service_api_version": getattr(service, "service_api_version", 1)}
+                    value = description
                 elif action == "service.call":
                     method = request["method"]
                     if method.startswith("_") or not method.isidentifier():
@@ -165,12 +231,12 @@ def main() -> None:
                     value = getattr(service, method)(*args, **kwargs)
                 else:
                     raise ValueError("unknown worker action")
-        print(PREFIX + json.dumps({"type": "result", "value": value, "state": _pack_state()}, default=_value), flush=True)
+        print(PREFIX + plugin_json.dumps_message({"type": "result", "value": value, "state": _pack_state()}, default=_value), flush=True)
     except SystemExit as exc:
-        print(PREFIX + json.dumps({"type": "result", "value": int(exc.code or 0), "state": _pack_state()}), flush=True)
+        print(PREFIX + plugin_json.dumps_message({"type": "result", "value": int(exc.code or 0), "state": _pack_state()}), flush=True)
     except BaseException as exc:
         # Never emit exception values: they can contain cloud credentials.
-        print(PREFIX + json.dumps({"type": "result", "error": type(exc).__name__}), flush=True)
+        print(PREFIX + plugin_json.dumps_message({"type": "result", "error": type(exc).__name__}), flush=True)
         sys.exit(1)
 
 

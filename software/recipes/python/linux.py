@@ -2,18 +2,15 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
-import tempfile
+import stat
 from pathlib import Path
 
 from software.base import InstallError
-from core.i18n import t
+from software._shared.activation import ActivationRollbackError
 from .driver import PlatformDriver
 from .constants import (
     SHIM_MARKER_BEGIN,
     SHIM_MARKER_END,
-    SHIM_SH_TEMPLATE,
     PROFILE_D_SHIM_FILE,
 )
 
@@ -23,132 +20,34 @@ class LinuxDriver(PlatformDriver):
     # ─── uv ──────────────────────────────────────────────────────────────────
 
     def ensure_uv(self) -> str:
-        from .constants import UV_INSTALL_SH, UV_INSTALL_SH_GHPROXY, UV_INSTALL_TIMEOUT
-        from .common import uv_bin_path
-
-        # 优先用 OpsKit 自管的私有 uv（版本新、元数据最新）；系统 PATH 上可能存在
-        # 陈旧的 uv（如 0.7.9），其内置 python-build-standalone 清单缺新版本，会导致
-        # "No download found"，故仅作为最后兜底。
-        private_uv = uv_bin_path()
-        if private_uv.exists() and os.access(str(private_uv), os.X_OK):
-            return str(private_uv)
-
-        private_uv.parent.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        env["UV_INSTALL_DIR"] = str(private_uv.parent)
-
-        for url in (UV_INSTALL_SH_GHPROXY, UV_INSTALL_SH):
-            dl = shutil.which("curl") or shutil.which("wget")
-            if not dl:
-                raise InstallError(t("software.python_error.download_src_failed", version="uv", error="curl/wget not found"))
-            cmd = [dl, "-LsSf", url] if "curl" in dl else [dl, "-qO-", url]
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".sh", delete=False, mode="w") as f:
-                    result = subprocess.run(cmd, capture_output=True, timeout=UV_INSTALL_TIMEOUT)
-                    if result.returncode != 0:
-                        continue
-                    f.write(result.stdout.decode())
-                    script = f.name
-                subprocess.run(
-                    ["sh", script],
-                    env=env,
-                    check=True,
-                    timeout=UV_INSTALL_TIMEOUT,
-                    capture_output=True,
-                    text=True,
-                )
-                os.unlink(script)
-                if private_uv.exists():
-                    return str(private_uv)
-            except Exception:
-                continue
-
-        sys_uv = shutil.which("uv")
-        if sys_uv:
-            return sys_uv
-
-        raise InstallError(t("software.python_error.uv_linux_failed"))
+        from .uv_bootstrap import ensure_uv_archive
+        return ensure_uv_archive()
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 
     def install_shim(self, fallback_bin: str) -> None:
         from .common import shim_dir
-        sdir = shim_dir()
-        sdir.mkdir(parents=True, exist_ok=True)
-        shims_path = str(sdir)
-
-        content = SHIM_SH_TEMPLATE.format(fallback=fallback_bin)
-        for name in ("python3", "python"):
-            shim = sdir / name
-            shim.write_text(content, encoding="utf-8")
-            shim.chmod(0o755)
-
-        block = (
-            f"\n{SHIM_MARKER_BEGIN}\n"
-            f'export PATH="{shims_path}:$PATH"\n'
-            f"{SHIM_MARKER_END}\n"
-        )
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            text = rc.read_text(encoding="utf-8")
-            if SHIM_MARKER_BEGIN not in text:
-                rc.write_text(text + block, encoding="utf-8")
-
-        try:
-            if hasattr(os, "getuid") and os.getuid() == 0:
-                pd = Path(PROFILE_D_SHIM_FILE)
-                pd.write_text(f'export PATH="{shims_path}:$PATH"\n', encoding="utf-8")
-                pd.chmod(0o644)
-        except Exception:
-            pass
+        from .posix_shims import shim_files, shim_text
+        from software._shared import shell_path
+        directory = shim_dir()
+        route, _ = self._symlink_target()
+        with shim_files(directory, shim_text(fallback_bin, route), route) as verify:
+            shell_path.inject_rc_path(str(directory), SHIM_MARKER_BEGIN, SHIM_MARKER_END, PROFILE_D_SHIM_FILE)
+            verify()
 
     def remove_shim(self) -> None:
         from .common import shim_dir
-        sdir = shim_dir()
-
-        for name in ("python3", "python"):
-            shim = sdir / name
-            if shim.exists():
-                shim.unlink()
+        from .posix_shims import shim_files
+        from software._shared import shell_path
+        directory = shim_dir()
+        route, _ = self._symlink_target()
+        with shim_files(directory, None, route) as verify:
+            shell_path.remove_rc_path(SHIM_MARKER_BEGIN, SHIM_MARKER_END, PROFILE_D_SHIM_FILE)
+            verify()
         try:
-            sdir.rmdir()
-        except Exception:
-            pass
-
-        for rc in (
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-            Path.home() / ".bash_profile",
-        ):
-            if not rc.exists():
-                continue
-            try:
-                lines = rc.read_text(encoding="utf-8").splitlines(keepends=True)
-                out, skip = [], False
-                for line in lines:
-                    if line.strip() == SHIM_MARKER_BEGIN:
-                        skip = True
-                    if not skip:
-                        out.append(line)
-                    if line.strip() == SHIM_MARKER_END:
-                        skip = False
-                rc.write_text("".join(out), encoding="utf-8")
-            except Exception:
-                pass
-
-        try:
-            pd = Path(PROFILE_D_SHIM_FILE)
-            if pd.exists():
-                pd.unlink()
-        except Exception:
-            pass
+            directory.rmdir()
+        except OSError:
+            pass  # Leave unrelated user files and nonempty directories intact.
 
     def shim_active(self) -> bool:
         from .common import shim_dir
@@ -160,31 +59,57 @@ class LinuxDriver(PlatformDriver):
     def apply_version_link(self, new_bin: str) -> None:
         symlink_path, has_root = self._symlink_target()
         from .constants import SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END
-        link = Path(symlink_path)
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if link.exists() or link.is_symlink():
-            link.unlink()
-        os.symlink(new_bin, symlink_path)
-        if not has_root:
-            self._ensure_local_bin_in_path(SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END)
+        target = Path(new_bin)
+        if not target.is_absolute() or not target.is_file():
+            raise InstallError("Python route requires an existing absolute interpreter path")
+        self._change_link(symlink_path, target, lambda: None if has_root else
+                          self._ensure_local_bin_in_path(SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END))
 
     def restore_original(
-        self,
-        symlink_path: str,
-        original_target: str | None,
-        had_local_bin_path: bool,
+        self, symlink_path: str, original_target: str | None, had_local_bin_path: bool,
     ) -> None:
         from .constants import SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END
+        expected, _ = self._symlink_target()
+        if not symlink_path or Path(symlink_path).absolute() != Path(expected).absolute():
+            raise InstallError("Python restore route is outside the platform command path")
+        target = Path(original_target) if original_target else None
+        self._change_link(symlink_path, target, lambda: self._remove_path_block(
+            SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END) if had_local_bin_path else None)
+
+    def _change_link(self, symlink_path, replacement, dependent):
+        from software._shared import shell_path
         link = Path(symlink_path)
-        if link.is_symlink() or link.exists():
-            link.unlink(missing_ok=True)
-        if original_target and Path(original_target).exists():
+        for node in link.parents:
             try:
-                os.symlink(original_target, symlink_path)
-            except Exception:
-                pass
-        if had_local_bin_path:
-            self._remove_path_block(SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END)
+                info = node.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+                raise InstallError("Python command parent must not be a link")
+        previous = shell_path._command_link(link)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if previous != replacement:
+            shell_path._apply_command_links([(link, previous, replacement)])
+        published = replacement
+        try:
+            current = shell_path._command_link(link)
+            if ((current is None) != (replacement is None) or
+                    (current is not None and shell_path._command_target(link, current) !=
+                     shell_path._command_target(link, replacement))):
+                raise InstallError("Python command link changed after publication")
+            # Windows readlink uses extended path prefixes; preserve its actual
+            # representation for the shared helper's exact rollback preflight.
+            published = current
+            dependent()
+            if shell_path._command_link(link) != published:
+                raise InstallError("Python command link changed before commit")
+        except BaseException:
+            if previous != replacement:
+                try:
+                    shell_path._apply_command_links([(link, published, previous)])
+                except Exception:
+                    raise ActivationRollbackError("Python command route failed; rollback incomplete") from None
+            raise
 
     def snapshot_pre_install(self) -> dict:
         symlink_path, has_root = self._symlink_target()
@@ -198,17 +123,8 @@ class LinuxDriver(PlatformDriver):
     # ─── detect ───────────────────────────────────────────────────────────────
 
     def detect_active(self) -> str | None:
-        from core.runner import which, run
-        for cmd in ("python3", "python"):
-            if which(cmd):
-                try:
-                    result = run([cmd, "--version"], capture=True, check=False)
-                    line = result.stdout.strip() or result.stderr.strip()
-                    if "Python" in line:
-                        return line.split()[-1]
-                except Exception:
-                    pass
-        return None
+        from .version_probe import command_version
+        return command_version(("python3", "python"))
 
     # ─── 内部工具 ─────────────────────────────────────────────────────────────
 
@@ -219,43 +135,14 @@ class LinuxDriver(PlatformDriver):
         return str(Path.home() / ".local" / "bin" / "python3"), False
 
     def _get_original_symlink_target(self, symlink_path: str) -> str | None:
-        try:
-            if os.path.islink(symlink_path):
-                return os.readlink(symlink_path)
-            if os.path.exists(symlink_path):
-                return symlink_path
-        except Exception:
-            pass
-        return None
+        from software._shared import shell_path
+        target = shell_path._command_link(Path(symlink_path))
+        return str(target) if target is not None else None
 
     def _ensure_local_bin_in_path(self, begin_marker: str, end_marker: str) -> None:
-        local_bin = str(Path.home() / ".local" / "bin")
-        block = (
-            f"\n{begin_marker}\n"
-            f'export PATH="{local_bin}:$PATH"\n'
-            f"{end_marker}\n"
-        )
-        for rc in (Path.home() / ".bashrc", Path.home() / ".zshrc"):
-            if not rc.exists():
-                continue
-            content = rc.read_text(encoding="utf-8")
-            if begin_marker not in content:
-                rc.write_text(content + block, encoding="utf-8")
+        from software._shared import shell_path
+        shell_path.inject_rc_path(str(Path.home() / ".local" / "bin"), begin_marker, end_marker)
 
     def _remove_path_block(self, begin_marker: str, end_marker: str) -> None:
-        for rc in (Path.home() / ".bashrc", Path.home() / ".zshrc"):
-            if not rc.exists():
-                continue
-            try:
-                lines = rc.read_text(encoding="utf-8").splitlines(keepends=True)
-                out, skip = [], False
-                for line in lines:
-                    if line.strip() == begin_marker:
-                        skip = True
-                    if not skip:
-                        out.append(line)
-                    if line.strip() == end_marker:
-                        skip = False
-                rc.write_text("".join(out), encoding="utf-8")
-            except Exception:
-                pass
+        from software._shared import shell_path
+        shell_path.remove_rc_path(begin_marker, end_marker)

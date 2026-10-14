@@ -59,8 +59,6 @@ tests/_child_*.py
 tests/_ctrlc_result.txt
 tests/**/token.txt
 
-# ── Windsurf ──────────────────────────────────────────────────────────────────
-
 # ── IDE / 编辑器 ──────────────────────────────────────────────────────────────
 .idea/
 .vscode/
@@ -78,10 +76,15 @@ cache/opskit.pending
 cache/*.pending
 
 # Local runtime and editor data
+.opskit-update-locks/
 /cache/
+/backups/
 /plugin-data/
 /plugin_trust.yaml
+/.config.lock
+/.plugin-trust.lock
 /plugin-runtimes/
+/plugin-resources/
 .env
 .env.*
 !.env.example

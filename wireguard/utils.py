@@ -91,15 +91,13 @@ def is_port_listening(port: int, proto: str = "tcp") -> bool:
         return False
 
 
-def is_service_active(service: str) -> bool:
+def is_service_active(service: str, *, timeout: float = 10) -> bool:
     """检查 systemd 服务是否活跃"""
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service],
-            capture_output=True, text=True, check=False,
-        )
-        return result.stdout.strip() == "active"
-    except Exception:
+        from core.process import capture
+        result = capture(["systemctl", "is-active", service], timeout=timeout)
+        return result.returncode == 0 and result.stdout.strip() == "active"
+    except OSError:
         return False
 
 

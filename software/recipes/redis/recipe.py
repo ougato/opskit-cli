@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from software.base import InstallError, InstallStep, Recipe
+from software._shared.mutation import versioned_mutation
 from software.registry import register
 from . import common
 from .driver import get_driver
@@ -54,6 +55,7 @@ class RedisRecipe(Recipe):
 
     # ─── install ──────────────────────────────────────────────────────────────
 
+    @versioned_mutation
     def install(self, version: str) -> None:
         import sys
         from core.platform import get_platform
@@ -120,6 +122,12 @@ class RedisRecipe(Recipe):
 
     # ─── switch ───────────────────────────────────────────────────────────────
 
+    @versioned_mutation
+    def upgrade(self, version: str) -> None:
+        """Install a new version while preserving existing versions and data."""
+        self.install(version)
+
+    @versioned_mutation
     def switch(self, version: str) -> None:
         from core.i18n import t
 
@@ -131,13 +139,20 @@ class RedisRecipe(Recipe):
                 version=version,
             ))
         bin_dir = versions[version]["redis_bin_dir"]
-        snap["active_version"] = version
-        snap["redis_bin_dir"] = bin_dir
-        common.save_snapshot(snap)
-        get_driver().apply_version_link(bin_dir)
+        previous_bin = snap.get("redis_bin_dir")
+        if not previous_bin and snap.get("active_version") in versions:
+            previous_bin = versions[snap["active_version"]]["redis_bin_dir"]
+        driver = get_driver()
+        from software._shared.activation import activate_version, verify_command_version
+        activate_version(snap, {"active_version": version, "redis_bin_dir": bin_dir},
+                         save=common.save_snapshot,
+                         apply=lambda: driver.apply_version_link(bin_dir),
+                         restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(),
+                         verify=lambda: verify_command_version("redis-server", version))
 
     # ─── uninstall ────────────────────────────────────────────────────────────
 
+    @versioned_mutation
     def uninstall(self, version: str | None = None) -> None:
         from core.progress import MultiStepProgress
         from core.i18n import t

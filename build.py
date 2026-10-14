@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -111,6 +112,21 @@ def _available_backends() -> list[str]:
 
 # ─── 构建函数 ─────────────────────────────────────────────────────────────────
 
+def _plugin_runtime_bundle() -> Path:
+    """Ship the raw guest SDK needed to bind/prepare frozen runtimes."""
+    from core.plugin_runtime_inventory import BUNDLE_NAME, bundle_snapshot
+    files = bundle_snapshot(ROOT / "core")
+    target = BUILD_DIR / BUNDLE_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(target, "w") as archive:
+        for name, content in sorted(files.items()):
+            member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            member.compress_type = zipfile.ZIP_DEFLATED
+            member.external_attr = 0o100644 << 16
+            archive.writestr(member, content)
+    return target
+
+
 def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None) -> Path | None:
     """使用 Nuitka 编译单文件可执行程序"""
     nuitka = _find_tool("nuitka") or _find_tool("nuitka3")
@@ -120,6 +136,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    runtime_bundle = _plugin_runtime_bundle()
 
     # onefile 固定解压目录：默认每次启动都把整包解压到随机 /tmp/onefile_<pid>_xxx，
     # 低配机/慢盘上这步要数秒且每次重来。按版本号固定到用户缓存目录后，
@@ -140,6 +157,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
         "--include-data-dir=core/themes=core/themes",
         "--include-data-dir=core/locale=core/locale",
         "--include-data-dir=core/mirrors=core/mirrors",
+        f"--include-data-files={runtime_bundle}=core/{runtime_bundle.name}",
         "--include-package=rich._unicode_data",
         "--include-module=_registry",
     ]
@@ -181,8 +199,10 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         return None
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
-    spec_out = BUILD_DIR / "opskit"
+    # PyInstaller cleans workpath/name; keep the spec outside that subtree.
+    spec_out = BUILD_DIR / "spec"
     spec_out.mkdir(parents=True, exist_ok=True)
+    runtime_bundle = _plugin_runtime_bundle()
 
     # Windows 路径分隔符用 ; Unix 用 :
     sep = ";" if sys.platform == "win32" else ":"
@@ -198,6 +218,7 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         f"--add-data={ROOT / 'core' / 'themes'}{sep}core/themes",
         f"--add-data={ROOT / 'core' / 'locale'}{sep}core/locale",
         f"--add-data={ROOT / 'core' / 'mirrors'}{sep}core/mirrors",
+        f"--add-data={runtime_bundle}{sep}core",
         "--hidden-import=_registry",
         "--hidden-import=software",
         "--hidden-import=software.menu",
@@ -226,13 +247,11 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--exclude-module=xmlrpc",
         "--exclude-module=pydoc",
         "--exclude-module=doctest",
-        "--exclude-module=distutils",
         "--exclude-module=lib2to3",
         "--exclude-module=ensurepip",
         "--exclude-module=idlelib",
         "--exclude-module=turtle",
         "--exclude-module=turtledemo",
-        "--exclude-module=sqlite3",
     ]
 
     if upx:
@@ -292,7 +311,7 @@ def write_manifest(bin_path: Path, checksum: str, backend: str, elapsed: float) 
 def print_report(bin_path: Path, elapsed: float) -> None:
     size_mb = bin_path.stat().st_size / 1024 / 1024
     print(f"\n{'=' * 60}")
-    print(f"[build] 构建完成")
+    print("[build] 构建完成")
     print(f"[build] 输出: {bin_path}")
     print(f"[build] 大小: {size_mb:.2f} MB")
     print(f"[build] 耗时: {elapsed:.1f}s")
@@ -323,7 +342,7 @@ _REGISTRY_FILE = ROOT / "_registry.py"
 
 
 def write_registry() -> list[str]:
-    """扫描插件包并生成 _registry.py（打包模式静态注册表），返回包名列表"""
+    """生成官方模块静态注册表，不扫描第三方插件目录。"""
     from core.builtins import MODULES
     entries = list(MODULES)
     lines = ["MODULE_LIST = ["]

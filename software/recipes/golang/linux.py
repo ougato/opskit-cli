@@ -1,10 +1,11 @@
 """Linux 平台驱动：tar.gz 解压、shim sh、shell rc PATH 注入"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import os
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -31,29 +32,22 @@ class LinuxDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import go_version_dir, go_bin_dir
+        from core.archive import extract_tar
+        from software._shared.archive_install import staged_directory
         dest = go_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
         # 路径统一用 UTF-8 字节串操作：Go 发行包含非 ASCII 文件名的测试
         # 夹具（如 test/fixedbugs/issue27836.dir/Þfoo.go），打包运行时文件系统
         # 编码可能退化为 ascii，str 路径会在 open/stat 时编码失败。
-        dest_b = str(dest).encode("utf-8")
         try:
-            with tarfile.open(str(tarball), "r:gz") as tf:
-                for member in tf.getmembers():
-                    if not member.name.startswith("go/"):
-                        continue
-                    rel = member.name[3:]
-                    if not rel:
-                        continue
-                    target_b = os.path.join(dest_b, rel.encode("utf-8"))
-                    if member.isdir():
-                        os.makedirs(target_b, exist_ok=True)
-                    elif member.isfile():
-                        os.makedirs(os.path.dirname(target_b), exist_ok=True)
-                        with tf.extractfile(member) as src, open(target_b, "wb") as out:
-                            shutil.copyfileobj(src, out)
-                        if member.mode & 0o111:
-                            os.chmod(target_b, os.stat(target_b).st_mode | 0o111)
+            with staged_directory(dest, prefix=".opskit-go-", utf8_paths=os.name == "posix") as staging:
+                with open_tar(str(tarball), "r:gz") as tf:
+                    if any(member.name != "go" and not member.name.startswith("go/")
+                           for member in tf.getmembers()):
+                        raise ValueError("Go archive must have a go root directory")
+                    extract_tar(tf, staging, strip_components=1, utf8_paths=os.name == "posix")
+                binary = staging / "bin" / "go"
+                if not os.path.isfile(str(binary).encode("utf-8") if os.name == "posix" else binary):
+                    raise InstallError(t("software.golang_error.bad_structure", version=version, file="bin/go"))
         except Exception as e:
             raise InstallError(t("software.golang_error.extract_failed", version=version, error=e)) from e
 
@@ -109,7 +103,8 @@ class LinuxDriver(PlatformDriver):
         非 root 时依赖 shim，同时注入当前进程 PATH 让 opskit 子进程立即可用。
         """
         # root 环境：创建/更新 /usr/local/bin 下的 symlink，立即全局生效
-        shell_path.link_into_system_bin(bin_dir, ("go", "gofmt"))
+        from .common import go_versions_dir
+        shell_path.link_into_system_bin(bin_dir, ("go", "gofmt"), managed_root=go_versions_dir())
         # 无论是否 root，都把 shim 目录注入当前 Python 进程的 PATH
         # 这样 opskit 内部的子进程调用 go 可以立即路由到正确版本
         from .common import shim_dir as _shim_dir

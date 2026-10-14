@@ -254,21 +254,29 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
     return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
 
 
-def install_server() -> None:
+def install_server(options: dict | None = None) -> dict | None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
-    panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
-    panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
-    panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password(), secret=True)
-    panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
-    host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
-    vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
-    sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
-    dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
+    if options is None:
+        panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
+        panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
+        panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password(), secret=True)
+        panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
+        host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
+        vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
+        sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
+        dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
+    else:
+        panel_port, panel_user, panel_password = options["panel_port"], options["panel_user"], options["panel_password"]
+        panel_base_path, host = options["panel_base_path"], options["host"]
+        vless_port, sni, dest = options["vless_port"], options["sni"], options["dest"]
+        _ensure_linux()
+        if not systemd_available():
+            raise InstallError("scripted XUI installation requires systemd")
 
-    if not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
+    if options is None and not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
         return
 
-    if not _precheck_systemd(breadcrumb):
+    if options is None and not _precheck_systemd(breadcrumb):
         return
 
     step_keys = [
@@ -321,7 +329,8 @@ def install_server() -> None:
         try:
             restart_service()
         except Exception:
-            pass
+            if options is not None:
+                raise
         effective = get_panel_settings()
         if isinstance(effective.get("port"), int):
             panel_port = int(effective["port"])
@@ -356,13 +365,16 @@ def install_server() -> None:
             panel_base_path=panel_base_path,
             inbounds=inbounds,
         )
+        if options is not None and not api_ok:
+            raise InstallError("XUI inbound configuration failed")
 
         sp.step(t("xui.step.start_service"))
         try:
             enable_service()
             restart_service()
         except Exception:
-            pass
+            if options is not None:
+                raise
         install_traffic_timer()
 
         sp.step(t("xui.step.verify"))
@@ -391,6 +403,11 @@ def install_server() -> None:
 
         sp.step(t("xui.step.print_links"))
 
+    if options is not None:
+        from core.cli_secrets import export_secret
+        if options.get("credentials_output_file"):
+            export_secret(options["credentials_output_file"], {"panel_user": panel_user, "panel_password": panel_password, "vless_link": vless_link})
+        return {"installed": True, "api_configured": api_ok, "panel_port": panel_port, "vless_port": vless_port}
     print_success(t("xui.output.install_done"))
     if not systemd_available():
         print_warning(t("xui.output.no_systemd"))

@@ -1,5 +1,7 @@
 # 更新功能 精简/重构计划
 
+> 历史方案，保留用于追溯，非当前执行规范。下文行号、代码规模、“稳定性核心不动”及零风险描述不代表当前源码或授权边界。2026-10-13起实际队列以`project-health-roadmap.md`、`official-cli-completion-plan.md`为准，实施和测试证据以`implementation-acceptance.md`为准；apply/rollback/health仍需安全事务验收。
+
 > 目标：精简、高效、稳定、结构清晰、易维护。本轮只动"更新功能"相关代码，apply/rollback/health/Windows 兜底等稳定性核心**不动**。
 
 ## 一、现状结构（core/updater.py，1108 行）

@@ -6,12 +6,61 @@ import os
 import signal
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
+import time
 from typing import Any, Callable, Iterator
 
 from rich.console import Console
 from rich.text import Text
 
 console = Console()
+
+_input_guard = ContextVar("prompt_input_guard", default=None)
+
+
+@contextmanager
+def guard_input(check: Callable[[], None]) -> Iterator[None]:
+    """Scope deadline/authorization checks to a host-mediated UI call."""
+    token = _input_guard.set(check)
+    try:
+        yield
+    finally:
+        _input_guard.reset(token)
+
+
+def _check_input() -> None:
+    check = _input_guard.get()
+    if check is not None:
+        check()
+        if not _stdin_is_tty():
+            raise PermissionError("sandbox UI requires terminal input")
+
+
+def _getwch() -> str:
+    import msvcrt
+    if _input_guard.get() is not None:
+        while True:
+            _check_input()
+            if msvcrt.kbhit():
+                break
+            time.sleep(0.05)
+    value = msvcrt.getwch()
+    if _input_guard.get() is not None and value in ("\x03", "\x04"):
+        raise KeyboardInterrupt
+    return value
+
+
+def _read_fd(fd: int, count: int) -> bytes:
+    if _input_guard.get() is not None:
+        import select as _select
+        while True:
+            _check_input()
+            if _select.select([fd], [], [], 0.05)[0]:
+                break
+    value = os.read(fd, count)
+    if _input_guard.get() is not None and value in (b"\x03", b"\x04"):
+        raise KeyboardInterrupt
+    return value
 
 
 # ─── 非交互模式全局标志 ─────────────────────────────────────────────────────
@@ -201,14 +250,14 @@ def _stdin_is_tty() -> bool:
 
 def _read_key() -> str:
     """读取单个按键（无需回车），跨平台"""
+    _check_input()
     if not _stdin_is_tty():
         try:
             return sys.stdin.read(1)
         except (OSError, EOFError):
             return ""
     if os.name == 'nt':
-        import msvcrt
-        return msvcrt.getwch()
+        return _getwch()
     else:
         import tty
         import termios
@@ -225,7 +274,7 @@ def _read_key() -> str:
             tty.setraw(fd)
             # 直接读 fd：sys.stdin 是带缓冲的 TextIOWrapper，会把后续字节
             # （如方向键序列的 '[A'）预读进自己的缓冲区，导致 select 探不到
-            data = os.read(fd, 1)
+            data = _read_fd(fd, 1)
             ch = data.decode(errors='ignore')
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -249,10 +298,11 @@ def _drain_input() -> None:
     残留字节会留在缓冲区里，污染随后的"按任意键"等待，导致返回需要多按
     一次。这里在等待前先丢弃残留输入，保证只消费一次用户主动按键。
     """
+    _check_input()
     if os.name == 'nt':
         import msvcrt
         while msvcrt.kbhit():
-            msvcrt.getwch()
+            _getwch()
     else:
         import select as _select
         import termios
@@ -264,10 +314,12 @@ def _drain_input() -> None:
         try:
             tty.setraw(fd)
             while _select.select([sys.stdin], [], [], 0)[0]:
-                if not sys.stdin.read(1):
+                _check_input()
+                if not (_read_fd(fd, 1) if _input_guard.get() is not None else sys.stdin.read(1)):
                     break
         except Exception:
-            pass
+            if _input_guard.get() is not None:
+                raise
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, old)
 
@@ -338,7 +390,9 @@ def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
 
 def clear_screen() -> None:
     """清除终端屏幕（跨平台）"""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    from core.cli import non_interactive
+    if not non_interactive.get():
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def print_header(breadcrumb: list[str]) -> None:
@@ -387,6 +441,8 @@ def select(
 
     返回选中的 key 字符串；用户按 0 返回 None；Ctrl+C 抛 UserCancel。
     """
+    from core.cli import require_interaction
+    require_interaction()
     os.system('cls' if os.name == 'nt' else 'clear')
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
@@ -524,13 +580,13 @@ def _read_key_seq() -> str:
     Unix：ESC 后 50ms 内跟随 '[' 视为 ANSI 序列（方向键），否则视为 ESC。
     Windows：msvcrt 前缀 '\\x00' / '\\xe0' 后跟 'H'（上）/ 'P'（下）。
     """
+    _check_input()
     if not _stdin_is_tty():
         return _read_key()
     if os.name == 'nt':
-        import msvcrt
-        ch = msvcrt.getwch()
+        ch = _getwch()
         if ch in ('\x00', '\xe0'):
-            ch2 = msvcrt.getwch()
+            ch2 = _getwch()
             if ch2 == 'H':
                 return 'UP'
             if ch2 == 'P':
@@ -546,18 +602,18 @@ def _read_key_seq() -> str:
         # 整个转义序列必须在同一个 raw 窗口内读完：恢复 canonical 模式后
         # 缓冲区里的后续字节（如 '[A'）没有换行不会被 select 报告可读
         tty.setraw(fd)
-        ch = os.read(fd, 1).decode(errors='ignore')
+        ch = _read_fd(fd, 1).decode(errors='ignore')
         if ch != '\x1b':
             return ch
         if not _sel.select([fd], [], [], 0.05)[0]:
             return ch
-        seq = os.read(fd, 1).decode(errors='ignore')
+        seq = _read_fd(fd, 1).decode(errors='ignore')
         if seq not in ('[', 'O'):  # 'O' = application mode 方向键（ESC O A 等）
             return ch
-        code = os.read(fd, 1).decode(errors='ignore')
+        code = _read_fd(fd, 1).decode(errors='ignore')
         # 吞掉序列剩余字节（如 Home/End/Delete 的 '~'）
         while _sel.select([fd], [], [], 0)[0]:
-            if not os.read(fd, 1):
+            if not _read_fd(fd, 1):
                 break
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -682,6 +738,9 @@ def confirm(
     info_lines — 标题与选项之间的信息行（├─ 前缀，如插件概要）
     非交互模式（--yes）下直接返回 True。
     """
+    from core.cli import require_interaction
+    if not _auto_yes:
+        require_interaction()
     if _auto_yes:
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -715,14 +774,14 @@ def _read_line(secret: bool = False) -> str:
     Unix：termios raw 模式逐字符读取，行为与 Windows 对齐。
     两端均支持 ESC 抛 UserCancel、Ctrl+C 退出、退格删字符。
     """
+    _check_input()
     if os.name == 'nt':
-        import msvcrt
         buf: list[str] = []
         while True:
-            ch = msvcrt.getwch()
+            ch = _getwch()
             if ch in ('\x00', '\xe0'):
                 # 导航键（方向/Home/End/Del 等）为双字符序列：吞掉第二字符并忽略
-                msvcrt.getwch()
+                _getwch()
                 continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
@@ -758,7 +817,7 @@ def _read_line(secret: bool = False) -> str:
         def _read_char() -> str:
             # 直接读 fd（同 _read_key）：sys.stdin 缓冲会吞掉后续字节导致
             # select 探不到；首字节为多字节 UTF-8 前缀时补齐剩余字节
-            data = os.read(fd, 1)
+            data = _read_fd(fd, 1)
             if not data:
                 return ''
             first = data[0]
@@ -770,7 +829,7 @@ def _read_line(secret: bool = False) -> str:
             elif first >= 0xC0:
                 need = 1
             while need > 0 and _sel.select([fd], [], [], 0.05)[0]:
-                data += os.read(fd, 1)
+                data += _read_fd(fd, 1)
                 need -= 1
             return data.decode(errors='ignore')
 
@@ -798,16 +857,16 @@ def _read_line(secret: bool = False) -> str:
                     # 按 CSI 语法读到终止字节（'@'~'~'）为止吞掉整个序列并忽略，
                     # 不多吞后续正常输入；只有单独的 ESC 才视为取消
                     if _sel.select([fd], [], [], 0.05)[0]:
-                        seq = os.read(fd, 1).decode(errors='ignore')
+                        seq = _read_fd(fd, 1).decode(errors='ignore')
                         if seq == '[':
                             while _sel.select([fd], [], [], 0.05)[0]:
-                                b = os.read(fd, 1).decode(errors='ignore')
+                                b = _read_fd(fd, 1).decode(errors='ignore')
                                 if not b or '@' <= b <= '~':
                                     break
                             continue
                         if seq == 'O':
                             if _sel.select([fd], [], [], 0.05)[0]:
-                                os.read(fd, 1)
+                                _read_fd(fd, 1)
                             continue
                         # ESC + 其他字符（如 Alt 组合键）：忽略该字符，视为取消
                     sys.stdout.write('\r\n')
@@ -847,6 +906,8 @@ def text_input(
     info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
     secret     — 敏感输入（如密码），回显 *
     """
+    from core.cli import require_interaction
+    require_interaction()
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
 
@@ -880,6 +941,9 @@ def pause(msg: str = '') -> None:
 
     非交互模式（--yes）下直接返回，不等待按键。
     """
+    from core.cli import non_interactive
+    if non_interactive.get():
+        return
     if _auto_yes:
         return
     import signal
@@ -889,14 +953,15 @@ def pause(msg: str = '') -> None:
 
     # Windows: 用 SetConsoleCtrlHandler 彻底屏蔽 Ctrl+C
     _handler_ref = None
-    if os.name == 'nt':
+    shield = _input_guard.get() is None
+    if shield and os.name == 'nt':
         import ctypes
         @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
         def _handler(event):
             return 1  # 吞掉所有控制台事件
         _handler_ref = _handler
         ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler_ref, True)
-    else:
+    elif shield:
         old_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
@@ -906,14 +971,17 @@ def pause(msg: str = '') -> None:
         sys.stdout.flush()
         try:
             _read_key()
-        except (KeyboardInterrupt, EOFError, OSError):
+        except KeyboardInterrupt:
+            if not shield:
+                raise
+        except (EOFError, OSError):
             pass
         console.print()
     finally:
-        if os.name == 'nt':
+        if shield and os.name == 'nt':
             import ctypes
             ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler_ref, False)
-        else:
+        elif shield:
             signal.signal(signal.SIGINT, old_handler)
 
 

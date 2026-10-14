@@ -136,18 +136,78 @@ def test_large_download_rejects_partial_stream(tmp_path, monkeypatch):
     assert not (tmp_path / "partial").exists()
 
 
-def test_timeout_kills_grandchild(tmp_path):
+def test_timeout_includes_grandchild_startup(tmp_path, monkeypatch):
+    from core import process
     import psutil
     marker = tmp_path / "pid"
     child_code = "import time; time.sleep(30)"
     parent_code = ("import subprocess,sys,time; from pathlib import Path; "
                    f"p=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
-                   f"Path({str(marker)!r}).write_text(str(p.pid)); time.sleep(30)")
+                   f"target=Path({str(marker)!r}); temporary=target.with_name('pid.tmp'); "
+                   "temporary.write_text(str(p.pid)); temporary.replace(target); time.sleep(30)")
+    original = process.start
+    parents = []
+
+    def tracked(*args, **kwargs):
+        parent = original(*args, **kwargs)
+        parents.append(parent)
+        return parent
+
+    monkeypatch.setattr(process, "start", tracked)
+    started = time.monotonic()
     with pytest.raises(subprocess.TimeoutExpired):
         run([sys.executable, "-c", parent_code], timeout=1, capture=True)
-    pid = int(marker.read_text())
-    if psutil.pid_exists(pid):
-        assert psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    assert time.monotonic() - started < 5
+    assert parents and parents[0].poll() is not None
+    # Startup consumes the production budget too; creation is proved separately.
+    if marker.exists():
+        pid = int(marker.read_text())
+        if psutil.pid_exists(pid):
+            assert psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+
+
+def test_ready_grandchild_is_reclaimed_after_one_real_second(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from core import process
+    import psutil
+    marker = tmp_path / "ready.json"
+    child_code = "import time; time.sleep(30)"
+    parent_code = ("import subprocess,sys,time,json,os,psutil; from pathlib import Path; "
+                   f"p=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
+                   "records=[{'pid':pid,'created':psutil.Process(pid).create_time()} "
+                   "for pid in (os.getpid(),p.pid)]; "
+                   f"Path({str(marker)!r}).write_text(json.dumps(records)); time.sleep(30)")
+    origin = time.monotonic()
+    ready = []
+
+    def stage_clock():
+        now = time.monotonic()
+        if not ready:
+            if marker.exists():
+                # Parent writes the complete JSON before it enters its wait.
+                try:
+                    records = json.loads(marker.read_text())
+                except (ValueError, OSError):
+                    records = None
+                if records and len(records) == 2:
+                    ready.append((now, records))
+            if not ready and now - origin >= 30:
+                pytest.fail("owned grandchild did not become ready within fixture startup allowance")
+        return origin + (now - ready[0][0] if ready else 0)
+
+    # Only this stage test excludes startup; product clock and whole-budget
+    # assertions above are unchanged. After readiness use actual wall time.
+    monkeypatch.setattr(process, "time", SimpleNamespace(monotonic=stage_clock))
+    with pytest.raises(subprocess.TimeoutExpired):
+        run([sys.executable, "-c", parent_code], timeout=1, capture=True)
+    assert ready and 1 <= time.monotonic() - ready[0][0] < 5
+    for record in ready[0][1]:
+        try:
+            observed = psutil.Process(record["pid"])
+            if observed.create_time() == record["created"]:
+                assert observed.status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            pass
 
 
 def test_download_cache_rejects_tampering(tmp_path):

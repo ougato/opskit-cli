@@ -1,6 +1,8 @@
 """RustDesk Server 安装、卸载与诊断。"""
 from __future__ import annotations
 
+from core.archive_reader import open_zip
+
 from core.archive import extract_zip
 
 import json
@@ -10,7 +12,6 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from core.constants import PUBLIC_IP_APIS
 from core.i18n import t
 from core.privilege import run_as_root
 from core.service import systemd_is_available
-from core.theme import console, get_color, print_action_title, print_warning
+from core.theme import console, get_color, print_action_title
 from software.base import InstallError
 from .constants import (
     RUSTDESK_ARCH_ASSETS,
@@ -155,6 +156,27 @@ def uninstall_server() -> None:
         sp.complete()
 
 
+def diagnostic_report(*, timeout=30) -> dict:
+    """Inspect local artifacts/services without state writes or key export."""
+    from core.deadline import Deadline
+    from core.diagnostics import file_checks, listener_checks
+    budget = Deadline(timeout, "RustDesk diagnostics")
+    checks = budget.call(file_checks,
+        [(name, RUSTDESK_INSTALL_DIR / name, False) for name in RUSTDESK_BINARIES]
+        + [("key_file", RUSTDESK_KEY_FILE, True)], timeout=budget.remaining())
+    checks.extend([
+        {"name": "hbbs_service", "ok": budget.call(is_process_active, RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE, timeout=budget.remaining())},
+        {"name": "hbbr_service", "ok": budget.call(is_process_active, RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE, timeout=budget.remaining())},
+    ])
+    checks.extend(budget.call(listener_checks, [
+        ("tcp", RUSTDESK_NAT_PORT, RUSTDESK_INSTALL_DIR / "hbbs"),
+        ("tcp", RUSTDESK_ID_PORT, RUSTDESK_INSTALL_DIR / "hbbs"),
+        ("udp", RUSTDESK_ID_PORT, RUSTDESK_INSTALL_DIR / "hbbs"),
+        ("tcp", RUSTDESK_RELAY_PORT, RUSTDESK_INSTALL_DIR / "hbbr"),
+    ], timeout=budget.remaining()))
+    return {"checks": checks}
+
+
 def diagnose_server() -> None:
     from core.prompt import clear_screen, pause
 
@@ -162,24 +184,9 @@ def diagnose_server() -> None:
     clear_screen()
     print_action_title(breadcrumb, trailing_blank=False)
 
-    version = detect_version()
-    if not version:
-        # print_warning 自带 1 行前置空行，标题与内容之间正好 1 行
-        print_warning(t("software.not_installed_hint", name=t("software.rustdesk")))
-        pause()
-        return
-    state = load_state()
-    key = read_key()
-    if key:
-        state = {**state, **build_state(version, str(state.get("host") or detect_public_host()), key)}
-        save_state(state)
-    rows = [
-        t("rustdesk.info.version", version=version),
-        t("rustdesk.info.hbbs", active=str(is_process_active(RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE))),
-        t("rustdesk.info.hbbr", active=str(is_process_active(RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE))),
-    ]
     console.print()
-    _render_info_panel(state, extra_rows=rows)
+    for check in diagnostic_report()["checks"]:
+        console.print(f"{check['name']}: {check['ok']}")
     pause()
 
 
@@ -205,7 +212,7 @@ def install_archive(archive: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="opskit-rustdesk-extract-") as tmp:
         extract_dir = Path(tmp)
         try:
-            with zipfile.ZipFile(archive) as zf:
+            with open_zip(archive) as zf:
                 extract_zip(zf, extract_dir)
         except Exception as exc:
             raise InstallError(t("rustdesk.error.extract_failed", error=str(exc))) from exc
@@ -308,17 +315,24 @@ def verify_running() -> bool:
     return is_process_active(RUSTDESK_HBBS_SERVICE, RUSTDESK_HBBS_PID_FILE) and is_process_active(RUSTDESK_HBBR_SERVICE, RUSTDESK_HBBR_PID_FILE)
 
 
-def is_process_active(service: str, pid_file: Path) -> bool:
-    if systemd_is_available():
-        result = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True, check=False)
-        return result.stdout.strip() == "active"
-    if not pid_file.exists():
-        return False
+def is_process_active(service: str, pid_file: Path, *, timeout=RUSTDESK_COMMAND_TIMEOUT_SECONDS) -> bool:
+    from core.deadline import Deadline
+    from core.process import capture
+    budget = Deadline(timeout, "RustDesk service")
+    if budget.call(systemd_is_available):
+        result = budget.call(capture, ["systemctl", "is-active", service], timeout=budget.remaining())
+        return result.returncode == 0 and result.stdout.strip() == "active"
     try:
-        pid = pid_file.read_text(encoding="utf-8").strip()
-    except Exception:
+        from core.privilege import read_unix_root_file
+        pid = budget.call(read_unix_root_file, pid_file, timeout=budget.remaining(), max_bytes=64)
+    except OSError:
         return False
-    return bool(pid) and subprocess.run(["kill", "-0", pid], capture_output=True, check=False).returncode == 0
+    if pid is None:
+        return False
+    pid = pid.strip()
+    if not pid.isascii() or not pid.isdecimal() or int(pid) <= 0:
+        return False
+    return budget.call(capture, ["kill", "-0", pid], timeout=budget.remaining()).returncode == 0
 
 
 def wait_for_key() -> str:

@@ -1,8 +1,9 @@
 """ClickHouse shared helpers."""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import platform
-import tarfile
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
@@ -132,37 +133,30 @@ def extract_clickhouse_tarball(tarball: Path, dest: Path, version: str) -> Path:
     from core.i18n import t
     from software.base import InstallError
 
+    import tempfile
+    from core.archive import extract_tar
     bin_dir = dest / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
     try:
-        with tarfile.open(str(tarball), "r:gz") as tf:
-            member = next(
-                (
-                    m for m in tf.getmembers()
-                    if m.isfile() and m.name.replace("\\", "/").endswith("/usr/bin/clickhouse")
-                ),
-                None,
-            )
-            if member is None:
-                member = next(
-                    (
-                        m for m in tf.getmembers()
-                        if m.isfile() and Path(m.name).name == "clickhouse"
-                    ),
-                    None,
-                )
-            if member is None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".opskit-clickhouse-package-", dir=dest.parent) as work:
+            unpacked = Path(work) / "package"
+            with open_tar(str(tarball), "r:gz") as archive:
+                extract_tar(archive, unpacked, allow_symlinks=True)
+            candidates = [path for path in unpacked.rglob("clickhouse") if path.is_file() and not path.is_symlink()]
+            official = [path for path in candidates if path.parts[-3:] == ("usr", "bin", "clickhouse")]
+            selected = official or candidates
+            if len(selected) != 1:
                 raise InstallError(t("software.clickhouse_error.bad_structure", version=version))
-            src = tf.extractfile(member)
-            if src is None:
-                raise InstallError(t("software.clickhouse_error.bad_structure", version=version))
+            bin_dir.mkdir(parents=True, exist_ok=True)
             target = bin_dir / "clickhouse"
-            target.write_bytes(src.read())
+            if target.exists():
+                raise InstallError("ClickHouse binary already exists; refusing to overwrite")
+            selected[0].rename(target)
             target.chmod(0o755)
     except InstallError:
         raise
-    except Exception as e:
-        raise InstallError(t("software.clickhouse_error.extract_failed", version=version, error=e)) from e
+    except Exception as error:
+        raise InstallError(t("software.clickhouse_error.extract_failed", version=version, error=error)) from error
     return bin_dir
 
 

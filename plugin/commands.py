@@ -15,6 +15,7 @@ from core.module import ModuleInfo
 from core.paths import plugins_dir
 from core.plugin import (
     PluginManifest,
+    PluginInventoryError,
     list_manifests,
     load_manifest,
     load_plugin,
@@ -250,9 +251,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
     cmd = ["git", "clone", "--depth", "1"]
     if branch:
         cmd += ["--branch", branch]
-    cmd += [url, str(dest)]
+    cmd += ["--", url, str(dest)]
     try:
-        result = run(cmd, capture=True, check=False)
+        result = run(cmd, capture=True, check=False, timeout=300)
     except Exception as e:
         _remove_tree(dest)
         return None, str(e)
@@ -263,10 +264,19 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
     if manifest is None:
         _remove_tree(dest)
         return None, "no_manifest"
-    conflict = _manifest_name_conflict(manifest)
+    try:
+        conflict = _manifest_name_conflict(manifest)
+    except PluginInventoryError:
+        _remove_tree(dest)
+        return None, "plugin inventory scan failed"
     if conflict is not None:
         _remove_tree(dest)
         return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
+    if manifest.name in builtin_module_keys():
+        _remove_tree(dest)
+        return None, "official_name_conflict"
+    # Preserve source/branch even before authorization; an empty digest grants nothing.
+    grant(manifest.name, "", manifest.version, url, branch)
     invalidate_service_cache()
     return manifest, ""
 
@@ -289,7 +299,6 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     root = Path(manifest.root)
     if not (root / ".git").exists():
         return False, "not_git"
-    was_trusted = trust_status(manifest) == TRUST_OK
     branch = plugin_branch(manifest.name)
     pull_cmd = ["git", "pull", "--ff-only"]
     if branch:
@@ -299,7 +308,7 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
         if head.returncode != 0:
             return False, git_error_reason(head)
         before = head.stdout.strip()
-        pulled = run(pull_cmd, cwd=root, capture=True, check=False)
+        pulled = run(pull_cmd, cwd=root, capture=True, check=False, timeout=300)
         if pulled.returncode != 0:
             return False, git_error_reason(pulled)
         head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
@@ -310,6 +319,8 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
         return False, str(e)
     if before == after:
         return True, "unchanged"
+    invalidate(manifest.name)
+    invalidate_service_cache()
     refreshed = load_manifest(root)
     if refreshed is None:
         return True, "updated"
@@ -318,14 +329,14 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
     if old_key is not None and new_key is not None and new_key < old_key:
         return True, "downgrade"
-    if was_trusted:
-        invalidate(manifest.name)
-    invalidate_service_cache()
     return True, "updated"
 
 
 def remove(manifest: PluginManifest) -> None:
     """删除插件目录、移除信任记录并清除进程内残留（立即生效）"""
+    root = Path(manifest.root)
+    if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or root.resolve().parent != plugins_dir().resolve():
+        raise ValueError("plugin removal must target a direct directory inside plugins")
     unload_plugin(manifest)
     _remove_tree(manifest.root)
     revoke(manifest.name)

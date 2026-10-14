@@ -64,7 +64,7 @@ GOLANG_VERSIONS_FALLBACK = [
 # ─── /etc/profile.d go 文件名 ─────────────────────────────────────────────────
 PROFILE_D_GO_FILE      = "/etc/profile.d/opskit-golang.sh"
 
-# ─── Windows .cmd shim 模板 ───────────────────────────────────────────────────
+# ─── 历史 Windows shim 模板：仅用于精确迁移旧文件，不再生成 ──────────────────
 SHIM_GO_CMD_TEMPLATE = (
     "@echo off\r\n"
     "rem opskit golang shim - auto version routing\r\n"

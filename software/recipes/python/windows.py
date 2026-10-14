@@ -1,18 +1,14 @@
-"""Windows 平台驱动：.cmd shim、HKLM/HKCU PATH 注入、PS Profile、cmd AutoRun"""
+"""Windows 平台驱动：.cmd shim、PATH、PS Profile 和受管旧 AutoRun 迁移。"""
 from __future__ import annotations
 
+
 import os
-import shutil
-import subprocess
+import re
+import stat
 from pathlib import Path
 
-from software.base import InstallError
 from .driver import PlatformDriver
 from .constants import (
-    UV_INSTALL_PS1,
-    UV_INSTALL_PS1_GHPROXY,
-    UV_WIN_ZIP_URL,
-    UV_WIN_ZIP_GHPROXY,
     CMD_AUTORUN_SUBPATH,
     WIN_SHIM_PS_MARKER,
     WIN_SHIM_PS_END,
@@ -24,105 +20,107 @@ from .constants import (
 
 class WindowsDriver(PlatformDriver):
 
+    def __init__(self):
+        from .common import load_snapshot
+        # Activation publishes its new snapshot before applying the route.
+        # Bind the previous target before that publication, not from the link.
+        self._route_binary = load_snapshot().get("uv_python_path")
+
     # ─── uv ──────────────────────────────────────────────────────────────────
 
     def ensure_uv(self) -> str:
-        from .constants import UV_INSTALL_TIMEOUT
-        from .common import uv_bin_path
-
-        # 优先用 OpsKit 自管的私有 uv（版本新、元数据最新）；系统 PATH 上可能存在
-        # 陈旧的 uv，其内置 python-build-standalone 清单缺新版本，会导致
-        # "No download found"，故仅作为最后兜底。
-        private_uv = uv_bin_path()
-        if private_uv.exists() and os.access(str(private_uv), os.X_OK):
-            return str(private_uv)
-
-        private_uv.parent.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        env["UV_INSTALL_DIR"] = str(private_uv.parent)
-
-        ps_cmd = (
-            shutil.which("powershell.exe") or shutil.which("powershell")
-            or shutil.which("pwsh.exe") or shutil.which("pwsh")
-        )
-        if ps_cmd:
-            for ps1_url in (UV_INSTALL_PS1_GHPROXY, UV_INSTALL_PS1):
-                try:
-                    subprocess.run(
-                        [ps_cmd, "-ExecutionPolicy", "Bypass", "-Command",
-                         f"irm '{ps1_url}' | iex"],
-                        env=env, check=True, timeout=UV_INSTALL_TIMEOUT,
-                        capture_output=True,
-                    )
-                    if private_uv.exists():
-                        return str(private_uv)
-                except Exception:
-                    continue
-
-        curl_bin = shutil.which("curl.exe") or shutil.which("curl")
-        if curl_bin:
-            import tempfile, zipfile
-            for dl_url in (UV_WIN_ZIP_GHPROXY, UV_WIN_ZIP_URL):
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as zf:
-                        zip_path = zf.name
-                    subprocess.run(
-                        [curl_bin, "-L", "-o", zip_path, dl_url],
-                        check=True, timeout=UV_INSTALL_TIMEOUT, capture_output=True,
-                    )
-                    with zipfile.ZipFile(zip_path) as z:
-                        for member in z.namelist():
-                            if member.endswith("uv.exe"):
-                                z.extract(member, path=str(private_uv.parent))
-                                extracted = private_uv.parent / member
-                                if extracted != private_uv:
-                                    extracted.rename(private_uv)
-                                break
-                    os.unlink(zip_path)
-                    if private_uv.exists():
-                        return str(private_uv)
-                except Exception:
-                    continue
-
-        sys_uv = shutil.which("uv")
-        if sys_uv:
-            return sys_uv
-
-        from core.i18n import t
-        raise InstallError(t("software.python_error.uv_win_failed"))
+        from .uv_bootstrap import ensure_uv_archive
+        return ensure_uv_archive()
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 
     def install_shim(self, fallback_bin: str) -> None:
-        from .common import shim_dir
+        from .common import shim_dir, load_snapshot
         sdir = shim_dir()
-        sdir.mkdir(parents=True, exist_ok=True)
-        for name in ("python.cmd", "python3.cmd"):
-            (sdir / name).write_text(SHIM_CMD_TEMPLATE, encoding="utf-8")
-        self._inject_path(str(sdir))
+        binary = getattr(self, "_route_binary", None) or load_snapshot().get("uv_python_path")
+        relative = self._route_plan(binary)[1] if binary else "python.exe"
+        body = self._route_text(relative)
+        with self._command_files(sdir, {name: body for name in ("python.cmd", "python3.cmd")}) as verify:
+            self._inject_path(str(sdir), verify_commands=verify)
+
+    @staticmethod
+    def _route_plan(binary, *, require_file=True):
+        from software.base import InstallError
+        path = Path(binary).absolute()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.exe", path.name):
+            raise InstallError("unsupported Python executable filename")
+        if require_file:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+                raise InstallError("Python route requires a regular executable")
+        path = path.resolve(strict=require_file)
+        if path.parent.name.lower() == "scripts" and (path.parent.parent / "pyvenv.cfg").is_file():
+            return path.parent.parent, "Scripts\\" + path.name
+        return path.parent, path.name
+
+    @staticmethod
+    def _route_text(relative):
+        return ("@echo off\r\nsetlocal DisableDelayedExpansion\r\n"
+                "rem opskit python command v1\r\n"
+                f'"%~dp0.python-current\\{relative}" %*\r\nexit /b %errorlevel%\r\n')
+
+    @classmethod
+    def _owned_command(cls, name, text):
+        canonical = text.replace("\r\r\n", "\r\n").replace("\r\n", "\n").replace("\n", "\r\n")
+        if canonical == SHIM_CMD_TEMPLATE:
+            return True
+        lines = canonical.splitlines()
+        if len(lines) != 5:
+            return False
+        match = re.fullmatch(r'"%~dp0\.python-current\\((?:Scripts\\)?[A-Za-z0-9_.-]+\.exe)" %\*', lines[3])
+        return match is not None and canonical == cls._route_text(match[1])
+
+    def _authorized_roots(self, new_binary=None):
+        from .common import load_snapshot
+        binaries = (new_binary, getattr(self, "_route_binary", None), load_snapshot().get("uv_python_path"))
+        return tuple(dict.fromkeys(self._route_plan(binary, require_file=False)[0] for binary in binaries if binary))
+
+    def _command_files(self, directory, replacements):
+        from software._shared.windows_commands import command_transaction
+        return command_transaction(directory, replacements,
+                                   owned=self._owned_command)
 
     def remove_shim(self) -> None:
         from .common import shim_dir
+        from software._shared.windows_junction import junction_transaction, remove_junction
         sdir = shim_dir()
-        for name in ("python.cmd", "python3.cmd"):
-            shim = sdir / name
-            if shim.exists():
-                shim.unlink(missing_ok=True)
-        try:
-            sdir.rmdir()
-        except Exception:
-            pass
-        self._remove_path(str(sdir))
+        entry = sdir / ".python-current"
+        targets = self._authorized_roots() or None
+        with junction_transaction(entry, sdir, authorized_targets=targets) as change:
+            with self._command_files(sdir, {name: None for name in ("python.cmd", "python3.cmd")}) as verify:
+                remove_junction(entry, sdir, authorized_targets=targets)
+                change.checkpoint(removed=True)
+                self._remove_path(str(sdir), verify_commands=verify)
+                change.verify()
+        self._route_binary = None
 
     def shim_active(self) -> bool:
         from .common import shim_dir
         shims = str(shim_dir())
         return any(p == shims for p in os.environ.get("PATH", "").split(";"))
 
-    # ─── version link（Windows 无 symlink，shim 已路由，空实现）─────────────────
+    # ─── 固定命令与受管 junction 路由 ─────────────────────────────────────────
 
     def apply_version_link(self, new_bin: str) -> None:
-        pass
+        from .common import shim_dir
+        from software._shared.windows_junction import junction_transaction, set_junction
+        sdir = shim_dir()
+        target, relative = self._route_plan(new_bin)
+        targets = self._authorized_roots(new_bin)
+        entry = sdir / ".python-current"
+        body = self._route_text(relative)
+        with junction_transaction(entry, sdir, authorized_targets=targets) as change:
+            with self._command_files(sdir, {name: body for name in ("python.cmd", "python3.cmd")}) as verify:
+                set_junction(entry, target, sdir, authorized_targets=targets)
+                change.checkpoint(target)
+                verify()
+                change.verify()
+        self._route_binary = new_bin
 
     def restore_original(
         self,
@@ -130,7 +128,7 @@ class WindowsDriver(PlatformDriver):
         original_target: str | None,
         had_local_bin_path: bool,
     ) -> None:
-        pass
+        self.remove_shim()
 
     def snapshot_pre_install(self) -> dict:
         return {}
@@ -138,179 +136,33 @@ class WindowsDriver(PlatformDriver):
     # ─── detect ───────────────────────────────────────────────────────────────
 
     def detect_active(self) -> str | None:
-        from .common import load_snapshot
-        snap = load_snapshot()
-        active = snap.get("active_version")
-        if active:
-            uv_bin = snap.get("uv_python_path", "")
-            if uv_bin and Path(uv_bin).exists():
-                return active
-        py = shutil.which("python")
-        if py:
-            try:
-                r = subprocess.run([py, "--version"], capture_output=True, text=True, timeout=5)
-                line = r.stdout.strip() or r.stderr.strip()
-                if "Python" in line:
-                    return line.split()[-1]
-            except Exception:
-                pass
-        return None
+        from .version_probe import command_version
+        return command_version(("python", "python3"))
 
-    # ─── PATH 注入（四层）────────────────────────────────────────────────────
+    # ─── 用户 PATH 路由────────────────────────────────────────────────────
 
-    def _inject_path(self, shims_path: str) -> None:
-        import winreg
-        import ctypes
-
-        # 0. HKLM 系统级 PATH（管理员权限，最彻底）
-        try:
-            sys_key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-                0, winreg.KEY_READ | winreg.KEY_SET_VALUE,
-            )
-            sys_val, sys_type = winreg.QueryValueEx(sys_key, "PATH")
-            sys_parts = [p for p in sys_val.split(";") if p]
-            if shims_path not in sys_parts:
-                winreg.SetValueEx(sys_key, "PATH", 0, sys_type,
-                                  ";".join([shims_path] + sys_parts))
-            winreg.CloseKey(sys_key)
-            ctypes.windll.user32.SendMessageTimeoutW(
-                0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
-            )
-        except Exception:
-            pass
-
-        # 1. HKCU 用户级 PATH
-        try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, r"Environment", 0,
-                winreg.KEY_READ | winreg.KEY_SET_VALUE,
-            )
-            try:
-                cur, reg_type = winreg.QueryValueEx(key, "PATH")
-            except FileNotFoundError:
-                cur, reg_type = "", winreg.REG_EXPAND_SZ
-            parts = [p for p in cur.split(";") if p]
-            if shims_path not in parts:
-                winreg.SetValueEx(key, "PATH", 0, reg_type,
-                                  ";".join([shims_path] + parts))
-            winreg.CloseKey(key)
-            ctypes.windll.user32.SendMessageTimeoutW(
-                0xFFFF, 0x001A, 0, "Environment", 2, 5000, None
-            )
-        except Exception:
-            pass
-
-        # 2. PowerShell Profile
-        ps_block = (
-            f"\n{WIN_SHIM_PS_MARKER}\n"
-            f"$env:PATH = '{shims_path}' + ';' + $env:PATH\n"
-            f"{WIN_SHIM_PS_END}\n"
-        )
-        docs = Path.home() / "Documents"
-        for ps_profile in (
-            docs / "PowerShell" / "profile.ps1",
-            docs / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1",
-            docs / "WindowsPowerShell" / "profile.ps1",
-        ):
-            try:
-                ps_profile.parent.mkdir(parents=True, exist_ok=True)
-                text = ps_profile.read_text(encoding="utf-8") if ps_profile.exists() else ""
-                if WIN_SHIM_PS_MARKER not in text:
-                    ps_profile.write_text(text + ps_block, encoding="utf-8")
-            except Exception:
-                pass
-
-        # 3. cmd AutoRun
-        bat_path = str(Path.home() / CMD_AUTORUN_SUBPATH)
-        bat_content = (
-            f"@echo off\r\n"
-            f"@{WIN_SHIM_CMD_MARKER}\r\n"
-            f"@set PATH={shims_path};%PATH%\r\n"
-            f"@{WIN_SHIM_CMD_END}\r\n"
-        )
-        try:
-            Path(bat_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(bat_path).write_text(bat_content, encoding="utf-8")
-            cmd_key = winreg.CreateKeyEx(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Command Processor", 0,
-                winreg.KEY_SET_VALUE,
-            )
-            winreg.SetValueEx(cmd_key, "AutoRun", 0, winreg.REG_SZ, bat_path)
-            winreg.CloseKey(cmd_key)
-        except Exception:
-            pass
+    def _inject_path(self, shims_path: str, *, verify_commands=None) -> None:
+        self._retire_legacy_autorun()
+        from software._shared.windows_registry_path import change_user_path
+        change_user_path(shims_path, WIN_SHIM_PS_MARKER, WIN_SHIM_PS_END, remove=False, verify_commands=verify_commands)
 
         # 4. 当前进程 PATH
         cur_path = os.environ.get("PATH", "")
         if shims_path not in cur_path.split(";"):
             os.environ["PATH"] = shims_path + ";" + cur_path
 
-    def _remove_path(self, shims_path: str) -> None:
-        import winreg
+    def _remove_path(self, shims_path: str, *, verify_commands=None) -> None:
+        self._retire_legacy_autorun()
+        from software._shared.windows_registry_path import change_user_path
+        change_user_path(shims_path, WIN_SHIM_PS_MARKER, WIN_SHIM_PS_END, remove=True, verify_commands=verify_commands)
+        os.environ["PATH"] = ";".join(part for part in os.environ.get("PATH", "").split(";")
+                                       if os.path.normcase(part) != os.path.normcase(shims_path))
 
-        # 0. HKLM
-        try:
-            sys_key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-                0, winreg.KEY_READ | winreg.KEY_SET_VALUE,
-            )
-            sys_val, sys_type = winreg.QueryValueEx(sys_key, "PATH")
-            sys_parts = [p for p in sys_val.split(";") if p and p != shims_path]
-            winreg.SetValueEx(sys_key, "PATH", 0, sys_type, ";".join(sys_parts))
-            winreg.CloseKey(sys_key)
-        except Exception:
-            pass
-
-        # 1. HKCU
-        try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, r"Environment", 0,
-                winreg.KEY_READ | winreg.KEY_SET_VALUE,
-            )
-            cur, reg_type = winreg.QueryValueEx(key, "PATH")
-            parts = [p for p in cur.split(";") if p and p != shims_path]
-            winreg.SetValueEx(key, "PATH", 0, reg_type, ";".join(parts))
-            winreg.CloseKey(key)
-        except Exception:
-            pass
-
-        # 2. PowerShell Profile
-        docs = Path.home() / "Documents"
-        for ps_profile in (
-            docs / "PowerShell" / "profile.ps1",
-            docs / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1",
-            docs / "WindowsPowerShell" / "profile.ps1",
-        ):
-            if not ps_profile.exists():
-                continue
-            try:
-                lines = ps_profile.read_text(encoding="utf-8").splitlines(keepends=True)
-                out, skip = [], False
-                for line in lines:
-                    if line.strip() == WIN_SHIM_PS_MARKER:
-                        skip = True
-                    if not skip:
-                        out.append(line)
-                    if line.strip() == WIN_SHIM_PS_END:
-                        skip = False
-                ps_profile.write_text("".join(out), encoding="utf-8")
-            except Exception:
-                pass
-
-        # 3. cmd AutoRun
-        try:
-            bat_path = str(Path.home() / CMD_AUTORUN_SUBPATH)
-            Path(bat_path).unlink(missing_ok=True)
-            cmd_key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Command Processor", 0,
-                winreg.KEY_SET_VALUE,
-            )
-            winreg.DeleteValue(cmd_key, "AutoRun")
-            winreg.CloseKey(cmd_key)
-        except Exception:
-            pass
+    def _retire_legacy_autorun(self) -> None:
+        from software._shared.windows_autorun import retire_legacy_autorun
+        from .common import shim_dir
+        retire_legacy_autorun(
+            Path.home() / CMD_AUTORUN_SUBPATH,
+            (str(shim_dir()),),
+            WIN_SHIM_CMD_MARKER, WIN_SHIM_CMD_END,
+        )

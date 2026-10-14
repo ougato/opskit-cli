@@ -56,5 +56,9 @@ class TailscaleRecipe(Recipe):
     def diagnose(self) -> None:
         diagnose_client()
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        from tailscale.diagnostics import report
+        return report(timeout=timeout)
+
     def manage(self) -> None:
         manage_client()

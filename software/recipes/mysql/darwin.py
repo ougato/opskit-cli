@@ -25,12 +25,20 @@ class DarwinDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import mysql_version_dir, mysql_bin_dir
+        from software._shared.archive_install import staged_directory
         dest = mysql_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-        extract_tarball(tarball, dest, version)
+        try:
+            with staged_directory(dest, prefix=".opskit-mysql-") as staging:
+                extract_tarball(tarball, staging, version)
+                if not (staging / "bin/mysql").is_file():
+                    raise InstallError(t("software.mysql_error.macos_bad_structure", version=version))
+        except FileExistsError as error:
+            raise InstallError("MySQL version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError(t("software.mysql_error.extract_failed", version=version, error=error)) from error
         bin_dir = mysql_bin_dir(version)
-        if not (bin_dir / "mysql").exists():
-            raise InstallError(t("software.mysql_error.macos_bad_structure", version=version))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────

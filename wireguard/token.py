@@ -12,6 +12,7 @@ from core.i18n import t
 
 TOKEN_PREFIX = "opskit://"
 TOKEN_VERSION = 2
+MAX_TOKEN_BYTES = 64 * 1024
 
 TOKEN_V1_DEFAULTS = {
     "vpn_subnet": "10.10.10.0/24",
@@ -126,13 +127,19 @@ def decode_token(token: str) -> dict:
     Raises:
         ValueError: 令牌格式无效
     """
+    if len(token) > MAX_TOKEN_BYTES:
+        raise ValueError("token input too large")
     token = token.strip()
     if token.startswith(TOKEN_PREFIX):
         token = token[len(TOKEN_PREFIX):]
 
     try:
         compressed = base64.urlsafe_b64decode(token)
-        raw = gzip.decompress(compressed)
+        import io
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as source:
+            raw = source.read(MAX_TOKEN_BYTES + 1)
+        if len(raw) > MAX_TOKEN_BYTES:
+            raise ValueError("token payload too large")
         data = json.loads(raw)
     except Exception as e:
         raise ValueError(t("wireguard.error.token_decode_fail", error=e)) from e
@@ -156,3 +163,13 @@ def decode_token(token: str) -> dict:
     _validate_token_fields(data)
 
     return data
+
+
+def decode_client_token(token: str) -> dict:
+    """Validate client interface constraints before dependencies or system writes."""
+    from wireguard.utils import normalize_tunnel_label
+    data = decode_token(token)
+    label = normalize_tunnel_label(data.get("label"), default="default")
+    if len(f"wg-{label}") > 15:
+        raise ValueError("tunnel label exceeds Linux interface name limit")
+    return {**data, "label": label}

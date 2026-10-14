@@ -28,6 +28,10 @@ def _make_provider(root: Path, name: str = "storagey") -> Path:
         entry: {name}_pkg
         provides:
           - storage
+        service_contracts:
+          storage:
+            api_version: 1
+            methods: [open_menu]
     """)
     pkg = plugin_dir / f"{name}_pkg"
     pkg.mkdir()
@@ -111,11 +115,12 @@ def test_manifest_defaults_empty_provides_uses(tmp_path) -> None:
     assert manifest.uses == []
 
 
-def test_get_service_from_trusted_provider(plugins_root) -> None:
+def test_get_service_from_trusted_provider(plugins_root, monkeypatch) -> None:
     _trust(_make_provider(plugins_root))
     svc = services.get_service("storage")
     assert svc is not None
-    assert svc.service_api_version == 2
+    monkeypatch.setattr("core.plugin_sandbox.invoke", lambda *a, **k: {"service_api_version": 1, "methods": ["open_menu"]})
+    assert svc.service_api_version == 1
     # 缓存命中同一对象
     assert services.get_service("storage") is svc
 

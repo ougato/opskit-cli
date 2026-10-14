@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,6 +130,29 @@ def shim_dir() -> Path:
     return Path.home() / UV_SHIM_SUBDIR
 
 
+def uv_installation_directories(base: Path) -> tuple[Path, ...]:
+    """Preflight the installation root and named entries without following links."""
+    base = Path(base).absolute()
+    for node in (base, *base.parents):
+        try:
+            info = node.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+            raise InstallError("Python installation root must not be a link or non-directory")
+    if not base.exists():
+        return ()
+    entries = []
+    for entry in base.iterdir():
+        if not entry.name.startswith("cpython-"):
+            continue
+        info = entry.lstat()
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+            raise InstallError("Python installation entry must not be a link or non-directory")
+        entries.append(entry)
+    return tuple(entries)
+
+
 # ─── 快照管理 ─────────────────────────────────────────────────────────────────
 
 _store = SnapshotStore(SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE)
@@ -158,14 +182,12 @@ def find_uv_python(version: str) -> str | None:
     Linux/macOS: ~/.opskit/python/cpython-{ver}-linux-.../bin/python3.X
     Windows:     ~/.opskit/python/cpython-{ver}-windows-.../python.exe
     """
+    if not is_stable_pyver(version) or len(version.split(".")) != 3:
+        return None
     major_minor = ".".join(version.split(".")[:2])
     base = uv_python_dir()
-    if not base.exists():
-        return None
-    for entry in base.iterdir():
-        if not entry.is_dir():
-            continue
-        if not entry.name.startswith(f"cpython-{version}"):
+    for entry in uv_installation_directories(base):
+        if not entry.name.startswith(f"cpython-{version}-"):
             continue
         candidates = [
             entry / "bin" / f"python{major_minor}",
@@ -174,7 +196,7 @@ def find_uv_python(version: str) -> str | None:
             entry / f"python{major_minor}.exe",
         ]
         for candidate in candidates:
-            if candidate.exists():
+            if candidate.is_file():
                 return str(candidate)
     return None
 

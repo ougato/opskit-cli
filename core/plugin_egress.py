@@ -9,6 +9,7 @@ import os
 import selectors
 import socket
 import socketserver
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -24,16 +25,21 @@ def allowed_addresses(host: str, port: int, private_targets: list[str]) -> list[
 
 class Proxy(socketserver.BaseRequestHandler):
     def handle(self):
-        self.request.settimeout(15)
         header = bytearray()
-        while b"\r\n\r\n" not in header:
-            byte = self.request.recv(1)
-            if not byte:
-                return
-            header.extend(byte)
-            if len(header) > 16384:
-                return
         try:
+            header_deadline = time.monotonic() + self.server.header_timeout
+            while b"\r\n\r\n" not in header:
+                remaining = header_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("proxy header deadline exceeded")
+                self.request.settimeout(remaining)
+                byte = self.request.recv(1)
+                if not byte:
+                    return
+                header.extend(byte)
+                if len(header) > 16384:
+                    raise ValueError("proxy header too large")
+            self.request.settimeout(15)
             first, *lines = bytes(header).split(b"\r\n")
             method, target, version = first.decode("ascii").split(" ", 2)
             auth = next((line.split(b":", 1)[1].strip() for line in lines if line.lower().startswith(b"proxy-authorization:")), b"")
@@ -89,6 +95,28 @@ class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
     request_queue_size = 16
+    header_timeout = 15
+    max_connections = 16
+
+    def __init__(self, *args, **kwargs):
+        self._slots = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 if __name__ == "__main__":

@@ -7,3 +7,4 @@ psutil>=5.9.8
 platformdirs>=4.0
 sentry-sdk>=2.0,<3
 cryptography>=44.0
+zstandard>=0.25,<1

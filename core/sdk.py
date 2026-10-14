@@ -40,7 +40,16 @@ from core.prompt import (
 )
 
 # ─── 插件间服务 ─────────────────────────────────────────────────────────────────
-from core.plugin_services import get_service, open_service_menu
+def get_service(name: str) -> object | None:
+    """Resolve on the host; the worker binds this API to an authenticated RPC."""
+    from core.plugin_services import get_service as resolve
+    return resolve(name)
+
+
+def open_service_menu(name: str, breadcrumb: list[str], context: dict[str, object] | None = None,
+                      source: str = "") -> bool:
+    from core.plugin_services import open_service_menu as open_menu
+    return open_menu(name, breadcrumb, context, source)
 
 # ─── 子进程执行 ───────────────────────────────────────────────────────────────
 from core.runner import run, run_lines, which, cmd_ok

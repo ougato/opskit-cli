@@ -1,10 +1,11 @@
 """Windows 平台驱动：zip 解压、shim cmd、注册表 PATH 注入（对齐 golang/windows.py）"""
 from __future__ import annotations
 
+from core.archive_reader import open_zip
+
 import os
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -31,30 +32,23 @@ class WindowsDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import mongo_version_dir, mongo_bin_dir
+        from core.archive import extract_zip
+        from software._shared.archive_install import staged_directory
         dest = mongo_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
         try:
-            with zipfile.ZipFile(str(tarball), "r") as zf:
-                for member in zf.infolist():
-                    name = member.filename
-                    # zip 内顶层目录名如 mongodb-windows-x86_64-8.0.4
-                    parts = name.split("/", 1)
-                    if len(parts) < 2 or not parts[1]:
-                        continue
-                    rel = parts[1]
-                    target = dest / rel.replace("/", os.sep)
-                    if name.endswith("/"):
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
+            with staged_directory(dest, prefix=".opskit-mongo-") as staging:
+                with open_zip(str(tarball), "r") as zf:
+                    extract_zip(zf, staging, strip_components=1)
+                if not (staging / "bin/mongod.exe").is_file():
+                    raise InstallError(t("software.mongodb_error.bad_structure", version=version, file="bin/mongod.exe"))
+        except FileExistsError as e:
+            raise InstallError("MongoDB version directory already exists; refusing to overwrite") from e
+        except InstallError:
+            raise
         except Exception as e:
             raise InstallError(t("software.mongodb_error.extract_failed", version=version, error=e)) from e
 
         bin_dir = mongo_bin_dir(version)
-        if not (bin_dir / "mongod.exe").exists():
-            raise InstallError(t("software.mongodb_error.bad_structure", version=version, file="bin/mongod.exe"))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────

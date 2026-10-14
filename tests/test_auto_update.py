@@ -481,9 +481,9 @@ class TestUpdaterImprovements:
         finally:
             sys.argv = original_argv
 
-    def test_windows_update_script_uses_powershell(self, tmp_path):
+    def test_windows_update_script_uses_powershell(self, tmp_path, monkeypatch):
         from core.updater import _apply_windows
-        import os
+        monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
         pending = tmp_path / "opskit.pending"
         pending.write_bytes(b"MZ" + b"\x00" * 100)
         self_path = tmp_path / "opskit.exe"
@@ -491,13 +491,14 @@ class TestUpdaterImprovements:
 
         with patch("subprocess.Popen"):
             _apply_windows(pending, self_path, 2)
-        ps_path = tmp_path / "opskit_update.ps1"
-        assert ps_path.exists()
+        jobs = list((tmp_path / "cache" / "update-jobs").glob("*/apply.ps1"))
+        assert len(jobs) == 1
+        ps_path = jobs[0]
         content = ps_path.read_text(encoding="utf-8")
-        assert "Rename-Item" in content, "新策略应使用 Rename-Item（Rename-Then-Copy）"
-        assert "Wait-Process" in content, "新策略应包含 Wait-Process 等待父进程退出"
+        assert "MoveFileEx($stage, $target, 9)" in content
+        assert "WaitForExit" in content
         assert f"$pid_to_wait = {os.getpid()}" in content, "应注入当前 PID"
-        assert "Copy-Item" in content, "应包含 Copy-Item 作为跨驱动器降级兜底"
+        assert "Copy-Item" not in content and "Rename-Item" not in content
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -697,9 +698,9 @@ class TestHealthRollback:
         with self._patch_health(hpath), patch("core.updater.rollback", return_value=True) as rb:
             assert _check_health() is True
             rb.assert_called_once()
-        assert not hpath.exists()
+        assert hpath.exists(), "Rollback must retain its health/backup recovery evidence"
 
-    def test_stale_build_cleared(self, tmp_path):
+    def test_other_build_health_retained(self, tmp_path):
         from core.updater import _check_health
         from core.constants import APP_VERSION
         hpath = tmp_path / "update_health.json"
@@ -708,7 +709,7 @@ class TestHealthRollback:
         with self._patch_health(hpath), patch("core.updater.rollback") as rb:
             assert _check_health() is False
             rb.assert_not_called()
-        assert not hpath.exists()
+        assert hpath.exists(), "A different runtime cannot delete another build's health"
 
     def test_confirm_health_sets_flag(self, tmp_path):
         from core.updater import confirm_health, mark_update_applied

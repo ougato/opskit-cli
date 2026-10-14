@@ -6,6 +6,7 @@ from core.prompt import select, text_input, confirm, pause, clear_screen, print_
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
 from plugin import commands
+from core.plugin import PluginInventoryError
 
 _THEME_KEY = "plugin"
 _BREADCRUMB = ["OpsKit"]
@@ -36,6 +37,14 @@ def _group_display(members) -> tuple[str, str]:
 
 
 def entry() -> None:
+    try:
+        _entry()
+    except PluginInventoryError as error:
+        print_error(str(error))
+        pause()
+
+
+def _entry() -> None:
     """插件工具主循环：每次进入实时重新扫描插件目录（热插拔），同 group 插件聚合为一个入口"""
     while True:
         pairs = commands.loaded_plugins()

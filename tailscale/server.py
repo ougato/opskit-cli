@@ -102,7 +102,11 @@ def install_step_keys() -> list[str]:
 
 
 def _run(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=check, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=env)
+    from core.process import capture
+    result = capture(command, timeout=timeout, env=env)
+    if check and result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+    return result
 
 
 def _run_root(command: list[str], check: bool = True, timeout: int = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
@@ -171,10 +175,10 @@ WantedBy=multi-user.target
 """
 
 
-def detect_tailscale_version() -> str | None:
+def detect_tailscale_version(*, timeout: float = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> str | None:
     if not command_exists(TAILSCALE_COMMAND):
         return None
-    result = _run([TAILSCALE_COMMAND, "version"], check=False)
+    result = _run([TAILSCALE_COMMAND, "version"], check=False, timeout=timeout)
     if result.returncode != 0:
         return None
     first = result.stdout.splitlines()[0].strip() if result.stdout else ""
@@ -188,11 +192,11 @@ def tailscale_ip() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def is_service_active() -> bool:
+def is_service_active(*, timeout: float = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> bool:
     if _is_darwin():
-        return bool(_status_json())
-    result = _run([SYSTEMCTL_COMMAND, "is-active", TAILSCALED_SERVICE], check=False)
-    return result.stdout.strip() == "active"
+        return bool(_status_json(timeout=timeout))
+    result = _run([SYSTEMCTL_COMMAND, "is-active", TAILSCALED_SERVICE], check=False, timeout=timeout)
+    return result.returncode == 0 and result.stdout.strip() == "active"
 
 
 def _install_script() -> None:
@@ -272,17 +276,19 @@ def restart_service() -> None:
     _run_root([SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE], check=False)
 
 
-def start_login() -> str:
+def start_login(*, advertise_exit_node: bool = True, timeout: float = TAILSCALE_UP_TIMEOUT_SECONDS) -> str:
     command = [
         TAILSCALE_COMMAND,
         "up",
         "--hostname",
         TAILSCALE_HOSTNAME,
     ]
-    if not _is_darwin():
+    if not _is_darwin() and advertise_exit_node:
         command.append("--advertise-exit-node")
     try:
-        result = _run_root(command, check=False, timeout=TAILSCALE_UP_TIMEOUT_SECONDS)
+        result = _run_root(command, check=False, timeout=timeout)
+        if result.returncode != 0:
+            raise RuntimeError("Tailscale login command failed")
         return (result.stdout + result.stderr).strip()
     except subprocess.TimeoutExpired as exc:
         output = ""
@@ -293,10 +299,10 @@ def start_login() -> str:
         return output.strip()
 
 
-def _status_json() -> dict:
+def _status_json(*, timeout: float = TAILSCALE_COMMAND_TIMEOUT_SECONDS) -> dict:
     if not command_exists(TAILSCALE_COMMAND):
         return {}
-    result = _run([TAILSCALE_COMMAND, "status", "--json"], check=False)
+    result = _run([TAILSCALE_COMMAND, "status", "--json"], check=False, timeout=timeout)
     if result.returncode != 0 or not result.stdout:
         return {}
     try:
@@ -384,6 +390,26 @@ def install_client() -> None:
     console.print()
     _render_install_panel(auth_url)
     pause()
+
+
+def prepare_client(*, exit_node: bool = False) -> dict:
+    """Install/start only; login and exit-node permissions are explicit."""
+    _ensure_supported()
+    if exit_node and _is_darwin():
+        raise InstallError("exit-node setup is only supported on Linux")
+    if not command_exists(TAILSCALE_COMMAND):
+        if _is_darwin():
+            _install_brew()
+        else:
+            _install_script()
+    _start_service()
+    if exit_node:
+        configure_exit_node()
+    installed = bool(detect_tailscale_version())
+    active = is_service_active()
+    if not installed or not active:
+        raise InstallError("Tailscale installation or service verification failed")
+    return {"installed": installed, "service_active": active, "exit_node": exit_node, "login_started": False}
 
 
 def uninstall_client() -> None:

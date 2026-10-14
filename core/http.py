@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 def get_json(url: str, *, timeout: float = 10, retries: int = 2) -> Any | None:
     """GET 请求并返回 JSON，失败返回 None"""
-    last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
@@ -23,7 +22,6 @@ def get_json(url: str, *, timeout: float = 10, retries: int = 2) -> Any | None:
                     return None
                 logger.debug("HTTP %d from %s (attempt %d)", resp.status_code, url, attempt)
         except Exception as e:
-            last_exc = e
             logger.debug("HTTP error from %s (attempt %d): %s", url, attempt, e)
     return None
 

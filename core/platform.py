@@ -6,10 +6,9 @@ import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 
 class IssueLevel(str, Enum):

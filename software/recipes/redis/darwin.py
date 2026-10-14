@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -23,48 +22,24 @@ class DarwinDriver(PlatformDriver):
 
     def install_binary(self, version: str, src: Path) -> str:
         """从源码 tar.gz make 编译并安装到版本专属目录，返回 bin 目录路径字符串"""
-        if not shutil.which("make"):
-            raise InstallError(t("software.redis_error.src_need_build_tools"))
         from .common import redis_version_dir, redis_bin_dir
+        from .linux import LinuxDriver
+        from software._shared.archive_install import staged_directory
         dest = redis_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-        bin_d = redis_bin_dir(version)
-        bin_d.mkdir(parents=True, exist_ok=True)
-
-        import tempfile
-        with tempfile.TemporaryDirectory(prefix="opskit-redis-src-", ignore_cleanup_errors=True) as tmp:
-            try:
-                with tarfile.open(str(src), "r:gz") as tf:
-                    from core.archive import extract_tar
-                    extract_tar(tf, tmp)
-            except Exception as e:
-                raise InstallError(t("software.redis_error.src_extract_failed", error=e)) from e
-            src_dirs = [d for d in Path(tmp).iterdir() if d.is_dir() and d.name.startswith("redis")]
-            if not src_dirs:
-                raise InstallError(t("software.redis_error.src_bad_structure"))
-            src_dir = src_dirs[0]
-            try:
-                subprocess.run(
-                    ["make", f"PREFIX={dest}", "install"],
-                    cwd=str(src_dir), check=True, capture_output=True
-                )
-            except subprocess.CalledProcessError as e:
-                raise InstallError(
-                    t("software.redis_error.src_make_failed", error=e.stderr.decode(errors='replace')[:300])
-                ) from e
-
-        for binary in ("redis-server", "redis-cli", "redis-sentinel", "redis-benchmark",
-                       "redis-check-aof", "redis-check-rdb"):
-            installed = dest / "bin" / binary
-            target = bin_d / binary
-            if installed.exists() and not target.exists():
-                shutil.copy2(str(installed), str(target))
-                target.chmod(0o755)
-
-        redis_server = bin_d / "redis-server"
-        if not redis_server.exists():
-            raise InstallError(t("software.redis_error.macos_bad_structure", version=version))
-        return str(bin_d)
+        try:
+            with staged_directory(dest, prefix=".opskit-redis-") as staging:
+                bin_d = staging / "bin"
+                bin_d.mkdir(parents=True)
+                LinuxDriver()._install_from_src(src, bin_d)
+                if not all((bin_d / binary).is_file() for binary in ("redis-server", "redis-cli")):
+                    raise InstallError(t("software.redis_error.macos_bad_structure", version=version))
+        except FileExistsError as error:
+            raise InstallError("Redis version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError("Redis installation preparation or publication failed") from error
+        return str(redis_bin_dir(version))
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 

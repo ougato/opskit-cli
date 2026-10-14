@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,15 @@ def _load_lang(lang: str) -> dict[str, Any]:
     path = _get_locale_dir() / f"{lang}.yaml"
     if not path.exists():
         path = _get_locale_dir() / "en.yaml"
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    metadata = path.stat()
+    return _cached_lang(path, metadata.st_mtime_ns, metadata.st_size)
+
+
+@lru_cache(maxsize=8)
+def _cached_lang(path: Path, modified_ns: int, size: int) -> dict[str, Any]:
+    """Bound immutable bundled catalogues; file changes invalidate their key."""
+    with path.open("r", encoding="utf-8") as source:
+        return yaml.load(source, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
 
 
 def _detect_system_lang() -> str:

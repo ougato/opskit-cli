@@ -6,16 +6,14 @@ import sys
 import time
 
 from rich import box as rich_box
-from rich.columns import Columns
 from rich.console import Console, Group
-from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from core.i18n import t
-from core.prompt import select, pause, clear_screen, UserCancel, _kbhit, _read_key, console as base_console
+from core.prompt import select, pause, clear_screen, UserCancel, _kbhit, console as base_console
 from core.theme import get_color, get_icon, get_panel_config
 
 console = Console()
@@ -25,6 +23,12 @@ _REFRESH_INTERVAL = 2  # 秒
 
 
 def _live_loop(render_fn) -> None:
+    from monitor.commands import sampling_session
+    with sampling_session():
+        _live_loop_scoped(render_fn)
+
+
+def _live_loop_scoped(render_fn) -> None:
     """通用实时刷新循环：screen=True 接管终端，退出后完整恢复，消除闪烁"""
     hint = Text(f"\n{t('prompt.pause')}", style=get_color('muted'))
     _stop = [False]
@@ -173,8 +177,8 @@ def _build_dashboard() -> Table:
 
     # CPU
     cpu = snap.cpu
-    cpu_bar = fmt_percent_bar(cpu.percent, 18)
-    cpu_color = _pct_color(cpu.percent)
+    cpu_bar = "N/A" if cpu.percent is None else fmt_percent_bar(cpu.percent, 18)
+    cpu_color = muted if cpu.percent is None else _pct_color(cpu.percent)
     cpu_panel = Panel(
         f"[{cpu_color}]{cpu_bar}[/{cpu_color}]\n"
         f"[{muted}]{cpu.count_physical}C/{cpu.count_logical}T  {cpu.freq_mhz:.0f} MHz[/{muted}]",
@@ -212,8 +216,8 @@ def _build_dashboard() -> Table:
         n = snap.net[0]
         speed_color = get_color("info")
         net_panel = Panel(
-            f"[{speed_color}]↑ {fmt_bytes(n.speed_send)}/s[/{speed_color}]\n"
-            f"[{success}]↓ {fmt_bytes(n.speed_recv)}/s[/{success}]\n"
+            f"[{speed_color}]↑ {_format_net_rate(n.speed_send)}[/{speed_color}]\n"
+            f"[{success}]↓ {_format_net_rate(n.speed_recv)}[/{success}]\n"
             f"[{muted}]{n.name}[/{muted}]",
             title=f"[{title_color}]{t('monitor.network')}[/{title_color}]",
             border_style=get_color(f"modules.{_THEME_KEY}.border"),
@@ -288,13 +292,13 @@ def show_cpu_detail() -> None:
         tbl.add_column(t("monitor.core"), style=muted, width=10)
         tbl.add_column(t("monitor.usage"), width=32)
 
-        total_bar = fmt_percent_bar(cpu.percent, 24)
-        color = error_c if cpu.percent >= 90 else (warning if cpu.percent >= 70 else success)
+        total_bar = "N/A" if cpu.percent is None else fmt_percent_bar(cpu.percent, 24)
+        color = muted if cpu.percent is None else error_c if cpu.percent >= 90 else (warning if cpu.percent >= 70 else success)
         tbl.add_row(f"[{muted}]{t('monitor.total')}[/{muted}]", f"[{color}]{total_bar}[/{color}]")
 
         for i, pct in enumerate(cpu.per_core):
-            bar = fmt_percent_bar(pct, 24)
-            c = error_c if pct >= 90 else (warning if pct >= 70 else success)
+            bar = "N/A" if pct is None else fmt_percent_bar(pct, 24)
+            c = muted if pct is None else error_c if pct >= 90 else (warning if pct >= 70 else success)
             tbl.add_row(f"Core {i}", f"[{c}]{bar}[/{c}]")
         return _titled(tbl, title)
 
@@ -397,6 +401,11 @@ def show_disk_detail(pause_after: bool = True) -> None:
 
 # ─── 网络详情 ─────────────────────────────────────────────────────────────────
 
+def _format_net_rate(value):
+    from monitor.commands import fmt_bytes
+    return "N/A" if value is None else f"{fmt_bytes(value)}/s"
+
+
 def show_network_detail() -> None:
     """网络接口实时流量"""
     from monitor.commands import get_net, fmt_bytes
@@ -423,8 +432,8 @@ def show_network_detail() -> None:
         for n in interfaces:
             tbl.add_row(
                 n.name,
-                f"[{info_c}]{fmt_bytes(n.speed_send)}/s[/{info_c}]",
-                f"[{success}]{fmt_bytes(n.speed_recv)}/s[/{success}]",
+                f"[{info_c}]{_format_net_rate(n.speed_send)}[/{info_c}]",
+                f"[{success}]{_format_net_rate(n.speed_recv)}[/{success}]",
                 fmt_bytes(n.bytes_sent),
                 fmt_bytes(n.bytes_recv),
             )
@@ -460,13 +469,15 @@ def show_processes() -> None:
         tbl.add_column(t("monitor.status"), style=muted, width=12)
 
         for p in procs:
-            cpu_c = error_c if p.cpu_percent >= 80 else (warning if p.cpu_percent >= 50 else success)
-            mem_c = error_c if p.mem_percent >= 50 else (warning if p.mem_percent >= 30 else success)
+            cpu_c = muted if p.cpu_percent is None else error_c if p.cpu_percent >= 80 else (warning if p.cpu_percent >= 50 else success)
+            mem_c = muted if p.mem_percent is None else error_c if p.mem_percent >= 50 else (warning if p.mem_percent >= 30 else success)
+            cpu_text = "N/A" if p.cpu_percent is None else f"{p.cpu_percent:.1f}"
+            mem_text = "N/A" if p.mem_percent is None else f"{p.mem_percent:.1f}"
             tbl.add_row(
                 str(p.pid),
                 p.name[:22],
-                f"[{cpu_c}]{p.cpu_percent:.1f}[/{cpu_c}]",
-                f"[{mem_c}]{p.mem_percent:.1f}[/{mem_c}]",
+                f"[{cpu_c}]{cpu_text}[/{cpu_c}]",
+                f"[{mem_c}]{mem_text}[/{mem_c}]",
                 p.status,
             )
         return _titled(tbl, title)

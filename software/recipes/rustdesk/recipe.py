@@ -55,5 +55,9 @@ class RustDeskRecipe(Recipe):
     def diagnose(self) -> None:
         diagnose_server()
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        from .server import diagnostic_report
+        return diagnostic_report(timeout=timeout)
+
     def system_version(self) -> str | None:
         return RUSTDESK_INSTALLED_VERSION if detect_version() else None

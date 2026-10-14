@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import math
 import queue
 import signal
 import subprocess
@@ -44,17 +45,35 @@ def terminate_tree(process: subprocess.Popen) -> None:
         process.wait(timeout=3)
 
 
-def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None) -> Iterator[str]:
+def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False):
+    """Start a text client in a group/kill-on-close Job before it can fork."""
     process = subprocess.Popen(
         list(cmd), cwd=str(cwd) if cwd else None, env=env,
+        stdin=stdin,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
+        text=not binary, encoding=None if binary else "utf-8", errors=None if binary else "replace",
         start_new_session=os.name != "nt",
         creationflags=0x4 if os.name == "nt" else 0,
     )
     if os.name == "nt":
         from core.windows_job import attach_and_resume
-        process._opskit_job = attach_and_resume(process)
+        try:
+            process._opskit_job = attach_and_resume(process)
+        except BaseException:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    pipe.close()
+            raise
+    return process
+
+
+def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=None, stdin=None) -> Iterator[str]:
+    if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("process timeout must be finite and positive")
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    process = start(cmd, cwd=cwd, env=env, stdin=stdin)
+    if process_ref is not None:
+        process_ref.append(process)
     output: queue.Queue = queue.Queue(maxsize=32)
     stopped = threading.Event()
 
@@ -78,9 +97,8 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None) -> Iterator[
             put(None)
 
     thread = threading.Thread(target=reader, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + timeout if timeout is not None else None
     try:
+        thread.start()
         while True:
             remaining = deadline - time.monotonic() if deadline is not None else None
             if remaining is not None and remaining <= 0:
@@ -97,6 +115,35 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None) -> Iterator[
     finally:
         stopped.set()
         terminate_tree(process)
-        thread.join(timeout=3)
+        if thread.ident is not None:
+            thread.join(timeout=3)
         if not thread.is_alive() and process.stdout is not None:
             process.stdout.close()
+
+
+def capture(cmd: Sequence[str], *, timeout, max_bytes=65536, env=None, stdin=None, cwd=None):
+    """Capture bounded merged text output using the same process-tree supervisor.
+
+    Intended for small diagnostic command results, rather than binary or exact
+    byte output. Does not raise for a nonzero exit status.
+    """
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("output limit must be a positive integer")
+    iterator = stream(cmd, timeout=timeout, env=env, stdin=stdin, cwd=cwd)
+    lines = []
+    size = 0
+    try:
+        while True:
+            try:
+                line = next(iterator) + "\n"
+            except StopIteration as done:
+                return subprocess.CompletedProcess(list(cmd), done.value, "".join(lines), "")
+            size += len(line.encode("utf-8"))
+            if size > max_bytes:
+                raise RuntimeError("diagnostic command output exceeds limit")
+            lines.append(line)
+    except subprocess.TimeoutExpired as exc:
+        exc.output = "".join(lines)
+        raise
+    finally:
+        iterator.close()

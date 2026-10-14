@@ -2,17 +2,25 @@
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass
 class CpuInfo:
-    percent: float          # 总 CPU 使用率 %
-    per_core: list[float]   # 每核使用率 %
+    percent: float | None          # 总 CPU 使用率 %；无效计数时不可计算
+    per_core: list[float | None]   # 同一采样区间的每核使用率 %
     freq_mhz: float         # 当前频率 MHz
     count_logical: int      # 逻辑核心数
     count_physical: int     # 物理核心数
+    rate_status: str = "available"
+    window_seconds: float | None = None
+    started_at: str | None = None
+    sampled_at: str | None = None
+    rate_unit: str = "percent"
+    rate_schema_version: int = 2
 
 
 @dataclass
@@ -42,17 +50,30 @@ class NetInterface:
     name: str
     bytes_sent: int
     bytes_recv: int
-    speed_send: float   # bytes/s（差值计算）
-    speed_recv: float   # bytes/s（差值计算）
+    speed_send: float | None   # bytes/s；首样本或重置时不可计算
+    speed_recv: float | None
+    rate_status: str = "available"
+    window_seconds: float | None = None
+    sampled_at: str | None = None
+    counter_unit: str = "bytes"
+    rate_unit: str = "bytes/s"
+    rate_schema_version: int = 2
 
 
 @dataclass
 class ProcessEntry:
     pid: int
     name: str
-    cpu_percent: float
-    mem_percent: float
+    cpu_percent: float | None
+    mem_percent: float | None
     status: str
+    rate_status: str = "available"
+    created_at: float | None = None
+    window_seconds: float | None = None
+    sampled_at: str | None = None
+    rate_unit: str = "percent"
+    cpu_scope: str = "one_logical_cpu"
+    rate_schema_version: int = 2
 
 
 @dataclass
@@ -67,35 +88,46 @@ class SystemSnapshot:
 
 # ─── 网速差值缓存 ─────────────────────────────────────────────────────────────
 
-_net_prev: dict[str, tuple[int, int, float]] = {}  # name → (sent, recv, timestamp)
+_net_session: ContextVar[dict | None] = ContextVar("monitor_net_session", default=None)
 
 
-def _calc_net_speed(name: str, sent: int, recv: int) -> tuple[float, float]:
-    now = time.monotonic()
-    if name in _net_prev:
-        p_sent, p_recv, p_ts = _net_prev[name]
-        dt = now - p_ts
-        if dt > 0:
-            speed_send = (sent - p_sent) / dt
-            speed_recv = (recv - p_recv) / dt
-        else:
-            speed_send = speed_recv = 0.0
-    else:
-        speed_send = speed_recv = 0.0
-    _net_prev[name] = (sent, recv, now)
-    return speed_send, speed_recv
+@contextmanager
+def sampling_session():
+    """Own baselines for one synchronous CLI invocation or live menu page."""
+    token = _net_session.set({})
+    from monitor.process_sampling import sampling_session as process_session
+    with process_session():
+        try:
+            yield
+        finally:
+            _net_session.reset(token)
+
+
+def _calc_net_speed(previous, name, sent, recv, now):
+    old = previous.get(name)
+    previous[name] = (sent, recv, now)
+    if old is None:
+        return None, None, "initial", None
+    p_sent, p_recv, p_ts = old
+    dt = now - p_ts
+    if sent < p_sent or recv < p_recv:
+        return None, None, "counter_reset", None
+    if dt <= 0:
+        return None, None, "invalid_window", None
+    return (sent - p_sent) / dt, (recv - p_recv) / dt, "available", dt
 
 
 # ─── 数据采集 ─────────────────────────────────────────────────────────────────
 
 def get_cpu() -> CpuInfo:
     import psutil
+    from monitor.cpu_sampling import sample
+    usage = sample()
     freq = psutil.cpu_freq()
     return CpuInfo(
-        percent=psutil.cpu_percent(interval=0.1),
-        per_core=psutil.cpu_percent(interval=0.1, percpu=True),
+        **usage,
         freq_mhz=freq.current if freq else 0.0,
-        count_logical=psutil.cpu_count(logical=True) or 0,
+        count_logical=len(usage["per_core"]),
         count_physical=psutil.cpu_count(logical=False) or 0,
     )
 
@@ -137,18 +169,32 @@ def get_disks() -> list[DiskPartition]:
 
 def get_net() -> list[NetInterface]:
     import psutil
-    counters = psutil.net_io_counters(pernic=True)
+    # psutil's global nowrap cache must not conceal resets.
+    counters = psutil.net_io_counters(pernic=True, nowrap=False)
+    if len(counters) > 4096:
+        raise RuntimeError("network interface inventory exceeds quota")
+    now = time.monotonic()
+    sampled_at = datetime.now(timezone.utc).isoformat()
+    previous = _net_session.get()
+    if previous is None:
+        previous = {}  # Unscoped calls are independent, not an implicit watch.
+    for missing in previous.keys() - counters.keys():
+        del previous[missing]
     result: list[NetInterface] = []
     for name, stat in counters.items():
         if name.startswith("lo"):
             continue
-        speed_send, speed_recv = _calc_net_speed(name, stat.bytes_sent, stat.bytes_recv)
+        speed_send, speed_recv, status, window = _calc_net_speed(
+            previous, name, stat.bytes_sent, stat.bytes_recv, now)
         result.append(NetInterface(
             name=name,
             bytes_sent=stat.bytes_sent,
             bytes_recv=stat.bytes_recv,
             speed_send=speed_send,
             speed_recv=speed_recv,
+            rate_status=status,
+            window_seconds=window,
+            sampled_at=sampled_at,
         ))
     return result
 
@@ -167,26 +213,16 @@ def get_load_avg() -> tuple[float, float, float] | None:
     return None
 
 
-def get_top_processes(n: int = 10, sort_by: str = "cpu") -> list[ProcessEntry]:
-    """返回按 CPU 或内存排序的 Top N 进程"""
-    import psutil
-    procs: list[ProcessEntry] = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
-        try:
-            info = proc.info
-            procs.append(ProcessEntry(
-                pid=info["pid"],
-                name=info["name"] or "",
-                cpu_percent=info["cpu_percent"] or 0.0,
-                mem_percent=info["memory_percent"] or 0.0,
-                status=info["status"] or "",
-            ))
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+def get_process(pid: int) -> ProcessEntry:
+    """直接采集目标身份；消失/权限/身份变化有明确失败原因。"""
+    from monitor.process_sampling import read
+    return ProcessEntry(**read(pid))
 
-    key = (lambda p: p.cpu_percent) if sort_by == "cpu" else (lambda p: p.mem_percent)
-    procs.sort(key=key, reverse=True)
-    return procs[:n]
+
+def get_top_processes(n: int = 10, sort_by: str = "cpu") -> list[ProcessEntry]:
+    """按同一会话的身份计数采样；未知指标排在已测指标之后。"""
+    from monitor.process_sampling import top
+    return [ProcessEntry(**item) for item in top(n, sort_by)]
 
 
 def get_snapshot() -> SystemSnapshot:

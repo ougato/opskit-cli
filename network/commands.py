@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import socket
+import ipaddress
+import math
 import subprocess
 import sys
+import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterator
 
 
@@ -39,7 +42,7 @@ class PortResult:
 
 # ─── Ping ─────────────────────────────────────────────────────────────────────
 
-def ping(host: str, count: int = 4, kill_ref: "list | None" = None) -> PingResult:
+def ping(host: str, count: int = 4, kill_ref: "list | None" = None, timeout: float = 30, *, strict: bool = False) -> PingResult:
     """
     执行 ping 并返回结果。
 
@@ -50,31 +53,41 @@ def ping(host: str, count: int = 4, kill_ref: "list | None" = None) -> PingResul
     - Linux/macOS: ping -c {count}
     - Windows:     ping -n {count}
     """
-    ip = _resolve_host(host) or host
-
-    if sys.platform == "win32":
-        cmd = ["ping", "-n", str(count), host]
-    else:
-        cmd = ["ping", "-c", str(count), host]
-
+    if count < 1 or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("count and timeout must be positive")
+    deadline = time.monotonic() + timeout
+    ip = host
     try:
-        kwargs: dict = {}
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            from network.resolver import resolve
+            addresses = resolve(host, timeout=max(0, deadline - time.monotonic()))
+            if not addresses:
+                raise RuntimeError("ping DNS lookup failed")
+            address = ipaddress.ip_address(addresses[0])
+        ip = str(address)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("ping deadline exceeded")
         if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, **kwargs
-        )
-        if kill_ref is not None:
-            kill_ref.append(process)
-        lines = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            lines.append(line)
-        process.wait()
-        output = "".join(lines)
-        return _parse_ping(host, ip, output, count)
+            cmd = ["ping", "-n", str(count), ip]
+        else:
+            executable = "ping6" if sys.platform == "darwin" and address.version == 6 else "ping"
+            cmd = [executable, "-c", str(count), ip]
+        from core.process import stream
+        from collections import deque
+        lines = deque(maxlen=256)
+        iterator = stream(cmd, timeout=remaining, process_ref=kill_ref)
+        try:
+            for line in iterator:
+                lines.append(line)
+        finally:
+            iterator.close()
+        return _parse_ping(host, ip, "\n".join(lines), count)
     except subprocess.TimeoutExpired:
+        if strict:
+            raise
         if kill_ref:
             try:
                 kill_ref[0].kill()
@@ -83,6 +96,8 @@ def ping(host: str, count: int = 4, kill_ref: "list | None" = None) -> PingResul
         return PingResult(host=host, ip=ip, packets_sent=count, packets_recv=0,
                           avg_ms=0, min_ms=0, max_ms=0, reachable=False)
     except Exception:
+        if strict:
+            raise
         return PingResult(host=host, ip=ip, packets_sent=count, packets_recv=0,
                           avg_ms=0, min_ms=0, max_ms=0, reachable=False)
 
@@ -118,52 +133,82 @@ def _parse_ping(host: str, ip: str, output: str, count: int) -> PingResult:
 
 # ─── Traceroute ───────────────────────────────────────────────────────────────
 
-def traceroute(host: str, max_hops: int = 20, kill_ref: "list | None" = None) -> Iterator[str]:
+def traceroute(host: str, max_hops: int = 20, kill_ref: "list | None" = None, timeout: float = 120, *, strict: bool = False) -> Iterator[str]:
     """流式输出 traceroute 每一跳（yield 每行字符串）。
 
     kill_ref：外部传入的单元素列表 []，函数会将 process 对象写入 kill_ref[0]，
     调用方可在任意时刻调用 kill_ref[0].kill() 立即终止子进程。
     """
-    if sys.platform == "win32":
-        cmd = ["tracert", "-d", "-h", str(max_hops), host]
-    else:
-        cmd = ["traceroute", "-n", "-m", str(max_hops), host]
-
+    if not 1 <= max_hops <= 255 or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("invalid hops or timeout")
+    deadline = time.monotonic() + timeout
     try:
-        kwargs = {}
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            from network.resolver import resolve
+            addresses = resolve(host, timeout=max(0, deadline - time.monotonic()))
+            if not addresses:
+                raise RuntimeError("traceroute DNS lookup failed")
+            address = ipaddress.ip_address(addresses[0])
+        target = str(address)
         if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kwargs)
-        if kill_ref is not None:
-            kill_ref.append(process)
-        assert process.stdout is not None
-        for line in process.stdout:
-            yield line.rstrip("\n")
-        process.wait()
+            cmd = ["tracert", "-d", "-h", str(max_hops)]
+        else:
+            executable = "traceroute6" if sys.platform == "darwin" and address.version == 6 else "traceroute"
+            cmd = [executable, "-n", "-m", str(max_hops)]
+        if address.version == 6 and sys.platform != "darwin":
+            cmd.append("-6")
+        cmd.append(target)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("traceroute deadline exceeded")
+        from core.process import stream
+        iterator = stream(cmd, timeout=remaining, process_ref=kill_ref)
+        reached = False
+        try:
+            while True:
+                try:
+                    line = next(iterator)
+                except StopIteration as done:
+                    code = done.value
+                    break
+                parts = line.split()
+                if parts and parts[0].isdigit() and not any(part.startswith("!") for part in parts):
+                    for part in parts[1:]:
+                        try:
+                            reached = reached or ipaddress.ip_address(part.strip("[](),")) == address
+                        except ValueError:
+                            pass
+                yield line
+        finally:
+            iterator.close()
+        if code:
+            raise subprocess.CalledProcessError(code, cmd)
+        return {"host": host, "target": target, "status": "reached" if reached else "not_reached",
+                "reached": reached, "return_code": code}
     except FileNotFoundError:
+        if strict:
+            raise
         yield "[traceroute not found on this system]"
     except Exception as e:
+        if strict:
+            raise
         yield f"[error: {e}]"
 
 
 # ─── DNS 查询 ─────────────────────────────────────────────────────────────────
 
-def dns_lookup(hostname: str) -> DnsResult:
+def dns_lookup(hostname: str, family: int = socket.AF_UNSPEC, *, timeout: float = 10) -> DnsResult:
     """DNS 正向解析"""
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-        addresses = list({info[4][0] for info in infos})
-        return DnsResult(hostname=hostname, addresses=addresses)
-    except socket.gaierror:
-        return DnsResult(hostname=hostname, addresses=[])
+    from network.resolver import resolve
+    return DnsResult(hostname=hostname, addresses=resolve(hostname, family=family, timeout=timeout) or [])
 
 
-def dns_reverse(ip: str) -> str | None:
+def dns_reverse(ip: str, *, timeout: float = 10) -> str | None:
     """DNS 反向解析（PTR 记录）"""
-    try:
-        return socket.gethostbyaddr(ip)[0]
-    except socket.herror:
-        return None
+    from network.resolver import resolve
+    return resolve(ip, reverse=True, timeout=timeout)
 
 
 # ─── 端口扫描 ─────────────────────────────────────────────────────────────────
@@ -191,16 +236,11 @@ def scan_port(host: str, port: int, protocol: str = "tcp", timeout: float = 1.0)
                       open=open_, latency_ms=latency)
 
 
-def scan_ports(host: str, ports: list[int], timeout: float = 0.5) -> list[PortResult]:
-    """批量扫描端口（并发）"""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    results: list[PortResult] = []
-    with ThreadPoolExecutor(max_workers=min(len(ports), 50)) as pool:
-        futures = {pool.submit(scan_port, host, p, "tcp", timeout): p for p in ports}
-        for f in as_completed(futures):
-            results.append(f.result())
-    results.sort(key=lambda r: r.port)
-    return results
+def scan_ports(host: str, ports: list[int], timeout: float = 0.5, concurrency: int = 50,
+               *, total_timeout: float = 30) -> list[PortResult]:
+    """批量 TCP 扫描：单连接期限和包含 DNS 的总期限分别限制。"""
+    from network.scanner import scan
+    return scan(host, ports, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout)
 
 
 # ─── 网络测速 ─────────────────────────────────────────────────────────────────
@@ -211,24 +251,11 @@ def speed_test_download(url: str, timeout: int = 10, cancel_event: "threading.Ev
 
     cancel_event：set() 后立即中止下载并返回已下载部分的速率。
     """
-    import httpx
-    import threading
-    from core.constants import DOWNLOAD_CHUNK_SIZE
-
-    total = 0
-    t0 = time.monotonic()
+    from network.http_measure import download
     try:
-        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
-            for chunk in resp.iter_bytes(DOWNLOAD_CHUNK_SIZE):
-                if cancel_event is not None and cancel_event.is_set():
-                    break
-                total += len(chunk)
-                if time.monotonic() - t0 > timeout:
-                    break
-    except Exception:
-        pass
-    elapsed = time.monotonic() - t0
-    return total / elapsed if elapsed > 0 else 0.0
+        return download(url, timeout, cancel_event)["bytes_per_second"]
+    except (OSError, RuntimeError, ValueError):
+        return 0.0
 
 
 # ─── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -252,50 +279,17 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 
-def get_public_ip(cancel_event: "threading.Event | None" = None) -> str | None:
-    """获取公网 IP。cancel_event set() 后立即放弃并返回 None。
+def get_public_ip(cancel_event: "threading.Event | None" = None, timeout: float = 10) -> str | None:
+    """Bounded synchronous lookup; no abandoned fetch threads on cancellation."""
+    from core.constants import PUBLIC_IP_APIS
+    from network.http_measure import public_ip
+    try:
+        return public_ip(PUBLIC_IP_APIS, timeout, cancel_event)
+    except (OSError, RuntimeError):
+        return None
 
-    每个 API 请求在独立线程中执行，cancel_event 可随时中断等待。
-    """
-    import httpx
-    import threading
-    from core.constants import TIMEOUT_MIRROR_PROBE, PUBLIC_IP_APIS
-    apis = [
-        (PUBLIC_IP_APIS[0], lambda t: t.strip()),
-        (PUBLIC_IP_APIS[1], lambda t: t.strip()),
-    ]
-    for url, extractor in apis:
-        if cancel_event is not None and cancel_event.is_set():
-            return None
-        result_box: list = []
 
-        done_event = threading.Event()
-
-        def _fetch_wrapped(u=url, ex=extractor):
-            try:
-                with httpx.Client(timeout=TIMEOUT_MIRROR_PROBE) as c:
-                    resp = c.get(u)
-                    if resp.status_code == 200:
-                        result_box.append(ex(resp.text))
-            except Exception:
-                pass
-            finally:
-                done_event.set()
-
-        threading.Thread(target=_fetch_wrapped, daemon=True).start()
-
-        deadline = TIMEOUT_MIRROR_PROBE + 1
-        step = 0.05
-        elapsed = 0.0
-        while elapsed < deadline:
-            if cancel_event is not None and cancel_event.is_set():
-                return None
-            if done_event.wait(timeout=step):
-                break
-            elapsed += step
-
-        if cancel_event is not None and cancel_event.is_set():
-            return None
-        if result_box:
-            return result_box[0]
-    return None
+def download_measurement(url: str, duration: float) -> dict:
+    """Measure downloaded bytes with a bounded read and total measurement window."""
+    from network.http_measure import download
+    return download(url, duration)

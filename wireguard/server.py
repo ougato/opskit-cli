@@ -166,7 +166,7 @@ def _setup_dnsmasq(vpn_gateway: str, base_domain: str, os_id: str) -> None:
                 check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
-def install_server() -> None:
+def install_server(options: dict | None = None) -> dict | None:
     """公网服务端安装向导"""
     from core.i18n import t
     from core.theme import print_action_title
@@ -201,90 +201,104 @@ def install_server() -> None:
     _saved_octet3 = _wg_cfg.get("octet3")
     _saved_label  = _wg_cfg.get("tunnel_label") or ""
 
-    # ── 收集输入 ─────────────────────────────────────────────────────────────
-    from core.theme import print_warning
-    while True:
-        try:
-            sni = text_input(
-                breadcrumb=breadcrumb,
-                prompt=t("wireguard.input_domain"),
-                default=_saved_domain,
-                theme_key="software",
-            )
-        except UserCancel:
-            return
-        if sni and sni.strip():
-            break
-        # 输入为空时停留在当前步骤重新提示，不返回上一层。
-        print_warning(t("wireguard.domain_required"))
-        pause()
-    sni = sni.strip()
-    if sni != _saved_domain:
-        _cfg = set_config_value(_cfg, "wireguard.domain", sni)
-    cert_email = _get_acme_email()
-
-    public_ip = _detect_public_ip()
-    if not public_ip:
-        try:
-            public_ip = text_input(
-                breadcrumb=breadcrumb,
-                prompt=t("wireguard.input_public_ip"),
-                theme_key="software",
-            )
-        except UserCancel:
-            return
-        if not public_ip or not public_ip.strip():
-            from core.theme import print_error
-            print_error(t("wireguard.public_ip_required"))
-            pause()
-            return
-        public_ip = public_ip.strip()
-
-    # ── 输入 VPN 子网第三段（1~254）────────────────────────────────────────
-    _default_octet3 = _saved_octet3 if _saved_octet3 is not None else VPN_DEFAULT_OCTET3
-    _octet3 = _default_octet3
-    while True:
-        try:
-            _octet3_raw = text_input(
-                breadcrumb=breadcrumb,
-                prompt=t("wireguard.input_vpn_octet3"),
-                default=str(_default_octet3),
-                theme_key="software",
-            )
-        except UserCancel:
-            return
-        _raw = (_octet3_raw or "").strip() or str(_default_octet3)
-        try:
-            _val = int(_raw)
-            if 1 <= _val <= 254:
-                _octet3 = _val
+    if options is not None:
+        from core.platform import get_platform
+        if get_platform().os_type != "linux":
+            raise InstallError("WireGuard server requires Linux")
+        conflict, _ = _check_port_443()
+        if conflict == "other":
+            raise InstallError("port 443 is owned by another service")
+        sni, public_ip = options["domain"], options["public_ip"]
+        cert_email = options["acme_email"]
+        _octet3 = options["subnet_octet"]
+        tunnel_label = options["label"]
+        vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
+        vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
+    else:
+        # ── 收集输入 ─────────────────────────────────────────────────────────────
+        from core.theme import print_warning
+        while True:
+            try:
+                sni = text_input(
+                    breadcrumb=breadcrumb,
+                    prompt=t("wireguard.input_domain"),
+                    default=_saved_domain,
+                    theme_key="software",
+                )
+            except UserCancel:
+                return
+            if sni and sni.strip():
                 break
-        except ValueError:
-            pass
-        from core.theme import print_error as _pe
-        _pe(t("wireguard.input_vpn_octet3_invalid"))
+            # 输入为空时停留在当前步骤重新提示，不返回上一层。
+            print_warning(t("wireguard.domain_required"))
+            pause()
+        sni = sni.strip()
+        if sni != _saved_domain:
+            _cfg = set_config_value(_cfg, "wireguard.domain", sni)
+        cert_email = _get_acme_email()
 
-    if _octet3 != _saved_octet3:
-        _cfg = set_config_value(_cfg, "wireguard.octet3", _octet3)
+        public_ip = _detect_public_ip()
+        if not public_ip:
+            try:
+                public_ip = text_input(
+                    breadcrumb=breadcrumb,
+                    prompt=t("wireguard.input_public_ip"),
+                    theme_key="software",
+                )
+            except UserCancel:
+                return
+            if not public_ip or not public_ip.strip():
+                from core.theme import print_error
+                print_error(t("wireguard.public_ip_required"))
+                pause()
+                return
+            public_ip = public_ip.strip()
 
-    vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
-    vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
+        # ── 输入 VPN 子网第三段（1~254）────────────────────────────────────────
+        _default_octet3 = _saved_octet3 if _saved_octet3 is not None else VPN_DEFAULT_OCTET3
+        _octet3 = _default_octet3
+        while True:
+            try:
+                _octet3_raw = text_input(
+                    breadcrumb=breadcrumb,
+                    prompt=t("wireguard.input_vpn_octet3"),
+                    default=str(_default_octet3),
+                    theme_key="software",
+                )
+            except UserCancel:
+                return
+            _raw = (_octet3_raw or "").strip() or str(_default_octet3)
+            try:
+                _val = int(_raw)
+                if 1 <= _val <= 254:
+                    _octet3 = _val
+                    break
+            except ValueError:
+                pass
+            from core.theme import print_error as _pe
+            _pe(t("wireguard.input_vpn_octet3_invalid"))
 
-    # ── 输入隧道名称 ──────────────────────────────────────────────────────
-    _default_label = _saved_label or "server"
-    try:
-        _label_raw = text_input(
-            breadcrumb=breadcrumb,
-            prompt=t("wireguard.input_tunnel_label"),
-            default=_default_label,
-            theme_key="software",
-        )
-    except UserCancel:
-        return
-    tunnel_label = normalize_tunnel_label(_label_raw, default=_default_label)
+        if _octet3 != _saved_octet3:
+            _cfg = set_config_value(_cfg, "wireguard.octet3", _octet3)
 
-    if tunnel_label != _saved_label:
-        _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
+        vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
+        vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
+
+        # ── 输入隧道名称 ──────────────────────────────────────────────────────
+        _default_label = _saved_label or "server"
+        try:
+            _label_raw = text_input(
+                breadcrumb=breadcrumb,
+                prompt=t("wireguard.input_tunnel_label"),
+                default=_default_label,
+                theme_key="software",
+            )
+        except UserCancel:
+            return
+        tunnel_label = normalize_tunnel_label(_label_raw, default=_default_label)
+
+        if tunnel_label != _saved_label:
+            _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
 
     iface = detect_default_iface()
     wg_port = WG_UDP_PORT
@@ -294,6 +308,8 @@ def install_server() -> None:
     # ── 443 端口检测（MultiStepProgress 外，交互先于安装）───────────────
     _port_status, _port_proc = _check_port_443()
     nginx_mode = "install"
+    if _port_status == "other" and options is not None:
+        raise InstallError("port 443 is owned by another service")
     if _port_status == "other":
         from core.theme import print_warning
         print_warning(t("wireguard.port_443_other_occupied").format(proc=_port_proc))
@@ -510,6 +526,13 @@ def install_server() -> None:
             ))
         _save_state(state)
         SysConfigManager.mark_installed("wg_server")
+
+    if options is not None:
+        from core.cli_secrets import export_secret
+        export_secret(options["credentials_output_file"], {"token": token})
+        for key, value in (("domain", sni), ("octet3", _octet3), ("tunnel_label", tunnel_label)):
+            _cfg = set_config_value(_cfg, "wireguard." + key, value)
+        return {"installed": True, "domain": sni, "vpn_gateway": vpn_gateway, "label": tunnel_label}
 
     # ── 输出结果 ─────────────────────────────────────────────────────────────
     clear_screen()
@@ -998,7 +1021,7 @@ def manage_peers() -> None:
                 remove_peer(breadcrumb)
 
 
-def add_peer(breadcrumb: list[str]) -> None:
+def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
     """添加客户端 peer — 自动生成密钥并输出连接令牌"""
     import subprocess
     from core.i18n import t
@@ -1015,29 +1038,36 @@ def add_peer(breadcrumb: list[str]) -> None:
 
     state = _load_state()
     if not state:
+        if name is not None:
+            raise InstallError("server state not found")
         print_error(t(f"{mk}.no_state"))
         pause()
         return
 
     next_ip_num = _alloc_client_ip(state.get("clients", []))
     if next_ip_num is None:
+        if name is not None:
+            raise InstallError("no free peer address")
         print_error(t(f"{mk}.max_clients"))
         pause()
         return
 
     # ── 输入客户端名称（有默认值）──────────────────────────────────────────────
     default_name = f"client-{len(state.get('clients', [])) + 1}"
-    try:
-        raw = text_input(
-            breadcrumb=sub,
-            prompt=t(f"{mk}.input_peer_name"),
-            hint=default_name,
-            default=default_name,
-            theme_key="software",
-        )
-    except UserCancel:
-        return
-    client_name = raw.strip() if raw and raw.strip() else default_name
+    if name is not None:
+        client_name = name
+    else:
+        try:
+            raw = text_input(
+                breadcrumb=sub,
+                prompt=t(f"{mk}.input_peer_name"),
+                hint=default_name,
+                default=default_name,
+                theme_key="software",
+            )
+        except UserCancel:
+            return
+        client_name = raw.strip() if raw and raw.strip() else default_name
 
     _vpn_subnet  = state.get("vpn_subnet",  "10.10.10.0/24")
     _vpn_gateway = state.get("vpn_gateway", "10.10.10.1")
@@ -1056,6 +1086,8 @@ def add_peer(breadcrumb: list[str]) -> None:
         check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if r_set.returncode != 0:
+        if name is not None:
+            raise InstallError("peer application failed")
         detail = (r_set.stderr or r_set.stdout or "").strip()
         print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set failed"))
         pause()
@@ -1065,6 +1097,8 @@ def add_peer(breadcrumb: list[str]) -> None:
         check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if r_save.returncode != 0:
+        if name is not None:
+            raise InstallError("peer persistence failed")
         detail = (r_save.stderr or r_save.stdout or "").strip()
         print_error(t("wireguard.error.peer_save_fail", detail=detail or "wg-quick save failed"))
         pause()
@@ -1094,6 +1128,9 @@ def add_peer(breadcrumb: list[str]) -> None:
                     "pubkey": client_pub, "token": token})
     state["clients"] = clients
     _save_state(state)
+
+    if name is not None:
+        return {"id": client_pub, "name": client_name, "ip": client_ip}
 
     _LABEL = "#7f849c"
     _VALUE = "bold #cdd6f4"
@@ -1167,7 +1204,7 @@ def list_peers(breadcrumb: list[str]) -> None:
     pause()
 
 
-def remove_peer(breadcrumb: list[str]) -> None:
+def remove_peer(breadcrumb: list[str], *, peer_id: str | None = None) -> dict | None:
     """删除客户端 peer"""
     import subprocess
     from core.i18n import t
@@ -1181,32 +1218,40 @@ def remove_peer(breadcrumb: list[str]) -> None:
     sub = [*breadcrumb, t(f"{mk}.remove_peer")]
 
     clients = _get_clients()
+    if not clients and peer_id is not None:
+        raise InstallError("peer not found")
     if not clients:
         print_warning(t(f"{mk}.no_clients"))
         pause()
         return
 
-    choices = [
-        {
-            "key": str(i + 1),
-            "label": f"{c.get('ip', '?'):<16} {c.get('name', '?'):<16} {_trunc(c.get('token', ''), 20)}",
-        }
-        for i, c in enumerate(clients)
-    ]
-    try:
-        key = select(
-            breadcrumb=sub,
-            subtitle=t("prompt.select"),
-            choices=choices,
-            theme_key="software",
-            back_label=f"{get_icon('back')} {t('menu.back')}",
-        )
-    except UserCancel:
-        return
-    if key is None:
-        return
+    if peer_id is not None:
+        matches = [i for i, client in enumerate(clients) if client.get("pubkey") == peer_id]
+        if len(matches) != 1:
+            raise InstallError("peer not found or ambiguous")
+        idx = matches[0]
+    else:
+        choices = [
+            {
+                "key": str(i + 1),
+                "label": f"{c.get('ip', '?'):<16} {c.get('name', '?'):<16} {_trunc(c.get('token', ''), 20)}",
+            }
+            for i, c in enumerate(clients)
+        ]
+        try:
+            key = select(
+                breadcrumb=sub,
+                subtitle=t("prompt.select"),
+                choices=choices,
+                theme_key="software",
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            return
+        if key is None:
+            return
 
-    idx = int(key) - 1
+        idx = int(key) - 1
     client = clients[idx]
     pubkey = client.get("pubkey", "")
 
@@ -1216,6 +1261,8 @@ def remove_peer(breadcrumb: list[str]) -> None:
             check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if r_remove.returncode != 0:
+            if peer_id is not None:
+                raise InstallError("peer removal or persistence failed")
             detail = (r_remove.stderr or r_remove.stdout or "").strip()
             print_error(t("wireguard.error.peer_apply_fail", detail=detail or "wg set remove failed"))
             pause()
@@ -1225,6 +1272,8 @@ def remove_peer(breadcrumb: list[str]) -> None:
             check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if r_save.returncode != 0:
+            if peer_id is not None:
+                raise InstallError("peer removal or persistence failed")
             detail = (r_save.stderr or r_save.stdout or "").strip()
             print_error(t("wireguard.error.peer_save_fail", detail=detail or "wg-quick save failed"))
             pause()
@@ -1234,6 +1283,9 @@ def remove_peer(breadcrumb: list[str]) -> None:
     state = _load_state()
     state["clients"] = [c for c in state.get("clients", []) if c.get("pubkey") != pubkey]
     _save_state(state)
+
+    if peer_id is not None:
+        return {"id": peer_id, "removed": True}
 
     _LABEL = "#7f849c"
     _VALUE = "bold #cdd6f4"
@@ -1256,7 +1308,7 @@ def remove_peer(breadcrumb: list[str]) -> None:
     pause()
 
 
-def rename_peer(breadcrumb: list[str]) -> None:
+def rename_peer(breadcrumb: list[str], *, peer_id: str | None = None, name: str | None = None) -> dict | None:
     """修改客户端名称"""
     from core.i18n import t
     from core.prompt import select, pause, clear_screen, text_input, UserCancel
@@ -1269,49 +1321,60 @@ def rename_peer(breadcrumb: list[str]) -> None:
     sub = [*breadcrumb, t(f"{mk}.rename_peer")]
 
     clients = _get_clients()
+    if not clients and peer_id is not None:
+        raise InstallError("peer not found")
     if not clients:
         print_warning(t(f"{mk}.no_clients"))
         pause()
         return
 
-    choices = [
-        {
-            "key": str(i + 1),
-            "label": f"{c.get('ip', '?'):<16} {c.get('name', '?'):<16} {_trunc(c.get('token', ''), 20)}",
-        }
-        for i, c in enumerate(clients)
-    ]
-    try:
-        key = select(
-            breadcrumb=sub,
-            subtitle=t("prompt.select"),
-            choices=choices,
-            theme_key="software",
-            back_label=f"{get_icon('back')} {t('menu.back')}",
-        )
-    except UserCancel:
-        return
-    if key is None:
-        return
+    if peer_id is not None:
+        matches = [i for i, client in enumerate(clients) if client.get("pubkey") == peer_id]
+        if len(matches) != 1:
+            raise InstallError("peer not found or ambiguous")
+        idx = matches[0]
+    else:
+        choices = [
+            {
+                "key": str(i + 1),
+                "label": f"{c.get('ip', '?'):<16} {c.get('name', '?'):<16} {_trunc(c.get('token', ''), 20)}",
+            }
+            for i, c in enumerate(clients)
+        ]
+        try:
+            key = select(
+                breadcrumb=sub,
+                subtitle=t("prompt.select"),
+                choices=choices,
+                theme_key="software",
+                back_label=f"{get_icon('back')} {t('menu.back')}",
+            )
+        except UserCancel:
+            return
+        if key is None:
+            return
 
-    idx = int(key) - 1
+        idx = int(key) - 1
     client = clients[idx]
     old_name = client.get("name", "")
 
-    try:
-        raw = text_input(
-            breadcrumb=sub,
-            prompt=t(f"{mk}.input_peer_name"),
-            hint=old_name,
-            default=old_name,
-            theme_key="software",
-        )
-    except UserCancel:
-        return
-    new_name = raw.strip() if raw and raw.strip() else old_name
+    if name is not None:
+        new_name = name
+    else:
+        try:
+            raw = text_input(
+                breadcrumb=sub,
+                prompt=t(f"{mk}.input_peer_name"),
+                hint=old_name,
+                default=old_name,
+                theme_key="software",
+            )
+        except UserCancel:
+            return
+        new_name = raw.strip() if raw and raw.strip() else old_name
 
     if new_name == old_name:
-        return
+        return {"id": peer_id, "name": old_name}
 
     state = _load_state()
     for c in state.get("clients", []):
@@ -1319,6 +1382,9 @@ def rename_peer(breadcrumb: list[str]) -> None:
             c["name"] = new_name
             break
     _save_state(state)
+
+    if peer_id is not None:
+        return {"id": peer_id, "name": new_name}
 
     _LABEL = "#7f849c"
     _VALUE = "bold #cdd6f4"

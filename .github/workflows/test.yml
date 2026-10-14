@@ -1,0 +1,105 @@
+name: Platform regression
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Git history secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned secret scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/opskit-gitleaks"
+          mkdir -p "$tool_dir"
+          cd "$tool_dir"
+          curl --proto '=https' --tlsv1.2 --fail --show-error --location --max-time 120 --max-filesize 67108864 \
+            --output gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  gitleaks.tar.gz\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb | sha256sum --check -
+          tar -xzf gitleaks.tar.gz gitleaks
+          printf '[extend]\nuseDefault = true\n' > default-rules.toml
+          touch empty.gitleaksignore
+      - name: Scan all refs including merge changes
+        shell: bash
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/opskit-gitleaks"
+          "$tool_dir/gitleaks" --no-banner --no-color --redact=100 \
+            --config "$tool_dir/default-rules.toml" \
+            --gitleaks-ignore-path "$tool_dir/empty.gitleaksignore" --ignore-gitleaks-allow \
+            --timeout 120 --max-decode-depth 5 --max-archive-depth 1 \
+            --report-format json --report-path "$tool_dir/history-report.json" \
+            git . --log-opts '--all -m --full-history'
+      - name: Save redacted secret scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redacted-secret-scan
+          path: ${{ runner.temp }}/opskit-gitleaks/history-report.json
+          if-no-files-found: ignore
+  regression:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Check dependency metadata
+        run: python -m pip check
+      - name: Check static correctness
+        run: python -m ruff check .
+      - name: Prevent new unreviewed static debt
+        run: python scripts/check_static_debt.py
+      - name: Build distributable wheel
+        run: python -I -m build --wheel --outdir cache/wheels
+      - name: Verify wheel source and resource inventory
+        run: python scripts/verify_wheel.py cache/wheels
+      - name: Install wheel in independent environment
+        run: >-
+          python -c "import pathlib, subprocess, venv;
+          root=pathlib.Path('cache/wheel-environment'); venv.EnvBuilder(with_pip=True).create(root);
+          python=root/('Scripts/python.exe' if __import__('os').name=='nt' else 'bin/python');
+          subprocess.check_call([str(python), '-m', 'pip', '--isolated', 'install', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', str(next(pathlib.Path('cache/wheels').glob('*.whl')))]);
+          subprocess.check_call([str(python), '-m', 'pip', 'check'])"
+      - name: Verify installed CLI outside source
+        run: python scripts/verify_installed_cli.py cache/wheel-environment cache/installed-cli
+      - name: Run regression suite
+        run: python -m pytest -q --timeout=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml
+      - name: Save test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-${{ matrix.os }}-python-${{ matrix.python }}
+          path: |
+            cache/ci-results.xml
+            cache/installed-cli/verification.json
+          if-no-files-found: ignore
+          retention-days: 7

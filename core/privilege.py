@@ -24,7 +24,6 @@ def require_root(message: str = "") -> None:
         return
 
     from core.i18n import t
-    from core.theme import print_error, get_icon
     msg = message or t("error.permission")
 
     os_type = sys.platform
@@ -96,6 +95,9 @@ def prime_sudo() -> bool:
 
     预热后同一会话内的多次 run_as_root 不会在进度条中途再逐条弹密码。
     """
+    from core.cli import non_interactive
+    if non_interactive.get():
+        return sudo_passwordless()
     try:
         return subprocess.run(["sudo", "-v"]).returncode == 0
     except Exception:
@@ -140,9 +142,50 @@ def run_as_root(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
 
     import shutil
     if shutil.which("sudo"):
-        return subprocess.run(["sudo"] + list(cmd), **kwargs)
+        from core.cli import non_interactive
+        return subprocess.run(["sudo"] + (["-n"] if non_interactive.get() else []) + list(cmd), **kwargs)
 
     raise PermissionError("root privileges required and sudo is unavailable")
+
+
+def capture_as_root(cmd: Sequence[str], *, timeout, max_bytes=65536):
+    """Supervised read-only query; never prompt for sudo credentials."""
+    from core.process import capture
+    command = list(cmd)
+    if not is_root() and sys.platform != "win32":
+        if not _has_sudo():
+            raise PermissionError("root privileges required and sudo is unavailable")
+        command = ["sudo", "-n", *command]
+    return capture(command, timeout=timeout, max_bytes=max_bytes)
+
+
+def read_unix_root_file(path, *, timeout, max_bytes=65536):
+    """Bounded Unix diagnostic read; reject nonregular files and never prompt.
+
+    Each external query shares one budget; replacement with a FIFO between
+    queries is still terminated by the command supervisor. No shell is used.
+    """
+    from core.deadline import Deadline
+    budget = Deadline(timeout, "diagnostic file read")
+    path = str(path)
+    result = budget.call(capture_as_root, ["test", "-f", path], timeout=budget.remaining())
+    if result.returncode:
+        return None
+    result = budget.call(capture_as_root, ["cat", "--", path], timeout=budget.remaining(), max_bytes=max_bytes)
+    if result.returncode:
+        raise OSError("diagnostic file read failed")
+    return result.stdout
+
+
+def unix_file_nonempty(path, *, timeout):
+    """Check a regular file's existence/size without reading secret contents."""
+    from core.deadline import Deadline
+    budget = Deadline(timeout, "diagnostic file check")
+    for predicate in ("-f", "-s"):
+        result = budget.call(capture_as_root, ["test", predicate, str(path)], timeout=budget.remaining())
+        if result.returncode:
+            return False
+    return True
 
 
 def write_root_file(path, content, mode: str = "0644") -> None:

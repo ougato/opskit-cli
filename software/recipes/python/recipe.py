@@ -4,10 +4,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, ClassVar
 
 from software.base import InstallError, InstallStep, Recipe
+from software._shared.mutation import versioned_mutation
 from software.registry import register
 from core.i18n import t
 from .common import (
@@ -17,6 +19,7 @@ from .common import (
     save_snapshot,
     delete_snapshot,
     uv_python_dir,
+    uv_installation_directories,
     version_entries,
     VersionEntry,
 )
@@ -37,28 +40,20 @@ class PythonRecipe(Recipe):
         return get_driver().detect_active()
 
     def system_version(self) -> str | None:
+        from .version_probe import interpreter_version
         candidates = [f"python3.{minor}" for minor in range(13, 9, -1)] + ["python3", "python"]
-        for cmd in candidates:
-            if shutil.which(cmd):
-                try:
-                    r = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=5)
-                    line = r.stdout.strip() or r.stderr.strip()
-                    if "Python" in line:
-                        ver = line.split()[-1]
-                        if ver.startswith("3."):
-                            return ver
-                except Exception:
-                    pass
+        for command in candidates:
+            executable = shutil.which(command)
+            if executable:
+                version = interpreter_version(executable)
+                if version and version.startswith("3."):
+                    return version
         return None
 
     def installed_versions(self) -> list[str]:
         base = uv_python_dir()
-        if not base.exists():
-            return []
         versions: list[str] = []
-        for entry in base.iterdir():
-            if not entry.is_dir():
-                continue
+        for entry in uv_installation_directories(base):
             name = entry.name
             if not name.startswith("cpython-"):
                 continue
@@ -90,6 +85,7 @@ class PythonRecipe(Recipe):
             InstallStep("software.step.install"),
         ]
 
+    @versioned_mutation
     def install(self, version: str) -> None:
         from core.progress import MultiStepProgress
 
@@ -154,73 +150,30 @@ class PythonRecipe(Recipe):
         uv_bin: str,
         on_progress: Callable[[int], None],
     ) -> str | None:
-        import threading as _threading
+        from core.process import capture
         from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
 
         env = os.environ.copy()
         env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
+        on_progress(25)
         try:
-            proc = subprocess.Popen(
-                [uv_bin, "python", "install", version],
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            result = capture(
+                [uv_bin, "python", "install", version], env=env,
+                timeout=UV_PYTHON_TIMEOUT, max_bytes=1024 * 1024,
+                stdin=subprocess.DEVNULL,
             )
-
-            stop_pct = _threading.Event()
-
-            def time_pct_ticker() -> None:
-                pct = 25
-                while not stop_pct.wait(1.0):
-                    if pct < 85:
-                        pct += 1
-                    on_progress(pct)
-
-            _captured: dict[str, bytes] = {}
-
-            def drain(pipe, key: str) -> None:
-                try:
-                    _captured[key] = pipe.read() or b""
-                except Exception:
-                    _captured[key] = b""
-
-            t_pct = _threading.Thread(target=time_pct_ticker, daemon=True)
-            t_out = _threading.Thread(target=drain, args=(proc.stdout, "out"), daemon=True)
-            t_err = _threading.Thread(target=drain, args=(proc.stderr, "err"), daemon=True)
-            t_pct.start()
-            t_out.start()
-            t_err.start()
-
-            try:
-                proc.wait(timeout=UV_PYTHON_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stop_pct.set()
-                raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT))
-
-            stop_pct.set()
-            t_pct.join(timeout=2)
-            t_out.join(timeout=2)
-            t_err.join(timeout=2)
-
-            if proc.returncode != 0:
-                import logging
-                stderr_txt = _captured.get("err", b"").decode("utf-8", "replace").strip()
-                logging.getLogger("opskit.python").warning(
-                    "uv python install %s failed rc=%s: %s",
-                    version, proc.returncode, stderr_txt or "(no stderr)",
-                )
-                tail = stderr_txt.splitlines()[-1] if stderr_txt else ""
-                detail = f" [{tail}]" if tail else ""
-                raise InstallError(
-                    t("software.python_error.uv_failed", code=proc.returncode, detail=detail)
-                )
-
-            return find_uv_python(version)
-        except InstallError:
-            raise
-        except Exception:
+        except subprocess.TimeoutExpired as error:
+            raise InstallError(t("software.python_error.uv_timeout", timeout=UV_PYTHON_TIMEOUT)) from error
+        except RuntimeError as error:
+            raise InstallError("uv Python installation exceeded its output or process resource limit") from error
+        except OSError:
             return None
+        if result.returncode != 0:
+            # Download output may contain proxy credentials or private URLs.
+            # Keep the exit code without echoing raw child output to logs/UI.
+            raise InstallError(t("software.python_error.uv_failed", code=result.returncode, detail=""))
+        on_progress(75)
+        return find_uv_python(version)
 
     def _install_with_package_manager(self, version: str, major_minor: str) -> str | None:
         entries = self._version_entries()
@@ -231,7 +184,8 @@ class PythonRecipe(Recipe):
 
         from core.pkg_runner import get_runner
         try:
-            return get_runner().install_python3(ver=major_minor)
+            installed = get_runner().install_python3(ver=major_minor)
+            return installed if installed and self._python_bin_matches(installed, version) else None
         except Exception:
             return None
 
@@ -245,6 +199,9 @@ class PythonRecipe(Recipe):
             raise InstallError(t("software.python_error.install_failed", version=version)) from e
 
     def _activate_install(self, version: str, new_bin: str, snap: dict, driver) -> None:
+        # Refuse an incorrect interpreter before modifying links, shims or PATH.
+        if not self._python_bin_matches(new_bin, version):
+            raise InstallError(t("software.python_error.verify_failed"))
         next_snap = dict(snap)
         installed = list(next_snap.get("installed_versions", []))
         if version not in installed:
@@ -253,39 +210,38 @@ class PythonRecipe(Recipe):
         next_snap["active_version"] = version
         next_snap["uv_python_path"] = new_bin
 
-        try:
-            driver.apply_version_link(new_bin)
-        except Exception:
-            pass
-
         fallback = next_snap.get("symlink_path", "") or "/usr/bin/python3"
-        try:
+        def apply():
+            driver.apply_version_link(new_bin)
             driver.install_shim(fallback)
-        except Exception:
-            pass
 
-        if not self._python_bin_matches(new_bin, version):
-            raise InstallError(t("software.python_error.verify_failed"))
-        save_snapshot(next_snap)
+        def verify():
+            if not self._python_bin_matches(new_bin, version):
+                raise InstallError(t("software.python_error.verify_failed"))
+
+        def restore():
+            previous_bin = snap.get("uv_python_path")
+            if previous_bin:
+                driver.apply_version_link(previous_bin)
+            else:
+                driver.restore_original(snap.get("symlink_path", ""), snap.get("original_target"),
+                                        snap.get("had_local_bin_path", False))
+                driver.remove_shim()
+
+        from software._shared.activation import activate_version
+        activate_version(snap, next_snap, save=save_snapshot, apply=apply, restore=restore, verify=verify)
 
     def _python_bin_matches(self, python_bin: str, version: str) -> bool:
-        target_minor = ".".join(version.split(".")[:2])
+        import re
+        from .version_probe import interpreter_version
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            return False
         try:
-            result = subprocess.run(
-                [python_bin, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            line = result.stdout.strip() or result.stderr.strip()
-            if "Python" not in line:
-                return False
-            detected = line.split()[-1]
-            return detected == target_minor or detected.startswith(f"{target_minor}.")
+            return interpreter_version(python_bin) == version
         except Exception:
             return False
 
+    @versioned_mutation
     def upgrade(self, version: str) -> None:
         """Python 多版本共存：升级即安装新版本并激活，不卸载已装的其它版本。
 
@@ -293,23 +249,30 @@ class PythonRecipe(Recipe):
         """
         self.install(version)
 
+    @versioned_mutation
     def switch(self, version: str) -> None:
         new_bin = find_uv_python(version)
         if not new_bin:
             raise InstallError(t("software.python_error.not_installed", version=version))
 
         snap = load_snapshot()
-        snap["active_version"] = version
-        snap["uv_python_path"] = new_bin
-        save_snapshot(snap)
+        previous_bin = snap.get("uv_python_path")
+        driver = get_driver()
+        from software._shared.activation import activate_version, verify_command_version
+        activate_version(snap, {"active_version": version, "uv_python_path": new_bin},
+                         save=save_snapshot,
+                         apply=lambda: driver.apply_version_link(new_bin),
+                         restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(
+                             snap.get("symlink_path", ""), snap.get("original_target"), snap.get("had_local_bin_path", False)),
+                         verify=lambda: verify_command_version("python" if sys.platform == "win32" else "python3", version))
 
-        try:
-            get_driver().apply_version_link(new_bin)
-        except Exception:
-            pass
-
+    @versioned_mutation
     def uninstall(self, version: str | None = None) -> None:
         from core.progress import MultiStepProgress
+        from software._shared.activation import ActivationRollbackError
+
+        if version is not None and (not is_stable_pyver(version) or len(version.split(".")) != 3):
+            raise InstallError("Python uninstall requires an exact stable version")
 
         snap = load_snapshot()
         active = snap.get("active_version")
@@ -320,12 +283,12 @@ class PythonRecipe(Recipe):
 
         def _remove_dir(ver: str) -> None:
             base = uv_python_dir()
-            if not base.exists():
-                return
-            for entry in base.iterdir():
-                if entry.is_dir() and entry.name.startswith(f"cpython-{ver}"):
-                    import shutil as _sh
-                    _sh.rmtree(str(entry), ignore_errors=True)
+            for entry in uv_installation_directories(base):
+                if entry.name.startswith(f"cpython-{ver}-"):
+                    try:
+                        shutil.rmtree(entry)
+                    except OSError as error:
+                        raise InstallError("Python installation directory removal failed") from error
 
         descs = [t("software.step.remove_files"), t("software.step.cleanup")]
         with MultiStepProgress(descs) as sp:
@@ -333,33 +296,40 @@ class PythonRecipe(Recipe):
             installed = self.installed_versions()
 
             if version is None:
-                for v in installed:
-                    _remove_dir(v)
+                # Validate every managed directory before changing routing.
+                uv_installation_directories(uv_python_dir())
                 driver.restore_original(symlink_path, original_target, had_local_bin_path)
                 driver.remove_shim()
+                for v in installed:
+                    _remove_dir(v)
                 delete_snapshot()
             else:
-                _remove_dir(version)
                 remaining = [v for v in installed if v != version]
                 switched_version: str | None = None
 
-                if version == active:
-                    if remaining:
-                        switched = False
-                        for fallback_ver in remaining:
-                            try:
-                                self.switch(fallback_ver)
-                                switched = True
-                                switched_version = fallback_ver
-                                break
-                            except Exception:
-                                continue
-                        if not switched:
-                            driver.restore_original(symlink_path, original_target, had_local_bin_path)
-                            delete_snapshot()
-                    else:
-                        driver.restore_original(symlink_path, original_target, had_local_bin_path)
-                        delete_snapshot()
+                if version == active and remaining:
+                    for fallback_ver in remaining:
+                        try:
+                            self.switch(fallback_ver)
+                            switched_version = fallback_ver
+                            break
+                        except ActivationRollbackError:
+                            # An uncertain route/state must not trigger another
+                            # switch attempt or any destructive directory work.
+                            raise
+                        except Exception:
+                            continue
+                    if switched_version is None:
+                        raise InstallError("Python uninstall could not activate a retained version; installation preserved")
+
+                if version == active and not remaining:
+                    uv_installation_directories(uv_python_dir())
+                    driver.restore_original(symlink_path, original_target, had_local_bin_path)
+                    driver.remove_shim()
+
+                _remove_dir(version)
+                if version == active and not remaining:
+                    delete_snapshot()
 
                 if snap:
                     snap["installed_versions"] = remaining

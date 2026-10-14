@@ -1,9 +1,10 @@
 """Linux 平台驱动：tar.xz/tar.gz 解压、shim sh、shell rc PATH 注入"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -32,51 +33,24 @@ class LinuxDriver(PlatformDriver):
         返回 bin 目录路径字符串。
         """
         from .common import node_version_dir, node_bin_dir
+        from core.archive import extract_tar
+        from software._shared.archive_install import staged_directory
         dest = node_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-        suffix = str(tarball).lower()
-        mode = "r:xz" if suffix.endswith(".tar.xz") else "r:gz"
+        mode = "r:xz" if str(tarball).lower().endswith(".tar.xz") else "r:gz"
         try:
-            with tarfile.open(str(tarball), mode) as tf:
-                # 找出顶层目录前缀（如 "node-v22.11.0-linux-x64/"）
-                prefix = ""
-                for member in tf.getmembers():
-                    if "/" in member.name:
-                        prefix = member.name.split("/")[0] + "/"
-                        break
-                    elif member.isdir():
-                        prefix = member.name.rstrip("/") + "/"
-                        break
-                for member in tf.getmembers():
-                    if prefix and not member.name.startswith(prefix):
-                        continue
-                    rel = member.name[len(prefix):]
-                    if not rel:
-                        continue
-                    target = dest / rel
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    elif member.issym():
-                        # bin/npm、bin/npx 是指向 lib/node_modules 的符号链接，
-                        # 丢掉会导致装完没有 npm
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        if target.is_symlink() or target.exists():
-                            target.unlink()
-                        target.symlink_to(member.linkname)
-                    elif member.isfile():
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
-                        if member.mode & 0o111:
-                            target.chmod(target.stat().st_mode | 0o111)
-        except Exception as e:
-            raise InstallError(t("software.nodejs_error.extract_failed", version=version, error=e)) from e
-
-        bin_d = node_bin_dir(version)
-        for cmd in ("node", "npm"):
-            if not (bin_d / cmd).exists():
-                raise InstallError(t("software.nodejs_error.bad_structure", version=version, file=f"bin/{cmd}"))
-        return str(bin_d)
+            with staged_directory(dest, prefix=".opskit-nodejs-") as staging:
+                with open_tar(str(tarball), mode) as archive:
+                    extract_tar(archive, staging, strip_components=1, allow_symlinks=True)
+                for binary in ('node', 'npm'):
+                    if not (staging / "bin" / binary).is_file():
+                        raise InstallError(t("software.nodejs_error.bad_structure", version=version, file="bin/" + binary))
+        except FileExistsError as error:
+            raise InstallError("nodejs version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError(t("software.nodejs_error.extract_failed", version=version, error=error)) from error
+        return str(node_bin_dir(version))
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 
@@ -126,7 +100,8 @@ class LinuxDriver(PlatformDriver):
         优先在 /usr/local/bin 创建/更新 node/npm/npx symlink（root 时立即全局生效）。
         非 root 时依赖 shim，同时注入当前进程 PATH 让 opskit 子进程立即可用。
         """
-        shell_path.link_into_system_bin(bin_dir, _SHIM_CMDS)
+        from .common import node_versions_dir
+        shell_path.link_into_system_bin(bin_dir, _SHIM_CMDS, managed_root=node_versions_dir())
         from .common import shim_dir as _shim_dir
         shell_path.prepend_process_path(str(_shim_dir()))
 

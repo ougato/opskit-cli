@@ -15,10 +15,6 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(REPO_ROOT))
 
-# 防止 Linux 上 ensure_venv 触发 exec 重入导致 pytest 卡死
-os.environ.setdefault("VIRTUAL_ENV", str(REPO_ROOT / ".venv"))
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. check_and_apply_pending 返回 True 后，打包模式触发 exec 重启
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,8 +219,8 @@ class TestOnExit:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestApplyUnixCrossFS:
-    def test_cross_fs_uses_copy2(self):
-        """rename 抛出 OSError 时应 fallback 到 shutil.copy2"""
+    def test_cross_fs_publishes_staged_copy(self):
+        """Only EXDEV triggers staged publication; verify actual bytes and mode."""
         if sys.platform == "win32":
             pytest.skip("_apply_unix 仅在 Linux/macOS 执行")
 
@@ -234,23 +230,26 @@ class TestApplyUnixCrossFS:
             pending = Path(tmp) / "opskit.pending"
             self_path = Path(tmp) / "opskit"
 
-            pending.write_bytes(b"\x7fELF" + b"\x00" * 200 * 1024)
+            new_bytes = b"\x7fELF" + b"\x01" * 200 * 1024
+            pending.write_bytes(new_bytes)
             self_path.write_bytes(b"\x7fELF" + b"\x00" * 200 * 1024)
-
-            copy2_called = []
+            self_path.chmod(0o750)
 
             original_replace = Path.replace
 
             def patched_replace(self_obj, target):
                 if self_obj == pending:
-                    raise OSError("cross-device link")
+                    import errno
+                    raise OSError(errno.EXDEV, "cross-device link")
                 return original_replace(self_obj, target)
 
-            with patch.object(Path, "replace", patched_replace), \
-                 patch("shutil.copy2", side_effect=lambda s, d: copy2_called.append((s, d))):
+            with patch.object(Path, "replace", patched_replace):
                 _apply_unix(pending, self_path, 2)
 
-            assert len(copy2_called) == 1, f"copy2 应被调用一次，实际 {copy2_called}"
+            assert self_path.read_bytes() == new_bytes
+            assert self_path.stat().st_mode & 0o777 == 0o750
+            assert not pending.exists()
+            assert list(Path(tmp).iterdir()) == [self_path]
 
     def test_same_fs_uses_replace(self):
         """同文件系统时应使用 replace（不调用 copy2）"""
@@ -286,16 +285,18 @@ class TestApplyUnixCrossFS:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestWindowsDataDir:
-    def test_windows_frozen_uses_localappdata(self):
-        """Windows 打包模式应使用 LOCALAPPDATA"""
+    def test_windows_frozen_fallback_uses_localappdata(self, monkeypatch):
+        """没有 platformdirs 时仍回退到 LOCALAPPDATA；不读取真实数据。"""
         if sys.platform != "win32":
             pytest.skip("仅 Windows 执行")
 
         from core import config as _cfg
 
         fake_localappdata = r"C:\Users\testuser\AppData\Local"
+        monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
 
-        with patch("core.config._is_frozen", return_value=True), \
+        with patch("core.paths._is_frozen", return_value=True), \
+             patch("core.paths._get_platformdirs", return_value=None), \
              patch.dict(os.environ, {"LOCALAPPDATA": fake_localappdata}):
             result = _cfg.get_data_dir()
 
@@ -304,14 +305,15 @@ class TestWindowsDataDir:
         assert "ProgramData" not in str(result), \
             f"不应使用 ProgramData，实际：{result}"
 
-    def test_windows_data_dir_no_admin_needed(self):
+    def test_windows_data_dir_no_admin_needed(self, monkeypatch):
         """Windows 数据目录应在用户目录下，不需要管理员权限"""
         from core import config as _cfg
 
         if sys.platform != "win32":
             pytest.skip("仅 Windows 执行")
 
-        with patch("core.config._is_frozen", return_value=True):
+        monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
+        with patch("core.paths._is_frozen", return_value=True):
             data_dir = _cfg.get_data_dir()
 
         localappdata = os.environ.get("LOCALAPPDATA", "")

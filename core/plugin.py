@@ -9,15 +9,15 @@
 from __future__ import annotations
 
 import re
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from core.constants import FILE_PLUGIN_MANIFEST, PLUGIN_API_VERSION
 from core.logger import get_logger
 from core.module import ModuleInfo
+from core.bounded_yaml import load_bounded_yaml
 from core.paths import plugins_dir
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, is_trusted
@@ -38,6 +38,12 @@ _REQUIRED_FIELDS = ("name", "version", "api_version", "kind", "entry")
 KIND_PYTHON = "python"
 KIND_EXEC = "exec"
 _VALID_KINDS = (KIND_PYTHON, KIND_EXEC)
+MAX_INVENTORY_ENTRIES = 4096
+MAX_MANIFESTS = 256
+
+
+class PluginInventoryError(RuntimeError):
+    """Incomplete inventories must never masquerade as an empty catalog."""
 
 # 外部插件默认排序权重（内置模块之后）
 _DEFAULT_ORDER = 50
@@ -64,7 +70,8 @@ class PluginManifest:
     group_icon: str | None = None
     group_label: dict[str, str] = field(default_factory=dict)
     provides: list[str] = field(default_factory=list)   # 对外提供的服务名（插件间服务）
-    uses: list[dict[str, str]] = field(default_factory=list)  # 依赖的服务 [{service, source}]
+    uses: list[dict[str, Any]] = field(default_factory=list)
+    service_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
     root: Path = field(default_factory=Path)
 
     def display_label(self, lang: str) -> str | None:
@@ -79,16 +86,65 @@ class PluginManifest:
         )
 
 
+def _service_contract(value):
+    if not isinstance(value, dict) or set(value) != {"api_version", "methods"}:
+        raise ValueError("invalid service contract fields")
+    version, methods = value["api_version"], value["methods"]
+    if type(version) is not int or not 1 <= version <= 65535:
+        raise ValueError("invalid service business version")
+    if (not isinstance(methods, list) or not 1 <= len(methods) <= 64
+            or any(not isinstance(method, str) or len(method) > 128
+                   or not method.isascii() or not method.isidentifier()
+                   or method.startswith("_") for method in methods)
+            or len(set(methods)) != len(methods)):
+        raise ValueError("invalid public service methods")
+    return {"api_version": version, "methods": list(methods)}
+
+
+def _service_declarations(data, provides):
+    contracts_raw = data.get("service_contracts", {})
+    if not isinstance(contracts_raw, dict) or len(contracts_raw) > 64:
+        raise ValueError("invalid service contracts")
+    contracts = {}
+    for service, contract in contracts_raw.items():
+        if not isinstance(service, str) or not _NAME_PATTERN.fullmatch(service) or service not in provides:
+            raise ValueError("contract service not provided")
+        contracts[service] = _service_contract(contract)
+    uses_raw = data.get("uses") or []
+    if not isinstance(uses_raw, list) or len(uses_raw) > 64:
+        raise ValueError("invalid service requirements")
+    uses, seen = [], set()
+    for requirement in uses_raw:
+        if isinstance(requirement, str):
+            requirement = {"service": requirement}
+        if not isinstance(requirement, dict) or set(requirement) - {"service", "source", "provider", "api_version", "methods"}:
+            raise ValueError("invalid service requirement fields")
+        service = requirement.get("service")
+        source = requirement.get("source", "")
+        if (not isinstance(service, str) or not _NAME_PATTERN.fullmatch(service)
+                or service in seen or not isinstance(source, str)):
+            raise ValueError("invalid or duplicate service requirement")
+        seen.add(service)
+        parsed = {"service": service, "source": source}
+        if set(requirement) & {"provider", "api_version", "methods"}:
+            provider = requirement.get("provider")
+            if not isinstance(provider, str) or not _NAME_PATTERN.fullmatch(provider) or provider == "platform":
+                raise ValueError("invalid service provider identity")
+            parsed.update(_service_contract({key: requirement[key] for key in ("api_version", "methods") if key in requirement}))
+            parsed["provider"] = provider
+        uses.append(parsed)
+    return contracts, uses
+
+
 def load_manifest(plugin_root: Path) -> PluginManifest | None:
     """读取并校验单个插件清单，失败返回 None（写日志）"""
     if plugin_root.is_symlink() or (hasattr(plugin_root, "is_junction") and plugin_root.is_junction()):
         return None
     manifest_path = plugin_root / FILE_PLUGIN_MANIFEST
     try:
-        with manifest_path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+        data = load_bounded_yaml(manifest_path)
     except Exception as e:
-        _log.warning("plugin %s: manifest read failed: %s", plugin_root.name, e)
+        _log.warning("plugin %s: manifest read failed (%s)", plugin_root.name, type(e).__name__)
         return None
 
     if not isinstance(data, dict):
@@ -161,14 +217,11 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
     provides = data.get("provides") or []
     if not isinstance(provides, list):
         provides = []
-    uses_raw = data.get("uses") or []
-    uses: list[dict[str, str]] = []
-    if isinstance(uses_raw, list):
-        for u in uses_raw:
-            if isinstance(u, dict) and u.get("service"):
-                uses.append({"service": str(u["service"]), "source": str(u.get("source", ""))})
-            elif isinstance(u, str):
-                uses.append({"service": u, "source": ""})
+    try:
+        service_contracts, uses = _service_declarations(data, provides)
+    except ValueError:
+        _log.warning("plugin %s: invalid service declarations", name)
+        return None
 
     if any(p not in {"network", "filesystem", "exec"} for p in permissions):
         _log.warning("plugin %s: unsupported permissions", name)
@@ -190,6 +243,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         group_label={str(k): str(v) for k, v in group_label.items()},
         provides=[str(p) for p in provides],
         uses=uses,
+        service_contracts=service_contracts,
         root=plugin_root,
     )
 
@@ -260,14 +314,31 @@ def _to_module_info(manifest: PluginManifest) -> ModuleInfo | None:
 def list_manifests() -> list[PluginManifest]:
     """列出插件目录下所有合法清单（不加载代码，供插件管理界面用）"""
     root = plugins_dir()
-    if not root.is_dir():
+    if root.is_symlink() or getattr(root, "is_junction", lambda: False)():
+        raise PluginInventoryError("linked plugin inventory root forbidden")
+    if not root.exists():
         return []
+    directories = []
+    candidates = []
+    try:
+        with os.scandir(root) as entries:
+            for count, entry in enumerate(entries, 1):
+                if count > MAX_INVENTORY_ENTRIES:
+                    raise PluginInventoryError("plugin inventory entry limit exceeded")
+                if entry.name.startswith((".", "_")) or not entry.is_dir(follow_symlinks=False):
+                    continue
+                path = Path(entry.path)
+                if not getattr(path, "is_junction", lambda: False)():
+                    directories.append(path)
+        for path in sorted(directories):
+            if (path / FILE_PLUGIN_MANIFEST).exists():
+                candidates.append(path)
+                if len(candidates) > MAX_MANIFESTS:
+                    raise PluginInventoryError("plugin inventory manifest limit exceeded")
+    except OSError as error:
+        raise PluginInventoryError("plugin inventory scan failed") from error
     manifests: list[PluginManifest] = []
-    for path in sorted(root.iterdir()):
-        if not path.is_dir() or path.name.startswith(".") or path.name.startswith("_"):
-            continue
-        if not (path / FILE_PLUGIN_MANIFEST).exists():
-            continue
+    for path in candidates:
         manifest = load_manifest(path)
         if manifest is not None:
             manifests.append(manifest)

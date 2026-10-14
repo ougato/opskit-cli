@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -96,6 +96,10 @@ class Recipe(ABC):
         """运行诊断检查（has_diagnose=True 时子类实现）"""
         pass
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        """只读结构化诊断；不调用菜单、不写配置、不导出连接信息。"""
+        raise NotImplementedError("read-only diagnostics are not supported")
+
     def manage(self) -> None:
         """运行管理界面（has_manage=True 时子类实现）"""
         pass
@@ -137,11 +141,11 @@ class Recipe(ABC):
         ]
 
 
-class InstallError(Exception):
+class InstallError(RuntimeError):
     """安装失败异常"""
     pass
 
 
-class UninstallError(Exception):
+class UninstallError(RuntimeError):
     """卸载失败异常"""
     pass

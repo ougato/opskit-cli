@@ -1,15 +1,16 @@
 """配置读写 + 配置迁移 + 路径双模式（开发 / 打包）"""
 from __future__ import annotations
 
-import os
 import sys
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 import yaml
+from core.resource_lock import ResourceLock
+from core.bounded_yaml import MAX_BYTES, load_bounded_yaml, parse_bounded_yaml
 
 from core.constants import (
-    APP_NAME,
     DEFAULT_CONFIG,
     DIR_CONFIG,
     FILE_CONFIG,
@@ -42,6 +43,22 @@ def get_config_path() -> Path:
     return get_data_dir() / DIR_CONFIG / FILE_CONFIG
 
 
+_configuration_lock = ResourceLock(lambda: get_data_dir() / ".config.lock", label="configuration")
+
+
+def configuration_transaction():
+    """Serialize configuration changes and authorization-dependent publication."""
+    return _configuration_lock.hold()
+
+
+def _serialized_configuration(function):
+    @wraps(function)
+    def update(*args, **kwargs):
+        with configuration_transaction():
+            return function(*args, **kwargs)
+    return update
+
+
 def get_resource_dir(relative: str) -> Path:
     """
     获取 YAML 资源目录（themes / locale / mirrors）的绝对路径。
@@ -59,7 +76,8 @@ def get_resource_dir(relative: str) -> Path:
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """递归合并，override 覆盖 base，不删除 base 中的键"""
-    result = base.copy()
+    from copy import deepcopy
+    result = deepcopy(base)
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = _deep_merge(result[key], value)
@@ -68,25 +86,49 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load_config() -> dict[str, Any]:
+def load_config(*, max_bytes=None) -> dict[str, Any]:
     """加载配置文件，不存在时返回默认配置（不写入磁盘）"""
-    path = get_config_path()
-    if not path.exists():
+    return _load_config_path(get_config_path(), max_bytes=max_bytes)
+
+
+def _load_config_path(path: Path, *, max_bytes=None) -> dict[str, Any]:
+    """Same bounded reader for explicit supervisor-selected paths."""
+    limit = MAX_BYTES if max_bytes is None else max_bytes
+    if type(limit) is not int or not 0 < limit <= MAX_BYTES:
+        raise ValueError("config size limit must be a positive integer at most 1MiB")
+    try:
+        path.lstat()
+    except FileNotFoundError:
         import copy
         return copy.deepcopy(DEFAULT_CONFIG)
-    with path.open("r", encoding="utf-8") as f:
-        user_cfg = yaml.safe_load(f) or {}
+    except OSError:
+        raise ValueError("configuration is unreadable") from None
+    try:
+        user_cfg = load_bounded_yaml(path, max_bytes=limit)
+        if not isinstance(user_cfg, dict) or any(not isinstance(key, str) for key in user_cfg):
+            raise ValueError("configuration must be a string-keyed mapping")
+    except (OSError, ValueError, yaml.YAMLError):
+        raise ValueError("configuration is invalid, unreadable, or exceeds size limits") from None
     return _deep_merge(DEFAULT_CONFIG, user_cfg)
 
 
+@_serialized_configuration
 def save_config(config: dict[str, Any]) -> None:
-    """保存配置到磁盘"""
+    """Explicitly replace configuration; use set_config_value for single-key edits."""
     path = get_config_path()
+    try:
+        if not isinstance(config, dict) or any(not isinstance(key, str) for key in config):
+            raise ValueError("invalid configuration root")
+        text = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+        parse_bounded_yaml(text.encode("utf-8"))
+    except (TypeError, ValueError, yaml.YAMLError):
+        raise ValueError("configuration is invalid or exceeds publication limits") from None
     path.parent.mkdir(parents=True, exist_ok=True)
     from core.secrets import atomic_write
-    atomic_write(path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+    atomic_write(path, text)
 
 
+@_serialized_configuration
 def ensure_config() -> dict[str, Any]:
     """
     首次运行时自动创建默认配置：
@@ -96,7 +138,9 @@ def ensure_config() -> dict[str, Any]:
     3. 已存在 → 加载并与默认值合并（只增不删），如版本不一致自动迁移
     """
     path = get_config_path()
-    if not path.exists():
+    try:
+        path.lstat()
+    except FileNotFoundError:
         path.parent.mkdir(parents=True, exist_ok=True)
         save_config(DEFAULT_CONFIG)
         import copy
@@ -109,18 +153,23 @@ def ensure_config() -> dict[str, Any]:
     return merged
 
 
+@_serialized_configuration
 def set_config_value(config: dict[str, Any], key_path: str, value: Any) -> dict[str, Any]:
     """
     设置嵌套配置值并保存。
 
     key_path 使用点号分隔，如 'update.enabled'、'language'。
     """
+    # The caller's snapshot may predate a completed plugin disable.
+    current = load_config()
     keys = key_path.split(".")
-    node = config
+    node = current
     for k in keys[:-1]:
         node = node.setdefault(k, {})
     node[keys[-1]] = value
-    save_config(config)
+    save_config(current)
+    config.clear()
+    config.update(current)
     return config
 
 

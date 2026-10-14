@@ -1,10 +1,11 @@
 """Redis Linux 平台驱动：deb 解压提取二进制（或源码编译 fallback）+ shim sh + PATH 注入"""
 from __future__ import annotations
 
+from core.archive_reader import open_tar
+
 import os
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -17,6 +18,37 @@ from .constants import (
     PROFILE_D_REDIS_FILE,
 )
 
+_DEB_BINARIES = frozenset(("redis-server", "redis-cli", "redis-sentinel", "redis-benchmark",
+                           "redis-check-aof", "redis-check-rdb"))
+
+
+def _resolve_deb_aliases(bin_dir, pending):
+    links = {}
+    for name, target, hard in pending:
+        if name in links or os.path.lexists(bin_dir / name):
+            raise InstallError("Redis package aliases conflict")
+        links[name] = target, hard
+    resolved = {}
+    for name in links:
+        current, trail, seen = name, [], set()
+        while current in links and current not in resolved:
+            if current in seen:
+                raise InstallError("Redis package aliases are cyclic")
+            seen.add(current)
+            trail.append(current)
+            current = links[current][0]
+        terminal = resolved.get(current, current)
+        binary = bin_dir / terminal
+        if not binary.is_file() or binary.is_symlink():
+            raise InstallError("Redis package alias target is missing")
+        for node in trail:
+            resolved[node] = terminal
+    for name, (_, hard) in links.items():
+        if hard:
+            os.link(bin_dir / resolved[name], bin_dir / name)
+        else:
+            os.symlink(resolved[name], bin_dir / name)
+
 
 class LinuxDriver(PlatformDriver):
 
@@ -25,128 +57,103 @@ class LinuxDriver(PlatformDriver):
     def install_binary(self, version: str, src) -> str:
         """
         src 可能是 Path 或 list[Path]（Linux 返回列表）。
-        - .deb → ar x + tar 提取 usr/bin/redis-server, redis-cli（多个 deb 合并）
+        - .deb → 有界解析 + tar 白名单提取 usr/bin/redis-server, redis-cli（多个 deb 合并）
         - .tar.gz → make 编译
         返回 bin 目录路径字符串。
         """
         from .common import redis_version_dir, redis_bin_dir
+        from software._shared.archive_install import staged_directory
         dest = redis_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-        bin_d = redis_bin_dir(version)
-        bin_d.mkdir(parents=True, exist_ok=True)
+        srcs = src if isinstance(src, list) else [src]
+        try:
+            with staged_directory(dest, prefix=".opskit-redis-") as staging:
+                bin_d = staging / "bin"
+                bin_d.mkdir(parents=True)
+                pending = []
+                for source in srcs:
+                    if source.suffix == ".deb":
+                        pending.extend(self._install_from_deb(source, bin_d))
+                    else:
+                        self._install_from_src(source, bin_d)
+                _resolve_deb_aliases(bin_d, pending)
+                if not all((bin_d / binary).is_file() for binary in ("redis-server", "redis-cli")):
+                    raise InstallError(t("software.redis_error.linux_bad_structure", version=version))
+        except FileExistsError as error:
+            raise InstallError("Redis version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError("Redis installation preparation or publication failed") from error
+        return str(redis_bin_dir(version))
 
-        srcs: list[Path] = src if isinstance(src, list) else [src]
-        for s in srcs:
-            suffix = "".join(s.suffixes)
-            if suffix.endswith(".deb"):
-                self._install_from_deb(s, bin_d)
-            else:
-                self._install_from_src(s, dest, bin_d)
-
-        # Debian 包里 redis-server 是 symlink → redis-check-rdb
-        # 若 symlink 提取后仍缺失，用 redis-check-rdb 复制兜底
-        redis_server = bin_d / "redis-server"
-        if not redis_server.exists():
-            fallback = bin_d / "redis-check-rdb"
-            if fallback.exists():
-                import shutil as _sh
-                _sh.copy2(str(fallback), str(redis_server))
-                redis_server.chmod(0o755)
-
-        if not redis_server.exists():
-            raise InstallError(t("software.redis_error.linux_bad_structure", version=version))
-        return str(bin_d)
-
-    def _install_from_deb(self, deb: Path, bin_d: Path) -> None:
-        """从 deb 包用 ar x + tar 提取 redis-server / redis-cli"""
+    def _install_from_deb(self, deb: Path, bin_d: Path):
+        """Map only exact usr/bin members; aliases resolve after all packages merge."""
         import tempfile
-        with tempfile.TemporaryDirectory(prefix="opskit-redis-deb-", ignore_cleanup_errors=True) as tmp:
-            tmp_path = Path(tmp)
+        import posixpath
+        from core.debian import extract_data_tar, open_data_tar
+        from core.archive import extract_tar_files
+        pending = []
+        with tempfile.TemporaryDirectory(prefix="opskit-redis-deb-") as work:
             try:
-                subprocess.run(["ar", "x", str(deb)], cwd=tmp, check=True, capture_output=True)
-            except Exception as e:
-                raise InstallError(t("software.redis_error.deb_unpack_failed", error=e)) from e
-            data_tar = None
-            for name in ("data.tar.xz", "data.tar.gz", "data.tar.zst", "data.tar.bz2", "data.tar"):
-                candidate = tmp_path / name
-                if candidate.exists():
-                    data_tar = candidate
-                    break
-            if data_tar is None:
-                raise InstallError(t("software.redis_error.deb_no_data_tar"))
-            _BINARIES = frozenset((
-                "redis-server", "redis-cli", "redis-sentinel",
-                "redis-benchmark", "redis-check-aof", "redis-check-rdb",
-            ))
-            try:
-                with tarfile.open(str(data_tar)) as tf:
-                    _pending_links: list[tuple[str, str]] = []
-                    for member in tf.getmembers():
-                        norm = member.name.lstrip("./")
-                        base = Path(norm).name
-                        if base not in _BINARIES:
-                            continue
-                        # 只提取 usr/bin/ 下的二进制，排除 bash-completion 等同名文件
-                        if not norm.startswith("usr/bin/"):
-                            continue
-                        target = bin_d / base
-                        if member.issym() or member.islnk():
-                            # 记录软/硬链接，等普通文件提取完再处理
-                            _pending_links.append((base, Path(member.linkname).name))
-                            continue
-                        src_f = tf.extractfile(member)
-                        if src_f:
-                            target.write_bytes(src_f.read())
-                            target.chmod(0o755)
-                    # 处理符号链接（redis-check-rdb → redis-server 等）
-                    for link_name, link_target in _pending_links:
-                        target = bin_d / link_name
-                        if not target.exists():
-                            real = bin_d / link_target
-                            if real.exists():
-                                import os as _os
-                                _os.symlink(str(real), str(target))
-                            else:
-                                # 源文件也不在 bin_d，复制 redis-server 充当
-                                fallback = bin_d / "redis-server"
-                                if fallback.exists():
-                                    import shutil as _sh
-                                    _sh.copy2(str(fallback), str(target))
-                                    target.chmod(0o755)
+                data_tar = extract_data_tar(deb, Path(work))
+
+                def select(name, member):
+                    parts = name.split("/")
+                    if len(parts) != 3 or parts[:2] != ["usr", "bin"] or parts[-1] not in _DEB_BINARIES:
+                        return None
+                    base = parts[-1]
+                    if member.issym() or member.islnk():
+                        raw = member.linkname.replace("\\", "/")
+                        if not raw or raw.startswith("/") or ":" in raw:
+                            raise ValueError("unsafe Redis package alias")
+                        linked = posixpath.normpath(posixpath.join("usr/bin", raw) if member.issym() else raw)
+                        target_parts = linked.split("/")
+                        if len(target_parts) != 3 or target_parts[:2] != ["usr", "bin"] or target_parts[-1] not in _DEB_BINARIES:
+                            raise ValueError("Redis package alias target is not allowlisted")
+                        pending.append((base, target_parts[-1], member.islnk()))
+                        return None
+                    return base
+
+                with open_data_tar(data_tar) as archive:
+                    extract_tar_files(archive, bin_d, select)
             except InstallError:
                 raise
-            except Exception as e:
-                raise InstallError(t("software.redis_error.deb_extract_failed", error=e)) from e
+            except Exception as error:
+                raise InstallError(t("software.redis_error.deb_extract_failed", error="invalid Redis package payload")) from error
+        return pending
 
-    def _install_from_src(self, tarball: Path, dest: Path, bin_d: Path) -> None:
+    def _install_from_src(self, tarball: Path, bin_d: Path) -> None:
         """从源码 tar.gz make 编译"""
         if not shutil.which("make") or not shutil.which("gcc"):
             raise InstallError(t("software.redis_error.src_need_build_tools"))
         import tempfile
         with tempfile.TemporaryDirectory(prefix="opskit-redis-src-", ignore_cleanup_errors=True) as tmp:
             try:
-                with tarfile.open(str(tarball), "r:gz") as tf:
+                with open_tar(str(tarball), "r:gz") as tf:
                     from core.archive import extract_tar
                     extract_tar(tf, tmp)
             except Exception as e:
                 raise InstallError(t("software.redis_error.src_extract_failed", error=e)) from e
             src_dirs = [d for d in Path(tmp).iterdir() if d.is_dir() and d.name.startswith("redis")]
-            if not src_dirs:
+            if len(src_dirs) != 1:
                 raise InstallError(t("software.redis_error.src_bad_structure"))
             src_dir = src_dirs[0]
             try:
-                subprocess.run(
-                    ["make", "-j4"],
-                    cwd=str(src_dir), check=True, capture_output=True
-                )
-            except subprocess.CalledProcessError as e:
-                raise InstallError(t("software.redis_error.src_make_failed", error=e.stderr.decode(errors='replace')[:200])) from e
-        for binary in ("redis-server", "redis-cli"):
-            installed = dest / "bin" / binary
-            target = bin_d / binary
-            if installed.exists() and not target.exists():
-                shutil.copy2(str(installed), str(target))
-                target.chmod(0o755)
+                from core.process import capture
+                result = capture(["make", "-j4"], cwd=src_dir, timeout=1800,
+                                 max_bytes=1024 * 1024, stdin=subprocess.DEVNULL)
+                if result.returncode != 0:
+                    raise InstallError(t("software.redis_error.src_make_failed", error="build command failed"))
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                raise InstallError(t("software.redis_error.src_make_failed", error="build command failed or timed out")) from error
+            for binary in _DEB_BINARIES:
+                built = src_dir / "src" / binary
+                target = bin_d / binary
+                if built.is_file():
+                    if target.exists():
+                        raise InstallError("Redis build outputs conflict")
+                    shutil.copy2(built, target)
+                    target.chmod(0o755)
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 
