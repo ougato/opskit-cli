@@ -118,6 +118,19 @@ def register(app):
             raise typer.Exit(1)
         emit(result)
 
+    @app.command("prepare-fetch", help="Prepare the platform's isolated Git/SSH tool from reviewed offline packages")
+    def prepare_fetch(packages: Path = typer.Option(..., "--packages")):
+        from core.plugin_fetch import prepare_tool
+        try:
+            image = prepare_tool(packages)
+        except ValueError:
+            fail("invalid fetch preparation inputs or tool identity", 2)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            fail("isolated fetch preparation failed")
+        except KeyboardInterrupt:
+            raise typer.Exit(130)
+        emit({"image": image, "prepared": True, "authorized": False})
+
     @app.command("prepare", help="Build an isolated plugin runtime with operator-approved pinned dependencies")
     def prepare(path: str, dependency: list[str] = typer.Option([], "--dependency"),
                 base_image: str = typer.Option(..., "--base-image"),

@@ -9,6 +9,54 @@ import pytest
 from core import plugin_fetch as fetch, plugin_sandbox as sandbox
 
 
+@pytest.mark.parametrize("operation", ["prepare", "select"])
+def test_tool_service_keeps_original_local_endpoint_after_environment_changes(monkeypatch, tmp_path, operation):
+    from core import plugin_fetch_image as tool
+    @contextmanager
+    def budget():
+        yield
+    pinned = ["docker", "--host", "unix:///var/run/docker.sock"]
+    identifier = "sha256:" + "a" * 64
+    monkeypatch.setattr(sandbox, "_execution_budget", budget)
+    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
+    monkeypatch.setenv("DOCKER_HOST", pinned[-1])
+    def capabilities(command):
+        assert command == pinned
+        monkeypatch.setenv("DOCKER_HOST", "tcp://untrusted.invalid:2375")
+    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", capabilities)
+    def build(command, packages):
+        assert command == pinned and packages == tmp_path
+        return identifier
+    def control(command, *args):
+        assert command == pinned
+        if args[:2] == ("image", "ls"):
+            return identifier
+        assert args[:2] == ("image", "inspect") and args[-1] == identifier
+        return json.dumps(tool._expected_identity())
+    monkeypatch.setattr(tool, "build", build)
+    monkeypatch.setattr(sandbox, "_control", control)
+    if operation == "prepare":
+        assert fetch.prepare_tool(tmp_path) == identifier
+    else:
+        assert fetch.prepared_tool() == (pinned, identifier)
+
+
+@pytest.mark.parametrize("operation", ["prepare", "select"])
+@pytest.mark.parametrize("endpoint", ["tcp://localhost:2375", "ssh://untrusted.invalid"])
+def test_tool_services_refuse_remote_daemon_before_capabilities_or_build(monkeypatch, tmp_path, operation, endpoint):
+    from core import plugin_fetch_image as tool
+    @contextmanager
+    def budget():
+        yield
+    monkeypatch.setattr(sandbox, "_execution_budget", budget)
+    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
+    monkeypatch.setenv("DOCKER_HOST", endpoint)
+    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda *args: pytest.fail("remote daemon queried"))
+    monkeypatch.setattr(tool, "build", lambda *args: pytest.fail("remote daemon built tool"))
+    with pytest.raises(ValueError, match="local Docker endpoint"):
+        fetch.prepare_tool(tmp_path) if operation == "prepare" else fetch.prepared_tool()
+
+
 @pytest.fixture
 def boundary(monkeypatch, tmp_path):
     events, calls = [], []

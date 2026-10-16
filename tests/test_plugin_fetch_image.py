@@ -67,7 +67,7 @@ def test_offline_context_is_exact_and_deterministic(packages, monkeypatch):
             return json.dumps({"id": image.BASE_IMAGE, "architecture": "amd64"})
         if command[-1] == result:
             return json.dumps({"architecture": "amd64", "policy": str(image.POLICY), "lock": lock_digest,
-                               "worker": hashlib.sha256(image.fetch_source()).hexdigest(),
+                               "worker": hashlib.sha256(image.fetch_snapshot()["core/plugin_fetch_worker.py"]).hexdigest(),
                                "sources": image.code_digest(image.fetch_snapshot())})
         return result
     monkeypatch.setattr(runtime, "_command_output", output)
@@ -77,7 +77,7 @@ def test_offline_context_is_exact_and_deterministic(packages, monkeypatch):
     with tarfile.open(fileobj=io.BytesIO(contexts[0])) as archive:
         assert set(archive.getnames()) == {"Dockerfile", "fetch.py", "packages/" + package["file"],
                                           *(n for n in image.fetch_snapshot() if n != "core/plugin_fetch_worker.py")}
-        assert archive.extractfile("fetch.py").read() == image.fetch_source()
+        assert archive.extractfile("fetch.py").read() == image.fetch_snapshot()["core/plugin_fetch_worker.py"]
         for name, content in image.fetch_snapshot().items():
             if name != "core/plugin_fetch_worker.py":
                 assert archive.extractfile(name).read() == content
@@ -124,9 +124,64 @@ def test_built_image_must_have_expected_identity(packages, monkeypatch, fault):
         if command[-1] == result:
             return json.dumps({"architecture": "arm64" if fault == "architecture" else "amd64",
                                "policy": str(image.POLICY), "lock": "b" * 64 if fault == "label" else lock_digest,
-                               "worker": hashlib.sha256(image.fetch_source()).hexdigest(),
+                               "worker": hashlib.sha256(image.fetch_snapshot()["core/plugin_fetch_worker.py"]).hexdigest(),
                                "sources": image.code_digest(image.fetch_snapshot())})
         return "untrusted-tag" if fault == "tag" else result
     monkeypatch.setattr(runtime, "_command_output", output)
     with pytest.raises(ValueError, match="image identity"):
         image.build(["docker"], packages[0])
+
+
+def test_prepared_selection_rechecks_immutable_identity_and_current_filters():
+    identifier = "sha256:" + "a" * 64
+    expected = image._expected_identity()
+    calls = []
+    def control(*args):
+        calls.append(args)
+        if args[:2] == ("image", "ls"):
+            assert "reference=opskit-fetch-toolchain:*" in args
+            for field, label in (("policy", "toolchain"), ("lock", "lock-sha256"),
+                                 ("worker", "worker-sha256"), ("sources", "sources-sha256")):
+                assert "label=org.opskit.fetch-" + label + "=" + expected[field] in args
+            # Docker may list the same image once per tag.
+            return identifier + "\n" + identifier
+        assert args[:2] == ("image", "inspect") and args[-1] == identifier
+        return json.dumps(expected)
+    assert image.prepared_image(["docker"], control=control) == identifier
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("inventory", ["", "opskit-fetch-toolchain:latest", "sha256:" + "a" * 12,
+    "sha256:" + "a" * 64 + "\nsha256:" + "b" * 64,
+    ("sha256:" + "a" * 64 + "\n") * 65, "x" * 16385, None])
+def test_invalid_or_ambiguous_selection_never_inspects_or_fetches(inventory):
+    def control(*args):
+        assert args[:2] == ("image", "ls")
+        return inventory
+    with pytest.raises(ValueError):
+        image.prepared_image(["docker"], control=control)
+
+
+@pytest.mark.parametrize("field", ["architecture", "policy", "lock", "worker", "sources"])
+def test_stale_or_false_daemon_filter_result_is_rejected(field):
+    expected = image._expected_identity()
+    expected[field] = "wrong"
+    def control(*args):
+        return "sha256:" + "a" * 64 if args[:2] == ("image", "ls") else json.dumps(expected)
+    with pytest.raises(ValueError, match="image identity"):
+        image.prepared_image(["docker"], control=control)
+
+
+def test_source_change_during_selection_is_not_accepted(monkeypatch):
+    expected = image._expected_identity()
+    def control(*args):
+        if args[:2] == ("image", "ls"):
+            return "sha256:" + "a" * 64
+        return json.dumps(expected)
+    actual_verify = image.verify
+    def verify(*args, **kwargs):
+        actual_verify(*args, **kwargs)
+        monkeypatch.setattr(image, "POLICY", image.POLICY + 1)
+    monkeypatch.setattr(image, "verify", verify)
+    with pytest.raises(ValueError, match="changed during selection"):
+        image.prepared_image(["docker"], control=control)

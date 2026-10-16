@@ -10,7 +10,7 @@ import tempfile
 
 from core.plugin_fetch_lock import BASE_IMAGE, BASE_REFERENCE, INSTALLED_PACKAGES_SHA256, LOCK
 from core.plugin_image_hardening import HARDENING_SCRIPT
-from core.plugin_runtime_inventory import _read_file, code_digest, fetch_snapshot, fetch_source
+from core.plugin_runtime_inventory import _read_file, code_digest, fetch_snapshot
 
 POLICY = 4
 MAX_PACKAGE_BYTES = 32 * 1024**2
@@ -98,6 +98,47 @@ def build(command, packages: Path):
         return result
 
 
+def _expected_identity():
+    lock_digest = hashlib.sha256(json.dumps(LOCK, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    sources = fetch_snapshot()
+    return {"architecture": "amd64", "policy": str(POLICY), "lock": lock_digest,
+            "worker": hashlib.sha256(sources["core/plugin_fetch_worker.py"]).hexdigest(),
+            "sources": code_digest(sources)}
+
+
+def prepared_image(command, *, control=None):
+    """Select one current tool from the local daemon's persisted image inventory.
+
+    No pull, build, mutable-tag execution or host Git fallback. Multiple tags of
+    one immutable image are harmless; multiple distinct matching images require
+    an operator decision rather than an arbitrary choice. The daemon remains a
+    trusted platform dependency, as for verify().
+    """
+    if control is None:
+        from core.plugin_runtime import _command_output
+        def control(*args):
+            return _command_output([*command, *args], timeout=30, max_bytes=16384)
+    expected = _expected_identity()
+    filters = ["--filter", "reference=opskit-fetch-toolchain:*"]
+    for field, label in (("policy", "toolchain"), ("lock", "lock-sha256"),
+                         ("worker", "worker-sha256"), ("sources", "sources-sha256")):
+        filters += ["--filter", "label=org.opskit.fetch-" + label + "=" + expected[field]]
+    result = control("image", "ls", "--no-trunc", "--quiet", *filters)
+    if not isinstance(result, str) or len(result.encode()) > 16384:
+        raise ValueError("invalid prepared fetch inventory")
+    images = result.splitlines()
+    if len(images) > 64 or any(re.fullmatch(r"sha256:[0-9a-f]{64}", image) is None for image in images):
+        raise ValueError("invalid prepared fetch inventory")
+    unique = set(images)
+    if len(unique) != 1:
+        raise ValueError("prepared fetch tool missing or ambiguous")
+    image = unique.pop()
+    verify(command, image, control=control)
+    if _expected_identity() != expected:
+        raise ValueError("fetch worker changed during selection")
+    return image
+
+
 def verify(command, image, *, control=None):
     """Require a content-addressed image with current platform lock/worker labels."""
     if not isinstance(image, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
@@ -106,16 +147,13 @@ def verify(command, image, *, control=None):
         from core.plugin_runtime import _command_output
         def control(*args):
             return _command_output([*command, *args], timeout=30)
-    lock_digest = hashlib.sha256(json.dumps(LOCK, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    worker_digest = hashlib.sha256(fetch_source()).hexdigest()
     fields = ('{"architecture":{{json .Architecture}},'
               '"policy":{{json (index .Config.Labels "org.opskit.fetch-toolchain")}},'
               '"lock":{{json (index .Config.Labels "org.opskit.fetch-lock-sha256")}},'
               '"sources":{{json (index .Config.Labels "org.opskit.fetch-sources-sha256")}},'
               '"worker":{{json (index .Config.Labels "org.opskit.fetch-worker-sha256")}}}')
     actual = json.loads(control("image", "inspect", "--format", fields, image))
-    if actual != {"architecture": "amd64", "policy": str(POLICY), "lock": lock_digest, "worker": worker_digest,
-                  "sources": code_digest(fetch_snapshot())}:
+    if actual != _expected_identity():
         raise ValueError("fetch image identity mismatch")
 
 

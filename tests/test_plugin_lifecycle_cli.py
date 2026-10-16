@@ -137,6 +137,44 @@ def test_prepare_requires_operator_lock_and_base_before_any_build(isolated, monk
     assert result.exit_code == 2 and json.loads(result.stdout)["ok"] is False
 
 
+def test_prepare_fetch_uses_explicit_offline_packages_without_boot_or_trust(isolated, monkeypatch):
+    import main
+    from core import plugin_fetch
+    calls = []
+    monkeypatch.setattr(main, "_boot", lambda: pytest.fail("preparation must not boot"))
+    def prepare(packages):
+        calls.append(packages)
+        return "sha256:" + "a" * 64
+    monkeypatch.setattr(plugin_fetch, "prepare_tool", prepare)
+    result = call("plugin", "prepare-fetch", "--packages", str(isolated / "offline"))
+    assert result.exit_code == 0, result.output
+    assert calls == [isolated / "offline"]
+    assert json.loads(result.stdout)["data"] == {"image": "sha256:" + "a" * 64,
+                                                "prepared": True, "authorized": False}
+    assert not (isolated / "data").exists() and not (isolated / "plugins").exists()
+
+
+@pytest.mark.parametrize("error,code", [(ValueError("SECRET"), 2),
+    (RuntimeError("SECRET"), 1), (PermissionError("SECRET"), 1),
+    (subprocess.CalledProcessError(1, ["SECRET"]), 1), (KeyboardInterrupt(), 130)])
+def test_prepare_fetch_sanitizes_failures(isolated, monkeypatch, error, code):
+    from core import plugin_fetch
+    def failed(*args):
+        raise error
+    monkeypatch.setattr(plugin_fetch, "prepare_tool", failed)
+    result = call("plugin", "prepare-fetch", "--packages", str(isolated))
+    assert result.exit_code == code and "SECRET" not in result.output
+    if code != 130:
+        assert json.loads(result.stdout)["ok"] is False
+
+
+def test_prepare_fetch_requires_packages_before_build(isolated, monkeypatch):
+    from core import plugin_fetch
+    monkeypatch.setattr(plugin_fetch, "prepare_tool", lambda *args: pytest.fail("missing packages built tool"))
+    result = call("plugin", "prepare-fetch")
+    assert result.exit_code == 2 and json.loads(result.stdout)["ok"] is False
+
+
 def test_native_fingerprint_process_preserves_platform_and_plugin_code(tmp_path):
     root = tmp_path / "artifact"
     root.mkdir()

@@ -13,6 +13,29 @@ from core.plugin_fetch_image import verify
 from core.process_binary import capture
 
 
+def prepare_tool(packages):
+    """Explicit offline preparation, separate from fetching or authorizing code."""
+    from core import plugin_fetch_image as tool
+    from core import plugin_sandbox as sandbox
+    with sandbox._execution_budget():
+        command = _local_backend(sandbox.docker_command())
+        sandbox._require_sandbox_capabilities(command)
+    # The existing builder supervises each client, including its 600s build.
+    # No claim of daemon-wide cancellation or maintenance admission is made.
+    return tool.build(command, Path(packages))
+
+
+def prepared_tool():
+    """Bind selection to one explicit local endpoint; never consult host Git."""
+    from core.plugin_fetch_image import prepared_image
+    from core import plugin_sandbox as sandbox
+    with sandbox._execution_budget():
+        command = _local_backend(sandbox.docker_command())
+        sandbox._require_sandbox_capabilities(command)
+        image = prepared_image(command, control=lambda *args: sandbox._control(command, *args))
+        return command, image
+
+
 @contextmanager
 def _remote_network(command, source, allow_private):
     """One fixed target, one internal network, with recoverable resource leases."""
