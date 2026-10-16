@@ -6,6 +6,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import selectors
 import socket
 import socketserver
@@ -14,7 +15,39 @@ import time
 from urllib.parse import urlsplit
 
 
-def allowed_addresses(host: str, port: int, private_targets: list[str]) -> list[tuple]:
+def fetch_target(value: str) -> tuple[str, int]:
+    """Canonical single TCP destination, without URL credentials or paths."""
+    if (not isinstance(value, str) or not value or not value.isascii()
+            or any(character.isspace() or ord(character) < 32 for character in value)
+            or "\\" in value or "%" in value):
+        raise ValueError("invalid fetch destination")
+    parsed = urlsplit("//" + value)
+    if (not parsed.hostname or parsed.username is not None or parsed.password is not None
+            or parsed.path or parsed.query or parsed.fragment or parsed.port is None):
+        raise ValueError("invalid fetch destination")
+    host, port = parsed.hostname.lower(), parsed.port
+    if not 1 <= port <= 65535:
+        raise ValueError("invalid fetch destination")
+    try:
+        host = ipaddress.ip_address(host).compressed
+    except ValueError:
+        host = host.rstrip(".")
+        if (not host or len(host) > 253 or ":" in host
+                or any(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                       for label in host.split("."))):
+            raise ValueError("invalid fetch destination") from None
+    return host, port
+
+
+def allowed_addresses(host: str, port: int, private_targets: list[str], *,
+                      target: tuple[str, int] | None = None) -> list[tuple]:
+    if target is not None:
+        authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        if fetch_target(authority) != target:
+            # Reject before DNS as well as connect: a denied host must not be
+            # usable as a DNS side channel. A private grant cannot widen target.
+            raise PermissionError("destination outside fetch scope")
+        host = target[0]
     addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     explicitly_allowed = f"{host.lower()}:{port}" in private_targets
     if not addresses or any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses) and not explicitly_allowed:
@@ -48,10 +81,28 @@ class Proxy(socketserver.BaseRequestHandler):
                 raise PermissionError("proxy authentication required")
             parsed = urlsplit("//" + target if method == "CONNECT" else target)
             host = parsed.hostname
-            port = parsed.port or (443 if method == "CONNECT" else 80)
+            port = parsed.port if parsed.port is not None else (443 if method == "CONNECT" else 80)
+            if not 1 <= port <= 65535:
+                raise PermissionError("invalid proxy destination port")
             if not host or parsed.username or parsed.password or method != "CONNECT" and parsed.scheme != "http":
                 raise PermissionError("invalid proxy destination")
-            addresses = allowed_addresses(host, port, json.loads(os.environ.get("OPSKIT_PRIVATE_TARGETS", "[]")))
+            if self.server.fetch_target is not None and method != "CONNECT":
+                if method not in ("GET", "POST") or version not in ("HTTP/1.0", "HTTP/1.1"):
+                    raise PermissionError("invalid fetch request")
+                hosts = [line.split(b":", 1)[1].strip().decode("ascii") for line in lines
+                         if line.lower().startswith(b"host:")]
+                if len(hosts) != 1:
+                    raise PermissionError("invalid fetch Host header")
+                header = urlsplit("//" + hosts[0])
+                header_port = header.port if header.port is not None else 80
+                header_authority = (f"[{header.hostname}]:{header_port}" if header.hostname and ":" in header.hostname
+                                    else f"{header.hostname}:{header_port}")
+                if (header.username is not None or header.password is not None
+                        or header.path or header.query or header.fragment
+                        or fetch_target(header_authority) != self.server.fetch_target):
+                    raise PermissionError("fetch Host differs from destination")
+            addresses = allowed_addresses(host, port, json.loads(os.environ.get("OPSKIT_PRIVATE_TARGETS", "[]")),
+                                          target=self.server.fetch_target)
             upstream = None
             for family, kind, protocol, _, address in addresses:
                 candidate = socket.socket(family, kind, protocol)
@@ -99,6 +150,8 @@ class Server(socketserver.ThreadingTCPServer):
     max_connections = 16
 
     def __init__(self, *args, **kwargs):
+        value = os.environ.get("OPSKIT_FETCH_TARGET")
+        self.fetch_target = fetch_target(value) if value is not None else None
         self._slots = threading.BoundedSemaphore(self.max_connections)
         super().__init__(*args, **kwargs)
 

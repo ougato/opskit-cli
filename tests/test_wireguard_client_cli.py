@@ -58,6 +58,8 @@ def invoke(*args):
 def test_update_cli_uses_stable_id_and_no_secret_output(environment, tmp_path):
     source = tmp_path / "token"
     source.write_text("new-secret")
+    from core.secrets import restrict_permissions
+    restrict_permissions(source)
     result = invoke("wireguard", "client", "tunnel", "update-token", "wg-hk", "--token-file", str(source))
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["data"] == {"id": "wg-hk", "updated": True}
@@ -114,6 +116,8 @@ def test_invalid_explicit_install_token_raises_instead_of_success(monkeypatch):
 def test_missing_id_is_usage_error(environment, tmp_path):
     source = tmp_path / "token"
     source.write_text("new-secret")
+    from core.secrets import restrict_permissions
+    restrict_permissions(source)
     result = invoke("wireguard", "client", "tunnel", "update-token", "unknown", "--token-file", str(source))
     assert result.exit_code == 2
     assert not environment.calls

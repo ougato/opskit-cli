@@ -58,12 +58,12 @@ def terminate_tree(process: subprocess.Popen) -> None:
         process.wait(timeout=3)
 
 
-def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False):
+def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False, stderr=subprocess.STDOUT):
     """Start a text client in a group/kill-on-close Job before it can fork."""
     process = subprocess.Popen(
         list(cmd), cwd=str(cwd) if cwd else None, env=env,
         stdin=stdin,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE, stderr=stderr,
         text=not binary, encoding=None if binary else "utf-8", errors=None if binary else "replace",
         start_new_session=os.name != "nt",
         creationflags=0x4 if os.name == "nt" else 0,

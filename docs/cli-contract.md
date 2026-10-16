@@ -64,7 +64,7 @@ RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/h
 
 `software list/search/installed/versions` 支持 JSON；list/search 支持 `--category` 与 `--platform linux|windows|darwin`。跨平台查询不运行外平台检测，安装状态为 null。`software capabilities NAME` 区分真实脚本化安装、交互向导和分类，未完成的向导不标为已支持。
 
-`software install wg_client --token-file FILE`，FILE 为 `-` 时从 stdin 读取；与 `--token` 互斥，拒绝空值和超过 64 KiB 的输入。
+`software install wg_client --token-file FILE`，FILE 为 `-` 时从 stdin 读取；与 `--token` 互斥，拒绝空值和超过 64 KiB 的输入。 文件输入通过同一个描述符验证单硬链接普通文件、大小及身份，读取前后复核路径、文件大小及时间元数据；拒绝符号链接/重解析点及已观察到的替换或内容变更。POSIX打开使用nonblocking/no-follow，防止替换成FIFO后等待写入者；UTF-8编码错误返回固定提示，不包含内容。stdin保留字节上限。读取前后还会在同一描述符上核验私密权限：Linux要求当前有效用户所有且group/other权限位全部为0；macOS还拒绝所有存在的扩展ACL（包括限制性ACL），不尝试近似解释其顺序；Windows仅接受当前用户、SYSTEM或Administrators所有，DACL授权仅限这些主体和经核实owner的OWNER RIGHTS，不支持的ACE及权限查询失败明确拒绝。不自动chmod或修改ACL。该边界不防御管理员/同账户恶意写入者，不提供原子内容快照；父目录保护、网络文件系统及完整敏感导出事务仍待验收，可使用显式stdin避免文件权限兼容问题。
 
 `preferences show` 仅返回主题和语言；`theme list/set NAME`、`language list/set zh|en|auto` 提供显式查询与持久化设置。查询不创建配置文件。
 
@@ -91,6 +91,8 @@ Windows任务使用独立产物副本及随机脚本目录，helper持有暂存�
 `software install xui --config FILE` 要求显式 host，支持 panel_port/panel_user/panel_base_path/vless_port/sni/dest。密码从 panel_password_file 读取；未提供时生成并要求 credentials_output_file。路径相对配置目录解析，敏感导出拒绝覆盖。安装要求 Linux/systemd，API 或服务配置失败不报成功。
 
 `xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`，状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
+
+敏感导出要求已有的受保护目标目录：POSIX目录由当前有效用户所有，group/other不可写；macOS还拒绝目录扩展ACL。Windows目录所有者须为当前用户/SYSTEM/Administrators，其他主体可有读取权限但不可有写入、删除或改权限的授权；最终父目录不能为重解析点。共享可写目录明确拒绝，不自动修改用户目录权限。先完成JSON序列化，再在目录内创建私密暂存文件，写入及同步完成后以不覆盖方式发布，已有文件、链接或目录保持原样。POSIX使用目录描述符及原子link；Windows创建时即指定私密ACL，并使用文件句柄相对目录重命名及失败删除。发布前后及最终同步后重查目录身份和权限；Windows在规范化路径之前拒绝末尾点/空格、保留设备名及备用数据流文件名。普通失败清理仅处理本次对象；POSIX目录一旦失去保护，保留私密暂存文件，避免按名称清理误删替换对象，恢复机制仍开放。同账户恶意写入者、管理员、网络文件系统和断电后孤立暂存文件的完整恢复仍未验收，不能等同于整个安装/服务事务已完成。
 
 XUI默认卸载保留 `/etc/x-ui` 中的面板数据库、配置、凭据状态、待处理入站及流量历史，不提供隐含purge。只移除程序、命令入口及服务/定时器单元。缺少systemd时整个卸载在删除前拒绝，不把“无法管理服务”当成“服务已停止”。单元LoadState明确not-found时允许继续；loaded/masked须成功停止并禁用，查询失败或其他状态拒绝继续。命令/删除/reload非零退出中止卸载，不标记成功或清除系统配置恢复记录；各阶段使用20秒内部预算，不是整次事务timeout，也不保证前序已完成操作全部回滚。当前仅有隔离夹具与三端专项，真实systemd/跨用户及最终产物仍需验收。
 

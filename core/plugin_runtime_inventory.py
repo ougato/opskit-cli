@@ -17,7 +17,9 @@ RUNTIME_FILES = (
     "prompt.py", "resource_lock.py", "runner.py", "sdk.py", "secrets.py", "theme.py", "yamlio.py",
     "locale/en.yaml", "locale/zh.yaml", "themes/catppuccin.yaml",
 )
-BUNDLED_FILES = (*RUNTIME_FILES, "plugin_egress.py")
+FETCH_FILES = ("__init__.py", "plugin_egress.py", "plugin_fetch_worker.py", "plugin_fetch_source.py",
+               "plugin_fetch_https.py", "plugin_fetch_ssh.py", "plugin_fetch_transport.py")
+BUNDLED_FILES = tuple(dict.fromkeys((*RUNTIME_FILES, *FETCH_FILES)))
 
 
 def _read_file(source, core, limit):
@@ -82,6 +84,16 @@ def snapshot(core=None):
 def gateway_source(core=None):
     """Independent stdlib-only proxy source, including frozen distributions."""
     return _snapshot(core, ("plugin_egress.py",))["core/plugin_egress.py"]
+
+
+def fetch_source(core=None):
+    """Standalone acquisition worker; never included in a plugin SDK image."""
+    return _snapshot(core, ("plugin_fetch_worker.py",))["core/plugin_fetch_worker.py"]
+
+
+def fetch_snapshot(core=None):
+    """Explicit stdlib acquisition inventory, separate from plugin SDK sources."""
+    return _snapshot(core, FETCH_FILES)
 
 
 def bundle_snapshot(core=None):

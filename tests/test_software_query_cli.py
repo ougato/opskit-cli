@@ -78,6 +78,8 @@ def test_secret_size_and_empty_rejected(tmp_path):
     with pytest.raises(ValueError):
         read_secret_file(str(path))
     path.write_text("  \n")
+    from core.secrets import restrict_permissions
+    restrict_permissions(path)
     with pytest.raises(ValueError):
         read_secret_file(str(path))
 

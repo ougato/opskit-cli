@@ -30,6 +30,17 @@ def _root(*, create=True):
 def _backend(command):
     if not isinstance(command, list):
         raise ValueError("invalid Docker resource backend")
+    if len(command) >= 3 and command[-2] == "--host":
+        endpoint = command[-1]
+        if (not isinstance(endpoint, str) or len(endpoint) > 1024
+                or any(c in endpoint for c in "\0\r\n?#")
+                or not (endpoint.startswith("unix:///") and ".." not in endpoint[7:].split("/")
+                        or re.fullmatch(r"npipe:////\./pipe/[A-Za-z0-9_.-]+", endpoint))):
+            raise ValueError("unsupported local Docker endpoint")
+        base = _backend(command[:-2])
+        if "--host" in base:
+            raise ValueError("nested Docker endpoint")
+        return [*base, "--host", endpoint]
     if command == ["docker"]:
         return list(command)
     if (len(command) == 5 and command[:2] == ["wsl", "-d"]
