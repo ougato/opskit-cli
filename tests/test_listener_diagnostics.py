@@ -55,6 +55,14 @@ def test_process_ownership_query_is_cached_per_pid(monkeypatch, tmp_path):
 @pytest.mark.parametrize("protocol", ["tcp", "udp"])
 @pytest.mark.parametrize("timeout", [None, 5])
 def test_real_native_listener_and_executable_ownership(protocol, timeout):
+    # macOS can deny whole-machine socket enumeration to ordinary users.
+    # Independently check visibility; denial must remain an unhealthy result.
+    try:
+        psutil.net_connections(kind="inet")
+    except (psutil.AccessDenied, OSError):
+        visible = False
+    else:
+        visible = True
     kind = socket.SOCK_STREAM if protocol == "tcp" else socket.SOCK_DGRAM
     with socket.socket(socket.AF_INET, kind) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -63,7 +71,10 @@ def test_real_native_listener_and_executable_ownership(protocol, timeout):
         port = listener.getsockname()[1]
         # Windows venv launchers can differ from the actual process image.
         checks = listener_checks([(protocol, port, Path(psutil.Process().exe()))], timeout=timeout)
-    assert checks[0]["ok"], checks
+    if visible:
+        assert checks[0]["ok"], checks
+    else:
+        assert checks == [{"name": f"{protocol}:{port}", "ok": False, "reason": "listeners_unavailable"}]
 
 
 def _slow_listener_worker(connection, expectations):

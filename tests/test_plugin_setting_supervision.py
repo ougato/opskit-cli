@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
+from worker_test_markers import publish_marker
+
 from core import config, plugin_inspection as inspection, plugin_sandbox as sandbox
 
 
@@ -14,7 +16,7 @@ def _blocked_setting(connection, buffer, length, requested):
     requested.wait()
     request = json.loads(bytes(memoryview(buffer).cast('B')[:length.value]))
     read, write = os.pipe()
-    Path(request['config']).write_text(str(os.getpid()))
+    publish_marker(Path(request['config']), str(os.getpid()))
     try:
         os.read(read, 1)
     finally:

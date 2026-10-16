@@ -112,8 +112,7 @@ def register(app):
     @app.command("port-scan")
     @guarded
     def port_scan(host: str = typer.Argument(None), ports: str = typer.Option("", "--ports"), timeout: float = typer.Option(0.5, "--timeout", min=0.01, max=60), concurrency: int = typer.Option(16, "--concurrency", min=1, max=50), total_timeout: float = typer.Option(30, "--total-timeout", min=0.1, max=3600)):
-        from network.menu import _COMMON_PORTS
-        selected = parse_ports(ports) if ports else _COMMON_PORTS
+        selected = parse_ports(ports) if ports else commands.COMMON_TCP_PORTS
         if missing_host(host, "show_port_scan"):
             return
         emit(commands.scan_ports(host, selected, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout))

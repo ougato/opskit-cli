@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from software._shared import archive_install
+from core import directory_publish
 from software._shared.archive_install import staged_directory, publish_new_directory
 
 
@@ -75,9 +75,9 @@ def test_posix_exclusive_flags_and_error_propagation(monkeypatch, platform, symb
             ctypes.set_errno(errno.EEXIST)
             return -1
 
-    monkeypatch.setattr(archive_install, "os", SimpleNamespace(name="posix", fsencode=os.fsencode, strerror=os.strerror))
-    monkeypatch.setattr(archive_install.sys, "platform", platform)
-    monkeypatch.setattr(archive_install.ctypes, "CDLL", lambda *a, **k: SimpleNamespace(**{symbol: Rename()}))
+    monkeypatch.setattr(directory_publish, "os", SimpleNamespace(name="posix", fsencode=os.fsencode, strerror=os.strerror))
+    monkeypatch.setattr(directory_publish.sys, "platform", platform)
+    monkeypatch.setattr(directory_publish.ctypes, "CDLL", lambda *a, **k: SimpleNamespace(**{symbol: Rename()}))
     from pathlib import Path
     with pytest.raises(FileExistsError):
         publish_new_directory(Path("source"), Path("target"))
@@ -86,9 +86,12 @@ def test_posix_exclusive_flags_and_error_propagation(monkeypatch, platform, symb
 
 def test_missing_posix_primitive_has_no_replacing_fallback(monkeypatch):
     from pathlib import Path
-    monkeypatch.setattr(archive_install, "os", SimpleNamespace(name="posix", fsencode=os.fsencode))
-    monkeypatch.setattr(archive_install.sys, "platform", "linux")
-    monkeypatch.setattr(archive_install.ctypes, "CDLL", lambda *a, **k: SimpleNamespace())
+    def forbidden_machine():
+        pytest.fail("missing native primitives must reject before querying host architecture")
+    monkeypatch.setattr(directory_publish, "os", SimpleNamespace(name="posix", fsencode=os.fsencode))
+    monkeypatch.setattr(directory_publish, "platform", SimpleNamespace(machine=forbidden_machine))
+    monkeypatch.setattr(directory_publish.sys, "platform", "linux")
+    monkeypatch.setattr(directory_publish.ctypes, "CDLL", lambda *a, **k: SimpleNamespace())
     with pytest.raises(OSError, match="unavailable"):
         publish_new_directory(Path("source"), Path("target"))
 
@@ -107,7 +110,7 @@ def test_windows_access_denied_classification_preserves_real_permission_error(tm
     def denied(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(archive_install, "os", SimpleNamespace(name="nt", path=os.path))
+    monkeypatch.setattr(directory_publish, "os", SimpleNamespace(name="nt", path=os.path))
     monkeypatch.setattr(Path, "rename", denied)
     with pytest.raises(FileExistsError if existing else PermissionError) as caught:
         publish_new_directory(source, destination)
@@ -178,9 +181,9 @@ def test_windows_publication_retry_is_bounded_and_never_replaces(tmp_path, monke
         if scenario == "cancel":
             raise KeyboardInterrupt
 
-    monkeypatch.setattr(archive_install, "os", SimpleNamespace(name="nt", path=os.path))
+    monkeypatch.setattr(directory_publish, "os", SimpleNamespace(name="nt", path=os.path))
     monkeypatch.setattr(Path, "rename", rename)
-    monkeypatch.setattr(archive_install.time, "sleep", wait)
+    monkeypatch.setattr(directory_publish.time, "sleep", wait)
     if scenario == "recover":
         publish_new_directory(source, destination)
         assert (destination / "binary").read_bytes() == b"owned"

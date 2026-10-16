@@ -6,7 +6,7 @@ import os
 import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 
 def send(connection, message):
@@ -32,7 +32,11 @@ def _owned_target(connection, lifetime, ready, parent_pid, target, arguments):
             pass
         os._exit(1)
     threading.Thread(target=parent_closed, daemon=True, name="worker-parent-lifetime").start()
-    ready.wait()
+    try:
+        if ready.recv_bytes(1) != b'R':
+            raise RuntimeError("invalid worker startup gate")
+    finally:
+        ready.close()
     target(connection, *arguments)
 
 
@@ -41,40 +45,51 @@ def owned_process(target, arguments, *, label):
     """One ownership implementation for disposable and invocation workers."""
     context = multiprocessing.get_context("spawn")
     receive = transmit = lifetime_read = lifetime_write = process = None
+    ready_read = ready_write = None
     job = None
     try:
         receive, transmit = context.Pipe(duplex=False)
         lifetime_read, lifetime_write = context.Pipe(duplex=False)
-        ready = context.Event()
+        ready_read, ready_write = context.Pipe(duplex=False)
         process = context.Process(target=_owned_target,
-                                  args=(transmit, lifetime_read, ready, os.getpid(), target, arguments), daemon=True)
+                                  args=(transmit, lifetime_read, ready_read, os.getpid(), target, arguments), daemon=True)
         process.start()
         if os.name == "nt":
             from core.windows_job import attach_running
             job = attach_running(process.sentinel)
-        ready.set()
+        ready_read.close()
+        ready_write.send_bytes(b'R')
+        ready_write.close()
         transmit.close()
         lifetime_read.close()
         yield receive, process
     finally:
-        for connection in (receive, transmit, lifetime_read, lifetime_write):
-            if connection is not None:
-                connection.close()
+        # Caught exceptions may retain this generator frame until a later GC.
+        # The child has its own serialized arguments; retire parent references.
+        arguments = ()
         try:
-            if job is not None:
-                from core.windows_job import close
-                close(job)
+            # Attempt every close even when one pipe reports an error. Such an
+            # error must not bypass the Job and process retirement below.
+            with ExitStack() as connections:
+                for connection in reversed((receive, transmit, lifetime_read, lifetime_write, ready_read, ready_write)):
+                    if connection is not None:
+                        connections.callback(connection.close)
         finally:
-            if process is not None and process.pid is not None:
-                if process.is_alive():
-                    process.terminate()
-                process.join(timeout=1)
-                if process.is_alive():
-                    process.kill()
+            try:
+                if job is not None:
+                    from core.windows_job import close
+                    close(job)
+            finally:
+                if process is not None and process.pid is not None:
+                    if process.is_alive():
+                        process.terminate()
                     process.join(timeout=1)
-                if process.is_alive():
-                    raise RuntimeError(label + " worker cleanup failed")
-                process.close()
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=1)
+                    if process.is_alive():
+                        raise RuntimeError(label + " worker cleanup failed")
+                    process.close()
 
 
 def wait_result(receive, *, deadline, label, cancel_event=None, on_deadline=None, on_cancel=None):

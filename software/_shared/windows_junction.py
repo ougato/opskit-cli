@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import stat
 import struct
+import time
 import uuid
 
 from software._shared.mutation import mutation_lock, versioned_mutation
@@ -33,9 +34,16 @@ def _open(path, *, delete=False, security_write=False):
         access |= 0x40000 | 0x80000
     # Read sharing preserves metadata queries but rejects competing writers
     # and deletion while a mutation or transaction guard holds the object.
-    handle = create(str(path), access, 1, None, 3, 0x02000000 | 0x00200000, None)
-    if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+    for attempt in range(10):
+        handle = create(str(path), access, 1, None, 3, 0x02000000 | 0x00200000, None)
+        if handle != ctypes.c_void_p(-1).value:
+            break
+        error = ctypes.get_last_error()
+        # Command exit can precede release of another process's directory
+        # handle. Keep exclusive sharing and revalidate identity after opening.
+        if error != 32 or attempt == 9:
+            raise ctypes.WinError(error)
+        time.sleep(.05)
     try:
         yield handle
     finally:

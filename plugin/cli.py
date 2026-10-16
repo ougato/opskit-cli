@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 from core.plugin import list_manifests
-from core.plugin_sandbox import SandboxError, invoke
+from core.plugin_sandbox import SandboxError, _execution_budget, _remaining, invoke
 
 
 def run_plugin(name: str, argv: list[str]) -> int:
-    from plugin.commands import is_enabled
-    matches = [m for m in list_manifests() if m.name == name]
-    if len(matches) != 1 or not is_enabled(name):
-        raise SandboxError("plugin missing, disabled or identity ambiguous")
-    result = invoke(matches[0], "cli", args=argv)
+    # Discovery and invocation share one deadline and supervised reader. invoke
+    # rechecks enabled/trust itself; do not synchronously reload config here.
+    with _execution_budget():
+        matches = [m for m in list_manifests() if m.name == name]
+        _remaining()
+        if len(matches) != 1:
+            raise SandboxError("plugin missing or identity ambiguous")
+        result = invoke(matches[0], "cli", args=argv)
     if result is None:
         return 0
     if not isinstance(result, int) or not 0 <= result <= 255:

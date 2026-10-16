@@ -1,7 +1,6 @@
 """Content inspection must reclaim actual blocked I/O without granting authority."""
 import os
 import json
-from pathlib import Path
 import time
 from types import SimpleNamespace
 
@@ -11,11 +10,12 @@ import pytest
 from core import plugin_inspection as inspection
 from core.plugin_integrity import write_checksums
 from core.plugin_trust import compute_fingerprint
+from worker_test_markers import publish_marker
 
 
 def _blocked_inspection(connection, source, verify):
     read, write = os.pipe()
-    Path(source).write_text(str(os.getpid()))
+    publish_marker(source, str(os.getpid()))
     try:
         os.read(read, 1)
     finally:

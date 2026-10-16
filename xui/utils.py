@@ -62,7 +62,6 @@ from xui.constants import (
     TRAFFIC_TIMER_UNIT,
     TRAFFIC_TIMER_UNIT_CONTENT,
     TRAFFIC_TIMER_UNIT_FILE,
-    XUI_TRAFFIC_HISTORY_FILE,
     WSL_DISTRO_NAME_ENV,
     WSL_MARKER,
     WSL_OSRELEASE_FILE,
@@ -521,7 +520,7 @@ def enable_service(service: str = XUI_SERVICE) -> None:
         return
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
@@ -546,30 +545,25 @@ def install_traffic_timer() -> None:
     write_root_file(TRAFFIC_TIMER_UNIT_FILE, TRAFFIC_TIMER_UNIT_CONTENT, "0644")
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def uninstall_traffic_timer() -> None:
-    """停用并移除流量快照定时器、历史库；无 systemd 时仅清理文件。"""
-    if systemd_available():
-        run_as_root(
-            [SYSTEMCTL_COMMAND, "disable", SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
-    run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE),
-                 str(XUI_TRAFFIC_HISTORY_FILE)], check=False, capture_output=True)
+    """停用并移除定时器单元，保留历史库；无 systemd 时仅清理单元文件。"""
+    stop_and_disable_service(TRAFFIC_TIMER_UNIT)
+    run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE)],
+                check=True, capture_output=True, timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
             [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=SERVICE_RESTART_TIMEOUT,
         )
 
@@ -577,26 +571,38 @@ def uninstall_traffic_timer() -> None:
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
+    result = run_as_root(
+        [SYSTEMCTL_COMMAND, "show", "--property=LoadState", "--value", service],
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
+    )
+    state = result.stdout.strip()
+    if state == "not-found":
+        return
+    if state not in {"loaded", "masked"}:
+        raise RuntimeError("XUI service state unconfirmed; uninstall stopped")
     run_as_root(
         [SYSTEMCTL_COMMAND, "stop", service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
         [SYSTEMCTL_COMMAND, "disable", service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def remove_xui_artifacts() -> None:
     for path in XUI_ARTIFACT_DIRS:
-        run_as_root(["rm", "-rf", str(path)], check=False, capture_output=True)
+        run_as_root(["rm", "-rf", str(path)], check=True, capture_output=True,
+                    timeout=SERVICE_RESTART_TIMEOUT)
     for path in XUI_ARTIFACT_FILES:
-        run_as_root(["rm", "-f", str(path)], check=False, capture_output=True)
+        run_as_root(["rm", "-f", str(path)], check=True, capture_output=True,
+                    timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
             [SYSTEMCTL_COMMAND, "daemon-reload"],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=SERVICE_RESTART_TIMEOUT,
         )

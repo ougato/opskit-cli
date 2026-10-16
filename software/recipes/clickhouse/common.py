@@ -7,6 +7,7 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.base import InstallError
 from .constants import (
     CLICKHOUSE_DL_URLS,
     CLICKHOUSE_PRIVATE_SUBDIR,
@@ -17,10 +18,12 @@ from .constants import (
 
 
 def clickhouse_arch() -> str:
-    machine = platform.machine().lower()
-    if machine in ("aarch64", "arm64"):
-        return "arm64"
-    return "amd64"
+    m = platform.machine().lower()
+    if m in ('x86_64', 'amd64'):
+        return 'amd64'
+    if m in ('aarch64', 'arm64'):
+        return 'arm64'
+    raise InstallError(f"Unsupported clickhouse CPU architecture: {m!r}")
 
 
 def clickhouse_versions_dir() -> Path:

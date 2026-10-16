@@ -259,7 +259,6 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     from core.progress import MultiStepProgress
     from wireguard.constants import (
         WG_UDP_PORT,
-        WG_CONFIG_DIR, XRAY_CONFIG_DIR, WG_SERVICE, XRAY_SERVICE,
         WG_CLIENT_MTU, WG_KEEPALIVE, XRAY_BINARY,
     )
     from wireguard.utils import (
@@ -688,7 +687,7 @@ def manage_client() -> None:
     """客户端管理主菜单（隧道列表 / 查看 / 更新令牌 / 移除单条隧道）"""
     from core.i18n import t
     from core.prompt import select, UserCancel, pause
-    from core.theme import get_icon, get_color, print_action_title, print_warning
+    from core.theme import get_icon, get_color, print_warning
 
     mk = "wireguard.client_manage"
     breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"),
@@ -1008,7 +1007,7 @@ def update_client_token(breadcrumb: list[str], *, tunnel_id: str | None = None, 
     from core.theme import print_error, print_action_title, print_success
     from core.progress import MultiStepProgress
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
-    from wireguard.utils import enable_and_start, stop_and_disable, write_file, write_secret_file, detect_default_iface
+    from wireguard.utils import enable_and_start, write_file, write_secret_file, detect_default_iface
     from wireguard.templates import xray_client_config, wg_client_config
     from wireguard.token import decode_token
 

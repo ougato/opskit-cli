@@ -4,6 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
+import time
 import uuid
 
 from core import plugin_resources as resources
@@ -15,6 +16,7 @@ def verify(image, output):
     previous = os.environ.get("OPSKIT_DATA_DIR")
     os.environ["OPSKIT_DATA_DIR"] = str(output / "data")
     checks = []
+    endpoint_cases = []
     try:
         command = sandbox.docker_command()
         control = lambda *args: sandbox._control(command, *args)
@@ -50,6 +52,27 @@ def verify(image, output):
                     raise AssertionError("failure injection was not exercised")
                 assert item.path.exists() and resources._find(item.record, control) == identity
                 checks.append(kind + ": failed cleanup retained intent and resource")
+                if os.name == "posix" and command == ["docker"]:
+                    endpoint = output / ("missing-" + uuid.uuid4().hex + ".sock")
+                    assert not endpoint.exists()
+                    before = item.path.read_bytes()
+                    attempted = []
+
+                    def unavailable_control(*args):
+                        attempted.append(args)
+                        return sandbox._control(command + ["--host", "unix://" + str(endpoint)], *args)
+
+                    start = time.monotonic()
+                    result = resources.reconcile(command, unavailable_control)
+                    elapsed = time.monotonic() - start
+                    assert result == {"recovered": 0, "active": 0, "pending": 1, "invalid": 0}
+                    assert attempted == [("info", "--format", "{{.ID}}")]
+                    assert item.path.read_bytes() == before
+                    assert resources._find(item.record, control) == identity
+                    assert not endpoint.exists()
+                    endpoint_cases.append({"kind": kind, "result": result, "elapsed_seconds": elapsed,
+                                           "journal_unchanged": True, "owned_id_retained": identity})
+                    checks.append(kind + ": real unavailable Docker endpoint retained intent and resource")
                 result = resources.reconcile(command, control)
                 assert result == {"recovered": 1, "active": 0, "pending": 0, "invalid": 0}
                 assert not item.path.exists() and resources._find(item.record, control) is None
@@ -72,7 +95,10 @@ def verify(image, output):
             checks.append("network: matching name without ownership label retained")
         finally:
             control("network", "rm", identity)
-        (output / "verification.json").write_text(json.dumps({"checks": checks, "passed": len(checks)}, indent=2))
+        (output / "verification.json").write_text(json.dumps({
+            "checks": checks, "passed": len(checks), "unavailable_endpoint_cases": endpoint_cases,
+            "scope": "owned Docker resources; missing Unix socket exercises a real client connection failure on native POSIX Docker only; no daemon restart, disk failure or cross-daemon deployment proof",
+        }, indent=2))
         print(json.dumps({"passed": len(checks), "output": str(output)}))
     finally:
         if previous is None:

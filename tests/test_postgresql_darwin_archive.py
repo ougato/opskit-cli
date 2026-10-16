@@ -50,6 +50,15 @@ def test_valid_format_publishes_complete_layout(install):
         assert stat.S_IMODE((dest / "doc/readme").stat().st_mode) == 0o644
 
 
+def test_archive_content_selects_parser_with_misleading_download_suffix(install):
+    driver, dest, source = install
+    package(source)
+    renamed = source.with_name("download.tar.gz" if source.suffix == ".zip" else "download.zip")
+    source.rename(renamed)
+    assert driver.install_tarball("1", renamed) == str(dest / "bin")
+    assert (dest / "bin/psql").read_bytes() == b"inert"
+
+
 @pytest.mark.parametrize("extra", ["pgsql/../../outside", "pgsql/..\\outside", "C:/outside", "other/bin/psql"])
 def test_bad_path_prevents_publication(install, extra):
     driver, dest, source = install

@@ -18,15 +18,24 @@ def client_resource_scope(monkeypatch):
 
     Real journal scopes are exercised in test_plugin_resource_journal.
     """
+    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
     from core import plugin_gateway
     monkeypatch.setattr(plugin_gateway, "image", lambda command: "platform-gateway-image")
     @contextmanager
     def scope(command, kind, name):
+        from core import plugin_workspace
+        lease = SimpleNamespace(labels=[], workspace=None)
+        def allocate_workspace(**kwargs):
+            lease.workspace = plugin_workspace.allocate(**kwargs)
+            return lease.workspace
+        lease.allocate_workspace = allocate_workspace
         try:
-            yield []
+            yield lease
         finally:
             args = ("rm", "-f", name) if kind == "container" else ("network", "rm", name)
             sandbox._cleanup_control(command, *args)
+            if lease.workspace is not None:
+                plugin_workspace.cleanup(lease.workspace, timeout=30)
     monkeypatch.setattr(sandbox, "_resource_scope", scope)
 
 

@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import re
 import hmac
+from functools import wraps
 from typing import Protocol, runtime_checkable
 
 from core.constants import APP_NAME
 from core.logger import get_logger
-from core.plugin import PluginManifest, list_manifests
+from core.plugin import PluginManifest
 
 _log = get_logger("opskit.services")
 
@@ -34,6 +35,24 @@ class MenuService(Protocol):
 _cache: dict[str, object] = {}
 
 
+def _service_budget(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        from core.plugin_sandbox import _execution_budget, _invocations
+        if getattr(_invocations, "inspection_scope", False):
+            return function(*args, **kwargs)
+        with _execution_budget():
+            return function(*args, **kwargs)
+    return run
+
+
+def _selected_manifests(select, value):
+    from core.paths import plugins_dir
+    from core.plugin_sandbox import _read_inventory
+    return _read_inventory(plugins_dir(), select=select, value=value)
+
+
+@_service_budget
 def authorize_service(caller: str, service: str, caller_fingerprint: str, provider_fingerprint: str):
     """Approve exactly the caller's declared contract using current immutable identities."""
     from core.config import configuration_transaction
@@ -42,7 +61,7 @@ def authorize_service(caller: str, service: str, caller_fingerprint: str, provid
     if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in (caller_fingerprint, provider_fingerprint)):
         raise ValueError("invalid service approval fingerprints")
     with configuration_transaction(), authorization_transaction():
-        callers = [item for item in list_manifests() if item.name == caller]
+        callers = _selected_manifests("name", caller)
         provider = _find_provider(service)
         if len(callers) != 1 or provider is None:
             raise ValueError("service approval identities unavailable or ambiguous")
@@ -67,9 +86,10 @@ def authorize_service(caller: str, service: str, caller_fingerprint: str, provid
                 "api_version": requirement["api_version"], "methods": requirement["methods"], "authorized": True}
 
 
+@_service_budget
 def _find_provider(name: str) -> PluginManifest | None:
     """在已安装插件清单中查找声明 provides 包含 name 的提供方"""
-    providers = [manifest for manifest in list_manifests() if name in manifest.provides]
+    providers = _selected_manifests("service", name)
     return providers[0] if len(providers) == 1 else None
 
 
@@ -92,6 +112,7 @@ class ServiceProxy:
         return lambda *args, **kwargs: call_service(self.name, method, list(args), kwargs)
 
 
+@_service_budget
 def call_service(name: str, method: str, args: list | None = None,
                  kwargs: dict | None = None, *, caller: str = "platform"):
     from core.plugin_sandbox import SandboxError, check_authorization, invoke
@@ -113,10 +134,10 @@ def call_service(name: str, method: str, args: list | None = None,
                   args=args, kwargs=kwargs, caller=caller)
 
 
+@_service_budget
 def resolve_service_access(provider, service, method, caller):
     """Validate declared contracts and return content-bound live grant checks."""
-    from core.plugin_sandbox import SandboxError, check_authorization
-    from core.plugin_trust import is_service_authorized
+    from core.plugin_sandbox import SandboxError, check_authorization, _check_live_authorizations
     if not isinstance(caller, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", caller):
         raise SandboxError("invalid caller identity")
     contract = provider.service_contracts.get(service)
@@ -126,7 +147,7 @@ def resolve_service_access(provider, service, method, caller):
         raise SandboxError("service method not declared by provider")
     if caller == "platform":
         return ()
-    callers = [item for item in list_manifests() if item.name == caller]
+    callers = _selected_manifests("name", caller)
     if len(callers) != 1:
         raise SandboxError("caller identity is ambiguous")
     caller_manifest = callers[0]
@@ -143,11 +164,11 @@ def resolve_service_access(provider, service, method, caller):
     methods = [method] if method else requirement["methods"]
     edges = tuple((caller, caller_digest, service, provider.name, provider_digest, contract["api_version"], value)
                   for value in methods)
-    if any(not is_service_authorized(*edge) for edge in edges):
-        raise SandboxError("service access not authorized; approve the declared service edge")
+    _check_live_authorizations(extra=((caller, caller_digest), (provider.name, provider_digest)), extra_edges=edges)
     return edges
 
 
+@_service_budget
 def describe_service(name: str, *, caller="platform"):
     from core.plugin_sandbox import SandboxError, invoke
     manifest = _find_provider(name)
@@ -157,6 +178,7 @@ def describe_service(name: str, *, caller="platform"):
     return invoke(manifest, "service.describe", service=name, caller=caller)
 
 
+@_service_budget
 def get_service(name: str) -> object | None:
     """获取插件间服务对象；提供方未安装 / 未信任 / 加载失败返回 None"""
     manifest = _find_provider(name)
@@ -196,7 +218,12 @@ def _guided_install(name: str, source: str) -> object | None:
         pause()
         return None
     if not confirm_trust(manifest, source=source):
-        plugin_commands.rollback_install(manifest)
+        try:
+            plugin_commands.rollback_install(manifest)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print_error(t("plugin.install_failed", error=str(exc)))
+            pause()
+            return None
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return None

@@ -452,15 +452,26 @@ class TestUpdaterImprovements:
         from core.updater import _verify_binary
         p = tmp_path / "valid.exe"
         p.write_bytes(b"MZ" + b"\x00" * (1024 * 200))
-        if sys.platform == "win32":
-            assert _verify_binary(p) is True
+        assert _verify_binary(p) is (sys.platform == "win32")
 
     def test_verify_binary_valid_elf(self, tmp_path):
         from core.updater import _verify_binary
         p = tmp_path / "valid"
         p.write_bytes(b"\x7fELF" + b"\x00" * (1024 * 200))
-        if sys.platform != "win32":
-            assert _verify_binary(p) is True
+        assert _verify_binary(p) is (sys.platform not in ("win32", "darwin"))
+
+    @pytest.mark.parametrize("header", [
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
+    ], ids=["mach32-be", "mach32-le", "mach64-be", "mach64-le",
+            "fat32-be", "fat32-le", "fat64-be", "fat64-le"])
+    def test_verify_binary_macos_headers(self, tmp_path, header):
+        from core.updater import _verify_binary
+        path = tmp_path / "candidate"
+        path.write_bytes(header + b"\0" * (1024 * 200))
+        assert _verify_binary(path) is (sys.platform == "darwin")
 
     def test_check_and_apply_pending_no_file(self):
         from core.updater import check_and_apply_pending

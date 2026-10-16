@@ -29,9 +29,7 @@ def test_disable_cannot_complete_during_state_publication(tmp_path, monkeypatch)
     import base64
     import io
     import tarfile
-    import threading
     from core import plugin_sandbox as sandbox, plugin_trust as trust
-    from core.resource_lock import ResourceBusyError
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     trust.grant("owner", "a" * 64, "1")
     monkeypatch.setattr(sandbox._invocations, "authorizations", (("owner", "a" * 64),), raising=False)
@@ -43,23 +41,15 @@ def test_disable_cannot_complete_during_state_publication(tmp_path, monkeypatch)
         member = tarfile.TarInfo("value")
         member.size = 3
         package.addfile(member, io.BytesIO(b"new"))
-    original = sandbox._rename_state
-    outcomes = []
-    def rename(source, destination):
-        def disable():
-            try:
-                set_enabled("owner", False)
-            except ResourceBusyError:
-                outcomes.append("busy")
-            else:
-                outcomes.append("disabled")
-        thread = threading.Thread(target=disable)
-        thread.start()
-        thread.join(timeout=5)
-        assert not thread.is_alive()
-        original(source, destination)
-    monkeypatch.setattr(sandbox, "_rename_state", rename)
-    sandbox._save_state(base64.b64encode(buffer.getvalue()).decode(), root)
+    import json
+    from core import plugin_state_publish
+    from state_publication_fixture import publication_worker
+    marker = tmp_path / "config-probe"
+    monkeypatch.setenv("OPSKIT_TEST_PUBLICATION_MODE", "config_probe")
+    monkeypatch.setenv("OPSKIT_TEST_PUBLICATION_MARKER", str(marker))
+    monkeypatch.setattr(plugin_state_publish, "_publish_worker", publication_worker)
+    sandbox._save_state(base64.b64encode(buffer.getvalue()).decode(), root, plugin="owner", caller="platform")
+    outcomes = [item for line in marker.read_text().splitlines() for item in json.loads(line)]
     assert outcomes and set(outcomes) == {"busy"}
     assert is_enabled("owner")
     set_enabled("owner", False)

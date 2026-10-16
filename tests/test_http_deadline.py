@@ -86,24 +86,24 @@ def prepared_http_context(monkeypatch, urls, measurement=False):
     context = multiprocessing.get_context("spawn")
     receive, transmit = context.Pipe(duplex=False)
     lifetime_read, lifetime_write = context.Pipe(duplex=False)
-    ready, begin = context.Event(), context.Event()
+    ready = context.Event()
+    begin, release = context.Pipe(duplex=False)
     process = context.Process(target=_ready_http_worker,
                               args=(transmit, ready, begin, lifetime_read, os.getpid(), urls, measurement), daemon=True)
     process.start()
     try:
         assert ready.wait(30), "fixture could not prepare a real HTTP worker"
         # Supply a real, already imported process to the unchanged supervisor.
-        # Its start releases the request gate; clocks and deadlines remain real.
+        # The production supervisor releases its pipe gate after attaching the
+        # Windows Job; clocks, request I/O and deadlines remain real.
         class PreparedContext:
             pipes = 0
 
             def Pipe(self, duplex):
                 assert duplex is False
                 self.pipes += 1
-                return (receive, transmit) if self.pipes == 1 else (lifetime_read, lifetime_write)
-
-            def Event(self):
-                return begin
+                assert 1 <= self.pipes <= 3
+                return ((receive, transmit), (lifetime_read, lifetime_write), (begin, release))[self.pipes - 1]
 
             def Process(self, target, args, daemon):
                 assert target is worker._owned_target and daemon
@@ -118,6 +118,8 @@ def prepared_http_context(monkeypatch, urls, measurement=False):
         transmit.close()
         lifetime_read.close()
         lifetime_write.close()
+        begin.close()
+        release.close()
         try:
             if process.is_alive():
                 process.terminate()

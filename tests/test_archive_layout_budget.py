@@ -91,7 +91,7 @@ def test_real_plugin_state_keeps_previous_data_on_implicit_directory_excess(tmp_
     names = [f"branch{i}/" + "a/" * 126 + "tool" for i in range(80)]
     data = base64.b64encode(tar_packet(names)).decode("ascii")
     with pytest.raises(ValueError, match="layout.*limits"):
-        sandbox._save_state(data, root)
+        sandbox._save_state(data, root, plugin="owner", caller="platform")
     assert (root / "previous").read_bytes() == b"keep"
     assert list(root.iterdir()) == [root / "previous"]
     assert not list(tmp_path.glob(".state-*"))

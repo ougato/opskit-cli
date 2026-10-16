@@ -105,7 +105,6 @@ class DockerRecipe(Recipe):
             sp.complete()
 
     def uninstall(self, version: str | None = None) -> None:
-        from core.platform import get_platform
         from core.progress import MultiStepProgress
 
         driver = get_driver()

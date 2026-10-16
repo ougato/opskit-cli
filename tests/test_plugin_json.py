@@ -132,7 +132,7 @@ def test_guest_rejects_ambiguous_reply_envelopes(monkeypatch, payload):
 ])
 def test_host_rejects_invalid_result_envelope_before_publication(wire_client, monkeypatch, payload):
     sandbox, clients, launch = wire_client
-    monkeypatch.setattr(sandbox, "_save_state", lambda *a: pytest.fail("invalid result published"))
+    monkeypatch.setattr(sandbox, "_save_state", lambda *a, **kwargs: pytest.fail("invalid result published"))
     message = plugin_json.dumps_message({"type": "result", **payload})
     program = "print(" + repr(sandbox.PREFIX + message) + ", flush=True)"
     with pytest.raises(sandbox.SandboxError, match="invalid plugin protocol"):
@@ -144,7 +144,7 @@ def test_host_rejects_invalid_result_envelope_before_publication(wire_client, mo
 def test_host_rejects_call_after_result_before_dispatch(wire_client, monkeypatch):
     sandbox, clients, launch = wire_client
     monkeypatch.setattr(sandbox, "_broker", lambda *a: pytest.fail("terminal result allowed capability call"))
-    monkeypatch.setattr(sandbox, "_save_state", lambda *a: pytest.fail("invalid sequence published"))
+    monkeypatch.setattr(sandbox, "_save_state", lambda *a, **kwargs: pytest.fail("invalid sequence published"))
     messages = [
         {"type": "result", "value": 0, "state": "fixture"},
         {"type": "call", "method": "pause", "args": [], "kwargs": {}},
@@ -208,7 +208,7 @@ def wire_client(tmp_path, monkeypatch, client_resource_scope):
 def test_host_refuses_actual_over_budget_client_before_dispatch(wire_client, monkeypatch, mode):
     sandbox, clients, launch = wire_client
     monkeypatch.setattr(sandbox, "_broker", lambda *a: pytest.fail("over-budget wire reached broker"))
-    monkeypatch.setattr(sandbox, "_save_state", lambda *a: pytest.fail("over-budget wire published state"))
+    monkeypatch.setattr(sandbox, "_save_state", lambda *a, **kwargs: pytest.fail("over-budget wire published state"))
     setup = "value=0\nfor _ in range(65): value=[value]" if mode == "depth" else "value=[0]*131072"
     program = ("import json,sys\n" + setup + "\n"
                + "message={'rpc_version':1,'type':'call','method':'pause','args':value,'kwargs':{}}\n"
@@ -218,6 +218,24 @@ def test_host_refuses_actual_over_budget_client_before_dispatch(wire_client, mon
         launch(program)
     assert len(clients) == 1 and clients[0].poll() is not None
     assert clients[0].stdin.closed and clients[0].stdout.closed
+
+
+def test_platform_owned_snapshot_accepts_system_temp_alias(wire_client, tmp_path, monkeypatch):
+    sandbox, clients, launch = wire_client
+    actual, alias = tmp_path / "actual-temp", tmp_path / "system-temp-alias"
+    actual.mkdir()
+    try:
+        alias.symlink_to(actual, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation unavailable")
+    for variable in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.setenv(variable, str(alias))
+    publications = []
+    monkeypatch.setattr(sandbox, "_save_state", lambda *args, **kwargs: publications.append(args))
+    program = "print('OPSKIT_RPC:{\"rpc_version\":1,\"type\":\"result\",\"value\":\"ok\",\"state\":\"\"}', flush=True)"
+    assert launch(program) == "ok"
+    assert len(publications) == 1
+    assert clients[0].poll() is not None
 
 
 @pytest.mark.parametrize("message", [
@@ -230,7 +248,7 @@ def test_host_refuses_actual_over_budget_client_before_dispatch(wire_client, mon
 ])
 def test_host_rejects_actual_client_wire_before_state_publish(wire_client, monkeypatch, message):
     sandbox, clients, launch = wire_client
-    monkeypatch.setattr(sandbox, "_save_state", lambda *args: pytest.fail("invalid wire published state"))
+    monkeypatch.setattr(sandbox, "_save_state", lambda *args, **kwargs: pytest.fail("invalid wire published state"))
     monkeypatch.setattr(sandbox, "_broker", lambda *args: pytest.fail("invalid wire reached host broker"))
     wire = sandbox.PREFIX.encode("ascii") + (message if isinstance(message, bytes) else message.encode("utf-8")) + b"\n"
     program = "import sys; sys.stdout.buffer.write(" + repr(wire) + "); sys.stdout.buffer.flush()"
@@ -246,7 +264,7 @@ def test_valid_unicode_callback_and_nonprotocol_output_survive(wire_client, monk
     calls, states, displayed = [], [], []
     monkeypatch.setattr(prompt, "pause", lambda text: calls.append(text))
     monkeypatch.setattr(prompt.console, "print", lambda text, **kwargs: displayed.append(text))
-    monkeypatch.setattr(sandbox, "_save_state", lambda state, root: states.append(state))
+    monkeypatch.setattr(sandbox, "_save_state", lambda state, root, **kwargs: states.append(state))
     call = sandbox.PREFIX + json.dumps({"rpc_version": 1, "type": "call", "method": "pause", "args": ["中文参数"], "kwargs": {}}, ensure_ascii=False)
     result = sandbox.PREFIX + json.dumps({"rpc_version": 1, "type": "result", "value": "中文结果", "state": "fixture-state"}, ensure_ascii=False)
     program = "\n".join([

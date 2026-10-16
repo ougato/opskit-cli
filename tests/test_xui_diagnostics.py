@@ -1,5 +1,6 @@
 """Real read-only DB/API checks, invalid state and safe report output."""
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import sqlite3
 import threading
@@ -102,9 +103,25 @@ def test_database_locked_does_not_wait_beyond_budget(tmp_path):
     with sqlite3.connect(path) as writer:
         writer.execute("begin exclusive")
         start = time.monotonic()
-        assert not diagnostics._inbound_configured(path, 443, timeout=.05)
-        assert time.monotonic() - start < .5
+        with pytest.raises(TimeoutError, match="XUI database"):
+            diagnostics._inbound_configured(path, 443, timeout=.05)
+        assert time.monotonic() - start < 3
         writer.rollback()
+
+
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason="POSIX FIFO required")
+def test_database_open_on_fifo_is_supervised_and_reaped(tmp_path):
+    import multiprocessing
+    path = tmp_path / "panel.db"
+    os.mkfifo(path, 0o600)
+    before = path.stat()
+    children = {child.pid for child in multiprocessing.active_children()}
+    with pytest.raises(TimeoutError, match="XUI database"):
+        diagnostics._inbound_configured(path, 443, timeout=.2)
+    after = path.stat()
+    assert (after.st_dev, after.st_ino, after.st_mode) == (before.st_dev, before.st_ino, before.st_mode)
+    assert {child.pid for child in multiprocessing.active_children()} <= children
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_invalid_state_never_probes_api_or_reads_panel_settings(monkeypatch):

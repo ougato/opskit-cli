@@ -81,21 +81,23 @@ def fetch_supported_versions(timeout: float = 8.0) -> Optional[list[str]]:
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
 
 def _pgsql_arch() -> str:
-    """将 Python platform.machine() 映射为 theseus-rs 架构字符串"""
+    '将 Python platform.machine() 映射为 theseus-rs 架构字符串'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported postgresql CPU architecture: {m!r}")
 
 
 def _pgsql_arch_darwin() -> str:
-    """macOS 专用：arm64 原生 / x86_64"""
+    'macOS 专用：arm64 原生 / x86_64'
     m = platform.machine().lower()
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported postgresql CPU architecture: {m!r}")
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────
@@ -417,11 +419,15 @@ def download_pgsql_tarball(version: str, dest: Path) -> Path:
         raise InstallError(_t3("software.postgresql_error.macos_unsupported", version=version))
 
     if sys.platform == "win32":
+        from software._shared.architecture import require_windows_x64
+        require_windows_x64("PostgreSQL")
         url_templates = PGSQL_DL_WINDOWS_URLS
         arch = "x86_64"
     else:
-        url_templates = PGSQL_DL_DARWIN_URLS
         arch = _pgsql_arch_darwin()
+        # EDB's URL has no architecture field and contains Intel binaries only.
+        # ARM downloads must use the native archive, without assuming Rosetta.
+        url_templates = [u for u in PGSQL_DL_DARWIN_URLS if arch == "x86_64" or "{arch}" in u]
 
     urls = [u.format(version=version, arch=arch) for u in url_templates]
 

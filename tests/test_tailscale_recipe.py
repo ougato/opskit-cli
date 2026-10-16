@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from software.registry import all_recipes, get
 
 
@@ -18,18 +20,23 @@ def test_tailscale_recipe_is_registered() -> None:
     assert recipe.has_manage is True
 
 
-def test_tailscale_steps() -> None:
+@pytest.mark.parametrize("darwin", [False, True], ids=["linux", "darwin"])
+def test_tailscale_steps(monkeypatch, darwin) -> None:
+    monkeypatch.setattr("tailscale.server._is_darwin", lambda: darwin)
     recipe_cls = get("tailscale")
     assert recipe_cls is not None
     install_steps = [step.description_key for step in recipe_cls().steps()]
     uninstall_steps = [step.description_key for step in recipe_cls().steps("uninstall")]
-    assert install_steps == [
+    expected = [
         "tailscale.step.check_os",
         "tailscale.step.install",
         "tailscale.step.start",
         "tailscale.step.exit_node",
         "tailscale.step.login",
     ]
+    if darwin:
+        expected.remove("tailscale.step.exit_node")
+    assert install_steps == expected
     assert uninstall_steps == [
         "software.step.stop_service",
         "software.step.remove_files",

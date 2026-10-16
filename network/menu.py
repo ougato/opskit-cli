@@ -15,11 +15,11 @@ from rich.table import Table
 from core.i18n import t
 from core.prompt import select, text_input, pause, UserCancel, clear_screen
 from core.theme import get_color, get_icon, print_error
+from network.commands import COMMON_TCP_PORTS
 
 console = Console()
 _THEME_KEY = "network"
 
-_COMMON_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 5432, 6379, 8080, 8443, 27017]
 
 
 @contextmanager
@@ -304,11 +304,11 @@ def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
         return
 
     clear_screen()
-    console.print(f"\n{t('network.scanning_ports')}: {', '.join(map(str, _COMMON_PORTS))}\n")
+    console.print(f"\n{t('network.scanning_ports')}: {', '.join(map(str, COMMON_TCP_PORTS))}\n")
 
     from core.progress import spinner
     with spinner(t("network.scanning")):
-        results = scan_ports(host, _COMMON_PORTS, timeout=0.5)
+        results = scan_ports(host, COMMON_TCP_PORTS, timeout=0.5)
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")

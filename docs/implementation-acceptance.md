@@ -1,6 +1,46 @@
 # 下一阶段实施与验收台账
 
-## 当前批次：独立出口代理与SDK策略6（2026-10-14）
+最新暂存额度批次（2026-10-15）：[额度设计与验收](plugin-state-staging-quota.md)。499文件最终快照三端相关专项各205通过、无跳过，当前wheel安装额度验证通过；未知目录只计占用，不按名称删除。下方498文件全量/容器结果早于此额度改动，不能作为当前额度版完整验收。
+
+## 当前批次：状态事务归属记录（2026-10-15）
+
+本批最终终态（498文件固定快照47563f01e2c7b681e6b274eb5385d363dd3357860b0894bf8fc216208ab29484）：Windows92463退出0，2948通过/32跳过/721.21秒；Linux98374退出0，2854通过/126跳过/370.72秒；macOS27733退出0，2852通过/128跳过/428.20秒。三端各2980用例，全部终态，无失败。后续只有恢复测试移除未用os导入及文档更新，运行代码未变；该测试另有14项通过。Linux/macOS完整日志、XML与verification.json已复制F盘cache/state-runtime-full-evidence-20261015-r2/{linux,macos}，Windows原证据在cache/state-runtime-full-windows-20261015-r2。
+
+同一wheel a2429048在Windows及macOS均离线安装、pip check通过，六个宿主模块实际来自site-packages；候选改名失败后的保留/旧状态恢复及正常新状态发布均通过。macOS2511整个安装管线退出0，94个help/103项入口通过，与Windows入口检查相同。macOS实际接收wheel的SHA256与Windows构建结果完全一致；证据已复制cache/state-runtime-wheel-evidence-20261015-r2/macos。复用了任务拥有的r3安装环境，旧产物证据仍绑定当时hash，不代表该环境仍安装旧wheel。
+
+真实RPC29986退出0：实际SDK b76f2f99，a1/b1/a2状态分区、未批准边/未声明方法/API8对7、协议与额度拒绝、身份及服务边撤权后旧状态保留通过，27个拥有worker移除，恢复四字段均0。首次原生准备因锁文件迁移路径不存在而在read_lock前失败，未创建容器；保留/tmp/opskit-state-runtime-rpc-20261015-r2，复制锁到新输入目录并核对1690a8af摘要后在r3目录完成。正式网关73301退出0：同一SDK，实际HTTP拒绝/获批/撤销、CONNECT就绪后的注入取消/身份和私网撤权/清理后撤权均保留状态；网关库存策略及权限屏障通过，恢复四字段0。证明在cache/state-runtime-native-evidence-20261015-r2，SHA清单已保存。仅当前Linux Docker合成插件范围，不覆盖其他daemon/平台或完整网络矩阵。
+
+额外真实OS信号探针在/tmp/opskit-state-os-signals-20261015-r3完成：仅对任务拥有的CLI PID发送SIGINT/SIGTERM，插件与客体后代均明确回报就绪后发信号；SIGINT退出130、自行清理后recovered0，其余恢复字段0；SIGTERM退出-15，显式reconcile回收1条遗留记录，active/pending/invalid均0。两者拥有worker确认移除，已提交状态摘要完全不变，客体未提交文件未发布。首轮包装器缺少__main__保护导致spawn重复执行CLI、未到达就绪点；恢复四字段0并保留失败目录。r2已通过但后代只确认创建，r3增加后代就绪回报后重新通过。缓存探针及实际日志/恢复JSON已保存cache/state-runtime-native-evidence-20261015-r2/os-signals；不是macOS/Windows信号、live CONNECT信号、断电、SIGKILL或daemon重启证明。
+
+本批所有进程已终态；state-runtime-live-jobs-20261015-r2.json中sessions为空。当前状态恢复已有运行接入、三端完整回归、安装包和当前宿主真实容器证据；监督I/O、父死亡/崩溃在任意发布点、未记录暂存归属与容量、残缺记录人工修复、磁盘满/权限/断电持久化及完整网络/daemon矩阵仍开放。SDK漏洞和八类总目标也未完成。本批仍未提交/推送。
+
+运行接入批次：_invoke在网络/容器创建前调用_recover_state，认证调用方分区由宿主显式传入；invoke既有进程内锁和OS状态锁覆盖恢复。_save_state显式接收plugin/caller，候选权限准备移到configuration→trust提交锁之外，锁内继续剩余期限与新鲜授权检查。_publish_state已替换原无日志双改名：先独占创建归属记录，再改名旧/新目录，最后finish_transaction；失败不猜测回滚。_state_staging替代TemporaryDirectory自动清理：存在事务记录时保留候选，无记录时才清理本次临时目录。提交后清理异常明确报告state committed，不把新状态回滚成普通失败；遗留无记录.previous仍拒绝。
+
+498文件固定源码快照47563f01e2c7b681e6b274eb5385d363dd3357860b0894bf8fc216208ab29484的11组专项：Windows191通过/44.92秒、Linux191通过/21.33秒、macOS191通过/36.71秒，均无跳过、退出0。新增9项运行接入测试包括真实_save_state改名后os._exit(73)、异常候选保留、提交后清理失败、权限准备失败、self/caller恢复；另一进程在恢复期间实际尝试获取同一状态锁，均确认busy；资源边界断言恢复已完成后才到达_network。未运行真实Docker业务，本批不能替代实际容器复验。首轮77通过/2失败来自旧协议测试mock未接受新增宿主绑定关键字，已迁移并在固定快照验证；保留首轮XML。Ruff全项目通过；静态检查首次解释器缺Ruff，改用固定环境后发现一个新增未用os导入，已移除并重跑14项通过，最终94候选/0新增/0漂移。此测试文件单行删除晚于快照，宿主运行代码未变化。
+
+同一固定运行源码wheel SHA256 a24290484d98d6829c889f9527d375439d852f0281b72cac54f59868ff281477，253运行文件/258成员，源码及RECORD验证通过。离线无依赖安装、pip check、-I实际site-packages的六模块来源、真实配置/信任授权读取、候选改名失败后保留/恢复旧状态、随后正常发布新状态均通过；证明在cache/wheel-state-runtime-20261015-r2/{verification.json,installed-state/verification.json}。SDK代码库存摘要仍3b64a5019608b8ada1a83514169223f3ca357e0d6ab3dae525db079881f3991f，未改guest库存，不据此沿用旧宿主真实容器验收。
+
+当前同一固定快照的三系统全量回归已启动，macOS handle27733、Linux98374、Windows92463；在记录时均未终态，不算通过，不重启。日志分别在远端state-runtime-r2/full、Linux/tmp/opskit-state-runtime-full-20261015-r2、F盘cache/state-runtime-full-windows-20261015-r2。安装CLI检查handle76926仍在运行；后续读取同一handle并补终态。专项证据已复制F盘cache/state-runtime-evidence-20261015-r2/{linux,macos}；Windows在cache/state-runtime-validation-windows-20261015-r2。新运行接入仍需完整回归、安装CLI、真实容器、监督I/O、断电/磁盘满/部分写入人工修复与父死亡矩阵；本批未提交/推送。
+
+随后安装CLI76926已退出0：94个help命令、103项入口检查均通过，证明在F盘cache/wheel-state-runtime-20261015-r2/installed-cli/verification.json。三系统全量27733/98374/92463最近一次均仍活跃，继续同一handle等待终态。
+
+后续清理批次：finish_transaction先恢复旧root（需要时），追加绑定同一事务ID的aborted/committed结果并同步，再删除身份匹配的候选或备份，最后删除空wrapper及记录。已记录结果允许恢复部分清理，包含首次事务候选已删后的缺失root；结果未记录时仍拒绝缺失候选的歧义。清理先有界验证整棵树，再按身份/类型/文件大小和mtime逐项检查删除，最多8192条目、4096文件、16MiB；无跳过目录规则，链接/特殊/多链接文件拒绝。恢复时每次重新同步结果，即使上次写完整但fsync失败，也不能直接开始删除。StateCleanupError携带已知outcome，明确区分提交后清理失败；取消保留记录。残缺结果追加保持失败时拒绝，不自动截断或猜测修复。本批仍未接入发布/运行路径。
+
+497文件固定快照56b7bcc7a3015ef63d9f944365845f5486f62958456976a3947d98113b7f8c3b：三端均验证归档、所有成员摘要和实际模块导入路径；Windows82通过/14.82秒、Linux82通过/4.56秒、macOS82通过/7.37秒，均无跳过、退出0。包括首次/已有状态的结果同步后退出、删除部分文件后退出、wrapper删除后退出，真实子进程退出73后可继续收尾；持续同步失败、权限失败、取消、残缺结果和外来链接均保留证据。首轮80通过/1跳过是无旧树可删除的无效参数组合，已从参数集合中排除；第二轮82通过后补充重试同步实现，最终仅以r3固定快照为本批证据。Ruff与diff检查通过；不是全量、wheel、运行接入、父进程监督或断电验收。
+
+源码/清单在F盘cache/state-cleanup-source-20261015-r3，Windows日志/XML/verification.json在cache/state-cleanup-validation-windows-20261015-r3；Linux/macOS相同证据已复制cache/state-cleanup-evidence-20261015-r3/{linux,macos}。后续必须替换原无日志的发布路径、发布前准备候选权限、在插件锁内恢复self/caller分区并保留锁内新鲜授权，避免TemporaryDirectory异常清理提前删除带记录的候选；还需验证记录写入/追加失败的明确人工修复方式、期限/取消和轮转磁盘容量。本批文档修改晚于源码快照，未提交/推送。
+
+后续恢复判定批次：core/plugin_state.py新增inspect_transaction/restore_previous。实际root/backup/wrapper/candidate身份均需匹配记录；wrapper只允许单个new条目，扫描最多看到第二条即拒绝，不递归遍历状态内容。只接受uncommitted、restore_previous和committed三种可证明拓扑，候选在提交前缺失或目录被替换则拒绝。restore_previous仅将有记录的旧备份恢复原位，保留记录与候选；恢复改名后真实进程退出73，再次恢复报告uncommitted且不重复改名。此为恢复辅助函数，仍未接入运行入口，没有清理/记录退役或自动续跑。
+
+496文件固定快照53dba2128bc0bdb998e585dd9eaf3a2208570176b682c0dffd152e48741783cd，源码归档/成员哈希及实际模块导入路径验证通过。恢复14项加记录/崩溃/授权44项：Windows58通过/6.91秒、Linux58通过/2.55秒、macOS58通过/4.74秒，均无跳过且退出0，Ruff和diff检查通过。Windows XML在F盘cache/state-recovery-windows-20261015-r1.xml；Linux/macOS日志、XML与verification.json已复制F盘cache/state-recovery-evidence-20261015-r1/{linux,macos}；源码在cache/state-recovery-source-20261015-r1。仅新增宿主模块和测试，未修改SDK库存；清理幂等、状态锁接入、发布授权、持久化、监督I/O及wheel/完整回归继续开放。随后文档修改不属于该固定快照。
+
+新增宿主core/plugin_state.py与30项记录专项；只实现独占创建、文件同步和有界验证，不进行发布、恢复或清理，尚未接入运行路径。4096字节精确结构绑定插件、认证调用方、父路径/目标与目录dev/inode；拒绝旧.previous、已存在记录、重复字段、链接/特殊文件、错分区、父目录替换及重叠身份。实际子进程在记录同步后os._exit(73)保留可读记录与旧新状态；同步失败也保留证据。后续还需接入状态锁/发布、实际目录拓扑验证、恢复幂等、部分清理与持久化/监督I/O，不宣称自动恢复已完成。
+
+495文件源码ZIP快照SHA256 80e1380597911160d02067ddf00e3a39be6b7ce7d6c02c04c8178534bcc3f462；Linux与macOS均先核对归档及每个成员摘要，再验证实际导入此快照的core/plugin_state.py。记录/重启/授权三组在Windows44通过/5.18秒、Linux44通过/1.89秒、macOS44通过/4.16秒，均无跳过、退出0；Ruff通过。Windows XML为F盘cache/state-records-windows-20261015-r2.xml；Linux/macOS日志、XML和verification.json已复制F盘cache/state-records-evidence-20261015-r2/{linux,macos}。源码归档/清单在F盘cache/state-records-source-20261015-r2。此为专项，不替代全量、wheel、安装入口或真实断电验收；随后文档更新不属于该快照。新模块未列入guest SDK库存，本批未改变SDK策略或源码摘要。
+
+本任务旧cache目录迁移到F盘cache/windows-route-transactions-cache-20261015，56个剩余普通目录逐一迁移并创建原路径junction；已迁出目录和559个文件的原路径入口恢复。首轮整体Move-Item遇到pytest特殊路径失败，三个pytest残留目录继续保留在C盘，未删除未知内容。迁移后C盘约569MB可用，仍建议扩大余量；原路径安装环境在-I模式下实际导入其site-packages成功。缓存迁移不属于产品性能测量。
+
+## 历史批次：独立出口代理与SDK策略6（2026-10-14）
 
 独立实时授权当前wheel c81def912717b02f66c83ced5e65616cd03226e8def0ac3a09c28710ae16aef8 构建退出0，251运行文件/256成员，源码/RECORD核对通过；安装入口正在复验。当前487个跟踪/未忽略候选文件快照秘密扫描退出0、0匹配，快照secrets-bytequota-0eq7_d4l；晚于该快照的台账文档更新不属于本次扫描，不作为最终提交/历史秘密扫描已完成。63686正式gateway策略2/独立实时回退修正前Windows完整回归2773通过/30跳过/652.48秒退出0，20667对应Linux完整回归仍运行；当前独立回退修正73项双平台均通过，Windows相关更广已开始。
 
@@ -2022,3 +2062,93 @@ core/plugin_catalog.py集中负责有界普通文件身份读取、六字段执�
 21245最终退出0：f1e957c5 wheel本地无索引/无依赖重解析安装、pip check及94help/103入口通过，cache/wheel-catalog-gateway-supervision-20261014/installed-cli/verification.json。另以安装环境python -I在源码导入路径之外执行实际ContentInspector，核对四个模块均来自site-packages，SDK/网关身份、同reader新鲜目录重读及进程回收通过；证据cache/wheel-catalog-gateway-supervision-20261014/installed-reader/verification.json，日志wheel-catalog-gateway-installed-reader-20261014.log。此额外探针只使用新建临时目录，无Docker或真实用户配置写入。当前更广30989/74456已确认仍运行，不标记整体通过。
 
 30989现已退出0：当前目录/网关监督源码的Windows更广回归711 passed/4 skipped/2106 deselected，288.87秒，catalog-gateway-broad-windows-20261014.log。Linux74456仍运行，尚无终态。
+
+
+## 阶段提交与完整执行清单读取监督（2026-10-15）
+
+用户先后确认347项文件范围及中文提交说明后，创建39fad3d2ab30f6224934acec44f425bd09eb9f5b，标题“重构 平台安全边界与独立插件运行机制”；普通push HEAD:develop成功，远端ls-remote同SHA。原F盘工作区文件及恢复备份保留。提交前当前源码全量终态：Windows67247退出0，2791 passed/30 skipped/834.60秒；Linux12830退出0，2695 passed/126 skipped/802.73秒。对应cache/full-catalog-gateway-{windows,linux}-20261014.log；前述74456更广Linux亦退出0，713 passed/2 skipped/374.81秒。所有结果只证明该阶段源码；提交不代表八类整体验收。
+
+本批把_invoke初始及复制后load_manifest改为同reader受监督读取，单次30秒且不超过父剩余期限。load_manifest与纯_parse_manifest分离，父进程复用规范化谓词检查所有字段并绑定请求root。完整JSON最多8MiB，复用256KiB共享邮箱、精确总长/偏移/块长，所有帧共享deadline；非最后块复制后ack，最后块无ack，防止吞掉下次请求。错误/取消关闭reader；指纹、完整快照比较和实时授权继续保留，无同步回退，也不执行插件业务代码。guest源码库存未变。
+
+首轮测试缺少短parametrize ids，1.1MiB超额样例被pytest作为测试名称传入PYTEST_CURRENT_TEST环境。Linux65909终态1 failed/52 passed/1 skipped，Windows日志53 passed/2 errors（环境变量超长），均不当作生产通过。两个Windows尾部输出包装器65566/33570因打印巨型测试名输出阻塞；确认只剩本批PowerShell和conhost、无测试子进程后只停止这两个输出包装器，工具exit15，原失败日志保留。修复仅为测试添加短名称，未放宽生产边界。
+
+修复后4507/71001均退出0：Windows60 passed/54.60秒，Linux59 passed/1 skipped/62.72秒，manifest-supervision-{windows,linux}-r2-20261015.log。新增28项包含100KiB与Unicode600KiB完整等价、入口/服务字段、同PID混合普通/分块请求、输入超额/错误帧/布尔整数混淆/root注入，以及真实os.read阻塞的初始/复制后清单与后续块超时/取消、确认reader回收且不启动容器。Linux跳过沿用既有Windows Job平台专属项。
+
+此前独立实验两平台各200次同reader请求均完整等价且回收，证据F盘cache/manifest-chunk-reuse-{windows,linux}-20261015/verification.json；仅为实验，不替代本批正式调用链用例。相关Ruff通过，diff检查通过（Git报告既有自动CRLF转换提示）。新wheel e01f71c3162a826251861d93d6cbe07f130e939fe8e887a08a376b615096d0bb，252运行文件/257成员，81600构建及源码/RECORD核对退出0。安装、pip check及python -I真实安装目录的完整清单新鲜读取/混合请求/独立scope释放探针已经通过；完整安装CLI、更广双平台670项选择回归及真实合成网络插件仍在运行，待终态后登记。
+
+服务发现/list_manifests目录I/O、状态发布与崩溃恢复、完整出口/daemon矩阵及其他八类门槛继续开放。本批后续改动尚未提交或推送。
+
+
+本批终态：42509/93628均退出0，Windows667 passed/3 skipped/2179 deselected/515.19秒，Linux667 passed/3 skipped/2179 deselected/664.89秒，manifest-broad-{windows,linux}-20261015.log。37768安装/依赖检查/真实安装目录探针及94help/103入口退出0，安装包仍为e01f71c3，证据wheel-manifest-supervision-20261015/{installed-reader,installed-cli}/verification.json。静态94候选/新增0/漂移0，Ruff F/E9排除既有F401/F841后通过，diff检查通过。
+
+原生61256退出1：第一份新输出的实际插件invoke在资源清理后、状态发布前_remaining期限复核拒绝，尚未发布proof；recovery四项0，原manifest-supervision-native-20261015.log及其隔离目录保留。不得把失败当作通过或直接归因于并发负载。随后等待双平台相关回归全部终态，使用仅增加父进程阶段计时的cache/trace_manifest_native_20261015.py，未调整生产谓词、未替换读取器、未放宽30秒配置，建立全新独立数据目录复验。76735退出0，manifest-native-traced-20261015/verification.json中passed=true、recovery四项0；正式SDK/网关与完整合成网络插件的未授权/授权/撤销，CONNECT就绪后的取消、身份撤销、私网撤销、清理后提交前撤销均通过，已提交proof保留，未提交状态未发布。7次invoke、14次完整manifest读取；timing.jsonl中清单读取约2.5–65.2毫秒，三次成功invoke约7.5–10.4秒。仅是该轮计时，不是代表性p50/p95或首轮失败原因证明。首轮期限边界仍保留在性能/故障矩阵待分析项，不能以第二次成功抹去失败。
+
+本批正式源码与专项/更广回归、wheel、安装和当前本机原生验证已有对应证据；不宣称全量2849项或远端六组合CI已重新通过。服务发现目录读取等下一批仍开放，八类整体目标未完成。本批7项工作树变更尚未暂存、提交或推送。
+
+## 插件库存与服务选择读取监督（2026-10-15）
+
+list_manifests已转入同scope的_read_inventory；原有4096条目/256清单扫描界限、确定性顺序、坏清单跳过和重复身份保留不变。读取器完成全目录额度检查后再按all/name/service筛选，父进程只解码所选清单；每条最多8MiB、完整列表允许超过8MiB。条目间非末条ACK与分块确认共用绝对期限，精确校验数量/字段/目录名/规范化清单/选择匹配，中途错误不返回部分结果。服务入口共享预算，访问解析改为新鲜受监督身份与授权边复核，无同步信任读取回退，不执行第三方业务。
+
+62453/26126退出0：Windows88 passed/57.33秒、Linux88 passed/62.59秒；额外75763/39923日志均3 passed，Windows16.07秒/Linux15.70秒。证据inventory-supervision-{windows,linux}-r1-20261015.log及inventory-extra-{windows,linux}-20261015.log。覆盖真实阻塞扫描、取消回收、部分结果拒绝、路径/数量注入、混合请求同PID、新鲜变更、重复身份拒绝和服务共享期限；15份大清单验证总量超过8MiB仍完整返回。原始扫描器单测使用私有_list_manifests，CLI额度用例在实际spawn子进程注入测试限制，不允许生产请求覆盖额度。
+
+新wheel 53c6229821434f2f8141afac63c6502f65879bd5ca77b402419dc2c6b4e651aa，252运行文件/257成员，源码/RECORD核对通过。52635安装验证退出0：离线无依赖重解析安装、pip check、94help/103入口通过；python -I实际site-packages探针验证四个模块来源、同reader完整清单/库存all/name/service新鲜读取、公开list_manifests和提供方选择、reader回收与独立scope释放。证据wheel-inventory-supervision-20261015/{verification.json,installed-reader/verification.json,installed-cli/verification.json}及install-inventory-supervision-wheel-20261015.log。
+
+本轮全项目Ruff及静态基线检查退出0：94候选/新增0/已解决未移除0。真实源码CLI库存界限探针已产生5项预期结果：条目超额时plugin list/run明确失败，清单超额时list明确失败，两种情况下官方software help仍成功；证据F盘cache/inventory-cli-supervision-20261015-r1/verification.json，包装器终态另核对。Windows73469/Linux11060完整回归已确认仍运行，尚不记录全量通过。真实Docker RPC安排在重负载回归终态后，不以先前网络插件复验代替新服务路径验收。状态发布I/O、崩溃归属恢复、完整出口/daemon矩阵和八类整体门槛继续开放；本批没有暂存、提交或推送。
+
+库存CLI探针34760终态退出0，前述5项检查全部通过。另完成下一批状态恢复问题的真实子进程探针：cache/probe_plugin_state_crash_20261015.py只对F盘新建目录执行_publish_state，第一步旧root改名成功后子进程os._exit(73)；父进程实际_copy_tree生成空restart-seed，旧值old仍完整位于self.previous，新值new保留在staging。探针退出0，证据F盘cache/plugin-state-crash-boundary-20261015-r1/verification.json。它证明重启准备阶段可能错误地把中断事务当作首次运行，不证明备份被删除，也未触发真实插件或Docker。状态归属与恢复方案和验收矩阵已补入授权监督设计；尚未修改运行时，完整回归仍对应当前库存批次源码。
+
+状态崩溃边界探针在WSL Linux亦退出0，行为与Windows一致：子进程第一步改名后退出73，old备份保留但实际重启seed为空；Linux证据/tmp/opskit-plugin-state-crash-boundary-20261015-r1/verification.json。当前候选提交秘密扫描35169退出0，491文件/0发现；工具发行包与可执行文件摘要已按既有固定校验核对，无仓库allow注释或忽略文件豁免，证据F盘cache/secrets-inventory-tn2_o0fe/{inventory.json,summary.json,report.json}。只证明本批候选文件，不替代远端未知历史或运行配置检查。
+
+验证效率实验：100个4KiB一次性文件的写/读/删，3轮中位数Windows挂载目录1.8206秒，Linux /tmp为0.02034秒；cache/linux-test-filesystem-probe-20261015.json。当前并发负载下的小样本，不推导整体pytest或平台加速倍数。为后续Linux验证把已扫描的491个候选文件复制至/tmp/opskit-inventory-source-20261015-r1，逐文件SHA256核对，库存摘要1800859300323608f04174bfa14d5a12bc71b8e6fe0bf9f0a2ae2aad936e7b18；没有复制Git元数据、cache或用户运行数据。源码仍以工作树为权威，后续改动须重新建立快照。现有11060完整回归继续从原位置运行，没有因观察超时重启或替换；Linux快照仅额外运行两项真实库存新鲜读取/服务共享reader烟雾测试，终态另核对，不能替代完整回归。
+
+Linux文件系统快照烟雾验证已退出0：2 passed/1.65秒，linux-source-snapshot-smoke-20261015.log。实际测试路径来自/tmp快照，覆盖同reader清单变更和服务授权共享reader；没有把挂载位置微基准当作完整回归性能结论。
+
+Windows完整回归73469终态退出0：2847 passed/30 skipped/772.50秒（共2877项），inventory-full-windows-20261015.log。该结果对应库存监督批次运行时，尚无状态恢复修复；不能作为未来源码的证明。Linux11060仍在运行，保留同一handle继续观察。
+
+Linux完整回归11060终态退出0：2751 passed/126 skipped/834.71秒（共2877项），inventory-full-linux-20261015.log。双平台完整回归均已终态，不含尚未实现的状态恢复。随后启动Linux文件系统独立源码快照的真实RPC验证，使用既定审核base与完整哈希锁及新建/tmp输出目录；仅拷入任务拥有的launcher/锁文件，生产策略与读取器无替换，最终资源回收结果单列记录。
+
+真实RPC27461终态退出0，使用491文件逐项哈希验证的Linux文件系统源码快照，无生产读取器/策略替换，SDK仍ad31a18c。合成provider与两个caller计数依次a=1/b=1/a=2，证明认证调用方状态分区；未授权边在提供方启动前拒绝；未声明方法、实际API版本8与声明7不一致、旧/其他传输版本、深度/分配额度、缺失/混合结果信封、终态后调用均拒绝且不发布状态。嵌套身份撤权与捕获服务边撤权异常后均保留原状态。27个拥有容器经逐项查询确认已移除，recovery四项均0，未清理其他资源。证据已从/tmp复制至F盘cache/inventory-rpc-native-20261015-r1/{rpc-verification.json,recovery-verification.json,snapshot-verification.json}；日志inventory-rpc-native-20261015-r1.log。该测试不覆盖完整RPC状态机、实际OS信号、daemon故障或所有网络矩阵。回查当前四个运行时模块SHA与本批验收记录完全一致。
+
+至此本批库存/服务读取监督专项、双平台完整回归、wheel/安装、CLI真实库存额度及本机真实RPC已有对应终态。计划继续状态发布崩溃恢复与I/O监督；八类整体验收仍未完成，未暂存/提交/推送本批新增修改。后续运行时改动必须重新关联验证，不能引用本批结果当作新版本通过。
+
+## macOS验收接入与状态重启拒绝边界（2026-10-15）
+
+用户授权通过ghost-macos验收。SSH首次无记录时使用accept-new记录新主机密钥，未禁用主机密钥检查。环境Darwin22.6.0/macOS13.6.5 Intel，4核/16GiB；SSH默认Python3.9.6，但/usr/local/bin/python3.12已安装3.12.2，无需修改系统Python。未发现Docker命令或Docker.app。仅创建/private/tmp/opskit-acceptance-20261015.Dzybna，使用独立venv及数据/插件/temp目录，没有启动真实服务或改用户项目。
+
+首轮快照491文件，归档SHA 1ec5ff242af385a60862806b3a5201cd375fb93b202500d7761b7fb4de28a1e0，库存SHA f80fe9edd151d3da0467bef33547e1fe1e5ffa0cd166cd97c858d78ccd5256fa。远端先核对两份文件SHA，再逐条验证成员类型/路径/大小/摘要后复制，不传缓存、Git、凭据或克隆插件。依赖安装/pip check/Ruff/静态94候选基线已退出0；完整回归及安装包阶段21859仍运行。该固定快照不包含后续本地状态防护与测试修正，不能声称当前新源码完整通过。
+
+macOS实际回归发现test_verify_binary_valid_elf把所有非Windows平台当作ELF；独立诊断退出1，1 failed/36 passed，远端diag-auto-update.log。生产_verify_binary已正确区分Mach-O，不放宽生产校验。测试改为明确验证PE/ELF在对应平台通过、在其他平台拒绝；新增8种Mach-O/Universal头的本机接受/异平台拒绝用例。首轮失败保留，不用跳过或修改原远端快照隐藏。
+
+本地同时增加_require_resolved_state，在self/caller准备后且资源创建前、状态解码及发布前拒绝.previous任何条目（含悬空链接）。真实子进程在旧root改名后退出73，旧备份和候选仍保留；直接调用_invoke证明两种分区均在网络/容器前拒绝，不生成空seed继续执行。新增5项回归。Windows状态专项14 passed/5.24秒；含更新测试的组合86 passed/8.44秒，macos-prep-windows-20261015-r2.log。Ruff及94/0/0静态门槛通过。此项只关闭错误启动缺口，自动事务恢复、归属、状态I/O监督及断电持久化仍未实现，八类整体验收不关闭。本批没有暂存、提交或推送。
+
+492文件修正快照SHA 5385e6284c83e647db6f51db20f0118a46211c0897f53d4fa27867be112d4ab1、库存SHA 13bcfc212946aae2c4fe4a0e8547da0940569a4612847690c452f53df8b6d8b2，分别逐项核对后放入Linux /tmp/opskit-validation-source-20261015-r2/source及macOS原拥有根的next/source。修正组合在Windows86 passed/8.44秒、Linux86 passed/4.07秒、macOS86 passed/6.14秒，均退出0；证据macos-prep-windows-20261015-r2.log、state-restart-linux-20261015-r2.log及远端next/targeted.log。它们不代表macOS其他首轮失败已解决。
+
+macOS首轮21859终态退出1，完整回归2741 passed/128 skipped/8 failed/403.70秒。8项：ELF平台预期1；真实监听所有权4（普通用户psutil全机枚举AccessDenied，生产返回listeners_unavailable，缺权限不能改判健康）；协议超额client清理1（killpg PermissionError覆盖了原拒绝）；独立guest导入1（待核实editable安装的宿主查找器是否越过captured包）；Tailscale步骤1（当前实现明确Darwin无Linux出口节点步骤，测试原来固定要求出口节点）。完整失败保留，未修改首轮远端源码。安装包阶段全部退出0，wheel SHA 558523e75401a6345e0b833094ad2ca88185a4f3db0c9e7b158a9c70500c7152，252运行文件/257成员；安装依赖检查和94help/103入口通过。原始验证JSON、JUnit、pytest日志、wheel库存及安装CLI结果已复制到F盘cache/macos-acceptance-20261015-r1/remote-results。无Docker，未据此宣称macOS插件真实容器已验收。
+
+macOS进程清理专项独立探针只创建20个本账号短Python子进程/会话。20/20在stdout EOF后、wait前killpg返回PermissionError，wait回收后同一拥有group返回ProcessLookupError；process-reap-probe.json。下一步在不掩盖活进程权限失败、仍回收后代的前提下修复此边界，再增加真实macOS回归。该文件当前只是证据，生产process.py尚未修改；其属于SDK库存，任何改动必须重建并验证新SDK，不能沿用ad31a18c当作新源码产物。
+
+Linux492文件快照完整回归47848已退出0：2764 passed/126 skipped/339.41秒（2890项），state-full-linux-20261015-r2.log。上一批挂载源码834.71秒（2877项）；本轮Linux文件系统快照耗时更短，但用例及并发负载略不同，不推导精确归因比例，也不宣称平台运行性能提升。Windows18704当前新批全量仍运行；不要停止或重启它，也不要在其读取活动源码期间混入下一批process运行时修复。后续Windows回归亦应改用哈希验证的固定快照，以避免开发与验收相互等待。当前新源码仍需新wheel/安装及macOS修正后完整验收，自动恢复、状态I/O监督和八类门槛继续开放。
+
+Windows状态重启批18704终态退出0：2860 passed/30 skipped/673.37秒（2890项），state-full-windows-20261015-r2.log。该运行对应r2采集的测试定义和旧process.py，不作为下一批修复通过证据。
+
+macOS候选目录先复用r2独立源码，再覆盖待验证process修复及三个测试文件；未修改首轮验收目录。首次候选38732退出1，97 passed/17 failed，均在快照manifest阶段失败：独立SSH测试未设置canonical TMPDIR，实际平台临时路径经/var别名被严格清单校验拒绝。保持相同生产策略，仅把该实验TMPDIR设为拥有目录后40074退出0，114 passed/24.01秒，证明进程清理候选及其他测试修正可通过，但不能用改测试环境掩盖默认macOS临时目录问题。
+
+随后Windows既有全量终态后，将候选process修复正式应用工作树：仅当killpg返回PermissionError且poll确认/回收拥有子进程已退出时，重试同一group；活leader及第二次权限拒绝继续抛出。新增真实退出leader/仍活动后代和模拟权限拒绝用例。并将_invoke自己新建临时目录的base规范化为resolve，避免系统/var别名；第三方manifest/source目录的链接拒绝不变。新增真实别名临时目录+实际reader/client用例。远端候选使用默认TMPDIR复验80453退出0，115 passed/24.94秒，targeted-default-temp-fixed.log。无Docker/真实用户服务操作。
+
+Windows相关201项首次6765退出1：196 passed/2 skipped/3 failed；失败均为POSIX模拟测试漏模拟Windows没有的SIGKILL常量，未进入生产killpg。补齐仅测试signal命名空间，单独3 passed/2 skipped退出0，process-mocks-windows-20261015-r3.log；原失败保留，未放宽生产异常或跳过三项断言。两项真实group测试仅POSIX运行。该新process属于SDK库存，后续需重建新SDK及真实Docker验收。
+
+SDK导入干扰已实际确认：macos-editable-import-probe-20261015.json中core来自captured，但core.updater spec被宿主__editable___opskit_1_0_0_finder解析到原source。修正测试使用-I -S及显式纯依赖库目录，保留完整平台模块不存在断言，不执行宿主.pth；真实guest中不安装平台editable包。监听测试先独立复核全局可见性，只有可见才断言真实owner；拒绝枚举时精确断言listeners_unavailable和ok=false，不skip、不改生产健康结果，也不把普通用户下的负向证明当作特权下的真实owner验收。Tailscale步骤分别参数化Linux与Darwin，保留Darwin无出口步骤的已有契约。
+
+修复后的r3固定快照493文件，归档SHA40ac995528e11972e8e69c21b89febd0152d48555dde09542393493b94d93975、库存SHA70c0eacef7e120e7105d53ae9b6d8dc48e6e42746bbd211925c3a8ba1ac3e34f。Windows F盘、Linux /tmp、macOS原拥有根/r3均核对归档及每个成员后使用固定副本；不从开发工作树边改边跑。当前三端完整验收30855/macOS、75570/Linux、82516/Windows均确认仍运行。macOS新环境依赖/pip/Ruff/静态门槛已退出0。Windows首次候选三项SIGKILL模拟缺陷已修复，正式r3含该修正。
+
+12194构建/源码/RECORD核对退出0，使用Windows r3固定快照，wheel dcc060e9baec59f6f5714854b00810bffe4d8862a4c7df35ff366238a2ec3ad0，252运行文件/257成员，证据F盘cache/wheel-macos-fixes-20261015-r3/verification.json。86499正在离线安装并验收真实site-packages读取器、状态拒绝与拥有进程回收，以及94help/103入口，未假定通过。新的process.py改变SDK摘要，Linux r3已准备任务拥有的RPC/网关计时验收helper与既有审核哈希锁；待完整回归资源空闲后重建并验证真实容器，旧ad31a18c不得作为本批新SDK证据。此轮尚未暂存/提交/推送；状态自动恢复及八类整体计划继续开放。
+
+r3终态：Linux75570退出0，2771 passed/126 skipped/378.95秒；Windows82516退出0，2865 passed/32 skipped/772.14秒（各2897项）。macOS30855整套退出0，2769 passed/128 skipped/395.94秒；其独立环境依赖、pip check、Ruff、静态基线、wheel构建/源码/RECORD核对、独立wheel安装/pip及94help/103入口均退出0。macOS wheel 0c58ee519d6079429ae1708c4c8403473439ee2400889c928b5fb7e8850f258a，252运行文件/257成员。首轮8失败及两个候选测试失败批次保留，不能把普通用户全局监听不可见的负向通过当作特权owner正向验收。macOS证据已复制F盘cache/macos-acceptance-20261015-r3/remote-results。
+
+Windows86499退出0：dcc060e9 wheel离线重装、pip check、真实site-packages五模块来源、完整清单与库存重读/reader释放、旧.previous拒绝且数据保留、真实拥有子进程回收及94help/103入口通过。证据F盘cache/wheel-macos-fixes-20261015-r3/{installed-reader,installed-cli}/verification.json。当前代码与493文件r3库存逐项比较，差异仅三份持续更新文档，运行时及测试没有变化。
+
+真实RPC61524退出0，新SDK sha256:b76f2f99ef2b10ca306403dc0b01c5ac2288d5979414735804a4ca18e31d8569，未沿用ad31a18c。实际image标签code-sha256为3b64a5019608b8ada1a83514169223f3ca357e0d6ab3dae525db079881f3991f，与当前SDK源码库存摘要完全相同；policy6/base2b4f19/锁1690a8af保持绑定。两caller状态计数1/1/2、未授权边、未声明方法、真实API版本不符、传输/分配额度/结果信封/终态顺序、嵌套身份撤权及捕获服务边撤权后的状态保留均通过；27个拥有worker确认移除，recovery四项0。
+
+正式网关原生89316退出0，同一新SDK b76f2f99与正式网关359ebe45；实际受控HTTP授权/拒绝/撤销及CONNECT就绪后的注入取消、身份撤权、私网撤权、网络清理后提交前撤权均通过，持久状态保留；recovery四项0。网关catalog与固定标签、无setid/无infocmp/无第三方Python分发/SSL与SQLite/UID65534/无capability及权限屏障检查通过。证据已复制F盘cache/macos-fixes-native-evidence-20261015-r3/{rpc-rpc-verification.json,rpc-recovery-verification.json,network-verification.json,network-timing.jsonl,gateway-catalog.json}。此处是Linux当前Docker的合成插件/轮询撤权，不是macOS Docker或全部部署矩阵、实际OS信号、daemon故障证明。
+
+493个候选文件秘密扫描72443退出0/0发现，F盘cache/secrets-inventory-1pbrspgr。实际新SDK OS复扫46667退出0，镜像ArtifactName与ImageID均为b76f2f99，固定Trivy0.75.0执行文件/发行包摘要重核对，使用2026-10-14T01:19:20Z数据库且不更新，保留同库比较范围。仍Critical0/High44/Medium58/Low61/Unknown3，73个不同编号，High对应8编号；F盘cache/runtime-macos-fixes-os-20261015-r3/{summary.json,os-vulnerabilities.json,scan.log}。退出0仅表示扫描完成，不关闭供应链安全门槛。新快照/新SDK本批已有本机验收终态，状态自动恢复/发布I/O、完整权限与网络/daemon矩阵、远端CI和八类整体计划继续开放。本批仍未暂存/提交/推送。

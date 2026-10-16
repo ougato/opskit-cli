@@ -6,29 +6,30 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.base import InstallError
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_REDIS_FILE
 
 
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
 
 def _redis_arch() -> str:
-    """Linux/macOS 架构字符串（用于 deb arch 和源码编译）"""
+    'Linux/macOS 架构字符串（用于 deb arch 和源码编译）'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported redis CPU architecture: {m!r}")
 
 
 def _deb_arch() -> str:
-    """deb 包架构字符串：x86_64 → amd64，aarch64 → arm64"""
+    'deb 包架构字符串：x86_64 → amd64，aarch64 → arm64'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "amd64"
-    if m in ("aarch64", "arm64"):
-        return "arm64"
-    return "amd64"
+    if m in ('x86_64', 'amd64'):
+        return 'amd64'
+    if m in ('aarch64', 'arm64'):
+        return 'arm64'
+    raise InstallError(f"Unsupported redis CPU architecture: {m!r}")
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────
@@ -230,7 +231,6 @@ def _pick_fastest_url(urls: list[str], probe_bytes: int = 65536) -> str:
 
     def probe(u: str) -> tuple[str, float]:
         """返回 (url, cost_per_byte)，越小越快；不可达返回 inf"""
-        tmp_chunks: list[bytes] = []
         total = 0
         try:
             t0 = _time.monotonic()
@@ -268,9 +268,11 @@ def download_redis_windows(version: str, dest: Path) -> Path:
     先实际带宽测速选最快可达源，再单线程下载。
     """
     import httpx as _httpx
-    import shutil as _shutil
     from software.base import InstallError
-    from .constants import REDIS_DL_WINDOWS_URLS, REDIS_WINDOWS_FALLBACK_VERSION
+    from .constants import REDIS_DL_WINDOWS_URLS
+
+    from software._shared.architecture import require_windows_x64
+    require_windows_x64("Redis")
 
     use_ver = version
     urls = [u.format(version=use_ver) for u in REDIS_DL_WINDOWS_URLS]

@@ -147,6 +147,11 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         _log.warning("plugin %s: manifest read failed (%s)", plugin_root.name, type(e).__name__)
         return None
 
+    return _parse_manifest(data, plugin_root)
+
+
+def _parse_manifest(data, plugin_root: Path) -> PluginManifest | None:
+    """Normalize manifest data without filesystem access or executing plugin code."""
     if not isinstance(data, dict):
         _log.warning("plugin %s: manifest is not a mapping", plugin_root.name)
         return None
@@ -313,7 +318,12 @@ def _to_module_info(manifest: PluginManifest) -> ModuleInfo | None:
 
 def list_manifests() -> list[PluginManifest]:
     """列出插件目录下所有合法清单（不加载代码，供插件管理界面用）"""
-    root = plugins_dir()
+    from core.plugin_sandbox import _read_inventory
+    return _read_inventory(plugins_dir())
+
+
+def _list_manifests(root: Path, *, select="all", value="") -> list[PluginManifest]:
+    """Reader-only inventory; scan completely before returning selected identities."""
     if root.is_symlink() or getattr(root, "is_junction", lambda: False)():
         raise PluginInventoryError("linked plugin inventory root forbidden")
     if not root.exists():
@@ -340,7 +350,8 @@ def list_manifests() -> list[PluginManifest]:
     manifests: list[PluginManifest] = []
     for path in candidates:
         manifest = load_manifest(path)
-        if manifest is not None:
+        if manifest is not None and (select == "all" or select == "name" and manifest.name == value
+                                     or select == "service" and value in manifest.provides):
             manifests.append(manifest)
     return manifests
 

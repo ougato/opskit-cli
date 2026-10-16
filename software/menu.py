@@ -142,8 +142,6 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
     """从 recipes 列表中让用户选择一个，再进入操作子菜单"""
     from core.installed_cache import get_detected
 
-    muted = get_color("muted")
-    success_c = get_color("success")
 
     hints: dict[str, str] = {cls.key: get_detected(cls) for cls in recipes}
 
@@ -470,7 +468,6 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
 
 def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     """执行卸载流程：支持多版本选择卸载"""
-    from core.progress import spinner
 
     _uname = recipe_display_name(cls)
 
@@ -562,7 +559,6 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     """执行版本切换流程"""
-    from core.progress import spinner
 
     _name = recipe_display_name(cls)
 
@@ -755,7 +751,6 @@ def show_list() -> None:
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     muted = get_color("muted")
     success = get_color("success")
-    error_c = get_color("error")
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
@@ -796,7 +791,7 @@ def show_list() -> None:
 
 def show_install() -> None:
     """选择软件 → 选择版本 → 确认 → 安装"""
-    from software.registry import all_recipes, get as get_recipe
+    from software.registry import all_recipes
     from core.platform import get_platform, check_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
     from software.base import InstallError

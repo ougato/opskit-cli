@@ -69,7 +69,7 @@ PGSQL_DL_WINDOWS_URLS = [
 ]
 
 PGSQL_DL_DARWIN_URLS = [
-    # EDB 官方 CDN（仅 x86_64，arm64 403，但可在 arm64 Rosetta 下运行）
+    # EDB 官方 CDN（仅 x86_64；ARM 不选择此包，不默认依赖 Rosetta）
     "https://get.enterprisedb.com/postgresql/postgresql-{version}-1-osx-binaries.zip",
     # theseus-rs ghfast 加速（支持原生 arm64，作 fallback）
     "https://ghfast.top/https://github.com/theseus-rs/postgresql-binaries/releases/download/{version}.0/postgresql-{version}.0-{arch}-apple-darwin.tar.gz",

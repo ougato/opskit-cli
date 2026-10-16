@@ -1,10 +1,16 @@
 # 官方 CLI 参数补齐与验收计划
 
+2026-10-16验收范围：当前603文件快照21e9afd3的三端整仓4064项均已独立复核：Windows4010通过54跳过，macOS3930通过134跳过，Linux3934通过130跳过。三端实际安装各113CLI、20生命周期及1项真实阻塞子进程关闭异常检查通过，269运行文件/RECORD已核对；Linux真实Docker基础3×21、9生命周期及完整RPC已独立验收。匹配快照的Linux冻结产物正在构建，尚未验收。原599 Windows取消worker后PID断言失败及595辅助PowerShell超时的根因仍开放，后续绿色结果不关闭原问题。历史r3三端已安装CLI各6项真实IPv4/IPv6回环端口与localhost DNS检查仅对应原快照。完整源码、跳过及证据见[验收台账](validation-status-20261015.md)。这些结果不关闭下列官方写事务、真实系统服务、外网/代理、更新恢复或发布签名门槛，也不把插件业务参数加入平台。
+
 核对日期：2026-10-13。依据当前工作区 `main.py`、各模块 CLI、Recipe 注册表及菜单服务调用链。这里的“已接入”表示代码入口存在，不表示真实安装、跨平台或生产安全验收通过。当前变更尚未提交，各批完整/相关回归结果见实施台账，跨平台与真实部署仍待验收。项目整体的安全、健康、性能及发布队列见 `project-health-roadmap.md`。
 
 ## 1. 总体结论和设计边界
 
+工作目录发现增量：`plugin inspect-workspaces --limit 256`（1..256）只读观察直接条目，最多扫描4096项，输出token与directory/unsafe以及unknown计数。不递归、不读取内容、不调用Docker，未知名称脱敏；不把观察结果当作归属或删除授权。失败/超限退出1，参数错误2，取消130。该入口用于暴露身份绑定前崩溃留下的目录，自动恢复缺口仍开放；具体语义及验收记录见[资源元数据恢复](plugin-resource-metadata-recovery.md)。
+
 最新插件生命周期补齐：`plugin authorize-service CALLER SERVICE --caller-fingerprint ... --provider-fingerprint ...` 与 `plugin revoke-service CALLER SERVICE` 管理精确RPC调用边；`plugin reconcile` 在整体预算内恢复非活动且具有所有权证明的Docker资源，输出recovered/active/pending/invalid，pending或invalid退出1。这些是平台通用生命周期参数，不是第三方业务参数。当前源码、新wheel及真实RPC/资源恢复证据见implementation-acceptance.md；不能据此关闭完整网络、真实OS取消和多租户部署门槛。
+
+补充恢复入口：`plugin retire-lock TOKEN` 按32位小写十六进制token退役无日志、非活动的锁元数据，不调用Docker、不接受任意路径；已有/损坏日志及活动锁保留。退出0为retired/absent，1为保留或未确认，2为输入错误，取消130。三端各48项及实际wheel安装命令已验收。新增 `plugin inspect-locks --limit 256`（1..256），只读发现 token 与日志/锁状态、计数未知条目，最多扫描4096项；无日志不表示无活动，退役必须重新复核。详见[孤立资源锁恢复](plugin-resource-metadata-recovery.md)，损坏日志修复仍开放。
 
 当前官方 CLI **尚未完善**。查询、监控、网络、官方管理及安装配置已接入部分能力；通用软件变更操作已统一输出并迁移编排，WireGuard 客户端管理已接入基础入口，完整诊断、驱动事务恢复及显式更新流程仍需完整验收。
 
@@ -85,7 +91,7 @@
 
 ## 5. 平台插件与更新命令（P1/P2）
 
-插件已有 list/show/install/update/remove/enable/disable/trust/revoke，安装支持 --branch/--as，授权要求 --fingerprint。prepare/fingerprint已迁移生命周期模块，统一结果/错误契约且不boot；prepare不授权，fingerprint校验只读。prepare要求--base-image的真实registry digest及--lock-file完整wheel哈希锁，--dependency只核对锁内版本；SDK四项根依赖不沿用平台完整requirements。执行时核对policy4/schema2、锁、来源digest和当前SDK摘要的镜像label绑定，旧运行时要求重建。真实Linux基础隔离通过；完整生命周期、多架构及漏洞审查仍待验收。
+插件已有 list/show/install/update/remove/enable/disable/trust/revoke，安装支持 --branch/--as，授权要求 --fingerprint。prepare/fingerprint已迁移生命周期模块，统一结果/错误契约且不boot；prepare不授权，fingerprint校验只读。prepare要求--base-image的真实registry digest及--lock-file完整wheel哈希锁，--dependency只核对锁内版本；SDK四项根依赖不沿用平台完整requirements。执行时核对policy7/schema2、锁、来源digest和当前SDK摘要的镜像label绑定，旧运行时要求重建。真实Linux基础隔离通过；完整生命周期、多架构及漏洞审查仍待验收。
 
 `plugin run` 的子进程退出码和业务 stdout 属于插件协议；不要强行用平台 JSON 包住插件任意输出。平台侧前置错误仍用平台 envelope。帮助与参数原样传递，验证插件与官方同名不劫持命令、缺 sandbox 不退回宿主执行。
 
@@ -165,7 +171,7 @@ Windows延迟应用现使用独立任务产物、摘要绑定和目标旁原子�
 
 最新Windows写入边界：四驱动命令文件已统一受管内容/名字/类型预检、原子发布及失败/取消补偿；Node/Go/Java不再在新shim内解析JSON，gofmt路由已修正。命令复核纳入用户registry/profile作用域，原生cmd参数/退出码与Unicode账户路径已有临时验证。本批完整2252通过/18跳过及wheel证据见实施台账；Python活动路由、junction与多PATH写入、快照/版本目录和断电的完整事务仍属第2项，不能视为九软件整体完成。GitLab两版本Linux门槛现有配置，尚待实际Runner；GitHub六组合需验证镜像及当前提交，不把本地通过充当远端发布门槛。
 
-1. **诊断期限和进程监督。** 先实现报告服务的共享预算，再接CLI的 --timeout；五种Recipe及专用入口必须一致支持。SQLite查询、监听枚举、状态读取和API不得绕开预算；前后检查无法中断阻塞调用，必须有实际可终止机制。验证预算跨阶段消耗、耗尽后不再启动下一步、晚到成功拒绝、取消及进程树回收。五种报告已接入共享预算：XUI状态/监听、RustDesk文件元数据受一次性worker监督；WG状态与服务、Tailscale查询采用进程树监督。通用software diagnose及专用入口已提供 --timeout（默认30秒，0.1..3600）。仍需真实Linux/原生打包、特殊文件系统及完整服务诊断验收；不承诺进程创建/回收的硬实时上限。
+1. **诊断期限和进程监督。** 先实现报告服务的共享预算，再接CLI的 --timeout；五种Recipe及专用入口必须一致支持。SQLite查询、监听枚举、状态读取和API不得绕开预算；前后检查无法中断阻塞调用，必须有实际可终止机制。验证预算跨阶段消耗、耗尽后不再启动下一步、晚到成功拒绝、取消及进程树回收。五种报告已接入共享预算：XUI状态/监听/SQLite路径解析及打开查询、RustDesk文件元数据受一次性worker监督；SQLite打开已用真实FIFO反例修复并完成三端相关回归及Linux已安装helper的超时/SIGINT补验，最终整仓/冻结仍须包含该增量；WG状态与服务、Tailscale查询采用进程树监督。通用software diagnose及专用入口已提供 --timeout（默认30秒，0.1..3600）。仍需真实Linux/原生打包、特殊文件系统及完整服务诊断验收；不承诺进程创建/回收的硬实时上限。
 2. **写操作事务和并发。** 按九种版本软件→WG→XUI→其他系统服务推进；存储、配置、链接、服务操作明确补偿顺序。失败注入验证旧状态可用，涉及系统路径的跨用户锁不能由home锁代替。
 3. **完善脚本契约。** 核对上表参数组合、所有help及stdout/stderr；prepare/fingerprint已统一，继续实际构建/隔离验收，插件参数原样传递。明确拒绝无效组合或文档化合理组合，不能静默忽略。
 4. **补显式更新入口。** 重用现有签名更新服务，先查询和下载，再应用/恢复；无效签名、降级、取消及恢复失败必须有验收证据。
@@ -231,6 +237,10 @@ Windows任务已增加schema_version=2的backup_id/transaction_id恢复引用；
 
 ## 15. 参数补齐决策与分批验收
 
+后续故障补验已将Linux受控拓扑扩为8项，增加两种地址族各一次真实超时和SIGINT取消；连同回环共10项。终态/退出码、已知工具子进程退出、命名空间清理、267安装字节及原始输出均已独立复核，详见验收台账及 `cache/linux-traceroute-netns-20261016-r3/audit.json`。仅关闭该拓扑的超时/取消缺口，公网、普通用户权限、其他工具版本与冻结产物继续开放。
+
+2026-10-16原生补验：当前能力批次实际安装wheel在Linux/WSL x64完成6项traceroute检查，包含IPv4/IPv6回环、隔离两跳到达和限制一跳未到达。均核对流最后唯一complete事件及退出码，未到达时即使底层工具退出0，CLI仍退出1。267安装文件与wheel核对一致，三个测试网络命名空间已清除；证据见验收台账及 `cache/linux-traceroute-{native,netns}-20261016-r1/audit.json`。下表“Linux原生待验收”已部分补齐，公网、不同版本、普通用户权限、取消/超时和最终原生产物仍开放，不将6项结果算作全部网络入口完成。
+
 本次重新核对monitor/cli.py、network/cli.py与core/update_cli.py：现有第9节清单继续适用。下表前两项已实施并通过本地参数组合回归；其余项目仍是目标契约，不表示已经实现。当前完整回归结果见实施台账。
 
 | 缺口 | 目标契约与实施方式 | 验收样例 |
@@ -238,7 +248,7 @@ Windows任务已增加schema_version=2的backup_id/transaction_id恢复引用；
 | DNS反查时family静默失效（已修复） | 保留数字IP自动反查；反查仅允许family=any，其他值退出2，说明family仅用于正向解析；先检查组合再启动resolver | IPv4/IPv6数字地址分别结合any/ipv4/ipv6和reverse；错误组合无解析调用，本地矩阵通过 |
 | processes指定pid时limit/sort静默失效（已修复） | pid查询仅返回该进程；显式指定limit或sort与pid组合退出2。用Click参数来源区分默认值与用户显式输入，不能只比较值 | pid单独成功；pid加显式limit=15或sort=cpu也拒绝；无pid时默认列表参数仍成功，本地矩阵通过 |
 | 监控interval与真实采样单位 | interval定义为两次采样之间的等待时间；记录采样时间和各字段单位；CPU百分比需要明确采样窗口，网络累计字节不得标成每秒速率 | once/count/watch组合、JSONL数量、时间与单位、有限采样结束、无限采样取消 |
-| traceroute流结束缺完整结果语义（本地已修复，原生范围继续验收） | 保留逐行输出；最后event=complete记录status=reached/not_reached/failed/timeout/cancelled。仅命令退出0且数字hop匹配固定目标才成功；DNS和命令共享timeout | 双平台40项相关回归各通过，Windows实际loopback到达通过；真实Linux/macOS命令、不同版本与权限仍待验收 |
+| traceroute流结束缺完整结果语义（本地已修复，原生范围继续验收） | 保留逐行输出；最后event=complete记录status=reached/not_reached/failed/timeout/cancelled。仅命令退出0且数字hop匹配固定目标才成功；DNS和命令共享timeout | 双平台40项相关回归各通过，Windows实际loopback到达通过；macOS原生IPv4/IPv6回环CLI均退出0且complete/reached、固定目标一致，证据见验收台账。本轮WSL缺少traceroute；Linux原生、非回环、不同版本与权限仍待验收 |
 | install/uninstall/upgrade等长写操作无总期限 | 先实现事务监督和取消恢复，再决定各操作timeout默认值；安装编译、下载与服务重建不能强行共用一个未经实测的默认值 | 下载中断、编译卡住、服务重建失败、状态写入失败；旧版本/数据恢复后才能推出参数 |
 | update apply缺timeout | 前置条件是helper/事务的独立监督和重启恢复；期限耗尽返回实际事务状态，不能杀掉helper后直接声称回滚 | 调度、替换、健康等待各阶段超时；重启后的目标摘要与事务日志一致 |
 | 服务管理命令的阻塞预算 | 审查status/traffic/logs/down/restart等真实调用；有阻塞的命令复用Deadline与进程监督后提供timeout；follow需要取消与单次读取预算，不用总期限破坏持续日志用途 | 守护进程无响应、提权等待、API卡住、日志空闲取消；没有子进程残留 |
@@ -281,15 +291,17 @@ Windows任务已增加schema_version=2的backup_id/transaction_id恢复引用；
 
 | 现有入口 | 实现证据与影响 | 最小改进与验收 |
 |---|---|---|
-| cpu/dashboard | 已改为同一对每核时间计数，只等待一次并按CPU时间增量加权总量；CPU schema2记录UTC起止、实际窗口和单位，异常计数nullable且CLI非零 | Windows/Linux真实同计数psutil对照及相关回归见台账；继续macOS、声明Python版本、实际热插拔/回退和阻塞元数据查询监督，不承诺精确周期 |
+| cpu/dashboard | 已改为同一对每核时间计数，只等待一次并按CPU时间增量加权总量；CPU schema2记录UTC起止、实际窗口和单位，异常计数nullable且CLI非零 | Windows/Linux及macOS Intel真实同计数psutil对照已有分批证据，见台账及性能记录；继续声明Python版本、实际热插拔/回退和阻塞元数据查询监督，不承诺精确周期 |
 | processes --pid | 已使用会话基线及创建时间复核；首样本null，同身份增量计算，消失/权限/僵尸有不同原因并非零退出；PID范围1..4294967295 | Windows/Linux真实自身负载及安装CLI证据见台账；继续其他平台、真实权限/PID复用及同步调用监督，创建时间仅用于观察身份，不是授权凭据 |
-| processes --limit/--sort | 与单PID共享采集器，CPU首次排序先初始化并重新采样，内存排序无等待；库存/基线16384上限、清理消失PID；完整排序仍O(P log P)/O(P) | 在代表性进程规模下比较稳定top-k方案及初始化/身份复核成本，保留并列/未知值顺序；k接近P时不盲目替换，记录p50/p95/RSS；权限不可见项不能冒充完整排名 |
+| processes --limit/--sort | 与单PID共享采集器，CPU首次排序先初始化并重新采样，内存排序无等待；库存/基线16384上限、清理消失PID；已按k*8<P使用稳定堆选择O(P log k)，否则完整排序O(P log P)，总库存存储O(P) | 策略边界与并列顺序已有测试；继续代表性规模下的采样/身份复核及端到端p50/p95/RSS，不能从合成选择阶段推算整命令提速；权限不可见项不能冒充完整排名 |
 | network --interface | 已移除全局_net_prev；CLI调用/菜单页面独立会话，原始计数读取，首样本/回退/无效窗口返回null及原因，消失接口清理；网络rate_schema_version=2 | 回归及实际安装采样证据见台账；仍需其他原生平台及同名接口身份策略，不能以当前计数判断未观察到的替换；CPU窗口另行完善 |
 | disk --mount | 无权限分区在get_disks中跳过，CLI最终合并报告为不可用或不可访问 | 保持默认查询容错；显式mount查询返回可区分的不存在/权限错误，限定输出字段，不为了诊断读取用户文件 |
 
 采样元数据在既有CLI输出契约内版本化，保持菜单对原始dataclass的使用；先核对现有脚本消费者与JSONL测试，再决定兼容方式。每条验收覆盖首样本、重复样本、资源消失/重建、权限、计数回退、有限采样以及取消。原生证据和性能证据独立记录，不能用增加字段代替正确采样。
 
 ## 18. MySQL安装参数的依赖前置条件与下一批交付
+
+XUI官方写操作增量（2026-10-16）：菜单/脚本现在统一传播服务重启、启用和定时器安装异常，三项systemctl非零状态不再被忽略；四个失败阶段不会写installed或导出成功凭据。三端各58项回归及wheel库存通过，原代码反例和源码摘要见验收台账。该修复关闭失败被报成功的局部缺口，不等于安装事务回滚、真实服务验收或整次timeout完成；API pending入站的既有显式降级行为另行保留。
 
 `software install mysql --version VERSION`不需要增加允许任意包名或跳过依赖检查的参数。Linux驱动现从mysql、mysqld、mysqladmin、mysqldump及安装目录内私有库的有界ELF元数据读取实际依赖，不执行下载的程序或ldd。精确匹配同架构soname，拒绝用libaio.so.10代替libaio.so.1；依赖检查、包管理及复核共享180秒内部预算，包管理失败、超额输出和超时显式失败，在版本发布前终止。180秒是依赖阶段预算，不是整次安装timeout。
 
@@ -300,7 +312,7 @@ Windows任务已增加schema_version=2的backup_id/transaction_id恢复引用；
 | 顺序 | 命令范围 | 参数决策 | 交付和结束条件 |
 |---|---|---|---|
 | 1 / P0 | software install/upgrade/uninstall/switch | 沿用version/all/config/token-file；暂不添加整次timeout | 补系统资源跨用户锁、服务/PATH/伴随命令补偿、实际发行版依赖和来源信任；失败保留用户数据，取消可恢复 |
-| 2 / P1 | monitor全部采样 | 沿用once/watch/count/interval及各自过滤参数 | 网络基线/回退、CPU共同窗口和进程创建时间基线/失败原因已实现；继续其他原生平台、真实权限/PID复用、同步查询整体监督；保留菜单兼容，实测top-k后才替换排序 |
+| 2 / P1 | monitor全部采样 | 沿用once/watch/count/interval及各自过滤参数 | 网络基线/回退、CPU共同窗口、进程创建时间基线/失败原因及有比例门槛的top-k已实现；继续其他原生平台、真实权限/PID复用、同步查询整体监督和端到端性能实测，保留菜单兼容 |
 | 3 / P1 | network traceroute及各网络操作 | 不增加重复参数；复核现有timeout/total-timeout | 明确终态与退出码，验证代理/TLS、真实打包DNS和取消；部分结果不能冒充完整成功 |
 | 4 / P0 | WG/XUI/Tailscale/RustDesk/Oh My Zsh | 有阻塞的有限操作先监督再决定timeout；follow保持持续模式 | 真实服务安装/管理、认证API、配置恢复与权限矩阵；五种diagnose已有timeout，继续深度诊断 |
 | 5 / P0 | update apply及恢复 | apply timeout仍待事务监督；不开放force/cleanup占位 | 未索引/旧任务、marker、退役及运行中冻结程序恢复；scheduled和实际完成区分 |
@@ -308,3 +320,12 @@ Windows任务已增加schema_version=2的backup_id/transaction_id恢复引用；
 | 7 / 发布门槛 | 第3、4、9节全部官方库存 | help、参数、能力声明由同一实现核对 | 声明平台及Python版本CI、干净wheel/原生包、生产签名；逐命令正常/失败/权限/取消/恢复证据 |
 
 每批独立记录“参数入口存在／业务验证／原生平台验证／当前源码发布验证”。当前这些批次仍有未满足项；第3节18个Recipe和第9节逐功能库存全部保留，不以少量新参数或一个平台通过关闭整个计划。
+
+2026-10-15 补充生命周期：`plugin inspect-state NAME [--caller CALLER]`及`plugin repair-state NAME --record-sha256 HASH [--caller CALLER]`已实现。省略caller选择self，显式platform仍选择服务分区。只修复完整绑定头且目录归属可确认的损坏尾，保留原始证据，损坏头/未知归属仍开放。三端相关回归、安装CLI、父进程强杀、Linux真实容量错误和普通用户权限拒绝已有分批证据，范围与限制见plugin-state-repair.md；不关闭第三类其余门槛或官方CLI整体完成计划。
+
+
+## 本机网络 CLI 实测补充（2026-10-15）
+
+当前网络五个入口/实现文件摘要与候选源码核对一致，三端各六项真实源码 CLI 检查通过：IPv4/IPv6 分别使用独占临时端口，监听端口为 open、绑定但不监听端口为 closed；并发 1/50、重复端口去重、排序、TCP 字段及非负耗时正确；localhost 的 ipv4/ipv6 DNS 均返回对应回环地址。每次 stdout 为单一 JSON envelope、退出 0，无 stdin，不创建平台数据。仅本机回环，不扫描外部主机。
+
+证据为 F 盘 `cache/network-loopback-windows-20261015-r2` 和 `cache/network-loopback-posix-20261015-r1/{linux,macos,audit.json}`。Windows 首轮在首项被 60 秒外部期限终止，原失败目录保留；独立 faulthandler 诊断未复现，原期限重跑六项通过，不能据此声称超时根因已解决。该结果不关闭外网/DNS 故障、扫描总期限/取消、真实权限或最终冻结产物验收。

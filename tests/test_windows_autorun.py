@@ -15,8 +15,12 @@ def test_driver_preserves_administrator_autorun(tmp_path,monkeypatch,recipe,oper
     module=importlib.import_module(f'software.recipes.{recipe}.windows')
     monkeypatch.setattr(Path,'home',lambda:tmp_path)
     monkeypatch.setenv('PATH', 'C:\\Windows')
+    # The simulated Windows API needs a Windows absolute path on every host.
+    # Python 3.13+ correctly rejects a single POSIX leading slash in ntpath.
+    shims = r'C:\OpsKit\shims'
     values={'AutoRun':('administrator-init.cmd',1)}
-    path_values={'HKCU':('C:\\Windows',2),'HKLM':('C:\\Windows',2)}
+    prior_path = shims + ';C:\\Windows' if operation == '_remove_path' else 'C:\\Windows'
+    path_values={'HKCU':(prior_path,2),'HKLM':('C:\\Windows',2)}
     def query(key,name):
         if name=='PATH':return path_values[key[0]]
         if name not in values:raise FileNotFoundError(name)
@@ -33,8 +37,10 @@ def test_driver_preserves_administrator_autorun(tmp_path,monkeypatch,recipe,oper
         monkeypatch.setattr(ctypes.windll,'user32',notification)
     else:
         monkeypatch.setattr(ctypes,'windll',SimpleNamespace(user32=notification),raising=False)
-    getattr(module.WindowsDriver(),operation)(str(tmp_path/'shims'))
+    getattr(module.WindowsDriver(),operation)(shims)
     assert values=={'AutoRun':('administrator-init.cmd',1)}
+    assert (shims in path_values['HKCU'][0].split(';')) == (operation == '_inject_path')
+    assert path_values['HKLM'] == ('C:\\Windows',2)
     assert not list((tmp_path/'.opskit').glob('cmd_autorun*.bat'))
 
 

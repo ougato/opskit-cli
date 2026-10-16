@@ -66,6 +66,13 @@ class ResourceLock:
                         raise self.busy_error_type(self.label + " is busy; retry later") from None
                 self._active.identity = identity
                 try:
+                    current = path.lstat()
+                    opened = os.fstat(handle.fileno())
+                    if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or opened.st_nlink != 1
+                            or getattr(current, "st_file_attributes", 0) & 0x400
+                            or (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+                            or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+                        raise self.error_type(self.label + " lock identity changed during acquisition")
                     yield
                 finally:
                     self._active.identity = None

@@ -1,4 +1,5 @@
 """Embed the operator-provided raw Ed25519 public key in a release build."""
+import argparse
 import base64
 import json
 import os
@@ -6,10 +7,18 @@ import re
 from pathlib import Path
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
+    root = parser.parse_args().root.resolve(strict=True)
+    for name in ("core/constants.py", "install.sh", "install.ps1"):
+        target = root / name
+        if (target.resolve(strict=True) != target or not target.is_file()
+                or target.stat().st_nlink != 1):
+            raise ValueError(f"release target must be an unlinked regular file: {target}")
     value = os.environ["OPSKIT_RELEASE_PUBLIC_KEY"]
     if len(base64.b64decode(value, validate=True)) != 32:
         raise ValueError("release public key must be 32 bytes encoded as base64")
-    path = Path(__file__).resolve().parent.parent / "core/constants.py"
+    path = root / "core/constants.py"
     text, count = re.subn(r'^UPDATE_SIGNING_PUBLIC_KEY = .*$',
                           'UPDATE_SIGNING_PUBLIC_KEY = ' + json.dumps(value),
                           path.read_text(encoding="utf-8"), flags=re.MULTILINE)

@@ -14,7 +14,7 @@ from core.i18n import t
 from core.privilege import run_as_root, write_root_file
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
-from core.theme import get_icon, print_action_title, print_error, print_success, print_warning
+from core.theme import get_icon, print_action_title, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
     APT_ASSUME_YES_ARG,
@@ -65,6 +65,7 @@ from xui.constants import (
     WSL_SYSTEMD_LINE_PATTERN,
     WSL_EXE_COMMAND,
     WSL_SHUTDOWN_ARG,
+    SERVICE_RESTART_TIMEOUT,
 )
 from xui.links import build_vless_link
 from xui.templates import to_xui_api_payload, vless_reality_tcp_inbound
@@ -326,11 +327,7 @@ def install_server(options: dict | None = None) -> dict | None:
             base_path=panel_base_path,
         ):
             raise InstallError(t("xui.error.panel_config_failed"))
-        try:
-            restart_service()
-        except Exception:
-            if options is not None:
-                raise
+        restart_service()
         effective = get_panel_settings()
         if isinstance(effective.get("port"), int):
             panel_port = int(effective["port"])
@@ -369,12 +366,8 @@ def install_server(options: dict | None = None) -> dict | None:
             raise InstallError("XUI inbound configuration failed")
 
         sp.step(t("xui.step.start_service"))
-        try:
-            enable_service()
-            restart_service()
-        except Exception:
-            if options is not None:
-                raise
+        enable_service()
+        restart_service()
         install_traffic_timer()
 
         sp.step(t("xui.step.verify"))
@@ -424,6 +417,9 @@ def install_server(options: dict | None = None) -> dict | None:
 def uninstall_server() -> None:
     from core.progress import MultiStepProgress
 
+    if not systemd_available():
+        raise UninstallError("XUI uninstall requires systemd service management; files retained")
+
     print_action_title(["OpsKit", t("menu.software"), t("software.xui"), t("software.uninstall")])
     descs = [
         t("software.step.stop_service"),
@@ -438,7 +434,8 @@ def uninstall_server() -> None:
             sp.step(descs[1])
             uninstall_traffic_timer()
             remove_xui_artifacts()
-            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE)], check=False, capture_output=True)
+            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE)], check=True, capture_output=True,
+                        timeout=SERVICE_RESTART_TIMEOUT)
 
             sp.step(descs[2])
             from core.sysconfig import SysConfigManager

@@ -11,6 +11,9 @@ import time
 from dataclasses import dataclass
 from typing import Iterator
 
+COMMON_TCP_PORTS = (21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+                    3306, 5432, 6379, 8080, 8443, 27017)
+
 
 @dataclass
 class PingResult:

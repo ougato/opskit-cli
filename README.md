@@ -61,6 +61,8 @@ opskit.exe
 
 ### 方式二：直接运行（开发模式）
 
+macOS 预编译资产目前面向 Apple Silicon。Intel macOS 的开发安装仍有依赖验收缺口：锁定的 cryptography 50.0.2 没有官方 x86_64 wheel，需另行验证安全的源码构建工具链；不能用有已知漏洞的旧版 wheel 降级替代。现有 Intel 机器的源码测试通过不代表全新安装通过，详见[验收台账](docs/validation-status-20261015.md)。
+
 ```bash
 git clone https://github.com/ougato/opskit-cli.git
 cd opskit-cli
@@ -332,7 +334,7 @@ opskit monitor network                # 查看网络接口实时流量
 opskit monitor processes              # 查看进程列表（Top 15）
 ```
 
-> `monitor disk` 是一次性输出，适合脚本化调用；`dashboard` / `cpu` / `memory` / `network` / `processes` 是实时 TUI，不适合作为一次性非交互命令。
+> 六种监控命令均支持 `--once`、`--watch`、`--count` 和 `--interval`。脚本可使用 `opskit --output json monitor dashboard --once`；非交互默认采样一次。交互终端中，除 `disk` 外，无采样选项和过滤条件时进入实时 TUI。磁盘采集在受管进程中运行，默认单次期限为 10 秒，超时明确报错。
 
 ### 🌐 网络工具 `opskit network <command> [HOST]`
 
@@ -456,6 +458,7 @@ psutil >= 5.9          # 系统监控
 httpx >= 0.27          # HTTP 客户端（更新 / 测速）
 platformdirs >= 4.0    # 跨平台数据目录（XDG / Win / macOS 规范）
 sentry-sdk >= 2.0,<3   # 错误上报（遥测，可关闭）
+cryptography >= 50.0.2 # 发布签名校验；安装使用哈希锁
 ```
 
 ---
@@ -507,12 +510,23 @@ make clean  # 清理
 
 **构建依赖：**
 
+正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。正式发布还需配置自己的签名公钥，流程见 [发布验收](docs/release-pipeline-security.md)。
+
+Windows x64 还需 MSVC 14.3 或更新版本，以及预先核验的 Dependency Walker。编译器和辅助工具缺失时构建会失败，不自动下载。辅助工具使用独立的新缓存目录：
+
+```powershell
+$env:NUITKA_CACHE_DIR = Join-Path (Get-Location) 'build/nuitka-cache'
+$env:NUITKA_CACHE_DIR_DOWNLOADS = Join-Path $env:NUITKA_CACHE_DIR 'downloads'
+& .\build\release-environment\Scripts\python.exe -I scripts/install_windows_build_tools.py $env:NUITKA_CACHE_DIR
+& .\build\release-environment\Scripts\python.exe build.py build --backend nuitka --jobs 2
+```
+
+可选开发后端和压缩工具：
+
 ```bash
-pip install nuitka zstandard   # 首选（C 编译，防逆向强）
-# 或
 pip install pyinstaller        # 备选（快速打包）
 
-# UPX 压缩（推荐，减小体积）
+# UPX 压缩（可选，需另外验收产物）
 # Linux:   sudo apt install upx-ucl
 # macOS:   brew install upx
 # Windows: choco install upx

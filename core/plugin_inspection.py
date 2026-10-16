@@ -1,5 +1,6 @@
 """Owned host reader for fresh content and authorization checks, never a permit cache."""
 from pathlib import Path
+from pathlib import PureWindowsPath
 import json
 import math
 import multiprocessing
@@ -7,15 +8,112 @@ import re
 import threading
 
 REQUEST_LIMIT = 256 * 1024
+MANIFEST_RESPONSE_LIMIT = 8 * 1024**2
 PRIVATE_TARGET_COUNT = 256
 PRIVATE_TARGET_LENGTH = 512
 PRIVATE_TARGET_BYTES = 16384
 NETWORK_AUTHORIZATION_COUNT = 256
 NETWORK_AUTHORIZATION_BYTES = 64 * 1024
+INVENTORY_ERRORS = {
+    "entries": "plugin inventory entry limit exceeded",
+    "manifests": "plugin inventory manifest limit exceeded",
+    "linked": "linked plugin inventory root forbidden",
+    "scan": "plugin inventory scan failed",
+}
 
 
 class ContentIntegrityError(RuntimeError):
     """A supplied checksum manifest does not match the inspected content."""
+
+
+class StatePathError(ValueError):
+    """A host file argument does not belong to the selected state partition."""
+
+
+def _valid_resource_record_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "path"}
+            and request["operation"] == "resource_record" and isinstance(request["path"], str)
+            and 0 < len(request["path"]) <= 65536 and "\0" not in request["path"])
+
+
+def _resource_record_result(request):
+    from core.plugin_resources import _read
+    try:
+        return {"ok": True, "record": _read(Path(request["path"]))}
+    except FileNotFoundError:
+        return {"ok": False, "reason": "missing"}
+    except OSError:
+        return {"ok": False, "reason": "filesystem"}
+    except (ValueError, RuntimeError):
+        return {"ok": False, "reason": "invalid"}
+
+
+def _resource_record_value(result, path):
+    from core.plugin_resources import _record_value
+    if result == {"ok": False, "reason": "missing"}:
+        return "missing", None
+    if result == {"ok": False, "reason": "filesystem"}:
+        return "filesystem", None
+    if result == {"ok": False, "reason": "invalid"}:
+        return "invalid", None
+    if (not isinstance(result, dict) or set(result) != {"ok", "record"}
+            or result["ok"] is not True):
+        raise RuntimeError("invalid resource journal inspection result")
+    return "ok", _record_value(Path(path), result["record"])
+
+
+def _valid_mount_path_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "path"}
+            and request["operation"] == "mount_path" and isinstance(request["path"], str)
+            and 0 < len(request["path"]) <= 65536 and "\0" not in request["path"])
+
+
+def _mount_path_result(request):
+    try:
+        return {"ok": True, "path": str(Path(request["path"]).resolve())}
+    except (OSError, ValueError, RuntimeError):
+        return {"ok": False}
+
+
+def _mount_path_value(result):
+    if (not isinstance(result, dict) or set(result) != {"ok", "path"} or result["ok"] is not True
+            or not isinstance(result["path"], str) or not 0 < len(result["path"]) <= 65536
+            or "\0" in result["path"] or not Path(result["path"]).is_absolute()
+            or ".." in Path(result["path"]).parts):
+        raise RuntimeError("invalid plugin mount path result")
+    return Path(result["path"])
+
+
+def _valid_state_path_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "root", "path"}
+            and request["operation"] == "state_path"
+            and all(isinstance(request[key], str) and 0 < len(request[key]) <= 65536
+                    and "\0" not in request[key] for key in ("root", "path")))
+
+
+def _state_path_result(request):
+    try:
+        root = Path(request["root"]).resolve()
+        path = Path(request["path"]).resolve()
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            return {"ok": False, "reason": "outside"}
+        return {"ok": True, "path": "/data/" + relative.as_posix()}
+    except (OSError, ValueError, RuntimeError):
+        return {"ok": False}
+
+
+def _state_path_value(result):
+    from pathlib import PurePosixPath
+    if result == {"ok": False, "reason": "outside"}:
+        raise StatePathError("file path is outside the authorized plugin state")
+    if (not isinstance(result, dict) or set(result) != {"ok", "path"} or result["ok"] is not True
+            or not isinstance(result["path"], str) or not 0 < len(result["path"]) <= 65536
+            or not result["path"].startswith("/data/") or "\0" in result["path"]
+            or ".." in PurePosixPath(result["path"]).parts):
+        raise RuntimeError("invalid plugin state path result")
+    return result["path"]
 
 
 def _inspect_result(source, verify):
@@ -118,6 +216,32 @@ def _authorization_failure(result):
             or result["failure"] not in (None, "settings", "identity", "service", "network")):
         raise RuntimeError("plugin authorization inspection failed")
     return result["failure"]
+
+
+def _valid_state_quota_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "root"}
+            and request["operation"] == "state_quota" and isinstance(request["root"], str)
+            and 0 < len(request["root"]) <= 65536 and Path(request["root"]).is_absolute())
+
+
+def _state_quota_result(request):
+    from core.plugin_state import reserve_staging
+    try:
+        count, size = reserve_staging(Path(request["root"]))
+        return {"ok": True, "count": count, "size": size}
+    except (OSError, ValueError):
+        return {"ok": False}
+
+
+def _state_quota_value(result):
+    from core.plugin_state import MAX_STAGING_DIRECTORIES, MAX_STAGING_BYTES, STAGING_RESERVATION_BYTES
+    if (not isinstance(result, dict) or set(result) != {"ok", "count", "size"}
+            or result["ok"] is not True or type(result["count"]) is not int
+            or not 0 <= result["count"] < MAX_STAGING_DIRECTORIES
+            or type(result["size"]) is not int
+            or not 0 <= result["size"] <= MAX_STAGING_BYTES - STAGING_RESERVATION_BYTES):
+        raise RuntimeError("plugin state staging quota inspection failed")
+    return result["count"], result["size"]
 
 
 def _valid_timeout_request(request):
@@ -238,6 +362,98 @@ def _catalog_value(result, *, gateway=False):
     return record
 
 
+def _valid_manifest_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "root"}
+            and request["operation"] == "manifest" and isinstance(request["root"], str)
+            and 0 < len(request["root"]) <= 65536)
+
+
+def _manifest_record(manifest):
+    from dataclasses import asdict
+    record = asdict(manifest)
+    record.pop("root")
+    return record
+
+
+def _send_record(connection, view, requested, record):
+    from network.worker import send
+    try:
+        encoded = json.dumps(record, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if not 0 < len(encoded) <= MANIFEST_RESPONSE_LIMIT:
+            raise ValueError("manifest response exceeds limit")
+    except (OSError, ValueError, TypeError, RuntimeError):
+        send(connection, {"ok": False})
+        return False
+    send(connection, {"ok": True, "size": len(encoded)})
+    for offset in range(0, len(encoded), REQUEST_LIMIT):
+        chunk = encoded[offset:offset + REQUEST_LIMIT]
+        view[:len(chunk)] = chunk
+        send(connection, {"offset": offset, "size": len(chunk)})
+        if offset + len(chunk) < len(encoded):
+            requested.wait()
+            requested.clear()
+        # No final acknowledgement: it could consume the next request's event.
+    return True
+
+
+def _send_manifest(connection, view, requested, root):
+    from core.plugin import load_manifest
+    from network.worker import send
+    try:
+        manifest = load_manifest(Path(root))
+        if manifest is None:
+            raise ValueError("invalid plugin manifest")
+        record = _manifest_record(manifest)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        send(connection, {"ok": False})
+        return
+    _send_record(connection, view, requested, record)
+
+
+def _valid_inventory_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "root", "select", "value"}
+            and request["operation"] == "inventory" and isinstance(request["root"], str)
+            and 0 < len(request["root"]) <= 65536 and isinstance(request["select"], str)
+            and request["select"] in ("all", "name", "service") and isinstance(request["value"], str)
+            and (request["value"] == "" if request["select"] == "all"
+                 else 0 < len(request["value"]) <= 65536 and re.fullmatch(r"[a-z][a-z0-9_]*", request["value"]) is not None))
+
+
+def _send_inventory(connection, view, requested, request):
+    from core.plugin import _list_manifests
+    from network.worker import send
+    try:
+        manifests = _list_manifests(Path(request["root"]), select=request["select"], value=request["value"])
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        reason = next((key for key, message in INVENTORY_ERRORS.items() if str(exc) == message), "scan")
+        send(connection, {"ok": False, "reason": reason})
+        return
+    send(connection, {"ok": True, "count": len(manifests)})
+    for index, manifest in enumerate(manifests):
+        if not _send_record(connection, view, requested,
+                            {"directory": manifest.root.name, "manifest": _manifest_record(manifest)}):
+            return
+        if index + 1 < len(manifests):
+            requested.wait()
+            requested.clear()
+
+
+def _manifest_value(record, root):
+    from dataclasses import asdict, fields
+    from core.plugin import PluginManifest, _parse_manifest
+    if not isinstance(record, dict) or set(record) != {f.name for f in fields(PluginManifest)} - {"root"}:
+        raise RuntimeError("invalid plugin manifest inspection result")
+    manifest = _parse_manifest(record, Path(root))
+    if manifest is None:
+        raise RuntimeError("invalid plugin manifest inspection result")
+    normalized = asdict(manifest)
+    normalized.pop("root")
+    # Compare JSON as well: bool and integer must not compare as equal.
+    if json.dumps(normalized, sort_keys=True, allow_nan=False) != json.dumps(record, sort_keys=True, allow_nan=False):
+        raise RuntimeError("invalid plugin manifest inspection result")
+    return manifest
+
+
 def _inspection_session(connection, buffer, length, requested):
     """Fixed memory mailbox: submitting work cannot block on a pipe writer."""
     from network.worker import send
@@ -252,6 +468,24 @@ def _inspection_session(connection, buffer, length, requested):
                 continue
             try:
                 request = json.loads(bytes(view[:size]))
+                if _valid_resource_record_request(request):
+                    send(connection, _resource_record_result(request))
+                    continue
+                if _valid_mount_path_request(request):
+                    send(connection, _mount_path_result(request))
+                    continue
+                if _valid_state_path_request(request):
+                    send(connection, _state_path_result(request))
+                    continue
+                if _valid_state_quota_request(request):
+                    send(connection, _state_quota_result(request))
+                    continue
+                if _valid_inventory_request(request):
+                    _send_inventory(connection, view, requested, request)
+                    continue
+                if _valid_manifest_request(request):
+                    _send_manifest(connection, view, requested, request["root"])
+                    continue
                 if _valid_catalog_request(request):
                     send(connection, _catalog_result(request))
                     continue
@@ -320,6 +554,37 @@ class ContentInspector:
             raise ValueError("invalid plugin authorization inspection request")
         return self._exchange(request, timeout, _authorization_failure)
 
+    def state_quota(self, root, *, timeout):
+        request = {"operation": "state_quota", "root": str(root)}
+        if not _valid_state_quota_request(request):
+            raise ValueError("invalid state quota inspection request")
+        return self._exchange(request, timeout, _state_quota_value)
+
+    def resource_record(self, path, *, timeout):
+        request = {"operation": "resource_record", "path": str(path)}
+        if not _valid_resource_record_request(request):
+            raise ValueError("invalid resource journal inspection request")
+        status, record = self._exchange(request, timeout, lambda result: _resource_record_value(result, path))
+        if status == "missing":
+            raise FileNotFoundError("resource journal no longer exists")
+        if status == "filesystem":
+            raise OSError("resource journal inspection failed")
+        if status == "invalid":
+            raise ValueError("invalid resource journal record")
+        return record
+
+    def mount_path(self, path, *, timeout):
+        request = {"operation": "mount_path", "path": str(path)}
+        if not _valid_mount_path_request(request):
+            raise ValueError("invalid mount path inspection request")
+        return self._exchange(request, timeout, _mount_path_value)
+
+    def state_path(self, root, path, *, timeout):
+        request = {"operation": "state_path", "root": str(root), "path": str(path)}
+        if not _valid_state_path_request(request):
+            raise ValueError("invalid state path inspection request")
+        return self._exchange(request, timeout, _state_path_value)
+
     def execution_timeout(self, config_path, *, timeout):
         request = {"operation": "timeout", "config": str(config_path)}
         if not _valid_timeout_request(request):
@@ -340,7 +605,71 @@ class ContentInspector:
             raise ValueError("invalid runtime catalog inspection request")
         return self._exchange(request, timeout, lambda result: _catalog_value(result, gateway=gateway))
 
-    def _exchange(self, request, timeout, decode):
+    def manifest(self, root, *, timeout):
+        request = {"operation": "manifest", "root": str(root)}
+        if not _valid_manifest_request(request):
+            raise ValueError("invalid plugin manifest inspection request")
+        return self._exchange(request, timeout, lambda record: _manifest_value(record, root), chunks=True)
+
+    def inventory(self, root, *, timeout, select="all", value=""):
+        request = {"operation": "inventory", "root": str(root), "select": select, "value": value}
+        if not _valid_inventory_request(request):
+            raise ValueError("invalid plugin inventory inspection request")
+        return self._exchange(request, timeout, lambda records: records, inventory=request)
+
+    def _receive_inventory(self, result, deadline, request):
+        from core.plugin import MAX_MANIFESTS, PluginInventoryError
+        from network import worker
+        if (isinstance(result, dict) and set(result) == {"ok", "reason"} and result["ok"] is False
+                and isinstance(result["reason"], str) and result["reason"] in INVENTORY_ERRORS):
+            raise PluginInventoryError(INVENTORY_ERRORS[result["reason"]])
+        if (not isinstance(result, dict) or set(result) != {"ok", "count"} or result["ok"] is not True
+                or type(result["count"]) is not int or not 0 <= result["count"] <= MAX_MANIFESTS):
+            raise RuntimeError("invalid plugin inventory inspection result")
+        manifests, directories = [], set()
+        for index in range(result["count"]):
+            header = worker.wait_result(self._receive, deadline=deadline, label="plugin inventory inspection")
+            record = self._receive_manifest(header, deadline)
+            if not isinstance(record, dict) or set(record) != {"directory", "manifest"}:
+                raise RuntimeError("invalid plugin inventory inspection item")
+            directory = record["directory"]
+            if (not isinstance(directory, str) or not directory or directory.startswith((".", "_"))
+                    or any(char in directory for char in ("/", "\\", "\0"))
+                    or PureWindowsPath(directory).drive or directory in directories):
+                raise RuntimeError("invalid plugin inventory directory identity")
+            directories.add(directory)
+            manifest = _manifest_value(record["manifest"], Path(request["root"]) / directory)
+            if (request["select"] == "name" and manifest.name != request["value"]
+                    or request["select"] == "service" and request["value"] not in manifest.provides):
+                raise RuntimeError("invalid plugin inventory selection")
+            manifests.append(manifest)
+            if index + 1 < result["count"]:
+                self._requested.set()
+        return manifests
+
+    def _receive_manifest(self, result, deadline):
+        from network import worker
+        if (not isinstance(result, dict) or set(result) != {"ok", "size"} or result["ok"] is not True
+                or type(result["size"]) is not int or not 0 < result["size"] <= MANIFEST_RESPONSE_LIMIT):
+            raise RuntimeError("plugin manifest inspection failed")
+        content = bytearray()
+        while len(content) < result["size"]:
+            part = worker.wait_result(self._receive, deadline=deadline, label="plugin manifest inspection")
+            expected_size = min(REQUEST_LIMIT, result["size"] - len(content))
+            if (not isinstance(part, dict) or set(part) != {"offset", "size"}
+                    or type(part["offset"]) is not int or part["offset"] != len(content)
+                    or type(part["size"]) is not int or part["size"] != expected_size):
+                raise RuntimeError("invalid plugin manifest inspection chunk")
+            view = memoryview(self._buffer).cast("B")
+            try:
+                content.extend(view[:expected_size])
+            finally:
+                view.release()
+            if len(content) < result["size"]:
+                self._requested.set()
+        return json.loads(content)
+
+    def _exchange(self, request, timeout, decode, *, chunks=False, inventory=None):
         from network import worker
         if self._closed or self._busy or threading.get_ident() != self._thread:
             raise RuntimeError("plugin content inspector is closed or belongs to another thread")
@@ -363,7 +692,14 @@ class ContentInspector:
             self._length.value = len(encoded)
             self._requested.set()
             result = worker.wait_result(self._receive, deadline=deadline, label="plugin content inspection")
-            return decode(result)
+            if inventory is not None:
+                result = self._receive_inventory(result, deadline, inventory)
+            elif chunks:
+                result = self._receive_manifest(result, deadline)
+            value = decode(result)
+            if worker.time.monotonic() >= deadline:
+                raise TimeoutError("plugin content inspection deadline exceeded")
+            return value
         except BaseException:
             self.close()
             raise

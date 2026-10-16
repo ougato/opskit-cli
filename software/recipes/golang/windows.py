@@ -12,7 +12,6 @@ from software.base import InstallError
 from core.i18n import t
 from .driver import PlatformDriver
 from .constants import (
-    GOLANG_INSTALL_DIR_WINDOWS,
     WIN_GO_PS_MARKER,
     WIN_GO_PS_END,
     WIN_GO_CMD_MARKER,

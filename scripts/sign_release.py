@@ -31,8 +31,10 @@ if __name__ == "__main__":
     if not isinstance(key, Ed25519PrivateKey):
         raise ValueError("release key must be Ed25519")
     expected_public = os.environ.get("OPSKIT_RELEASE_PUBLIC_KEY", "")
+    if not expected_public:
+        raise ValueError("pinned release public key is required")
     actual_public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode("ascii")
-    if expected_public and actual_public != expected_public:
+    if actual_public != expected_public:
         raise ValueError("signing key does not match the pinned release public key")
     for asset in args.assets:
         sign(asset, args.build, key)

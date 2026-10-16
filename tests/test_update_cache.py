@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from worker_test_markers import process_birth
 
 from core import updater, update_cache
 
@@ -183,6 +184,7 @@ from multiprocessing import get_context
 import psutil
 sys.path.insert(0, sys.argv[3])
 from test_update_download import slow_pipeline
+from worker_test_markers import process_birth
 context = get_context("spawn")
 receive, transmit = context.Pipe(duplex=False)
 process = context.Process(target=slow_pipeline, args=(transmit, sys.argv[1], time.monotonic()+60, {"signing_public_key":"test-key"}))
@@ -195,14 +197,14 @@ while not Path(sys.argv[1]).with_suffix(".started").exists():
         process.join(3)
         raise RuntimeError("owned worker did not reach download")
     time.sleep(.05)
-Path(sys.argv[2]).write_text(json.dumps({"pid":process.pid,"created":psutil.Process(process.pid).create_time()}))
+Path(sys.argv[2]).write_text(json.dumps({"pid":process.pid,"created":process_birth(process.pid)}))
 os._exit(0)
 '''
     subprocess.run([sys.executable, "-c", launcher, str(cache), str(identity), str(Path(__file__).parent.resolve())],
                    check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     info = json.loads(identity.read_text())
     process = psutil.Process(info["pid"])
-    assert process.create_time() == info["created"]
+    assert process_birth(process.pid) == info["created"]
     try:
         with pytest.raises(RuntimeError, match="busy"):
             reserve(cache)

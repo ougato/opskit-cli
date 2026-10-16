@@ -6,12 +6,14 @@ from pathlib import Path
 import psutil
 import pytest
 
+from worker_test_markers import publish_marker
+
 from core import plugin_sandbox as sandbox, plugin_snapshot as snapshot
 
 
 def _blocked_copy(connection, source, target, limit, skip_dirs):
     read, write = os.pipe()
-    Path(target).write_text(str(os.getpid()))
+    publish_marker(Path(target), str(os.getpid()))
     try:
         os.read(read, 1)
     finally:

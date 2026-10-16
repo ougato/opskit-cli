@@ -6,7 +6,6 @@ import tarfile
 import pytest
 
 from core import archive, plugin_sandbox as sandbox, plugin_trust as trust
-from core.resource_lock import ResourceBusyError
 
 
 def payload():
@@ -30,37 +29,34 @@ def authorized_state(tmp_path, monkeypatch):
     return root
 
 
-def test_revocation_during_state_extraction_preserves_old_state(authorized_state, monkeypatch):
+def revoking_preparation_worker(connection, *args):
+    from core.plugin_state_prepare import _prepare_worker
     original = archive.extract_tar
     def extract(*args, **kwargs):
         original(*args, **kwargs)
         trust.revoke("owner")
-    monkeypatch.setattr(archive, "extract_tar", extract)
+    archive.extract_tar = extract
+    _prepare_worker(connection, *args)
+
+
+def test_revocation_during_state_extraction_preserves_old_state(authorized_state, monkeypatch):
+    monkeypatch.setattr("core.plugin_state_prepare._prepare_worker", revoking_preparation_worker)
     with pytest.raises(sandbox.SandboxError, match="authorization revoked"):
-        sandbox._save_state(payload(), authorized_state)
+        sandbox._save_state(payload(), authorized_state, plugin="owner", caller="platform")
     assert (authorized_state / "value").read_bytes() == b"old"
     assert not authorized_state.with_name("state.previous").exists()
 
 
 def test_publication_holds_trust_lock_against_another_thread(authorized_state, monkeypatch):
-    import threading
-    original = sandbox._rename_state
-    attempts = []
-    def rename(source, destination):
-        def revoke():
-            try:
-                trust.revoke("owner")
-            except ResourceBusyError:
-                attempts.append("busy")
-            else:
-                attempts.append("revoked")
-        thread = threading.Thread(target=revoke)
-        thread.start()
-        thread.join(timeout=5)
-        assert not thread.is_alive()
-        original(source, destination)
-    monkeypatch.setattr(sandbox, "_rename_state", rename)
-    sandbox._save_state(payload(), authorized_state)
+    import json
+    from core import plugin_state_publish
+    from state_publication_fixture import publication_worker
+    marker = authorized_state.parent / "trust-probe"
+    monkeypatch.setenv("OPSKIT_TEST_PUBLICATION_MODE", "trust_probe")
+    monkeypatch.setenv("OPSKIT_TEST_PUBLICATION_MARKER", str(marker))
+    monkeypatch.setattr(plugin_state_publish, "_publish_worker", publication_worker)
+    sandbox._save_state(payload(), authorized_state, plugin="owner", caller="platform")
+    attempts = [item for line in marker.read_text().splitlines() for item in json.loads(line)]
     assert attempts and set(attempts) == {"busy"}
     assert (authorized_state / "value").read_bytes() == b"new"
     trust.revoke("owner")
@@ -98,7 +94,7 @@ with authorization_transaction():
                 pytest.fail("child did not acquire authorization transaction")
             time.sleep(0.01)
         with pytest.raises(sandbox.SandboxError, match="state not committed"):
-            sandbox._save_state(payload(), authorized_state)
+            sandbox._save_state(payload(), authorized_state, plugin="owner", caller="platform")
         assert (authorized_state / "value").read_bytes() == b"old"
         assert not list(authorized_state.parent.glob(".state-*"))
     finally:
@@ -110,5 +106,5 @@ with authorization_transaction():
             process.communicate(timeout=5)
             raise
     assert process.returncode == 0, stderr
-    sandbox._save_state(payload(), authorized_state)
+    sandbox._save_state(payload(), authorized_state, plugin="owner", caller="platform")
     assert (authorized_state / "value").read_bytes() == b"new"

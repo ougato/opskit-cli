@@ -77,7 +77,7 @@ def test_network_scope_retains_grants_until_commit_and_cleans_resources(monkeypa
     def resources(command, kind, name):
         active.append((kind, name))
         try:
-            yield []
+            yield SimpleNamespace(labels=[])
         finally:
             active.remove((kind, name))
 

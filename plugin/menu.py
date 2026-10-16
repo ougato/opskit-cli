@@ -207,7 +207,12 @@ def _install() -> None:
         pause()
         return
     if not confirm_trust(manifest, source=url.strip(), branch=branch):
-        commands.rollback_install(manifest)
+        try:
+            commands.rollback_install(manifest)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print_error(t("plugin.install_failed", error=str(exc)))
+            pause()
+            return
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return
@@ -450,6 +455,12 @@ def _remove() -> None:
         theme_key=_THEME_KEY,
     ):
         return
-    commands.remove(manifest)
+    from core.resource_lock import ResourceBusyError
+    try:
+        commands.remove(manifest)
+    except ResourceBusyError as exc:
+        print_error(str(exc))
+        pause()
+        return
     print_success(t("plugin.remove_success", name=_display_name(manifest)))
     pause()

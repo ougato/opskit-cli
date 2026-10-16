@@ -13,8 +13,6 @@ from core.i18n import t
 from software._shared import shell_path
 from .driver import PlatformDriver
 from .constants import (
-    GOLANG_INSTALL_DIR_LINUX,
-    GOLANG_PRIVATE_SUBDIR,
     GOPATH_MARKER_BEGIN,
     GOPATH_MARKER_END,
     SHIM_GO_SH_TEMPLATE,

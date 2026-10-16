@@ -90,7 +90,7 @@ else:
     raise ValueError('no absent PID in the bounded fixture range')
 print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': commands, 'skipped_help': skipped, 'absent_pid': absent_pid}))
 """
-    result = subprocess.run([str(python), "-I", "-c", probe], cwd=outside, env=env,
+    result = subprocess.run([str(python), "-I", "-c", probe], cwd=outside, env=env, stdin=subprocess.DEVNULL,
                             capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
     provenance = json.loads(result.stdout)
     for name in ("main", "core"):
@@ -100,6 +100,11 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
     cases.extend([
         (["--output", "json", "--version"], 0, True),
         (["--output", "json", "software", "list"], 0, True),
+        (["--output", "json", "plugin", "inspect-locks"], 0, True),
+        (["--output", "json", "plugin", "inspect-workspaces"], 0, True),
+        (["--output", "json", "plugin", "inspect-state", "acceptance_missing"], 0, True),
+        (["--output", "json", "plugin", "inspect-state", "acceptance_missing", "--caller", "platform"], 0, True),
+        (["--output", "json", "plugin", "repair-state", "acceptance_missing", "--record-sha256", "BAD"], 2, True),
         (["--output", "json", "monitor", "cpu", "--once"], 0, True),
         (["--output", "json", "update", "status", "--timeout", "10"], 0, True),
         (["--output", "json", "update", "reconcile"], 2, True),
@@ -110,7 +115,7 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
     ])
     records = []
     for index, (arguments, expected, structured) in enumerate(cases):
-        result = subprocess.run([str(entry), *arguments], cwd=outside, env=env,
+        result = subprocess.run([str(entry), *arguments], cwd=outside, env=env, stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         (output / f"{index:03d}.stdout").write_text(result.stdout, encoding="utf-8")
         (output / f"{index:03d}.stderr").write_text(result.stderr, encoding="utf-8")
@@ -118,8 +123,20 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
             raise RuntimeError("installed CLI failed: " + " ".join(arguments))
         if structured:
             payload = json.loads(result.stdout)
-            if payload.get("schema_version") != 1 or payload.get("ok") is not (expected == 0):
-                raise ValueError("installed CLI returned an invalid result envelope")
+            if (not isinstance(payload, dict)
+                    or set(payload) != {"schema_version", "ok", "data", "error"}
+                    or type(payload["schema_version"]) is not int
+                    or payload["schema_version"] != 1
+                    or payload["ok"] is not (expected == 0)):
+                raise ValueError("installed CLI result envelope mismatch")
+            error = payload["error"]
+            if expected == 0:
+                if error is not None:
+                    raise ValueError("successful installed CLI returned an error")
+            elif (not isinstance(error, dict) or set(error) != {"code", "message"}
+                  or type(error["code"]) is not int or error["code"] != expected
+                  or not isinstance(error["message"], str) or not error["message"].strip()):
+                raise ValueError("failed installed CLI returned an invalid error")
             if "processes" in arguments and "--once" in arguments:
                 row = payload["data"][0]
                 if row["rate_schema_version"] != 2 or row["cpu_percent"] is not None:

@@ -240,7 +240,7 @@ def test_driver_profile_failure_restores_user_registry(tmp_path, monkeypatch, re
     from pathlib import Path
     from software._shared import windows_profile
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    directory = str(tmp_path / "shims")
+    directory = r"C:\OpsKit\shims"
     initial = (directory + ";C:\\Windows" if remove else "C:\\Windows", 2)
     values = {"user": initial, "machine": ("C:\\Windows", 2)}
     def query(key, name):
@@ -281,7 +281,7 @@ def test_user_driver_never_accesses_machine_environment(registry, tmp_path, monk
         return "key"
     api.OpenKey = open_user
     driver = importlib.import_module(f"software.recipes.{recipe}.windows").WindowsDriver()
-    getattr(driver, "_remove_path" if remove else "_inject_path")(str(tmp_path / "shims"))
+    getattr(driver, "_remove_path" if remove else "_inject_path")(r"C:\OpsKit\shims")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows registry")

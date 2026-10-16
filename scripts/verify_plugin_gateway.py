@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import uuid
 
@@ -262,7 +263,12 @@ print(json.dumps({'proxy_reachable': ready, 'direct_peer_reachable': direct,
     reports = []
     plugin_report = None
     def control(*args):
-        result = capture(['docker', *args], timeout=30, max_bytes=8192)
+        # Docker can emit host-capability warnings on stderr even on success.
+        # Keep them separate from exact JSON/ID output used by assertions.
+        result = subprocess.run(['docker', *args], timeout=30, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True)
+        if len(result.stdout.encode()) + len(result.stderr.encode()) > 8192:
+            raise RuntimeError('owned network verification output exceeds limit')
         if result.returncode:
             raise RuntimeError('owned network verification control failed')
         return result.stdout.strip()
@@ -318,10 +324,12 @@ print(json.dumps({'proxy_reachable': ready, 'direct_peer_reachable': direct,
             'gateway_inventory': inventory, 'plugin': plugin_report,
             'scope': 'actual platform scopes, controlled private HTTP peer, IPv4 on current Docker daemon; no foreign services or destinations'}, indent=2))
     finally:
-        if peer is not None:
-            control('rm', '-f', peer)
-            if control('container', 'ls', '-a', '--filter', 'id=' + peer, '--format', '{{.ID}}'):
-                raise RuntimeError('owned HTTP peer cleanup unconfirmed')
+        # A failed `docker run` can still have created the named container.
+        # Its returned ID is unavailable on that path; retire the exact unique
+        # name allocated above, including when startup failed before assignment.
+        capture(['docker', 'rm', '-f', peer_name], timeout=30, max_bytes=4096)
+        if control('container', 'ls', '-a', '--filter', 'name=^/' + peer_name + '$', '--format', '{{.ID}}'):
+            raise RuntimeError('owned HTTP peer cleanup unconfirmed')
         recovery = resources.reconcile(['docker'], lambda *args: sandbox._cleanup_control(['docker'], *args))
         (output / 'recovery.json').write_text(json.dumps(recovery))
     if any(recovery.values()):

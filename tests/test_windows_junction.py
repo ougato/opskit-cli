@@ -11,6 +11,35 @@ from software.base import InstallError
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires native reparse APIs")
 
 
+def test_temporary_sharing_violation_waits_for_real_handle_release(tmp_path, monkeypatch):
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    owner = junction._open(directory)
+    owner.__enter__()
+    sleep = junction.time.sleep
+    attempts = []
+    def release(delay):
+        attempts.append(delay)
+        owner.__exit__(None, None, None)
+        sleep(delay)
+    monkeypatch.setattr(junction.time, "sleep", release)
+    with junction._open(directory, delete=True) as handle:
+        assert junction._identity(handle)
+    assert len(attempts) == 1
+    assert directory.is_dir()
+
+
+def test_persistent_sharing_violation_is_bounded_and_preserves_object(tmp_path):
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    with junction._open(directory):
+        with pytest.raises(PermissionError) as caught:
+            with junction._open(directory, delete=True):
+                pytest.fail("competing handle unexpectedly opened")
+        assert caught.value.winerror == 32
+    assert directory.is_dir()
+
+
 def test_native_create_switch_and_remove_with_literal_paths(tmp_path):
     root = tmp_path / "managed"
     first = root / "中文 & first"

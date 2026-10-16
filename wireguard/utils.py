@@ -281,7 +281,7 @@ def install_xray() -> None:
     github_direct = f"{GITHUB_BASE}/{github_rel_path}"
     url_template = f"{{mirror}}/{github_rel_path}"
 
-    from core.mirror import download as mirror_download, get_download_cache_path, _is_cached_valid
+    from core.mirror import download as mirror_download, get_download_cache_path
     cache_zip = get_download_cache_path("xray", ver, zip_name)
 
     with tempfile.TemporaryDirectory() as tmpdir:

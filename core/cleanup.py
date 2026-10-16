@@ -16,6 +16,19 @@ _lock = threading.Lock()
 _registered = False
 
 
+def add_exception_note(error: BaseException, message: str) -> None:
+    """Retain secondary cleanup evidence without replacing the primary error.
+
+    Python 3.10 keeps the same metadata for callers, although its native
+    traceback formatter does not display exception notes.
+    """
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(message)
+    else:
+        error.__notes__ = [*getattr(error, "__notes__", []), message]
+
+
 def register_cleanup(fn: Callable[[], Any]) -> None:
     """注册退出清理回调，退出时按注册逆序执行"""
     with _lock:

@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -40,15 +40,22 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
+      - name: install locked installer
+        run: >-
+          python -I -m pip --isolated --disable-pip-version-check install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-installer.txt
       - name: install deps
-        run: pip install -r requirements.txt pytest pytest-timeout
+        run: |
+          python -I -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-ci.txt
 
       - name: sync version from tag
         run: python scripts/release_bump.py "${GITHUB_REF_NAME}"
@@ -58,6 +65,7 @@ jobs:
 
   build:
     needs: test
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -77,7 +85,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       # tag → APP_VERSION / bootstrap，确保编译进二进制的自报版本与 tag 一致（防版本漂移导致更新自锁）
       - name: sync version from tag
@@ -86,7 +97,7 @@ jobs:
             import os, subprocess, sys
             sys.exit(subprocess.call([sys.executable, "scripts/release_bump.py", os.environ["GITHUB_REF_NAME"]]))
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: ${{ !matrix.manylinux }}
         with:
           python-version: '3.12'
@@ -99,43 +110,63 @@ jobs:
 
       - name: install deps (non-manylinux)
         if: ${{ !matrix.manylinux }}
-        run: pip install -r requirements.txt nuitka zstandard
+        shell: python
+        run: |
+          import os, pathlib, subprocess, sys
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "opskit-build"
+          subprocess.check_call([sys.executable, "-I", "scripts/install_release_build.py", str(root)])
+          python = root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"OPSKIT_BUILD_PYTHON={python}\n")
+
+      - name: provision reviewed Windows build tool
+        if: runner.os == 'Windows'
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          cache = pathlib.Path(os.environ["RUNNER_TEMP"]) / "opskit-nuitka-cache"
+          subprocess.check_call([os.environ["OPSKIT_BUILD_PYTHON"], "-I",
+                                 "scripts/install_windows_build_tools.py", str(cache)])
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"NUITKA_CACHE_DIR={cache}\n")
+              stream.write(f"NUITKA_CACHE_DIR_DOWNLOADS={cache / 'downloads'}\n")
 
       - name: build (manylinux container — glibc 2.17 compatible)
         if: ${{ matrix.manylinux }}
         run: |
-          docker run --rm \
+          docker run --rm --platform linux/amd64 \
             -v "${{ github.workspace }}:/work" \
             -w /work \
-            quay.io/pypa/manylinux2014_x86_64 \
+            quay.io/pypa/manylinux2014_x86_64@sha256:f6a6f153c9cf45470507ebbc27013e5db14ce21331b62fd2c540561f25e5f0a5 \
             bash -c "
               set -e
               cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && cd /work
-              /opt/python/cp312-cp312/bin/pip install -r requirements.txt nuitka zstandard
-              /opt/python/cp312-cp312/bin/python build.py build --backend nuitka
+              ln -s /opt/rh/devtoolset-10/root/usr/bin/gcc /usr/local/bin/gcc
+              ln -s /opt/rh/devtoolset-10/root/usr/bin/g++ /usr/local/bin/g++
+              /opt/python/cp312-cp312/bin/python -I scripts/install_release_build.py /tmp/opskit-build
+              /tmp/opskit-build/bin/python build.py build --backend nuitka --jobs 2
               chown -R \$(stat -c '%u:%g' /work) /work/dist/
             "
 
       - name: build (non-manylinux)
         if: ${{ !matrix.manylinux }}
-        run: python build.py build --backend nuitka
-
-      - name: smoke test (unix)
-        if: runner.os != 'Windows'
+        shell: python
         run: |
-          bin=$(ls dist/opskit-* | grep -v '\.sha256' | head -1)
-          chmod +x "$bin"
-          "$bin" --version
+          import os, subprocess, sys
+          sys.exit(subprocess.call([os.environ["OPSKIT_BUILD_PYTHON"], "build.py", "build", "--backend", "nuitka", "--jobs", "2"]))
 
-      - name: smoke test (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: verify frozen CLI outside source
+        shell: python
         run: |
-          $bin = Get-ChildItem dist\opskit-*.exe | Select-Object -First 1
-          & $bin.FullName --version
+          import os, pathlib, subprocess, sys
+          name = "${{ matrix.artifact }}" + (".exe" if os.name == "nt" else "")
+          output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "opskit-frozen-acceptance"
+          subprocess.check_call([sys.executable, "-I", "scripts/verify_frozen_cli.py",
+                                 str(pathlib.Path("dist") / name), "--build", os.environ["GITHUB_REF_NAME"][1:],
+                                 "--output", str(output)])
 
       - name: upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/
@@ -143,20 +174,43 @@ jobs:
   release:
     needs: [build]
     runs-on: ubuntu-latest
+    # Serialize all tags, not only reruns of one tag. Queue order is not trusted;
+    # the bootstrap preflight below also rejects an older version.
+    concurrency:
+      group: opskit-release-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.repository.default_branch }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Sign with the same immutable source used by this tag event's builds.
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: download all artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           path: artifacts/
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+
+      - name: validate complete artifact matrix
+        run: python -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts
+
+      - name: install release verification dependency
+        run: |
+          set -euo pipefail
+          python -I -m venv "$RUNNER_TEMP/opskit-signing"
+          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip --isolated --disable-pip-version-check install \
+            --index-url https://pypi.org/simple --only-binary=:all: --require-hashes --no-deps \
+            -r requirements-installer.txt
+          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip --isolated install \
+            --index-url https://pypi.org/simple --only-binary=:all: --require-hashes --no-deps \
+            -r requirements-release-signing.txt
+          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip check
 
       - name: sign release assets
         env:
@@ -164,49 +218,43 @@ jobs:
           OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          python -m pip install 'cryptography>=44.0'
           BUILD="${GITHUB_REF_NAME#v}"
           for f in artifacts/*/opskit-*; do
             [[ "$f" == *.sha256 || "$f" == *.sig.json || "$f" == *.sig || "$f" == *.signed ]] && continue
-            python scripts/sign_release.py --build "$BUILD" "$f"
+            "$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/sign_release.py --build "$BUILD" "$f"
           done
 
-      - name: create GitHub Release and upload assets
+      - name: verify and publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          gh release create "${TAG}" --title "${TAG}" --notes "" 2>/dev/null || true
-          for f in artifacts/*/opskit-*; do
-            [ -f "$f" ] || continue
-            echo "[gh] uploading $(basename $f)"
-            gh release upload "${TAG}" "$f" --clobber
-          done
-
-      - name: generate SHA256 checksums
-        run: |
-          for f in artifacts/*/opskit-*; do
-            [ -f "$f" ] || continue
-            [[ "$f" == *.sha256 || "$f" == *.sig.json || "$f" == *.sig || "$f" == *.signed ]] && continue
-            sha256sum "$f" | awk '{print $1, $2}'
-          done
+          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
+        run: '"$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts --publish'
 
       # 发布控制面：把 tag 对应的 build 写回默认分支的 constants.py + bootstrap.json，
       # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本
+      # Keep event source separate: branch contents are data, never release scripts.
+      - name: checkout bootstrap publishing branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: bootstrap-target
+
       - name: publish bootstrap manifest
         env:
           OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          python scripts/pin_release_key.py
-          python scripts/release_bump.py "${GITHUB_REF_NAME}"
-          python scripts/release_bump.py "${GITHUB_REF_NAME}" --check
-          if git diff --quiet -- core/constants.py bootstrap.json install.sh install.ps1; then
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --preflight
+          python -I scripts/pin_release_key.py --root bootstrap-target
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --check
+          if git -C bootstrap-target diff --quiet -- core/constants.py bootstrap.json install.sh install.ps1; then
             echo "[bootstrap] 无变更，跳过提交"
             exit 0
           fi
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add core/constants.py bootstrap.json install.sh install.ps1
-          git commit -m "chore(release): bump to ${GITHUB_REF_NAME} [skip ci]"
-          git push origin HEAD:"${{ github.event.repository.default_branch }}"
+          git -C bootstrap-target config user.name  "github-actions[bot]"
+          git -C bootstrap-target config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C bootstrap-target add core/constants.py bootstrap.json install.sh install.ps1
+          git -C bootstrap-target commit -m "chore(release): bump to ${GITHUB_REF_NAME} [skip ci]"
+          git -C bootstrap-target push origin HEAD:"${{ github.event.repository.default_branch }}"

@@ -90,11 +90,10 @@ def _install_dep(
 ) -> None:
     """静默安装缺失的依赖"""
     from rich.console import Console
-    from core.theme import get_color, get_icon
+    from core.theme import get_color
     _con = Console()
     target = min_ver or "latest"
     muted = get_color("muted")
-    text = get_color("text")
     _con.print(f"  [{muted}]{t('deps.installing', dep=key, target=target)}[/{muted}]")
 
     # 先递归解依赖的依赖
@@ -121,8 +120,6 @@ def _upgrade_dep(
     _con = Console()
     warn = get_color("warning")
     muted = get_color("muted")
-    error_c = get_color("error")
-    success_c = get_color("success")
 
     _con.print(
         f"\n  [bold {warn}]{get_icon('warning')} {t('deps.conflict_title')}[/bold {warn}]  "

@@ -34,12 +34,13 @@ def test_get_mem(tmp_path) -> None:
     assert 0 <= mem.percent <= 100
 
 
-def test_get_disks(tmp_path) -> None:
+def test_get_disks(tmp_path, monkeypatch) -> None:
+    from monitor import disk_sampling
+    row = dict(mountpoint="/disk", device="disk0", fstype="test", total=100,
+               used=60, free=40, percent=60.0)
+    monkeypatch.setattr(disk_sampling, "sample", lambda **kwargs: [row])
     disks = get_disks()
-    assert isinstance(disks, list)
-    if disks:
-        assert isinstance(disks[0], DiskPartition)
-        assert disks[0].total > 0
+    assert disks == [DiskPartition(**row)]
 
 
 def test_get_net(tmp_path) -> None:
@@ -52,7 +53,8 @@ def test_get_uptime(tmp_path) -> None:
     assert uptime > 0
 
 
-def test_get_snapshot(tmp_path) -> None:
+def test_get_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("monitor.commands.get_disks", lambda: [])
     snap = get_snapshot()
     assert isinstance(snap, SystemSnapshot)
     assert snap.uptime_seconds > 0

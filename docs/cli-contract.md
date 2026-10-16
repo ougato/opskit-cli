@@ -1,5 +1,9 @@
 # 官方 CLI 脚本化契约（实施中）
 
+`plugin run NAME -- ARGS` 的插件发现与执行共享同一总期限和受监督reader，发现耗时不能在进入invoke时重新获得完整预算。invoke仍重新读取启用/信任/授权及较短配置期限；路由不再在主进程重复读取启用配置。ARGS的大小写、顺序、重复参数与插件--help继续原样传递，未引入插件业务专属的平台参数。源码专项及实际产物范围以[最新台账](validation-status-20261015.md)为准。
+
+平台维护命令 `plugin inspect-workspaces [--limit 256]` 返回 `{entries: [{token, kind}], unknown}`，kind为directory/unsafe。limit范围1..256，全扫描最多4096项；结果仅是只读观察，不建立所有权、不授权删除，不读取目录内容、不调用Docker。缺失命名空间保持不存在；失败/超限1、参数错误2、取消130。详见[资源元数据恢复](plugin-resource-metadata-recovery.md)。
+
 全局 `--output text|json`；JSON 输出为 `{schema_version: 1, ok, data, error}`，连续采样/逐跳输出使用 JSON Lines。`--non-interactive` 拒绝输入和菜单，`--yes` 只批准普通确认。尚未迁移的软件与管理命令仍需补齐统一输出，不代表全部 CLI 已完成。
 
 命令解析错误（未知命令、缺参、类型或范围错误）在根级 JSON 模式返回单个错误 envelope 和退出码 2，不回显原始敏感参数。`--output json --version` 返回版本对象。仅根级 --output 选择平台格式，插件自己的 --output 不影响平台解析。
@@ -12,7 +16,9 @@
 
 - `monitor dashboard|cpu|memory|disk|network|processes` 支持 `--once`、`--watch`、`--count`、`--interval`。非 TTY 默认一次；进程支持 `--limit`、`--sort cpu|memory`、`--pid`，网络支持 `--interface`，磁盘支持 `--mount`。
 
-监控无关过滤参数在解析阶段拒绝。`--watch --count 0` 无限采样，正数 count 限定次数，`--once` 与 watch 冲突且 count 不得大于 1。指定 PID 直接读取该进程，消失或无权读取返回空列表；`--pid` 与显式 `--limit` 或 `--sort` 互斥，即使显式值等于默认值也退出2，且不启动采样。未知接口或不可访问挂载点退出 2。显式过滤不进入交互菜单，取消退出 130。
+监控无关过滤参数在解析阶段拒绝。`--watch --count 0` 无限采样，正数 count 限定次数，`--once` 与 watch 冲突且 count 不得大于 1。指定 PID 直接读取该进程，消失或无权读取保留不可用状态并退出 1；`--pid` 与显式 `--limit` 或 `--sort` 互斥，即使显式值等于默认值也退出2，且不启动采样。未知接口或不可访问挂载点退出 2。显式过滤不进入交互菜单，取消退出 130。
+
+磁盘枚举与分区容量读取共同在一次性受管进程执行，`get_disks` 的单次默认期限为 10 秒（包含 worker 启动和采集），`monitor disk`、dashboard 及菜单复用此边界；连续采样每次重新计时，不把整个 watch 限制为 10 秒。超时/worker 失败不返回空列表，CLI 输出失败 envelope 并退出 1，键盘取消退出 130。回收复用现有进程监督与最多两次各 1 秒的等待；不是硬实时保证。最多接受 256 个分区，超额或超过消息大小限制显式失败。已有权限/普通 OSError 的单分区跳过规则保留，空列表不能证明全部挂载点可读。CLI 尚无磁盘期限参数；其他同步采集项及故障文件系统仍需独立审查。
 - `network ping HOST --count 4 --timeout 30`。
 
 ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析，主机名一次受监督解析后把选定数字 IP 传给 ping，避免命令再解析。预算耗尽立即失败；不可达返回 ok=false、退出 1，同时保留包数和耗时数据。macOS 的 IPv6 使用 ping6，真实平台支持仍须验收。
@@ -85,6 +91,8 @@ Windows任务使用独立产物副本及随机脚本目录，helper持有暂存�
 `software install xui --config FILE` 要求显式 host，支持 panel_port/panel_user/panel_base_path/vless_port/sni/dest。密码从 panel_password_file 读取；未提供时生成并要求 credentials_output_file。路径相对配置目录解析，敏感导出拒绝覆盖。安装要求 Linux/systemd，API 或服务配置失败不报成功。
 
 `xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`，状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
+
+XUI默认卸载保留 `/etc/x-ui` 中的面板数据库、配置、凭据状态、待处理入站及流量历史，不提供隐含purge。只移除程序、命令入口及服务/定时器单元。缺少systemd时整个卸载在删除前拒绝，不把“无法管理服务”当成“服务已停止”。单元LoadState明确not-found时允许继续；loaded/masked须成功停止并禁用，查询失败或其他状态拒绝继续。命令/删除/reload非零退出中止卸载，不标记成功或清除系统配置恢复记录；各阶段使用20秒内部预算，不是整次事务timeout，也不保证前序已完成操作全部回滚。当前仅有隔离夹具与三端专项，真实systemd/跨用户及最终产物仍需验收。
 
 XUI diagnose 额外比对 state 和实际面板配置、验证面板监听归属、以 SQLite 只读连接检查 VLESS 入站启用及 REALITY，并探测固定 loopback CSRF API（默认最多 3 秒、64 KiB、不使用代理/重定向/压缩）。不输出 token/凭据/数据库内容；CSRF 健康不等于认证 API 或 REALITY 握手通过，总预算已接入，深度检查及真实平台仍待补齐。
 

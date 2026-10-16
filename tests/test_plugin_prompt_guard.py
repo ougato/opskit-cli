@@ -185,6 +185,8 @@ def test_revocation_during_preparation_denies_launch_with_correct_reason(tmp_pat
         revoke("provider")
         return "image"
 
+    # This fixture emulates Docker; capability enforcement has dedicated tests.
+    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
     monkeypatch.setattr(sandbox, "_image", preparing)
     monkeypatch.setattr(sandbox, "start", lambda *a, **k: pytest.fail("revoked preparation launched client"))
     with pytest.raises(sandbox.SandboxError, match="authorization revoked during execution"):

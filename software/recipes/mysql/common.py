@@ -7,6 +7,7 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.base import InstallError
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MYSQL_FILE
 
 
@@ -14,18 +15,20 @@ from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MYSQL_FILE
 
 def _mysql_arch() -> str:
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported mysql CPU architecture: {m!r}")
 
 
 def _mysql_arch_darwin() -> str:
     m = platform.machine().lower()
-    if m in ("aarch64", "arm64"):
-        return "arm64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'arm64'
+    raise InstallError(f"Unsupported mysql CPU architecture: {m!r}")
 
 
 def _mysql_macos_ver(version: str) -> str:
@@ -191,6 +194,8 @@ def download_mysql_tarball(
     major_minor = ".".join(parts[:2]) if len(parts) >= 2 else version
 
     if sys.platform == "win32":
+        from software._shared.architecture import require_windows_x64
+        require_windows_x64("MySQL")
         url_templates = MYSQL_DL_WINDOWS_URLS
         urls = [u.format(version=version, major_minor=major_minor) for u in url_templates]
     elif sys.platform == "darwin":

@@ -44,7 +44,6 @@ def inventory(query="", installed_only=False, category="", platform=""):
 
 
 def register(app):
-    import typer
     from core.cli import emit, fail, guarded
 
     @app.command("capabilities")

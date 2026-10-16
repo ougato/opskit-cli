@@ -1,8 +1,87 @@
 import json
+import os
 
 import pytest
 
-from core import plugin_resources as resources
+from core import plugin_resources as resources, plugin_resource_io as resource_io
+
+
+@pytest.mark.parametrize('field', ['schema', 'token', 'kind', 'name', 'backend', 'daemon'])
+def test_duplicate_record_fields_are_retained_without_docker_calls(journal, field):
+    item = lease(journal)
+    original = item.path.read_bytes()
+    duplicate = original.decode()[:-1] + ', ' + json.dumps(field) + ': ' + json.dumps(item.record[field]) + '}'
+    item.path.write_text(duplicate)
+    item.lock.__exit__(None, None, None)
+    journal.calls.clear()
+    result = resources.reconcile(['docker'], journal)
+    assert result == {'recovered': 0, 'active': 0, 'pending': 0, 'invalid': 1}
+    assert item.path.read_text() == duplicate and journal.objects and journal.calls == []
+    item.path.write_bytes(original)
+    assert resources.reconcile(['docker'], journal)['recovered'] == 1
+
+
+@pytest.mark.parametrize('stage', ['before_open', 'during_read'])
+def test_record_modification_during_read_is_refused(journal, monkeypatch, stage):
+    item = lease(journal)
+    original_bytes = item.path.read_bytes()
+    if stage == 'before_open':
+        original = resources.os.open
+        def changed(path, *args, **kwargs):
+            if path == item.path:
+                with item.path.open('ab') as stream:
+                    stream.write(b' ')
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(resources.os, 'open', changed)
+    else:
+        original = resources.os.fdopen
+        class Stream:
+            def __init__(self, stream):
+                self.stream = stream
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+            def fileno(self):
+                return self.stream.fileno()
+            def read(self, *args):
+                result = self.stream.read(*args)
+                with item.path.open('ab') as stream:
+                    stream.write(b' ')
+                return result
+        monkeypatch.setattr(resources.os, 'fdopen', lambda *a, **k: Stream(original(*a, **k)))
+    try:
+        with pytest.raises(ValueError, match='changed during'):
+            resources._read(item.path)
+    finally:
+        monkeypatch.setattr(resources.os, 'open' if stage == 'before_open' else 'fdopen', original)
+        item.path.write_bytes(original_bytes)
+        item.close(journal)
+
+
+def test_deep_record_rejected_before_json_object_parser(tmp_path, monkeypatch):
+    from core import plugin_json
+    path = tmp_path / ('a' * 32 + '.json')
+    path.write_bytes(b'[' * 65 + b'0' + b']' * 65)
+    monkeypatch.setattr(plugin_json.json, 'loads', lambda *a, **k: pytest.fail('deep journal reached object parser'))
+    with pytest.raises(ValueError, match='limit'):
+        resources._read(path)
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX FIFO replacement')
+def test_regular_file_replaced_by_fifo_does_not_block(tmp_path, monkeypatch):
+    path = tmp_path / ('a' * 32 + '.json')
+    path.write_bytes(b'{}')
+    original = resources.os.open
+    def changed(target, flags, *args, **kwargs):
+        if target == path:
+            assert flags & os.O_NONBLOCK
+            path.unlink()
+            os.mkfifo(path)
+        return original(target, flags, *args, **kwargs)
+    monkeypatch.setattr(resources.os, 'open', changed)
+    with pytest.raises(ValueError, match='invalid resource journal file'):
+        resources._read(path)
 
 
 class Daemon:
@@ -47,8 +126,8 @@ def test_sandbox_scope_records_launch_and_retains_failed_cleanup(journal, monkey
     monkeypatch.setattr(sandbox, "_control", lambda command, *args: journal(*args))
     expected = ValueError if body_failure else sandbox.SandboxError
     with pytest.raises(expected):
-        with sandbox._resource_scope(["docker"], "container", "opskit-" + "a" * 32) as labels:
-            token = labels[1].split("=", 1)[1]
+        with sandbox._resource_scope(["docker"], "container", "opskit-" + "a" * 32) as managed:
+            token = managed.labels[1].split("=", 1)[1]
             journal.objects.append({"id": "b" * 64, "name": "opskit-" + "a" * 32,
                                     "kind": "container", "token": token})
             assert resources.reconcile(["docker"], journal)["active"] == 1
@@ -63,9 +142,9 @@ def test_sandbox_scope_records_launch_and_retains_failed_cleanup(journal, monkey
 def test_sandbox_scope_refuses_launch_when_intent_cannot_be_saved(journal, monkeypatch):
     from core import plugin_sandbox as sandbox
     monkeypatch.setattr(sandbox, "_control", lambda command, *args: journal(*args))
-    def reject(*args):
+    def reject(*args, **kwargs):
         raise OSError("disk full")
-    monkeypatch.setattr(resources, "atomic_write", reject)
+    monkeypatch.setattr(resource_io, "create_record", reject)
     with pytest.raises(sandbox.SandboxError, match="execution refused"):
         with sandbox._resource_scope(["docker"], "container", "opskit-" + "a" * 32):
             pytest.fail("resource creation must not be reached")
@@ -121,7 +200,10 @@ def test_cleanup_failure_retains_intent_and_recovery_deletes_only_owned_id(journ
     result = resources.reconcile(["docker"], journal)
     assert result == {"recovered": 1, "active": 0, "pending": 0, "invalid": 0}
     assert not item.path.exists() and not journal.objects
-    assert journal.calls[-2][-1] == "b" * 64
+    deletions = [call for call in journal.calls
+                 if call[0] == 'rm' or call[:2] == ('network', 'rm')]
+    assert deletions == [("rm", "-f", "b" * 64) if kind == "container"
+                         else ("network", "rm", "b" * 64)]
 
 
 def test_live_lease_is_not_recovered(journal):
@@ -199,9 +281,9 @@ def test_failed_removal_requires_same_daemon_and_confirmed_absence(journal, kind
 
 
 def test_launch_intent_failure_does_not_create_resource(journal, monkeypatch):
-    def reject(*args):
+    def reject(*args, **kwargs):
         raise OSError("disk full")
-    monkeypatch.setattr(resources, "atomic_write", reject)
+    monkeypatch.setattr(resource_io, "create_record", reject)
     with pytest.raises(OSError):
         resources.ResourceLease(["docker"], "container", "opskit-" + "a" * 32, journal)
     assert not journal.objects

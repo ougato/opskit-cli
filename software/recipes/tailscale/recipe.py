@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from software.base import InstallStep, Recipe
 from software.registry import register
-from tailscale.constants import TAILSCALE_INSTALLED_VERSION, TAILSCALE_VERSION_LATEST
+from tailscale.constants import TAILSCALE_VERSION_LATEST
 from tailscale.server import (
     detect_tailscale_version,
     diagnose_client,

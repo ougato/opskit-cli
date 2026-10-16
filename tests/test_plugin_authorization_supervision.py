@@ -7,6 +7,8 @@ import time
 import psutil
 import pytest
 
+from worker_test_markers import publish_marker
+
 from core import config, plugin_inspection as inspection, plugin_sandbox as sandbox, plugin_trust as trust
 
 
@@ -73,7 +75,7 @@ def _blocked_initial_check(connection, buffer, length, requested):
         elif request.get("operation") == "setting":
             result = inspection._setting_result(request)
         elif request.get("operation") == "authorize":
-            Path(os.environ["OPSKIT_TEST_AUTHORIZATION_MARKER"]).write_text(str(os.getpid()))
+            publish_marker(Path(os.environ["OPSKIT_TEST_AUTHORIZATION_MARKER"]), str(os.getpid()))
             read, write = os.pipe()
             try:
                 os.read(read, 1)
@@ -126,7 +128,7 @@ def _blocked_authorization(connection, buffer, length, requested):
     requested.wait()
     request = json.loads(bytes(memoryview(buffer).cast("B")[:length.value]))
     read, write = os.pipe()
-    Path(request["config"]).write_text(str(os.getpid()))
+    publish_marker(Path(request["config"]), str(os.getpid()))
     try:
         os.read(read, 1)
     finally:
@@ -269,7 +271,7 @@ def _blocked_live_authorization(connection, buffer, length, requested):
         if request.get('operation') == 'timeout':
             send(connection, {'ok': True, 'timeout': 30})
             continue
-        Path(request['config']).write_text(str(os.getpid()))
+        publish_marker(Path(request['config']), str(os.getpid()))
         read, write = os.pipe()
         try:
             os.read(read, 1)

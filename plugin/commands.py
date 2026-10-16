@@ -5,10 +5,15 @@ import re
 import shutil
 import stat
 import subprocess
+import tempfile
+from dataclasses import dataclass, fields
 from pathlib import Path
 from urllib.parse import urlparse
 
 from core.config import load_config, set_config_value
+from core.directory_publish import publish_new_directory
+from core.plugin_install_receipt import content_receipt
+from core.resource_lock import ResourceLock
 from core.i18n import t
 from core.loader import builtin_module_keys
 from core.module import ModuleInfo
@@ -31,6 +36,23 @@ _URL_NAME_PATTERN = re.compile(r"([^/\\]+?)(?:\.git)?[/\\]?$")
 _SCP_URL_PATTERN = re.compile(r"^[^@\s]+@[^:\s]+:(?P<path>.+)$")
 _INSTALL_DIR_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 _REMOTE_URL_SCHEMES = {"http", "https", "ssh", "git", "file"}
+
+_installation_lock = ResourceLock(lambda: plugins_dir() / ".installation.lock", label="plugin installation")
+
+
+def _git_command(*args: str) -> list[str]:
+    # Git (including Git for Windows) treats /dev/null as a non-directory.
+    # Command-line configuration overrides repository/global hooksPath. Never
+    # run lifecycle hooks in the host before the plugin has entered its sandbox.
+    return ["git", "-c", "core.hooksPath=/dev/null", *args]
+
+
+@dataclass
+class _InstalledManifest(PluginManifest):
+    """Process-local receipt; discovery alone never authorizes install rollback."""
+    _installation_identity: tuple[int, int] = (0, 0)
+    _installation_parent_identity: tuple[int, int] = (0, 0)
+    _installation_content: str = ""
 
 # 信任状态
 TRUST_OK = "trusted"
@@ -245,50 +267,120 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
     if not name:
         return None, "invalid url"
     dest = plugins_dir() / name
-    if dest.exists():
+    if dest.exists() or dest.is_symlink():
         return None, f"exists:{name}"
+    for parent in (dest.parent, *dest.parent.parents):
+        if parent.is_symlink() or (hasattr(parent, "is_junction") and parent.is_junction()):
+            return None, "plugin installation parent must not be a link"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone", "--depth", "1"]
+    work = Path(tempfile.mkdtemp(prefix=".opskit-install-", dir=dest.parent))
+    owned = work.lstat()
+    staging = work / "payload"
+    cmd = _git_command("clone", "--depth", "1")
     if branch:
         cmd += ["--branch", branch]
-    cmd += ["--", url, str(dest)]
+    cmd += ["--", url, str(staging)]
     try:
         result = run(cmd, capture=True, check=False, timeout=300)
-    except Exception as e:
-        _remove_tree(dest)
-        return None, str(e)
-    if result.returncode != 0:
-        _remove_tree(dest)
-        return None, git_error_reason(result)
-    manifest = load_manifest(dest)
-    if manifest is None:
-        _remove_tree(dest)
-        return None, "no_manifest"
-    try:
-        conflict = _manifest_name_conflict(manifest)
-    except PluginInventoryError:
-        _remove_tree(dest)
-        return None, "plugin inventory scan failed"
-    if conflict is not None:
-        _remove_tree(dest)
-        return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
-    if manifest.name in builtin_module_keys():
-        _remove_tree(dest)
-        return None, "official_name_conflict"
-    # Preserve source/branch even before authorization; an empty digest grants nothing.
-    grant(manifest.name, "", manifest.version, url, branch)
-    invalidate_service_cache()
-    return manifest, ""
+        if result.returncode != 0:
+            return None, git_error_reason(result)
+        manifest = load_manifest(staging)
+        if manifest is None:
+            return None, "no_manifest"
+        if manifest.name in builtin_module_keys():
+            return None, "official_name_conflict"
+        # Clone independently; serialize only identity validation and publication.
+        # Inventory sees neither partial clones nor an unvalidated payload.
+        with _installation_lock.hold():
+            try:
+                conflict = _manifest_name_conflict(manifest)
+            except PluginInventoryError:
+                return None, "plugin inventory scan failed"
+            if conflict is not None:
+                return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
+            # Fail closed before making content discoverable, including stale trust
+            # from an earlier installation of the same name. This grants nothing.
+            grant(manifest.name, "", manifest.version, url, branch)
+            payload_identity = staging.lstat()
+            parent_identity = dest.parent.lstat()
+            payload_content = content_receipt(staging)
+            publish_new_directory(staging, dest)
+        invalidate_service_cache()
+        values = {field.name: getattr(manifest, field.name) for field in fields(PluginManifest)}
+        values["root"] = dest
+        return _InstalledManifest(**values,
+            _installation_identity=(payload_identity.st_dev, payload_identity.st_ino),
+            _installation_parent_identity=(parent_identity.st_dev, parent_identity.st_ino),
+            _installation_content=payload_content), ""
+    except FileExistsError:
+        return None, f"exists:{name}"
+    except Exception as exc:
+        return None, str(exc)
+    finally:
+        # Never roll back dest: it may belong to a concurrent writer. The private
+        # wrapper is our only cleanup target; replacement means retain and report.
+        current = work.lstat()
+        if ((current.st_dev, current.st_ino) != (owned.st_dev, owned.st_ino)
+                or not stat.S_ISDIR(current.st_mode)
+                or getattr(current, "st_file_attributes", 0) & 0x400):
+            raise RuntimeError("plugin installation staging identity changed; cleanup refused")
+        _remove_tree(work)
 
 
 def rollback_install(manifest: PluginManifest) -> None:
-    """用户拒绝信任时回滚删除刚安装的插件目录"""
-    root = Path(manifest.root).resolve()
-    if root.parent == plugins_dir().resolve():
-        _remove_tree(root)
+    """Withdraw only the directory bound to this successful install receipt."""
+    if not isinstance(manifest, _InstalledManifest):
+        raise ValueError("installation receipt required; rollback refused")
+    root = Path(manifest.root).absolute()
+    if root.parent != plugins_dir().absolute():
+        raise ValueError("plugin installation root changed; rollback refused")
+    with _installation_lock.hold():
+        parent = root.parent.lstat()
+        current = root.lstat()
+        if ((parent.st_dev, parent.st_ino) != manifest._installation_parent_identity
+                or (current.st_dev, current.st_ino) != manifest._installation_identity
+                or not stat.S_ISDIR(current.st_mode)
+                or getattr(current, "st_file_attributes", 0) & 0x400):
+            raise ValueError("plugin installation identity changed; rollback refused")
+        if content_receipt(root) != manifest._installation_content:
+            raise ValueError("plugin installation content changed; rollback refused")
+        wrapper = Path(tempfile.mkdtemp(prefix=".opskit-rollback-", dir=root.parent))
+        withdrawn = wrapper / "payload"
+        try:
+            # Bind the object actually moved, not merely the prior path lookup.
+            publish_new_directory(root, withdrawn)
+            moved = withdrawn.lstat()
+            identity_matches = ((moved.st_dev, moved.st_ino) == manifest._installation_identity
+                                and stat.S_ISDIR(moved.st_mode)
+                                and not getattr(moved, "st_file_attributes", 0) & 0x400)
+            try:
+                content_matches = identity_matches and content_receipt(withdrawn) == manifest._installation_content
+            except (OSError, ValueError, RuntimeError):
+                content_matches = False
+            if not identity_matches or not content_matches:
+                try:
+                    publish_new_directory(withdrawn, root)
+                except OSError as exc:
+                    raise RuntimeError("rollback identity changed; moved object retained at " + str(withdrawn)) from exc
+                raise ValueError("plugin installation identity changed; replacement restored")
+            _remove_tree(withdrawn)
+        finally:
+            # An unexpected object or failed cleanup remains available for recovery.
+            if not any(wrapper.iterdir()):
+                wrapper.rmdir()
 
 
 def update(manifest: PluginManifest) -> tuple[bool, str]:
+    """Exclude active invocations before reading or changing plugin sources."""
+    from core.plugin_invocation_lock import hold
+    try:
+        with hold(plugin=manifest.name, timeout=30):
+            return _update_locked(manifest)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
+def _update_locked(manifest: PluginManifest) -> tuple[bool, str]:
     """git pull 更新插件目录（安装时指定过分支则固定 pull 该分支）。
 
     新内容撤销旧指纹授权，需要重新核对权限并确认信任；以下异常交回菜单层处置：
@@ -300,18 +392,18 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
     if not (root / ".git").exists():
         return False, "not_git"
     branch = plugin_branch(manifest.name)
-    pull_cmd = ["git", "pull", "--ff-only"]
+    pull_cmd = _git_command("pull", "--ff-only")
     if branch:
         pull_cmd += ["origin", branch]
     try:
-        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
+        head = run(_git_command("rev-parse", "HEAD"), cwd=root, capture=True, check=False)
         if head.returncode != 0:
             return False, git_error_reason(head)
         before = head.stdout.strip()
         pulled = run(pull_cmd, cwd=root, capture=True, check=False, timeout=300)
         if pulled.returncode != 0:
             return False, git_error_reason(pulled)
-        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
+        head = run(_git_command("rev-parse", "HEAD"), cwd=root, capture=True, check=False)
         if head.returncode != 0:
             return False, git_error_reason(head)
         after = head.stdout.strip()
@@ -333,6 +425,13 @@ def update(manifest: PluginManifest) -> tuple[bool, str]:
 
 
 def remove(manifest: PluginManifest) -> None:
+    """Exclude active invocations through source removal and trust revocation."""
+    from core.plugin_invocation_lock import hold
+    with hold(plugin=manifest.name, timeout=30):
+        _remove_locked(manifest)
+
+
+def _remove_locked(manifest: PluginManifest) -> None:
     """删除插件目录、移除信任记录并清除进程内残留（立即生效）"""
     root = Path(manifest.root)
     if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or root.resolve().parent != plugins_dir().resolve():

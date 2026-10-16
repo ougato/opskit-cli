@@ -34,12 +34,17 @@ class DarwinDriver(PlatformDriver):
         dest = pgsql_version_dir(version)
         try:
             with staged_directory(dest, prefix=".opskit-pgsql-") as staging:
-                if str(tarball).lower().endswith(".zip"):
-                    with open_zip(str(tarball), "r") as archive:
-                        extract_zip(archive, staging, strip_components=1, preserve_mode=True)
-                else:
-                    with open_tar(str(tarball), "r:gz") as archive:
-                        extract_tar(archive, staging, strip_components=1, allow_symlinks=True)
+                # The download race writes ZIP and tar.gz responses to the same
+                # destination. Select by content using one open file handle.
+                with tarball.open("rb") as source:
+                    signature = source.read(4)
+                    source.seek(0)
+                    if signature in (b"PK\x03\x04", b"PK\x05\x06"):
+                        with open_zip(fileobj=source) as archive:
+                            extract_zip(archive, staging, strip_components=1, preserve_mode=True)
+                    else:
+                        with open_tar(fileobj=source, mode="r:gz") as archive:
+                            extract_tar(archive, staging, strip_components=1, allow_symlinks=True)
                 if not (staging / "bin/psql").is_file():
                     raise InstallError(t("software.postgresql_error.macos_bad_structure", version=version))
         except FileExistsError as error:

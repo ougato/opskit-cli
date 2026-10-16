@@ -16,12 +16,12 @@ def profiles(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("bom", [False, True])
-def test_idempotence_and_removal_preserve_unrelated_crlf(profiles, tmp_path, bom):
+def test_idempotence_and_removal_preserve_unrelated_crlf(profiles, bom):
     original = (b"\xef\xbb\xbf" if bom else b"") + b"# administrator\r\n"
     for path in profiles:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(original)
-    args = (str(tmp_path / "quote'path"), "# begin", "# end")
+    args = (r"C:\OpsKit\quote'path", "# begin", "# end")
     windows_profile.inject_profile(*args)
     first = [path.read_bytes() for path in profiles]
     windows_profile.inject_profile(*args)
@@ -44,7 +44,7 @@ def test_late_publication_failure_restores_files_and_new_directories(profiles, t
         return original(source, target)
     monkeypatch.setattr(os, "replace", denied)
     with pytest.raises(PermissionError):
-        windows_profile.inject_profile(str(tmp_path / "shims"), "# begin", "# end")
+        windows_profile.inject_profile(r"C:\OpsKit\shims", "# begin", "# end")
     if existing:
         assert [path.read_bytes() for path in profiles] == [b"# administrator\r\n"] * 3
     else:
@@ -64,7 +64,7 @@ def test_ambiguous_late_marker_refused_before_any_file_change(profiles, tmp_path
 
 def test_path_delimiter_refused_before_creating_profiles(profiles, tmp_path):
     with pytest.raises(ValueError, match="invalid PowerShell"):
-        windows_profile.inject_profile(str(tmp_path / "first;second"), "# begin", "# end")
+        windows_profile.inject_profile(r"C:\OpsKit\first;second", "# begin", "# end")
     assert not (tmp_path / "Documents").exists()
 
 

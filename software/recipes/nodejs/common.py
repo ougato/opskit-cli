@@ -14,17 +14,17 @@ from software.base import InstallError
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
 
 def _node_arch() -> str:
-    """将 Python platform.machine() 映射为 Node.js 架构字符串"""
+    '将 Python platform.machine() 映射为 Node.js 架构字符串'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x64"
-    if m in ("aarch64", "arm64"):
-        return "arm64"
-    if m.startswith("armv"):
-        return "armv7l"
-    if m in ("i386", "i686", "x86"):
-        return "x86"
-    return "x64"
+    if m in ('x86_64', 'amd64'):
+        return 'x64'
+    if m in ('aarch64', 'arm64'):
+        return 'arm64'
+    if m in ('armv7l', 'armv8l'):
+        return 'armv7l'
+    if m in ('i386', 'i686', 'x86'):
+        return 'x86'
+    raise InstallError(f"Unsupported nodejs CPU architecture: {m!r}")
 
 
 # ─── 老 glibc 兼容检测 ───────────────────────────────────────────────────────────

@@ -83,25 +83,38 @@ def api_available(port, base_path, timeout=3):
         return False
 
 
-def _inbound_configured(path, port, *, timeout=1):
+def _database_worker(connection, path, port, deadline):
     # mode=ro is essential: diagnostics must never create a missing database.
+    # Both opening the file and querying SQLite can block, so neither operation
+    # belongs in the supervisor. Only a boolean crosses the worker boundary.
+    from network.worker import send
+    import time
+    healthy = False
     try:
-        from core.deadline import Deadline
-        budget = Deadline(timeout, "XUI database")
-        with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=budget.remaining())) as database:
-            import time
-            database.set_progress_handler(lambda: int(time.monotonic() >= budget.end), 1000)
+        uri = Path(path).resolve().as_uri() + "?mode=ro"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        with closing(sqlite3.connect(uri, uri=True, timeout=remaining)) as database:
+            database.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             rows = database.execute("select protocol, enable, stream_settings from inbounds where port = ? limit 2", (port,)).fetchall()
-            budget.remaining()
-            if len(rows) != 1:
-                return False
-            protocol, enabled, stream_settings = rows[0]
-            if not isinstance(stream_settings, str) or len(stream_settings) > 65536:
-                return False
-            settings = json.loads(stream_settings)
-            return protocol == "vless" and enabled == 1 and isinstance(settings, dict) and settings.get("security") == "reality"
+            if len(rows) == 1 and time.monotonic() < deadline:
+                protocol, enabled, stream_settings = rows[0]
+                if isinstance(stream_settings, str) and len(stream_settings) <= 65536:
+                    settings = json.loads(stream_settings)
+                    healthy = protocol == "vless" and enabled == 1 and isinstance(settings, dict) and settings.get("security") == "reality"
     except (sqlite3.Error, OSError, ValueError):
-        return False
+        pass
+    finally:
+        send(connection, {"ok": healthy})
+        connection.close()
+
+
+def _inbound_configured(path, port, *, timeout=1):
+    from network.worker import run
+    import time
+    return run(_database_worker, (str(path), port, time.monotonic() + timeout),
+               timeout=timeout, label="XUI database")["ok"] is True
 
 
 def report(*, timeout=30):

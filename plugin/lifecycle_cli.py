@@ -31,6 +31,80 @@ def describe(manifest):
 
 
 def register(app):
+    def state_command(name, caller, digest=None):
+        from core.plugin_state import _binding
+        from core.plugin_state_operator import state_operation
+        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining, _state_lock
+        try:
+            _binding(name, "platform" if caller is None else caller)
+            if digest is not None and re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise ValueError("invalid SHA256")
+        except ValueError:
+            fail("invalid plugin, caller or record SHA256", 2)
+        try:
+            with _execution_budget():
+                if digest is None:
+                    result = state_operation(name, caller=caller, timeout=_remaining(CONTROL_TIMEOUT))
+                else:
+                    with _state_lock(name):
+                        result = state_operation(name, caller=caller, digest=digest, timeout=_remaining(CONTROL_TIMEOUT))
+        except (ValueError, OSError, RuntimeError):
+            fail("state operation unconfirmed; inspect before retry", 1)
+        emit(result)
+
+    @app.command("inspect-state", help="Inspect transaction metadata; omitted caller selects self, explicit caller selects a service partition")
+    @guarded
+    def inspect_state(name: str, caller: str = typer.Option(None, "--caller")):
+        state_command(name, caller)
+
+    @app.command("repair-state", help="Repair a torn transaction tail matching the observed SHA256; preserve original evidence")
+    @guarded
+    def repair_state(name: str, record_sha256: str = typer.Option(..., "--record-sha256"),
+                     caller: str = typer.Option(None, "--caller")):
+        state_command(name, caller, record_sha256)
+
+    @app.command("inspect-locks", help="Inspect bounded resource metadata without changing files; absence of a journal is not retirement permission")
+    @guarded
+    def inspect_locks(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.plugin_resource_io import inspect_lock_metadata
+        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
+        try:
+            with _execution_budget():
+                result = inspect_lock_metadata(timeout=_remaining(CONTROL_TIMEOUT), limit=limit)
+        except (ValueError, OSError, RuntimeError):
+            fail("resource metadata inspection unconfirmed; no retirement performed", 1)
+        emit(result)
+
+    @app.command("inspect-workspaces", help="Observe bounded workspace entries without reading contents; observations do not establish ownership or authorize deletion")
+    @guarded
+    def inspect_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.plugin_workspace import inspect_workspaces as inspect
+        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
+        try:
+            with _execution_budget():
+                result = inspect(timeout=_remaining(CONTROL_TIMEOUT), limit=limit)
+        except (ValueError, OSError, RuntimeError):
+            fail("workspace inspection unconfirmed; no cleanup performed", 1)
+        emit(result)
+
+    @app.command("retire-lock", help="Retire one inactive resource metadata lock by its exact token; retain journal evidence")
+    @guarded
+    def retire_lock(token: str):
+        if re.fullmatch(r"[0-9a-f]{32}", token) is None:
+            fail("resource token must be 32 lowercase hexadecimal characters", 2)
+        from core.plugin_resource_io import retire_orphan_lock
+        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
+        try:
+            with _execution_budget():
+                status = retire_orphan_lock(token, timeout=_remaining(CONTROL_TIMEOUT))
+        except (ValueError, OSError, RuntimeError):
+            fail("resource metadata retirement unconfirmed; inspect before retry", 1)
+        result = {"token": token, "status": status}
+        if status == "retained":
+            emit(result, error={"code": 1, "message": "resource metadata retained; journal or active lock requires recovery"})
+            raise typer.Exit(1)
+        emit(result)
+
     @app.command("reconcile", help="Recover inactive, owned sandbox resources")
     @guarded
     def reconcile():

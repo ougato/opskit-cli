@@ -147,24 +147,9 @@ def get_mem() -> MemInfo:
     )
 
 
-def get_disks() -> list[DiskPartition]:
-    import psutil
-    result: list[DiskPartition] = []
-    for part in psutil.disk_partitions(all=False):
-        try:
-            usage = psutil.disk_usage(part.mountpoint)
-            result.append(DiskPartition(
-                mountpoint=part.mountpoint,
-                device=part.device,
-                fstype=part.fstype,
-                total=usage.total,
-                used=usage.used,
-                free=usage.free,
-                percent=usage.percent,
-            ))
-        except (PermissionError, OSError):
-            continue
-    return result
+def get_disks(*, timeout=10, cancel_event=None) -> list[DiskPartition]:
+    from monitor.disk_sampling import sample
+    return [DiskPartition(**row) for row in sample(timeout=timeout, cancel_event=cancel_event)]
 
 
 def get_net() -> list[NetInterface]:

@@ -19,9 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Install pinned secret scanner
         shell: bash
         run: |
@@ -51,7 +52,7 @@ jobs:
             git . --log-opts '--all -m --full-history'
       - name: Save redacted secret scan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: redacted-secret-scan
           path: ${{ runner.temp }}/opskit-gitleaks/history-report.json
@@ -64,22 +65,33 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Windows local regression alone took 24.7 minutes; allow setup and wheel checks too.
+    # This remains a bounded job budget, separate from each test's 20-second limit.
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Install locked installer
+        run: >-
+          python -I -m pip --isolated --disable-pip-version-check install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-installer.txt
       - name: Install project and test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -I -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-ci.txt
+          python -I -m pip --isolated install --no-deps --no-build-isolation -e .
       - name: Check dependency metadata
         run: python -m pip check
+      - name: Verify repository publication boundaries
+        run: python -I scripts/verify_repository_hygiene.py
       - name: Check static correctness
         run: python -m ruff check .
       - name: Prevent new unreviewed static debt
         run: python scripts/check_static_debt.py
       - name: Build distributable wheel
-        run: python -I -m build --wheel --outdir cache/wheels
+        run: python -I -m build --no-isolation --wheel --outdir cache/wheels
       - name: Verify wheel source and resource inventory
         run: python scripts/verify_wheel.py cache/wheels
       - name: Install wheel in independent environment
@@ -87,15 +99,17 @@ jobs:
           python -c "import pathlib, subprocess, venv;
           root=pathlib.Path('cache/wheel-environment'); venv.EnvBuilder(with_pip=True).create(root);
           python=root/('Scripts/python.exe' if __import__('os').name=='nt' else 'bin/python');
-          subprocess.check_call([str(python), '-m', 'pip', '--isolated', 'install', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', str(next(pathlib.Path('cache/wheels').glob('*.whl')))]);
+          subprocess.check_call([str(python), '-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', 'install', '--require-hashes', '--no-deps', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', '-r', 'requirements-installer.txt']);
+          subprocess.check_call([str(python), '-I', '-m', 'pip', '--isolated', 'install', '--require-hashes', '--no-deps', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', '-r', 'requirements-runtime.txt']);
+          subprocess.check_call([str(python), '-I', '-m', 'pip', '--isolated', 'install', '--no-deps', str(next(pathlib.Path('cache/wheels').glob('*.whl')))]);
           subprocess.check_call([str(python), '-m', 'pip', 'check'])"
       - name: Verify installed CLI outside source
         run: python scripts/verify_installed_cli.py cache/wheel-environment cache/installed-cli
       - name: Run regression suite
-        run: python -m pytest -q --timeout=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml
+        run: python -m pytest -q --timeout=20 --durations=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml
       - name: Save test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: regression-${{ matrix.os }}-python-${{ matrix.python }}
           path: |

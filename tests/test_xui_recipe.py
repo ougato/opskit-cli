@@ -118,16 +118,18 @@ def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> Non
     history = tmp_path / "opskit-traffic.db"
     monkeypatch.setattr(utils, "TRAFFIC_SERVICE_UNIT_FILE", service_unit)
     monkeypatch.setattr(utils, "TRAFFIC_TIMER_UNIT_FILE", timer_unit)
-    monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history)
+    monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history, raising=False)
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
 
     class _R:
         returncode = 0
+        stdout = "loaded\n"
 
     def fake_root(cmd, **kwargs):
         if cmd and cmd[0] == "rm":
             from pathlib import Path
             for target in cmd[2:]:
+                assert Path(target) in {service_unit, timer_unit, history}
                 Path(target).unlink(missing_ok=True)
         return _R()
 
@@ -141,7 +143,7 @@ def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> Non
     utils.uninstall_traffic_timer()
     assert not service_unit.exists()
     assert not timer_unit.exists()
-    assert not history.exists()
+    assert history.read_text(encoding="utf-8") == "x"
 
 
 def test_xui_recipe_is_registered_without_submenu() -> None:
@@ -294,8 +296,10 @@ def test_enable_inbound_clients_updates_traffic_tables(tmp_path, monkeypatch) ->
     assert traffic[2] > 0
 
 
-def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -> None:
-    from xui import utils
+def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeypatch) -> None:
+    from xui import constants, utils
+
+    assert constants.XUI_CONFIG_DIR not in constants.XUI_ARTIFACT_DIRS
 
     install_dir = tmp_path / "usr-local-x-ui"
     config_dir = tmp_path / "etc-x-ui"
@@ -303,6 +307,8 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
     command_link = tmp_path / "x-ui"
     install_dir.mkdir()
     config_dir.mkdir()
+    database = config_dir / "x-ui.db"
+    database.write_bytes(b"user database")
     service_file.write_text("service", encoding="utf-8")
     command_link.write_text("cmd", encoding="utf-8")
     calls: list[list[str]] = []
@@ -326,14 +332,14 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
         return Result()
 
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
-    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
     monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     utils.remove_xui_artifacts()
 
     assert not install_dir.exists()
-    assert not config_dir.exists()
+    assert database.read_bytes() == b"user database"
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]

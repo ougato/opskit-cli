@@ -7,6 +7,12 @@ from typer.testing import CliRunner
 from core import plugin
 
 
+def _limited_inventory_session(connection, buffer, length, requested):
+    from core.plugin_inspection import _inspection_session
+    plugin.MAX_INVENTORY_ENTRIES = 1
+    _inspection_session(connection, buffer, length, requested)
+
+
 def test_entry_limit_counts_ignored_and_non_directory_entries(tmp_path, monkeypatch):
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path))
     monkeypatch.setattr(plugin, "MAX_INVENTORY_ENTRIES", 4)
@@ -14,7 +20,7 @@ def test_entry_limit_counts_ignored_and_non_directory_entries(tmp_path, monkeypa
         (tmp_path / (".hidden" + str(index))).touch()
     monkeypatch.setattr(plugin, "load_manifest", lambda *args: pytest.fail("parsed incomplete inventory"))
     with pytest.raises(plugin.PluginInventoryError, match="entry limit"):
-        plugin.list_manifests()
+        plugin._list_manifests(tmp_path)
 
 
 def test_manifest_limit_applies_before_any_manifest_is_parsed(tmp_path, monkeypatch):
@@ -25,7 +31,7 @@ def test_manifest_limit_applies_before_any_manifest_is_parsed(tmp_path, monkeypa
         (tmp_path / name / "plugin.yaml").write_text("not valid")
     monkeypatch.setattr(plugin, "load_manifest", lambda *args: pytest.fail("parsed partial inventory"))
     with pytest.raises(plugin.PluginInventoryError, match="manifest limit"):
-        plugin.list_manifests()
+        plugin._list_manifests(tmp_path)
 
 
 def test_inventory_preserves_sorted_directory_order(tmp_path, monkeypatch):
@@ -43,7 +49,7 @@ def test_scan_failure_is_explicit_and_does_not_echo_os_error(tmp_path, monkeypat
         raise PermissionError("synthetic-sensitive-path")
     monkeypatch.setattr(plugin.os, "scandir", denied)
     with pytest.raises(plugin.PluginInventoryError, match="^plugin inventory scan failed$"):
-        plugin.list_manifests()
+        plugin._list_manifests(tmp_path)
 
 
 @pytest.mark.parametrize("arguments", [["plugin", "list"], ["plugin", "run", "demo", "--", "--help"]])
@@ -54,7 +60,8 @@ def test_cli_inventory_overflow_is_not_successful_empty_list(tmp_path, monkeypat
     root = tmp_path / "plugins"
     root.mkdir()
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
-    monkeypatch.setattr(plugin, "MAX_INVENTORY_ENTRIES", 1)
+    from core import plugin_inspection
+    monkeypatch.setattr(plugin_inspection, "_inspection_session", _limited_inventory_session)
     (root / "a").touch()
     (root / "b").touch()
     try:
@@ -76,7 +83,8 @@ def test_install_rolls_back_its_clone_on_incomplete_inventory(tmp_path, monkeypa
     existing.write_text("preserve")
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
-    monkeypatch.setattr(plugin, "MAX_INVENTORY_ENTRIES", 1)
+    from core import plugin_inspection
+    monkeypatch.setattr(plugin_inspection, "_inspection_session", _limited_inventory_session)
     def clone(command, **kwargs):
         dest = Path(command[-1])
         dest.mkdir()

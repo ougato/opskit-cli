@@ -24,6 +24,19 @@ def terminate_tree(process: subprocess.Popen) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError as denied:
+            # Allow one bounded wait for our child after a denied signal,
+            # then retry the group so surviving
+            # descendants are still killed. Never suppress a persistent denial.
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    raise denied from None
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
     else:
         import psutil
         try:

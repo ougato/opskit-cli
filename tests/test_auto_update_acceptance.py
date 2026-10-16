@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -142,18 +143,19 @@ class TestDownloadExceptions:
         def raise_connect(*a, **kw):
             raise httpx.ConnectError("network failure")
 
-        with patch("httpx.stream", side_effect=raise_connect), \
+        with patch("httpx.stream", side_effect=raise_connect) as transport, \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""):
+             patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater.time.sleep"):
             result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "a" * 64)
 
         assert result is None
         assert not fake_pending.exists()
+        assert transport.call_count == 5
 
     def test_T05_resume_download_range_request(self, tmp_data, monkeypatch):
         """T05: tmp 已有部分数据时，发送 Range 请求追加写入"""
         import core.updater as upd
-        import httpx
 
         fake_pending = tmp_data / "cache" / "opskit.pending"
         fake_tmp = tmp_data / "cache" / "opskit.pending.tmp"
@@ -165,6 +167,8 @@ class TestDownloadExceptions:
 
         initial_data = b"MZ" + b"\x00" * (256 * 1024 - 2)
         fake_tmp.write_bytes(initial_data)
+        expected = initial_data + b"\x00" * (256 * 1024)
+        digest = hashlib.sha256(expected).hexdigest()
 
         range_headers_sent = []
 
@@ -182,13 +186,15 @@ class TestDownloadExceptions:
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "a" * 64)
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", digest)
 
-        assert any("Range" in h for h in range_headers_sent), "Range header should be sent"
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert not fake_tmp.exists()
+        assert len(range_headers_sent) == 1
         assert range_headers_sent[0].get("Range") == f"bytes={len(initial_data)}-"
+        retry_wait.assert_not_called()
 
     def test_T05b_stale_partial_discarded_on_version_change(self, tmp_data, monkeypatch):
         """T05b: 残留 .tmp 属于旧版本(v2)、目标已是 v4 时，丢弃旧半包从头下载，不发 Range"""
@@ -207,6 +213,8 @@ class TestDownloadExceptions:
             json.dump({"download_version": 2, "etag": '"old"'}, f)
 
         range_headers_sent = []
+        expected = b"MZ" + b"\x00" * (512 * 1024 - 2)
+        digest = hashlib.sha256(expected).hexdigest()
 
         class FakeResp:
             status_code = 200
@@ -214,7 +222,7 @@ class TestDownloadExceptions:
             def __enter__(self): return self
             def __exit__(self, *a): pass
             def iter_bytes(self, chunk_size):
-                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+                yield expected
 
         def fake_stream(method, url, timeout, follow_redirects, headers=None):
             range_headers_sent.append(headers or {})
@@ -222,15 +230,18 @@ class TestDownloadExceptions:
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update(
-                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", "", 4)
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update(
+                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", digest, 4)
 
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert not fake_tmp.exists()
+        assert len(range_headers_sent) == 1
         assert all("Range" not in h for h in range_headers_sent), "旧版本残包应被丢弃，不应发 Range"
         assert all("If-None-Match" not in h for h in range_headers_sent), "版本变化后应清空 ETag"
         assert upd._load_check_cache().get("download_version") == 4
+        retry_wait.assert_not_called()
 
     def test_T06_stall_timeout_uses_read_timeout(self, tmp_data, monkeypatch):
         """T06: 下载使用 TIMEOUT_DOWNLOAD_READ 而非 read=None"""
@@ -1098,7 +1109,7 @@ class TestGapCoverage:
         assert cache.get("pending_version") is None, "损坏 pending 后 cache 中 pending_version 应被清除"
 
     def test_A5_httpx_reads_https_proxy_env(self, tmp_data, monkeypatch):
-        """A5: HTTPS_PROXY 环境变量被 httpx 读取（验证 httpx 代理透传机制）"""
+        """A5: 下载请求保留代理环境并委托httpx；不模拟真实代理服务器。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -1113,6 +1124,8 @@ class TestGapCoverage:
         monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
 
         stream_kwargs_captured = []
+        expected = b"MZ" + b"\x00" * (512 * 1024 - 2)
+        digest = hashlib.sha256(expected).hexdigest()
 
         class FakeResp:
             status_code = 200
@@ -1120,22 +1133,22 @@ class TestGapCoverage:
             def __enter__(self): return self
             def __exit__(self, *a): pass
             def iter_bytes(self, cs):
-                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+                yield expected
 
         def fake_stream(method, url, **kwargs):
+            assert os.environ["HTTPS_PROXY"] == "http://proxy.example.com:8080"
             stream_kwargs_captured.append(kwargs)
             return FakeResp()
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://example.com/opskit", "a" * 64)
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update("https://example.com/opskit", digest)
 
-        # httpx 默认从环境变量读取代理，无需额外配置
-        # 验证：httpx.stream 被调用（不因代理而提前 crash）
-        assert stream_kwargs_captured, "设置 HTTPS_PROXY 后 httpx.stream 应正常被调用"
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert len(stream_kwargs_captured) == 1
+        retry_wait.assert_not_called()
 
     def test_sha256_file_correct_hash(self, tmp_data):
         """SHA256 计算正确性验证"""

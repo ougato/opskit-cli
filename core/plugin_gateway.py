@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 from core.paths import data_dir
 from core.plugin_runtime_inventory import gateway_source
+from core.plugin_image_hardening import HARDENING_SCRIPT
 from core.resource_lock import ResourceLock
 
 POLICY = 2
@@ -15,22 +16,7 @@ BASE_REFERENCE = "docker.io/library/python@sha256:a6e34c598f2467ed0e9a8d349809fc
 LABELS = ("org.opskit.gateway", "org.opskit.gateway-base-digest", "org.opskit.gateway-code-sha256")
 _lock = ResourceLock(lambda: data_dir() / "plugin-runtimes" / ".gateway.lock", label="plugin gateway preparation")
 
-# The gateway runs only platform stdlib code. It needs no privileged utility
-# bits or terminal-description analyser; retain the libraries Python uses.
-HARDENING_SCRIPT = """import os, stat
-for base in ('/usr/bin', '/usr/sbin', '/usr/local/bin'):
-    for parent, dirs, files in os.walk(base, followlinks=False):
-        for name in files:
-            path = os.path.join(parent, name)
-            mode = os.lstat(path).st_mode
-            if stat.S_ISREG(mode) and mode & 0o6000:
-                os.chmod(path, stat.S_IMODE(mode) & ~0o6000)
-path = '/usr/bin/infocmp'
-if os.path.lexists(path):
-    if not stat.S_ISREG(os.lstat(path).st_mode):
-        raise RuntimeError('unexpected gateway utility path type')
-    os.unlink(path)
-"""
+
 
 
 def _catalog():

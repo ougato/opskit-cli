@@ -1,5 +1,6 @@
 import json
 import socket
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -21,6 +22,18 @@ def test_real_local_port_scan():
         assert result.exit_code == 0
         data = json.loads(result.stdout)["data"]
         assert data[0]["port"] == port and data[0]["open"]
+
+
+@pytest.mark.parametrize("ports", [None, "80,22,80"])
+def test_noninteractive_scan_does_not_require_menu(monkeypatch, ports):
+    from network import commands
+    seen = []
+    monkeypatch.setitem(sys.modules, "network.menu", None)
+    monkeypatch.setattr(commands, "scan_ports", lambda host, selected, **kw: seen.append((host, list(selected))) or [])
+    result = invoke("port-scan", "127.0.0.1", *([] if ports is None else ["--ports", ports]))
+    assert result.exit_code == 0, result.output
+    assert seen == [("127.0.0.1", [21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+                                   3306, 5432, 6379, 8080, 8443, 27017] if ports is None else [22, 80])]
 
 
 def test_dns_localhost_ipv4():

@@ -65,7 +65,7 @@ def test_plugin_state_metadata_cannot_replace_existing_state(tmp_path):
     root.mkdir()
     (root / "old").write_bytes(b"previous state")
     with pytest.raises(ValueError):
-        _save_state(base64.b64encode(giant_header()).decode(), root)
+        _save_state(base64.b64encode(giant_header()).decode(), root, plugin="owner", caller="platform")
     assert (root / "old").read_bytes() == b"previous state"
     assert not root.with_name("state.previous").exists()
     assert not list(tmp_path.glob(".state-*"))
@@ -81,7 +81,7 @@ def test_plugin_file_quota_is_applied_during_inventory_parse(tmp_path):
     root.mkdir()
     (root / "old").write_bytes(b"previous state")
     with pytest.raises(ValueError, match="inventory"):
-        _save_state(base64.b64encode(output.getvalue()).decode(), root)
+        _save_state(base64.b64encode(output.getvalue()).decode(), root, plugin="owner", caller="platform")
     assert (root / "old").read_bytes() == b"previous state"
     assert not list(tmp_path.glob(".state-*"))
 

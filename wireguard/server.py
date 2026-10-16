@@ -176,7 +176,7 @@ def install_server(options: dict | None = None) -> dict | None:
         XRAY_REALITY_PORT,
         WG_UDP_PORT,
         WG_CONFIG_FILE, XRAY_CONFIG_FILE, WG_SERVICE, XRAY_SERVICE,
-        NGINX_VLESS_WS_CONF, NGINX_STREAM_CONF, NGINX_STEAL_CONF,
+        NGINX_VLESS_WS_CONF,
         XRAY_WS_PORT, XRAY_WS_PATH, ACME_CERT_DIR,
         VPN_CLIENT_IP_START,
         VPN_SUBNET_TPL, VPN_GW_TPL, VPN_DEFAULT_OCTET3,
@@ -189,7 +189,7 @@ def install_server(options: dict | None = None) -> dict | None:
     from wireguard.templates import (
         xray_server_config_ws,
         wg_server_config, wg_peer_section,
-        nginx_vless_ws_config, nginx_http_only_config,
+        nginx_vless_ws_config,
     )
 
     breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"), t("software.install")]
@@ -662,7 +662,6 @@ def diagnose_server() -> None:
     from pathlib import Path
     from rich.panel import Panel
     from rich.table import Table
-    from rich.rule import Rule
     from rich.text import Text
     from core.i18n import t
     from wireguard.constants import (
@@ -961,7 +960,7 @@ def manage_peers() -> None:
     """peer 管理主菜单"""
     from core.i18n import t
     from core.prompt import select, UserCancel, pause
-    from core.theme import get_icon, get_color, print_action_title, print_warning
+    from core.theme import get_icon, get_color, print_warning
 
     mk = "wireguard.manage"
     breadcrumb = ["OpsKit", t("menu.software"), t("software.wireguard"),
@@ -1023,7 +1022,6 @@ def manage_peers() -> None:
 
 def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
     """添加客户端 peer — 自动生成密钥并输出连接令牌"""
-    import subprocess
     from core.i18n import t
     from core.prompt import pause, clear_screen, text_input, UserCancel
     from core.theme import print_error, print_action_title
@@ -1031,7 +1029,6 @@ def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
     from rich.table import Table
     from rich.text import Text
     from wireguard.utils import gen_wg_keypair, gen_wg_psk
-    from wireguard.constants import VPN_CLIENT_IP_MAX
 
     mk = "wireguard.manage"
     sub = [*breadcrumb, t(f"{mk}.add_peer")]
@@ -1206,7 +1203,6 @@ def list_peers(breadcrumb: list[str]) -> None:
 
 def remove_peer(breadcrumb: list[str], *, peer_id: str | None = None) -> dict | None:
     """删除客户端 peer"""
-    import subprocess
     from core.i18n import t
     from core.prompt import select, pause, clear_screen, UserCancel
     from core.theme import get_icon, print_action_title, print_error, print_warning

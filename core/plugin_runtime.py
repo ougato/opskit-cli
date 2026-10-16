@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -20,6 +21,7 @@ from core.paths import data_dir
 from core.process import capture
 from core.plugin_lock import CATALOG_LIMIT, read_lock, valid_base_reference
 from core.plugin_runtime_inventory import RUNTIME_POLICY, snapshot, code_digest
+from core.plugin_image_hardening import HARDENING_SCRIPT
 
 BUILD_TIMEOUT = 600
 BUILD_OUTPUT_LIMIT = 4 * 1024**2
@@ -52,6 +54,7 @@ def build(path: Path, dependencies: list[str], base_image: str, *, lock_file: Pa
         raise ValueError("invalid base image identity")
     lock_digest = hashlib.sha256(requirements.encode("utf-8")).hexdigest()
     base_digest = base_image.rsplit("@", 1)[1]
+    hardening = shlex.quote("exec(" + repr(HARDENING_SCRIPT) + ")")
     dockerfile = f"""FROM {base_id}
 WORKDIR /runtime
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
@@ -59,6 +62,7 @@ COPY pip-bootstrap.txt /runtime/pip-bootstrap.txt
 RUN python -m pip --isolated install --disable-pip-version-check --no-deps --require-hashes --only-binary=:all: --no-cache-dir --index-url https://pypi.org/simple -r pip-bootstrap.txt
 COPY requirements.txt /runtime/requirements.txt
 RUN python -m pip --isolated install --disable-pip-version-check --ignore-installed --require-hashes --only-binary=:all: --no-cache-dir --index-url https://pypi.org/simple -r requirements.txt
+RUN python -I -S -c {hardening}
 COPY core /runtime/core
 ENV PYTHONPATH=/runtime PYTHONDONTWRITEBYTECODE=1
 USER 65534:65534

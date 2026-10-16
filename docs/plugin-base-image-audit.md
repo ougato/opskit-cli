@@ -1,5 +1,9 @@
 # 插件基础镜像 OS 审计
 
+2026-10-15最新实际SDK7e58与网关359e已按精确ImageID复扫，两者仍Critical0/High44条包记录、对应8个High编号；数据库仍为10月14日版本。八项Debian上游状态、触发条件、unstable修复版本与逐项待办已整理为[当前漏洞处置](plugin-os-vulnerability-disposition.md)。没有新增豁免，发布安全验收仍未通过。
+
+2026-10-15事务锁批次：公共resource_lock的身份复核使SDK代码摘要更新为`5055234979aa7a66ae84b7a9589ff5ee5f4a97115a30e3748f02d824b66bce6c`，实际SDK重建为`sha256:7e58a4a647b25849415bb42cf370745465e647bde184efaf8e4207c58b1ab883`。新镜像真实RPC和网关复验通过；本页下方的历史漏洞/权限报告不能当作该镜像的新扫描结果，发布前仍需按实际摘要扫描，不能宣称OS漏洞已清零。详见[事务监督验收](plugin-state-transaction-supervision.md)。
+
 2026-10-14：当前未通过发布安全验收。SDK Python 包已知漏洞复验无匹配，不代表基础镜像 OS 包安全。
 
 扫描对象是实际policy5 SDK镜像`sha256:7dfd1f1684d32fb37f2e13c0bcc5361a4e12ecaab254f53f44b1c89b858c73ad`，报告中的ArtifactName和ImageID均匹配该摘要。它使用Debian13.6（trixie）。Trivy0.75.0通过Docker读取镜像，只扫描OS漏洞，未运行第三方插件或修改服务。
@@ -64,3 +68,5 @@ SDK实际13个Python包（包含pip26.2）重新捕获后使用 pip-audit --no-d
 当前实际SDK和gateway的权限屏障已分别复验：runtime-privilege-barriers-20261014/verification.json，UID65534、CapEff=0、NoNewPrivs=1、Seccomp=2；容器内自有/mnt上的tmpfs mount返回32，unshare用户namespace与nsenter当前容器mount namespace均返回1。两容器均删除并确认不存在，无宿主目录挂载、无外部网络或真实服务写入。此结果证明当前daemon默认seccomp与固定运行参数下相关特权操作被拒绝，不是漏洞利用复现、内核无漏洞或所有rootless/远程部署保证；仍不能移除cap-drop/no-new-privileges/只读根等约束。
 
 正式网关策略2已落地并原生验收：实际image359ebe4520dd3b516b0894ef81fcb9a3784eec7390a2498d37b546dc03b6daa2，批准catalog/schema2及实际标签核对通过；移除infocmp、清除三个可执行目录普通文件setid位，保留共享库，无实验解析器覆盖。scripts/verify_plugin_gateway.py已检查物理清单、无第三方Python分发、SSL/SQLite/策略导入和实际权限，并复验完整合成插件HTTP/CONNECT/撤权/清理后提交，98809退出0，全部资源恢复计数0。正式OS复验gateway-policy2-os.json的ArtifactName匹配实际镜像，12844退出0，仍Critical0/High44/Medium58/Low61/Unknown3；保留原包元数据，不按扫描数字删库。CVE-2025-69720的受影响命令在正式网关已移除，但SDK仍含该命令，不能把此结论跨镜像复用。
+
+2026-10-15进程清理修复后实际SDK重建为b76f2f99ef2b10ca306403dc0b01c5ac2288d5979414735804a4ca18e31d8569（policy6、base2b4f19、完整哈希锁不变），实际code标签3b64a5019608b8ada1a83514169223f3ca357e0d6ab3dae525db079881f3991f与源码一致。固定Trivy0.75.0及上述2026-10-14数据库对该实际镜像复扫，ArtifactName/ImageID均核对，通过扫描执行但仍166记录/73编号：Critical0、High44、Medium58、Low61、Unknown3，High仍8编号。证据F盘任务缓存runtime-macos-fixes-os-20261015-r3。新SDK真实RPC/正式网关矩阵已通过，不代替这些漏洞处置；未刷新数据库，因此发布时仍需更新扫描。未以代码变更推断OS包无漏洞，也未把旧镜像报告当作新镜像报告。

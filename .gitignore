@@ -34,6 +34,7 @@ MANIFEST
 *.onefile-build/
 opskit.bin
 opskit.exe
+/nuitka-crash-report.xml
 
 # ── 测试 / 覆盖率 ─────────────────────────────────────────────────────────────
 .pytest_cache/

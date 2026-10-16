@@ -6,10 +6,6 @@ The container never receives platform credentials, Docker socket or a host shell
 """
 from __future__ import annotations
 
-from core.archive_reader import open_tar
-
-import base64
-import io
 import ipaddress
 import json
 import math
@@ -19,7 +15,6 @@ import re
 import shutil
 import stat
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -53,17 +48,39 @@ def _encode(value, state_root: Path):
     if isinstance(value, Path):
         if value.as_posix().startswith("/data/"):
             target = value.as_posix()
+            if ".." in value.parts or "\0" in target:
+                raise SandboxError("file path is outside the authorized plugin state")
         else:
-            try:
-                target = "/data/" + value.resolve().relative_to(state_root.resolve()).as_posix()
-            except ValueError as exc:
-                raise SandboxError("file path is outside the authorized plugin state") from exc
+            target = _encode_host_path(value, state_root)
         return {"__opskit_path__": target}
     if isinstance(value, (list, tuple)):
         return [_encode(v, state_root) for v in value]
     if isinstance(value, dict):
         return {k: _encode(v, state_root) for k, v in value.items()}
     return value
+
+
+def _encode_host_path(value, state_root):
+    from core.plugin_inspection import ContentInspector, StatePathError
+    scoped = getattr(_invocations, "inspection_scope", False)
+    inspector = getattr(_invocations, "inspector", None) if scoped else None
+    if inspector is None:
+        inspector = ContentInspector()
+        if scoped:
+            _invocations.inspector = inspector
+    try:
+        result = inspector.state_path(state_root, value, timeout=_remaining(CONTROL_TIMEOUT))
+        _remaining()
+        return result
+    except StatePathError as exc:
+        raise SandboxError("file path is outside the authorized plugin state") from exc
+    except TimeoutError:
+        raise SandboxError("plugin exceeded execution deadline resolving file path") from None
+    except (OSError, ValueError, RuntimeError):
+        raise SandboxError("plugin file path inspection failed") from None
+    finally:
+        if not scoped:
+            inspector.close()
 
 
 def docker_command() -> list[str]:
@@ -101,7 +118,23 @@ def _read_sandbox_setting(field, name=""):
 
 
 def mount_path(path: Path, command: list[str]) -> str:
-    path = path.resolve()
+    from core.plugin_inspection import ContentInspector
+    scoped = getattr(_invocations, "inspection_scope", False)
+    inspector = getattr(_invocations, "inspector", None) if scoped else None
+    if inspector is None:
+        inspector = ContentInspector()
+        if scoped:
+            _invocations.inspector = inspector
+    try:
+        path = inspector.mount_path(path, timeout=_remaining(CONTROL_TIMEOUT))
+        _remaining()
+    except TimeoutError:
+        raise SandboxError("plugin exceeded execution deadline resolving mount path") from None
+    except (OSError, ValueError, RuntimeError):
+        raise SandboxError("plugin mount path inspection failed") from None
+    finally:
+        if not scoped:
+            inspector.close()
     if command[0] == "wsl":
         if not re.fullmatch(r"[A-Za-z]:", path.drive):
             raise SandboxError("WSL sandbox requires a local drive path")
@@ -136,6 +169,26 @@ def _cleanup_control(command: list[str], *args: str) -> str:
         _invocations.deadline = deadline
 
 
+def _require_sandbox_capabilities(command):
+    """Reject engines that would silently ignore required resource limits."""
+    template = ('{"os":{{json .OSType}},"memory":{{json .MemoryLimit}},'
+                '"swap":{{json .SwapLimit}},"pids":{{json .PidsLimit}},'
+                '"cpu_quota":{{json .CPUCfsQuota}},"cpu_period":{{json .CPUCfsPeriod}},'
+                '"security":{{json .SecurityOptions}}}')
+    message = "Docker Linux sandbox requires memory, swap, PID, CPU and default seccomp support"
+    try:
+        value = json.loads(_control(command, "info", "--format", template))
+        required = {"memory", "swap", "pids", "cpu_quota", "cpu_period"}
+        if (not isinstance(value, dict) or set(value) != required | {"os", "security"}
+                or value["os"] != "linux" or any(value[key] is not True for key in required)
+                or not isinstance(value["security"], list) or len(value["security"]) > 32
+                or any(not isinstance(option, str) or len(option) > 512 for option in value["security"])
+                or not {"name=seccomp,profile=default", "name=seccomp,profile=builtin"}.intersection(value["security"])):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise SandboxError(message) from None
+
+
 def _read_runtime_catalog(path, *, gateway=False):
     if not getattr(_invocations, "inspection_scope", False):
         with _execution_budget():
@@ -155,6 +208,49 @@ def _read_runtime_catalog(path, *, gateway=False):
         raise SandboxError("plugin exceeded execution deadline reading runtime catalog") from None
     except (OSError, ValueError, RuntimeError):
         raise RuntimeCatalogError("plugin runtime catalog inspection failed") from None
+
+
+def _read_manifest(root):
+    if not getattr(_invocations, "inspection_scope", False):
+        with _execution_budget():
+            return _read_manifest(root)
+    from core.plugin_inspection import ContentInspector
+    inspector = getattr(_invocations, "inspector", None)
+    if inspector is None:
+        inspector = ContentInspector()
+        _invocations.inspector = inspector
+    try:
+        manifest = inspector.manifest(root, timeout=_remaining(CONTROL_TIMEOUT))
+        _remaining()
+        return manifest
+    except SandboxError:
+        raise
+    except TimeoutError:
+        raise SandboxError("plugin exceeded execution deadline reading manifest") from None
+    except (OSError, ValueError, RuntimeError):
+        raise SandboxError("plugin manifest inspection failed") from None
+
+
+def _read_inventory(root, *, select="all", value=""):
+    from core.plugin import PluginInventoryError
+    try:
+        if not getattr(_invocations, "inspection_scope", False):
+            with _execution_budget():
+                return _read_inventory(root, select=select, value=value)
+        from core.plugin_inspection import ContentInspector
+        inspector = getattr(_invocations, "inspector", None)
+        if inspector is None:
+            inspector = ContentInspector()
+            _invocations.inspector = inspector
+        manifests = inspector.inventory(root, select=select, value=value, timeout=_remaining(CONTROL_TIMEOUT))
+        _remaining()
+        return manifests
+    except PluginInventoryError:
+        raise
+    except TimeoutError:
+        raise PluginInventoryError("plugin inventory inspection deadline exceeded") from None
+    except (OSError, ValueError, RuntimeError):
+        raise PluginInventoryError("plugin inventory inspection failed") from None
 
 
 def _image(manifest, command) -> str:
@@ -333,51 +429,126 @@ def _copy_snapshot_file(source: Path, target: Path, budget: int) -> int:
         raise
 
 
-def _save_state(state: str, root: Path) -> None:
+def _require_resolved_state(root: Path) -> None:
+    # A missing root can mean either a first run or an interrupted publication.
+    # Never seed an empty state while the previous committed state still exists.
+    from core.plugin_metadata import path_present
+    if path_present(root.with_name(root.name + ".previous")):
+        raise SandboxError("unresolved previous state transaction")
+    from core.plugin_state import record_path
+    if path_present(record_path(root)):
+        raise SandboxError("unresolved state transaction")
+
+
+def _recover_state(root: Path, *, plugin: str, caller: str, initialize=False) -> None:
+    from core.plugin_state import StateCleanupError
+    from core.plugin_state_io import finish_supervised
+    from core.resource_lock import ResourceBusyError
+    try:
+        finish_supervised(root, plugin=plugin, caller=caller, timeout=_remaining(CONTROL_TIMEOUT),
+                          initialize=initialize)
+    except ResourceBusyError:
+        raise SandboxError("plugin state transaction is busy; recovery not started") from None
+    except StateCleanupError as exc:
+        raise SandboxError(f"plugin state {exc.outcome}; recovery cleanup incomplete") from exc
+    except TimeoutError:
+        raise SandboxError("plugin exceeded execution deadline during state recovery") from None
+    except (OSError, ValueError) as exc:
+        raise SandboxError("plugin state recovery refused; transaction evidence retained") from exc
+
+
+@contextmanager
+def _state_staging(root: Path, state: str, *, plugin: str, caller: str, budget_base=None):
+    """One worker allocates and prepares; cleanup waits for confirmed exit."""
+    from core.plugin_state_io import discard_supervised
+    from core.plugin_state_prepare import prepare_candidate
+    lease = None
+    def allocated(value):
+        nonlocal lease
+        lease = value
+    retain = False
+    failure = None
+    try:
+        identity = prepare_candidate(state, root, plugin=plugin, caller=caller,
+                                     timeout=_remaining(CONTROL_TIMEOUT), on_allocate=allocated,
+                                     budget_base=budget_base)
+        lease.candidate_identity = identity
+        yield lease
+    except BaseException as exc:
+        from core.plugin_state_prepare import PreparationCleanupError
+        from core.plugin_state_publish import PublicationUncertainError
+        retain = isinstance(exc, (PreparationCleanupError, PublicationUncertainError))
+        failure = exc
+        raise
+    finally:
+        if lease is not None and not retain and not lease.retired:
+            try:
+                # As for Docker resource cleanup, expiry has a separate bounded
+                # cleanup allowance. Never replace the primary cancellation.
+                discard_supervised(lease, plugin=plugin, caller=caller, timeout=CONTROL_TIMEOUT)
+            except BaseException as exc:
+                if failure is None:
+                    if isinstance(exc, Exception):
+                        raise SandboxError("plugin staging cleanup incomplete; evidence retained") from exc
+                    raise
+                from core.cleanup import add_exception_note
+                add_exception_note(failure, "plugin staging cleanup incomplete; evidence retained")
+
+
+def _check_staging_quota(root: Path) -> None:
+    from core.plugin_inspection import ContentInspector
+    scoped = getattr(_invocations, "deadline", None) is not None
+    inspector = getattr(_invocations, "inspector", None) if scoped else None
+    if inspector is None:
+        inspector = ContentInspector()
+        if scoped:
+            _invocations.inspector = inspector
+    try:
+        inspector.state_quota(root, timeout=_remaining(CONTROL_TIMEOUT))
+    except (OSError, ValueError, RuntimeError) as exc:
+        # Exhausted storage/retained evidence is an operational failure (exit 1),
+        # not invalid user arguments (exit 2). Do not expose filesystem paths.
+        raise SandboxError("plugin state staging quota check failed; retained evidence preserved") from exc
+    finally:
+        if not scoped:
+            inspector.close()
+
+
+def _save_state(state: str, root: Path, *, plugin: str, caller: str, budget_base=None) -> None:
     if not isinstance(state, str) or len(state) > WIRE_LIMIT:
         raise SandboxError("invalid state payload")
-    raw = base64.b64decode(state, validate=True)
-    if len(raw) > STATE_LIMIT + MAX_FILES * 2048 + 10240:
-        raise SandboxError("state payload too large")
-    from core.archive import extract_tar
-    with tempfile.TemporaryDirectory(dir=root.parent, prefix=".state-") as temp:
-        staging = Path(temp) / "new"
-        with open_tar(fileobj=io.BytesIO(raw), mode="r:", max_files=MAX_FILES,
-                      max_payload_bytes=STATE_LIMIT, max_metadata_bytes=STATE_LIMIT) as archive:
-            members = archive.getmembers()
-            if len(members) > MAX_FILES or sum(m.size for m in members) > STATE_LIMIT:
-                raise SandboxError("persistent state exceeds quota")
-            extract_tar(archive, staging)
-        from core.plugin_trust import authorization_transaction
-        from core.config import configuration_transaction
-        from core.resource_lock import ResourceBusyError
+    with _state_staging(root, state, plugin=plugin, caller=caller, budget_base=budget_base) as lease:
+        from core.plugin_state_publish import publish_supervised
+        from core.config import get_config_path
+        from core.plugin_trust import _trust_file
+        requirements = {"operation": "authorize", "config": str(get_config_path()), "trust": str(_trust_file()),
+                        "identities": getattr(_invocations, "authorizations", ()),
+                        "edges": getattr(_invocations, "service_edges", ()),
+                        "networks": getattr(_invocations, "network_authorizations", ())}
+        publish_supervised(lease, lease.candidate_identity, plugin=plugin, caller=caller,
+                           requirements=requirements, timeout=_remaining(CONTROL_TIMEOUT))
+        # Publication has completed under fresh authorization. Cleanup owns its
+        # transaction guard, but no longer blocks unrelated config/trust writes.
         try:
-            with configuration_transaction(), authorization_transaction():
-                _remaining()
-                _check_live_authorizations()
-                _publish_state(staging, root)
-        except ResourceBusyError:
-            raise SandboxError("plugin authorization is busy; state not committed") from None
+            from core.plugin_state_io import finish_supervised
+            outcome = finish_supervised(root, plugin=plugin, caller=caller, timeout=_remaining(CONTROL_TIMEOUT))
+            lease.retired = outcome == "committed"
+        except Exception as exc:
+            raise SandboxError("plugin state committed; transaction cleanup incomplete") from exc
 
 
-def _publish_state(staging: Path, root: Path) -> None:
+def _publish_state_locked(staging: Path, root: Path, *, plugin: str, caller: str) -> None:
+    """The invocation, authorization and transaction guards are held."""
+    from core.plugin_state import confirm_prepared_record
+    plan = confirm_prepared_record(root, staging, plugin=plugin, caller=caller)
     backup = root.with_name(root.name + ".previous")
-    if backup.exists():
-        raise SandboxError("unresolved previous state transaction")
-    if root.exists():
+    _remaining()
+    if plan.record.old_identity is not None:
         _rename_state(root, backup)
-    try:
-        _rename_state(staging, root)
-    except BaseException:
-        if backup.exists():
-            _rename_state(backup, root)
-        raise
-    if backup.exists():
-        shutil.rmtree(backup)
-    from core.secrets import restrict_permissions
-    restrict_permissions(root)
-    for path in root.rglob("*"):
-        restrict_permissions(path)
+    _remaining()
+    # Failure or cancellation retains both the journal and owned candidate.
+    # The next locked invocation reconciles topology instead of guessing rollback.
+    _rename_state(staging, root)
 
 
 def _rename_state(source: Path, target: Path) -> None:
@@ -449,13 +620,13 @@ _locks_guard = threading.Lock()
 _invocations = threading.local()
 
 
-def _check_live_authorizations(*, extra=()):
+def _check_live_authorizations(*, extra=(), extra_edges=()):
     """Check each supervisor-bound identity, including outer RPC callers."""
     if not getattr(_invocations, "inspection_scope", False):
         with _execution_budget():
-            return _check_live_authorizations(extra=extra)
+            return _check_live_authorizations(extra=extra, extra_edges=extra_edges)
     identities = (*getattr(_invocations, "authorizations", ()), *extra)
-    edges = getattr(_invocations, "service_edges", ())
+    edges = (*getattr(_invocations, "service_edges", ()), *extra_edges)
     networks = getattr(_invocations, "network_authorizations", ())
     from core.config import get_config_path
     from core.plugin_trust import _trust_file
@@ -473,6 +644,10 @@ def _check_live_authorizations(*, extra=()):
     except (OSError, ValueError, RuntimeError):
         raise SandboxError("plugin authorization inspection worker failed") from None
     _remaining()
+    _raise_authorization_failure(failure)
+
+
+def _raise_authorization_failure(failure):
     errors = {"settings": "invalid plugin authorization settings",
               "identity": "plugin authorization revoked during execution",
               "service": "service authorization revoked during execution",
@@ -581,31 +756,24 @@ def _sandbox_timeout(config):
 @contextmanager
 def _state_lock(name: str):
     """Serialize transactions across CLI processes without deleting lock files."""
-    root = data_dir() / "plugin-runtimes"
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / (name + ".lock")).open("a+b") as handle:
-        handle.seek(0, 2)
-        if handle.tell() == 0:
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise SandboxError("plugin is busy in another process; retry later") from exc
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+    from core.resource_lock import ResourceBusyError
+    from core.plugin_invocation_lock import hold
+    if not isinstance(name, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,127}", name) is None:
+        raise SandboxError("invalid plugin state lock identity")
+    # Catch acquisition failures only; preserve invocation exceptions.
+    owner = hold(plugin=name, timeout=_remaining(CONTROL_TIMEOUT))
+    try:
+        owner.__enter__()
+    except ResourceBusyError as exc:
+        raise SandboxError("plugin is busy in another process; retry later") from exc
+    except TimeoutError as exc:
+        raise SandboxError("plugin exceeded execution deadline acquiring state lock") from exc
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SandboxError("plugin state lock acquisition failed") from exc
+    try:
+        yield
+    finally:
+        owner.__exit__(None, None, None)
 
 
 def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=None, caller="platform"):
@@ -650,7 +818,7 @@ def _resource_scope(command, kind, name):
         raise SandboxError("cannot record sandbox resource; execution refused") from None
     failed = False
     try:
-        yield lease.labels
+        yield lease
     except BaseException:
         failed = True
         raise
@@ -680,10 +848,10 @@ def _network(manifest, command):
     from core.plugin_gateway import image as gateway_image
     image = gateway_image(command)
     with ExitStack() as resources:
-        network_labels = resources.enter_context(_resource_scope(command, "network", name))
+        network_labels = resources.enter_context(_resource_scope(command, "network", name)).labels
         _control(command, "network", "create", "--driver=bridge", "--internal", "--ipv6=false",
                  "--opt", "com.docker.network.bridge.inhibit_ipv4=true", *network_labels, name)
-        proxy_labels = resources.enter_context(_resource_scope(command, "container", proxy))
+        proxy_labels = resources.enter_context(_resource_scope(command, "container", proxy)).labels
         _control(command, "run", "-d", "--rm", "--name", proxy, "--pull=never",
                  *proxy_labels,
                  "--log-driver=none",
@@ -719,8 +887,7 @@ def _network(manifest, command):
 
 
 def _invoke(manifest, action, *, args, service, method, kwargs, caller):
-    from core.plugin import load_manifest
-    current = load_manifest(manifest.root)
+    current = _read_manifest(manifest.root)
     if current is None or current.name != manifest.name:
         raise SandboxError("plugin manifest changed or identity is invalid")
     manifest = current
@@ -738,32 +905,36 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
     _invocations.authorizations = (*getattr(_invocations, "authorizations", ()), (manifest.name, fingerprint))
     _check_live_authorizations()
     command = docker_command()
+    _require_sandbox_capabilities(command)
     image = _image(manifest, command)
     _remaining()
     _check_live_authorizations()
     owner_root = data_dir() / "plugin-data" / manifest.name
     state_root = owner_root / "self"
-    state_root.parent.mkdir(parents=True, exist_ok=True)
     # A provider's persistent state is partitioned by the authenticated caller.
     if action.startswith("service"):
         state_root = owner_root / "callers" / caller
-        state_root.parent.mkdir(parents=True, exist_ok=True)
+    _recover_state(state_root, plugin=manifest.name,
+                   caller=caller if action.startswith("service") else "platform", initialize=True)
+    _check_staging_quota(state_root)
     name = "opskit-" + uuid.uuid4().hex
-    with _network(manifest, command) as (network, proxy_env), tempfile.TemporaryDirectory(prefix="opskit-sandbox-") as temp, _resource_scope(command, "container", name) as resource_labels:
-        base = Path(temp)
+    payload = {"action": action, "name": manifest.name, "entry": manifest.entry,
+               "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
+               "service": service, "method": method, "caller": caller,
+               "service_contract": service_contract}
+    request_text = plugin_json.dumps_message(_encode(payload, state_root))
+    from core.plugin_workspace import owned_workspace
+    with _network(manifest, command) as (network, proxy_env), _resource_scope(command, "container", name) as resource, owned_workspace(timeout=_remaining(CONTROL_TIMEOUT), cleanup_timeout=CONTROL_TIMEOUT, request_text=request_text, resource=resource) as workspace:
+        base = workspace.root
+        resource_labels = resource.labels
         _copy_supervised(manifest.root, base / "plugin", 128 * 1024**2)
         if compute_fingerprint(base / "plugin") != fingerprint:
             raise SandboxError("plugin changed during snapshot creation")
         from dataclasses import replace
-        snapshot_manifest = load_manifest(base / "plugin")
+        snapshot_manifest = _read_manifest(base / "plugin")
         if snapshot_manifest is None or replace(snapshot_manifest, root=manifest.root) != manifest:
             raise SandboxError("plugin manifest changed during authorization")
         _copy_supervised(state_root, base / "seed", STATE_LIMIT, skip_dirs=frozenset())
-        payload = {"action": action, "name": manifest.name, "entry": manifest.entry,
-                   "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
-                   "service": service, "method": method, "caller": caller,
-                   "service_contract": service_contract}
-        (base / "request.json").write_text(plugin_json.dumps_message(_encode(payload, state_root)), encoding="utf-8")
         mounts = []
         for source, target in [(base / "plugin", "/plugin"), (base / "seed", "/seed"), (base / "request.json", "/request.json")]:
             mounts += ["--mount", f"type=bind,src={mount_path(source, command)},dst={target},readonly"]
@@ -935,5 +1106,7 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
     _check_live_authorizations()
     if compute_fingerprint(manifest.root) != fingerprint:
         raise SandboxError("plugin changed during cleanup")
-    _save_state(result["state"], state_root)
+    _save_state(result["state"], state_root, plugin=manifest.name,
+                caller=caller if action.startswith("service") else "platform",
+                budget_base=data_dir().absolute() / "plugin-data")
     return result.get("value")

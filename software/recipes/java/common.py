@@ -14,17 +14,17 @@ from software.base import InstallError
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
 
 def _java_arch() -> str:
-    """将 Python platform.machine() 映射为 Adoptium API 架构字符串"""
+    '将 Python platform.machine() 映射为 Adoptium API 架构字符串'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    if m.startswith("armv"):
-        return "arm"
-    if m in ("i386", "i686", "x86"):
-        return "x86"
-    return "x64"
+    if m in ('x86_64', 'amd64'):
+        return 'x64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    if m in ('armv6l', 'armv7l', 'armv8l'):
+        return 'arm'
+    if m in ('i386', 'i686', 'x86'):
+        return 'x86'
+    raise InstallError(f"Unsupported java CPU architecture: {m!r}")
 
 
 def _java_os() -> str:
@@ -185,7 +185,7 @@ def get_download_info(version: str) -> tuple[str, str, str]:
     优先级：清华镜像 → ghproxy → GitHub 官方直连。
     尽量不调 API，按规则直接构造 URL。
     """
-    from .constants import GHPROXY_PREFIX, JAVA_CN_MIRRORS
+    from .constants import JAVA_CN_MIRRORS
 
     os_str = _java_os()
     arch   = _java_arch()
@@ -199,7 +199,6 @@ def get_download_info(version: str) -> tuple[str, str, str]:
     # GitHub 原始 URL
     tag = version.replace("+", "%2B")
     raw_url = f"https://github.com/adoptium/temurin{major}-binaries/releases/download/jdk-{tag}/{filename}"
-    ghproxy_url = GHPROXY_PREFIX + raw_url
 
     return tuna_url, raw_url, filename
 

@@ -84,6 +84,11 @@ def test_platform_context_only_and_build_output_on_stderr(tmp_path, monkeypatch,
         assert f"org.opskit.sandbox={RUNTIME_POLICY}".encode() in dockerfile and b"org.opskit.code-sha256=" in dockerfile
         assert dockerfile.index(b"-r pip-bootstrap.txt") < dockerfile.index(b"-r requirements.txt")
         assert dockerfile.count(b"--disable-pip-version-check") == 2
+        import shlex
+        from core.plugin_image_hardening import HARDENING_SCRIPT
+        hardening = ("RUN python -I -S -c " + shlex.quote("exec(" + repr(HARDENING_SCRIPT) + ")")).encode()
+        assert dockerfile.count(hardening) == 1
+        assert dockerfile.index(b"-r requirements.txt") < dockerfile.index(hardening) < dockerfile.index(b"USER 65534:65534")
 
 
 def test_bounded_native_client_output_and_nonzero_fail_without_log_leak(capfd):

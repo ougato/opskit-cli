@@ -127,7 +127,8 @@ def _plugin_runtime_bundle() -> Path:
     return target
 
 
-def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None) -> Path | None:
+def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
+                 jobs: int | None = None) -> Path | None:
     """使用 Nuitka 编译单文件可执行程序"""
     nuitka = _find_tool("nuitka") or _find_tool("nuitka3")
     if not nuitka:
@@ -163,10 +164,12 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
     ]
     for pkg in (packages or []):
         cmd.append(f"--include-package={pkg}")
+    if jobs is not None:
+        cmd.append(f"--jobs={jobs}")
     cmd += [
         "--noinclude-pytest-mode=nofollow",
         "--noinclude-unittest-mode=nofollow",
-        "--assume-yes-for-downloads",
+        "--update-check=never",
         "--no-deployment-flag=self-execution",
         "--no-deployment-flag=original-argv0",
     ]
@@ -183,7 +186,9 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
         cmd.append("--windows-console-mode=force")
 
     cmd.append("main.py")
-    rc = _run(cmd, cwd=ROOT)
+    # Nuitka documents EOF on stdin as the way to refuse auxiliary downloads.
+    # A missing compiler/helper must fail instead of fetching unreviewed code.
+    rc = _run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL)
     if rc != 0:
         print(f"[build] Nuitka failed (exit {rc})")
         return None
@@ -374,7 +379,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     used_backend = args.backend
 
     if args.backend in ("nuitka", "auto"):
-        bin_path = build_nuitka(output_name, args.upx, packages)
+        bin_path = build_nuitka(output_name, args.upx, packages, args.jobs)
         if bin_path:
             used_backend = "nuitka"
 
@@ -418,6 +423,13 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 # ─── 入口 ────────────────────────────────────────────────────────────────────
 
+def positive_jobs(value: str) -> int:
+    jobs = int(value)
+    if jobs < 1:
+        raise argparse.ArgumentTypeError("jobs must be positive")
+    return jobs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="OpsKit 构建脚本",
@@ -441,6 +453,7 @@ def main() -> None:
             default="auto", help="打包后端（默认 auto：Nuitka → PyInstaller 回退）",
         )
         p.add_argument("--upx", action="store_true", help="启用 UPX 压缩")
+        p.add_argument("--jobs", type=positive_jobs, default=None, help="Nuitka并行编译进程数（默认由Nuitka决定）")
 
     args = parser.parse_args()
 

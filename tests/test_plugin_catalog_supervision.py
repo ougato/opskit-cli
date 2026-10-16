@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
+from worker_test_markers import publish_marker
+
 from core import plugin_inspection as inspection
 from core import plugin_sandbox as sandbox
 from core import plugin_gateway as gateway
@@ -30,7 +32,7 @@ def blocked_catalog(connection, buffer, length, requested):
             send(connection, {"ok": True, "timeout": 30})
             continue
         read, write = os.pipe()
-        Path(request["path"]).write_text(str(os.getpid()))
+        publish_marker(Path(request["path"]), str(os.getpid()))
         try:
             os.read(read, 1)
         finally:

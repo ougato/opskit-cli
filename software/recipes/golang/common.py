@@ -1,9 +1,7 @@
 """跨平台共用工具：路径、快照、版本查找、版本列表、tarball 赛马下载"""
 from __future__ import annotations
 
-import os
 import platform
-import subprocess
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
@@ -21,11 +19,11 @@ def _go_arch() -> str:
         return "amd64"
     if m in ("aarch64", "arm64"):
         return "arm64"
-    if m.startswith("armv"):
+    if m in ("armv6l", "armv7l", "armv8l"):
         return "armv6l"
     if m in ("i386", "i686", "x86"):
         return "386"
-    return "amd64"
+    raise InstallError(f"Unsupported Go CPU architecture: {m!r}")
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────

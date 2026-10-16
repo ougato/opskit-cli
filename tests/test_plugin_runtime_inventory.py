@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
 import zipfile
 
 import pytest
@@ -113,6 +114,7 @@ def test_captured_guest_imports_and_rpc_adapter_without_platform_modules(tmp_pat
     code = '''
 import importlib.util, json, sys
 sys.path.insert(0, sys.argv[1])
+sys.path.extend(json.loads(sys.argv[2]))
 from core import sdk, plugin_worker
 plugin_worker._adapt_sdk('owned')
 for name in ('updater', 'privilege', 'http', 'plugin', 'plugin_services', 'plugin_runtime', 'plugin_sandbox', 'plugin_gateway', 'plugin_egress'):
@@ -127,7 +129,10 @@ assert sdk.current_lang() in ('en', 'zh')
 assert sdk.get_color('success')
 print(json.dumps({'sdk_exports': sorted(sdk.__all__), 'platform_modules_absent': True}))
 '''
-    result = subprocess.run([sys.executable, "-I", "-c", code, str(captured)],
+    # Match a guest with dependencies but no host editable-install import hook.
+    # -I alone still executes site-packages .pth files from the host environment.
+    libraries = sorted({sysconfig.get_paths()[key] for key in ("purelib", "platlib")})
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(captured), json.dumps(libraries)],
                             cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads(result.stdout)

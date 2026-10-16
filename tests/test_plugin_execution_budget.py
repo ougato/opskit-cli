@@ -51,6 +51,7 @@ def test_preparation_expiry_does_not_launch_container(tmp_path, monkeypatch):
         clock[0] += 3
         return "image"
 
+    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
     monkeypatch.setattr(sandbox, "_image", delayed_image)
     monkeypatch.setattr(sandbox, "start", lambda *a, **k: pytest.fail("expired preparation launched client"))
     with pytest.raises(sandbox.SandboxError, match="execution deadline"):
