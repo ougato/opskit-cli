@@ -8,7 +8,6 @@ import re
 import concurrent.futures
 import secrets
 import shutil
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -44,7 +43,6 @@ from xui.constants import (
     PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
     REDACTED_VALUE,
-    SECONDS_PER_DAY,
     SENSITIVE_STATE_KEYS,
     SERVICE_RESTART_TIMEOUT,
     SHORT_ID_BYTES,
@@ -68,8 +66,6 @@ from xui.constants import (
     HTTP_URL_TEMPLATE,
     HTTP_VALUE_XMLHTTPREQUEST,
     BASH_COMMAND,
-    CLIENT_EXPIRY_DAYS,
-    CLIENT_TOTAL_GB,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
     XUI_API_ADD_INBOUND_PATH,
@@ -79,7 +75,6 @@ from xui.constants import (
     XUI_COMMAND,
     XUI_ARTIFACT_DIRS,
     XUI_ARTIFACT_FILES,
-    XUI_DATABASE_FILE,
     XUI_SETTING_PASSWORD_ARG,
     XUI_SETTING_PORT_ARG,
     XUI_SETTING_SUBCOMMAND,
@@ -159,7 +154,10 @@ def is_port_listening(port: int) -> bool:
             check=False,
             timeout=HTTP_TIMEOUT_SECONDS,
         )
-        return f":{port}" in result.stdout
+        return result.returncode == 0 and any(
+            len(fields := line.split()) >= 4 and fields[3].rsplit(":", 1)[-1] == str(port)
+            for line in result.stdout.splitlines()
+        )
     except Exception:
         return False
 
@@ -230,7 +228,7 @@ def generate_reality_keypair() -> tuple[str, str]:
             lower = line.lower()
             if "private" in lower:
                 private_key = line.split(":", 1)[-1].strip()
-            if "public" in lower:
+            if "public" in lower or lower.startswith("password:"):
                 public_key = line.split(":", 1)[-1].strip()
         if private_key and public_key:
             return private_key, public_key
@@ -424,36 +422,6 @@ def login_panel(port: int, username: str, password: str, base_path: str) -> tupl
             if data.get("success") is True:
                 return _cookie_header(jar), csrf_token
     return "", ""
-
-
-def enable_inbound_clients(remarks: list[str]) -> None:
-    if not XUI_DATABASE_FILE.exists():
-        return
-    expiry_time = int((time.time() + CLIENT_EXPIRY_DAYS * SECONDS_PER_DAY) * 1000)
-    with sqlite3.connect(XUI_DATABASE_FILE) as conn:
-        for remark in remarks:
-            _enable_inbound_client(conn, remark, expiry_time)
-
-
-def _enable_inbound_client(conn: sqlite3.Connection, remark: str, expiry_time: int) -> None:
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("select id, settings from inbounds where remark = ?", (remark,)).fetchone()
-    if not row:
-        return
-    settings = json.loads(row["settings"])
-    for client in settings.get("clients") or []:
-        client["enable"] = True
-        client["totalGB"] = CLIENT_TOTAL_GB
-        client["expiryTime"] = expiry_time
-    conn.execute("update inbounds set settings = ? where id = ?", (json.dumps(settings, ensure_ascii=False), row["id"]))
-    conn.execute(
-        "update clients set enable = 1, total_gb = ?, expiry_time = ? where email = ?",
-        (CLIENT_TOTAL_GB, expiry_time, remark),
-    )
-    conn.execute(
-        "update client_traffics set enable = 1, total = ?, expiry_time = ? where inbound_id = ? and email = ?",
-        (CLIENT_TOTAL_GB, expiry_time, row["id"], remark),
-    )
 
 
 def add_inbound(port: int, username: str, password: str, base_path: str, payload: dict[str, object]) -> bool:

@@ -8,7 +8,7 @@ from core.cli import configure
 
 
 @pytest.mark.parametrize("scripted", [False, True], ids=["menu", "script"])
-@pytest.mark.parametrize("stage", ["panel_restart", "enable", "final_restart", "timer", None])
+@pytest.mark.parametrize("stage", ["panel_restart", "inbound", "enable", "final_restart", "timer", "verify", None])
 def test_service_failure_never_publishes_installed_state(tmp_path, monkeypatch, scripted, stage):
     from core.sysconfig import SysConfigManager
     from xui import server
@@ -29,7 +29,11 @@ def test_service_failure_never_publishes_installed_state(tmp_path, monkeypatch, 
     monkeypatch.setattr(server, "generate_reality_keypair", lambda: ("test-private", "test-public"))
     monkeypatch.setattr(server, "configure_panel_settings", lambda **kwargs: True)
     monkeypatch.setattr(server, "get_panel_settings", lambda: {})
-    monkeypatch.setattr(server, "_create_inbounds", lambda **kwargs: True)
+    monkeypatch.setattr(server, "_create_inbounds", lambda **kwargs: stage != "inbound")
+    def verify(*args):
+        if stage == "verify":
+            raise failure
+    monkeypatch.setattr(server, "_verify_installation", verify)
     monkeypatch.setattr(server, "write_secret_json", lambda *args: events.append("state"))
     monkeypatch.setattr(server, "print_success", lambda *args: events.append("success"))
     monkeypatch.setattr(SysConfigManager, "save", lambda *args, **kwargs: None)
@@ -60,11 +64,12 @@ def test_service_failure_never_publishes_installed_state(tmp_path, monkeypatch, 
                "panel_base_path": "", "host": "example.invalid", "vless_port": 443,
                "sni": "example.invalid", "dest": "example.invalid:443", "credentials_output_file": str(output)}
     if stage is not None:
-        with pytest.raises(OSError) as caught:
+        with pytest.raises(server.InstallError if stage == "inbound" else OSError) as caught:
             server.install_server(options if scripted else None)
-        assert caught.value is failure
+        if stage != "inbound":
+            assert caught.value is failure
         assert not {"state", "installed", "success"}.intersection(events)
-        if stage != "timer":
+        if stage not in {"timer", "verify"}:
             assert "timer" not in events
         assert not output.exists()
         if stage == "panel_restart":
@@ -105,3 +110,32 @@ def test_systemctl_nonzero_is_an_install_failure(monkeypatch, stage):
             utils.install_traffic_timer()
     assert caught.value.returncode == 7
     assert len(commands) == (2 if stage == "timer_enable" else 1)
+
+
+@pytest.mark.parametrize("service,panel,inbound", [(False, True, True), (True, False, True), (True, True, False)])
+def test_verification_rejects_missing_service_or_listener(monkeypatch, service, panel, inbound):
+    from xui import server
+    monkeypatch.setattr(server, "is_service_active", lambda: service)
+    monkeypatch.setattr(server, "is_port_listening", lambda port: panel if port == 54321 else inbound)
+    monkeypatch.setattr(server.time, "sleep", lambda delay: None)
+    with pytest.raises(server.InstallError):
+        server._verify_installation(54321, 443)
+
+
+def test_verification_waits_for_xray_listener(monkeypatch):
+    from xui import server
+    attempts = iter([False, True])
+    monkeypatch.setattr(server, "is_service_active", lambda: True)
+    monkeypatch.setattr(server, "is_port_listening", lambda port: True if port == 54321 else next(attempts))
+    monkeypatch.setattr(server.time, "sleep", lambda delay: None)
+    server._verify_installation(54321, 443)
+
+
+@pytest.mark.parametrize("manager,package", [("apt-get", "iproute2"), ("yum", "iproute")])
+def test_installer_adds_listener_tool_when_missing(monkeypatch, manager, package):
+    from xui import server
+    calls = []
+    monkeypatch.setattr(server, "command_exists", lambda command: command in {"curl", "sqlite3", manager})
+    monkeypatch.setattr(server, "run_as_root", lambda command, **kwargs: calls.append(command))
+    server._install_base_packages()
+    assert package in calls[-1]

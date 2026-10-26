@@ -81,6 +81,7 @@ def test_script_install_executes_without_input_and_exports_only_to_file(tmp_path
     monkeypatch.setattr(server, "configure_panel_settings", lambda **kw: True)
     monkeypatch.setattr(server, "get_panel_settings", lambda: {})
     monkeypatch.setattr(server, "_create_inbounds", lambda **kw: True)
+    monkeypatch.setattr(server, "_verify_installation", lambda *args: None)
     monkeypatch.setattr(server, "write_secret_json", lambda *args: None)
     monkeypatch.setattr(SysConfigManager, "save", lambda *args, **kw: None)
     monkeypatch.setattr(SysConfigManager, "mark_installed", lambda *args, **kw: None)

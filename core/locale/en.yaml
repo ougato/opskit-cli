@@ -407,6 +407,8 @@ xui:
     unsupported_os: "Linux only"
     package_manager_missing: "No supported package manager found"
     panel_config_failed: "Panel configuration failed"
+    inbound_config_failed: "VLESS inbound creation failed; configuration saved for diagnosis, installation incomplete."
+    startup_verify_failed: "X-UI startup verification failed: check service logs and TCP listeners for panel {panel_port} and VLESS {vless_port}."
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
     download_script_fail: "Failed to download X-UI install script, check network: {url}"

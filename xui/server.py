@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 from rich.console import Console
 
@@ -48,6 +49,9 @@ from xui.constants import (
     TRAFFIC_PERIOD_MONTH,
     TRAFFIC_PERIOD_TODAY,
     TRAFFIC_PERIOD_WEEK,
+    SS_COMMAND,
+    IPROUTE_APT_PACKAGE,
+    IPROUTE_YUM_PACKAGE,
     SQLITE3_COMMAND,
     SQLITE_YUM_PACKAGE,
     YUM_COMMAND,
@@ -76,7 +80,6 @@ from xui.utils import (
     detect_public_host,
     detect_xui_version,
     get_panel_settings,
-    enable_inbound_clients,
     generate_reality_keypair,
     gen_password,
     gen_short_id,
@@ -131,7 +134,7 @@ def _ensure_linux() -> None:
 
 
 def _install_base_packages() -> None:
-    if command_exists(CURL_COMMAND) and command_exists(SQLITE3_COMMAND):
+    if all(command_exists(command) for command in (CURL_COMMAND, SQLITE3_COMMAND, SS_COMMAND)):
         return
     env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
     if command_exists(APT_GET_COMMAND):
@@ -145,7 +148,7 @@ def _install_base_packages() -> None:
             env=env,
         )
         run_as_root(
-            [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND],
+            [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND, IPROUTE_APT_PACKAGE],
             check=True,
             capture_output=True,
             text=True,
@@ -156,7 +159,7 @@ def _install_base_packages() -> None:
         return
     if command_exists(YUM_COMMAND):
         run_as_root(
-            [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE],
+            [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE, IPROUTE_YUM_PACKAGE],
             check=True,
             capture_output=True,
             text=True,
@@ -204,9 +207,17 @@ def _create_inbounds(
             ok = False
     if not ok:
         _save_pending_inbounds(inbounds)
-    else:
-        enable_inbound_clients([str(inbound["remark"]) for inbound in inbounds])
     return ok
+
+
+def _verify_installation(panel_port: int, vless_port: int) -> None:
+    # systemctl restart can return before the panel has started its Xray child.
+    for attempt in range(10):
+        if is_service_active() and all(is_port_listening(port) for port in (panel_port, vless_port)):
+            return
+        if attempt < 9:
+            time.sleep(1)
+    raise InstallError(t("xui.error.startup_verify_failed", panel_port=panel_port, vless_port=vless_port))
 
 
 def _enable_wsl_systemd() -> None:
@@ -362,8 +373,8 @@ def install_server(options: dict | None = None) -> dict | None:
             panel_base_path=panel_base_path,
             inbounds=inbounds,
         )
-        if options is not None and not api_ok:
-            raise InstallError("XUI inbound configuration failed")
+        if not api_ok:
+            raise InstallError(t("xui.error.inbound_config_failed"))
 
         sp.step(t("xui.step.start_service"))
         enable_service()
@@ -371,6 +382,7 @@ def install_server(options: dict | None = None) -> dict | None:
         install_traffic_timer()
 
         sp.step(t("xui.step.verify"))
+        _verify_installation(panel_port, vless_port)
         state: dict[str, object] = {
             "status": XUI_VERSION_LATEST,
             "panel_port": panel_port,
@@ -404,13 +416,11 @@ def install_server(options: dict | None = None) -> dict | None:
     print_success(t("xui.output.install_done"))
     if not systemd_available():
         print_warning(t("xui.output.no_systemd"))
-    if not api_ok:
-        print_warning(t("xui.output.pending_inbounds", path=str(XUI_PENDING_INBOUNDS_FILE)))
     panel_url = HTTP_URL_TEMPLATE.format(host=host or LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
     console.print(f"{t('xui.output.panel')}: {panel_url}")
     console.print(f"{t('xui.output.panel_user')}: {panel_user}")
     console.print(f"{t('xui.output.panel_password')}: ********")
-    console.print(f"{t('xui.output.vless_link')}: {vless_link}")
+    console.print(f"{t('xui.output.vless_link')}: {vless_link}", markup=False, highlight=False)
     pause()
 
 

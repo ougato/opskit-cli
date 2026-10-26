@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from software.registry import all_recipes, get
 from xui.utils import redact_state, write_secret_json
 
@@ -256,46 +258,6 @@ def test_extract_csrf_token_from_login_page() -> None:
     assert _extract_csrf_token(html) == "token-value"
 
 
-def test_enable_inbound_clients_updates_traffic_tables(tmp_path, monkeypatch) -> None:
-    import json
-    import sqlite3
-
-    from xui import utils
-
-    db = tmp_path / "x-ui.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("create table inbounds (id integer primary key, remark text, settings text)")
-        conn.execute("create table clients (email text, enable numeric, total_gb integer, expiry_time integer)")
-        conn.execute(
-            "create table client_traffics (inbound_id integer, email text, enable numeric, total integer, expiry_time integer)"
-        )
-        conn.execute(
-            "insert into inbounds values (1, ?, ?)",
-            (
-                "opskit-vless-reality-tcp",
-                json.dumps({"clients": [{"email": "opskit-vless-reality-tcp", "enable": False}]}),
-            ),
-        )
-        conn.execute("insert into clients values (?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
-        conn.execute("insert into client_traffics values (1, ?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
-
-    monkeypatch.setattr(utils, "XUI_DATABASE_FILE", db)
-    utils.enable_inbound_clients(["opskit-vless-reality-tcp"])
-
-    with sqlite3.connect(db) as conn:
-        settings = json.loads(conn.execute("select settings from inbounds where id = 1").fetchone()[0])
-        client = conn.execute("select enable, total_gb, expiry_time from clients").fetchone()
-        traffic = conn.execute("select enable, total, expiry_time from client_traffics").fetchone()
-    assert settings["clients"][0]["enable"] is True
-    assert settings["clients"][0]["totalGB"] > 0
-    assert client[0] == 1
-    assert client[1] > 0
-    assert client[2] > 0
-    assert traffic[0] == 1
-    assert traffic[1] > 0
-    assert traffic[2] > 0
-
-
 def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeypatch) -> None:
     from xui import constants, utils
 
@@ -343,3 +305,23 @@ def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeyp
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]
+
+
+@pytest.mark.parametrize("label", ["Public key", "Password (PublicKey)", "Password"])
+def test_reality_keypair_output_formats(monkeypatch, label):
+    from types import SimpleNamespace
+    from xui import utils
+    monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", ["xray"])
+    monkeypatch.setattr(utils, "command_exists", lambda name: True)
+    monkeypatch.setattr(utils.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=f"PrivateKey: private-key\n{label}: public-key\nHash32: ignored\n"))
+    assert utils.generate_reality_keypair() == ("private-key", "public-key")
+
+
+@pytest.mark.parametrize("address,expected", [("0.0.0.0:443", True), ("[::]:443", True), ("0.0.0.0:4430", False)])
+def test_listener_matches_exact_port(monkeypatch, address, expected):
+    from types import SimpleNamespace
+    from xui import utils
+    monkeypatch.setattr(utils.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=f"State Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0 4096 {address} 0.0.0.0:*\n"))
+    assert utils.is_port_listening(443) is expected
