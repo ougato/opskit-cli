@@ -11,7 +11,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 import tempfile
 import urllib.parse
 import urllib.request
@@ -25,9 +24,7 @@ from core.privilege import run_as_root, write_root_file
 from software.base import InstallError
 from xui.constants import (
     HTTP_CONTENT_TYPE_FORM,
-    HTTP_CONTENT_TYPE_JSON,
     HTTP_HEADER_CONTENT_TYPE,
-    HTTP_HEADER_COOKIE,
     HTTP_HEADER_USER_AGENT,
     HTTP_HEADER_X_CSRF_TOKEN,
     HTTP_HEADER_X_REQUESTED_WITH,
@@ -39,8 +36,6 @@ from xui.constants import (
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
-    PANEL_API_RETRY_COUNT,
-    PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
     REDACTED_VALUE,
     SENSITIVE_STATE_KEYS,
@@ -68,7 +63,6 @@ from xui.constants import (
     BASH_COMMAND,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
-    XUI_API_ADD_INBOUND_PATH,
     XUI_API_CSRF_PATH,
     XUI_API_LOGIN_PATH,
     XUI_BINARY_COMMAND,
@@ -162,6 +156,38 @@ def is_port_listening(port: int) -> bool:
         return False
 
 
+def installation_listeners_ready(panel_port: int, vless_port: int) -> bool:
+    """An unrelated listener must not make a failed Xray start look healthy."""
+    import psutil
+    panel_exe = Path(XUI_BINARY_COMMAND).resolve()
+    xray_dir = panel_exe.parent / "bin"
+    matched = set()
+    owners = {}
+    try:
+        connections = psutil.net_connections(kind="tcp")
+    except (psutil.Error, OSError):
+        return False
+    for connection in connections:
+        if connection.status != psutil.CONN_LISTEN or not connection.laddr or connection.pid is None:
+            continue
+        port = connection.laddr.port
+        if port not in (panel_port, vless_port):
+            continue
+        if connection.pid not in owners:
+            try:
+                owners[connection.pid] = Path(psutil.Process(connection.pid).exe()).resolve()
+            except (psutil.Error, OSError):
+                owners[connection.pid] = None
+        executable = owners[connection.pid]
+        if executable is None:
+            continue
+        if port == panel_port and executable == panel_exe:
+            matched.add(port)
+        elif port == vless_port and executable.parent == xray_dir and executable.name.startswith("xray"):
+            matched.add(port)
+    return panel_port != vless_port and len(matched) == 2
+
+
 def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = False) -> str | None:
     from core.deadline import Deadline
     budget = Deadline(timeout, "XUI version")
@@ -233,6 +259,18 @@ def generate_reality_keypair() -> tuple[str, str]:
         if private_key and public_key:
             return private_key, public_key
     return "", ""
+
+
+def reality_public_key(private_key: str) -> str:
+    """Derive the share-link key from the authoritative existing private key."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    try:
+        raw = base64.urlsafe_b64decode(private_key + "=" * (-len(private_key) % 4))
+        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes_raw()
+    except (ValueError, TypeError):
+        raise InstallError("XUI existing Reality private key is invalid") from None
+    return base64.urlsafe_b64encode(public).decode("ascii").rstrip("=")
 
 
 def write_secret_json(path: Path, data: dict[str, object]) -> None:
@@ -358,35 +396,10 @@ def _cookie_header(jar: http.cookiejar.CookieJar) -> str:
     return XUI_COOKIE_SEPARATOR.join(f"{cookie.name}={cookie.value}" for cookie in jar)
 
 
-def _post_json(url: str, payload: dict[str, object], cookie: str, csrf_token: str) -> bool:
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            HTTP_HEADER_CONTENT_TYPE: HTTP_CONTENT_TYPE_JSON,
-            HTTP_HEADER_COOKIE: cookie,
-            HTTP_HEADER_USER_AGENT: OPSKIT_USER_AGENT,
-            HTTP_HEADER_X_REQUESTED_WITH: HTTP_VALUE_XMLHTTPREQUEST,
-            HTTP_HEADER_X_CSRF_TOKEN: csrf_token,
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-        text = resp.read().decode("utf-8", errors="ignore")
-        if resp.status != HTTP_STATUS_OK:
-            return False
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return True
-        return data.get("success") is True
-
-
 def login_panel(port: int, username: str, password: str, base_path: str) -> tuple[str, str]:
     base = panel_api_base(port, base_path)
     jar = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(jar))
     with opener.open(f"{base}/", timeout=HTTP_TIMEOUT_SECONDS) as resp:
         csrf_token = _extract_csrf_token(resp.read().decode("utf-8", errors="ignore"))
     if not csrf_token:
@@ -422,21 +435,6 @@ def login_panel(port: int, username: str, password: str, base_path: str) -> tupl
             if data.get("success") is True:
                 return _cookie_header(jar), csrf_token
     return "", ""
-
-
-def add_inbound(port: int, username: str, password: str, base_path: str, payload: dict[str, object]) -> bool:
-    for attempt in range(PANEL_API_RETRY_COUNT):
-        try:
-            cookie, csrf_token = login_panel(port, username, password, base_path)
-            if cookie and csrf_token:
-                base = panel_api_base(port, base_path)
-                if _post_json(f"{base}{XUI_API_ADD_INBOUND_PATH}", payload, cookie, csrf_token):
-                    return True
-        except Exception:
-            pass
-        if attempt < PANEL_API_RETRY_COUNT - 1:
-            time.sleep(PANEL_API_RETRY_DELAY_SECONDS)
-    return False
 
 
 def systemd_available() -> bool:

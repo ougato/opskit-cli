@@ -59,9 +59,9 @@ def test_installer_sends_unlimited_client_through_panel_api(monkeypatch):
     from xui import server
     calls = []
     def add(*args):
-        calls.append(args[-1])
-        return True
-    monkeypatch.setattr(server, "add_inbound", add)
+        calls.append(to_xui_api_payload(args[-1]))
+        return args[-1]
+    monkeypatch.setattr(server, "ensure_inbound", add)
     inbound = vless_reality_tcp_inbound(port=443, uuid="uuid", private_key="private", short_id="abcd",
                                        sni="example.invalid", dest="example.invalid:443")
     assert server._create_inbounds(panel_port=54321, panel_user="test", panel_password="synthetic",

@@ -936,13 +936,26 @@ def text_input(
     return raw if raw else default
 
 
+_pause_suppressed: ContextVar[bool] = ContextVar("prompt_pause_suppressed", default=False)
+
+
+@contextmanager
+def suppress_pause() -> Iterator[None]:
+    """Let an outer menu own the final pause while nested operations print results."""
+    token = _pause_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _pause_suppressed.reset(token)
+
+
 def pause(msg: str = '') -> None:
     """操作完成后等待用户按任意键（屏蔽 SIGINT 防止二次中断）。
 
     非交互模式（--yes）下直接返回，不等待按键。
     """
     from core.cli import non_interactive
-    if non_interactive.get():
+    if _pause_suppressed.get() or non_interactive.get():
         return
     if _auto_yes:
         return

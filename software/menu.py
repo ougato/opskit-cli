@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, paged_select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 from core.feedback import capture as _report, report_failure
@@ -518,7 +518,8 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
-        r = execute_uninstall(instance, version_to_remove)
+        with suppress_pause():
+            r = execute_uninstall(instance, version_to_remove)
         if r.ok:
             print_success(t("uninstall.success", name=_uname))
         else:
@@ -545,16 +546,16 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
     try:
-        r = execute_uninstall(instance)
+        with suppress_pause():
+            r = execute_uninstall(instance)
     except KeyboardInterrupt:
         return
     if not r.ok:
         report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
-        pause()
-    elif not getattr(cls, "has_wizard", False):
-        # 向导型 recipe（has_wizard=True）自行负责结果展示与「按任意键返回」，
-        # 框架不再重复 pause，避免出现两次任意键才能返回的问题。
-        pause()
+    # Installation wizard support does not imply that uninstall waits for input.
+    # The menu owns one final pause for every result, including legacy recipes
+    # that call pause themselves while executing.
+    pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
@@ -1046,7 +1047,8 @@ def show_uninstall() -> None:
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "uninstall")
-        instance.uninstall()
+        with suppress_pause():
+            instance.uninstall()
         from core.installed_cache import invalidate
         invalidate(cls.key)
     except PrivilegeError as e:

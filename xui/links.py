@@ -8,6 +8,7 @@ from xui.constants import (
     REALITY_SECURITY,
     TCP_NETWORK,
     VLESS_FLOW,
+    VLESS_DECRYPTION,
 )
 
 
@@ -24,6 +25,7 @@ def build_vless_link(
 ) -> str:
     query = urlencode(
         {
+            "encryption": VLESS_DECRYPTION,
             "type": TCP_NETWORK,
             "security": REALITY_SECURITY,
             "pbk": public_key,
@@ -34,4 +36,6 @@ def build_vless_link(
         },
         safe="/",
     )
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return f"vless://{quote(uuid, safe='')}@{host}:{port}?{query}#{quote(remark)}"

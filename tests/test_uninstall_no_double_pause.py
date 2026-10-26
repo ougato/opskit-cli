@@ -1,16 +1,15 @@
-"""守卫测试：卸载流程不得出现「两次任意键才能返回」。
+"""Uninstall menus own one final pause, regardless of installation wizard support.
 
-历史问题：向导型 recipe（has_wizard=True）在自己的 uninstall() 里已经
-调用 pause() 展示结果，而菜单框架 _do_uninstall 又无条件 pause 了一次，
-导致用户要按两次任意键才返回。
-
-规则（本测试锁定）：
-- has_wizard=True 且卸载成功 → 框架不再 pause（结果与 pause 由 recipe 自负责）；
-- has_wizard=False 且卸载成功 → 框架负责 pause 一次；
-- 卸载失败 → 框架 pause 一次，保证错误可见。
+Recipes may still pause when called directly. Their pauses are suppressed only
+inside menu-owned uninstall operations, so success and errors stay visible once.
 """
 from __future__ import annotations
 
+import pytest
+from types import SimpleNamespace
+
+import core.prompt as prompt
+from core.cli import configure
 import software.menu as menu
 
 
@@ -51,12 +50,12 @@ def _patch_common(monkeypatch, pause_counter: list[int]):
     monkeypatch.setattr(menu.base_console, "print", lambda *a, **k: None)
 
 
-def test_wizard_uninstall_success_frame_does_not_pause(monkeypatch):
+def test_wizard_uninstall_success_frame_pauses_once(monkeypatch):
     calls: list[int] = []
     _patch_common(monkeypatch, calls)
     cls = _make_cls(has_wizard=True)
     menu._do_uninstall(["OpsKit"], cls, _FakeInstance(ok=True))
-    assert calls == [], "向导型 recipe 卸载成功时框架不应再 pause（由 recipe 自负责）"
+    assert calls == [1], "向导型 recipe 卸载成功后也必须保留结果"
 
 
 def test_non_wizard_uninstall_success_frame_pauses_once(monkeypatch):
@@ -74,3 +73,97 @@ def test_uninstall_failure_frame_pauses_once(monkeypatch):
         cls = _make_cls(has_wizard=has_wizard)
         menu._do_uninstall(["OpsKit"], cls, _FakeInstance(ok=False))
         assert calls == [1], "卸载失败时框架应 pause 恰好一次以展示错误"
+
+
+@pytest.fixture
+def terminal(monkeypatch):
+    events = []
+    _patch_common(monkeypatch, [])
+    configure("text", False)
+    monkeypatch.setattr(prompt, "_auto_yes", False)
+    monkeypatch.setattr(prompt, "_drain_input", lambda: None)
+    monkeypatch.setattr(prompt, "_read_key", lambda: events.append("keypress"))
+    monkeypatch.setattr(menu, "pause", lambda: prompt.pause("press any key"))
+    monkeypatch.setattr(menu, "report_failure", lambda *args, **kwargs: events.append("error"))
+    # Avoid changing the process's real signal handlers during a fake read.
+    with prompt.guard_input(lambda: None):
+        yield events
+    configure("text", False)
+
+
+@pytest.mark.parametrize("wizard", [False, True])
+@pytest.mark.parametrize("internal_pause", [False, True])
+@pytest.mark.parametrize("success", [False, True])
+def test_result_is_visible_before_exactly_one_keypress(terminal, wizard, internal_pause, success):
+    class Recipe(_FakeInstance):
+        def uninstall(self, version=None):
+            terminal.append("uninstall")
+            if internal_pause:
+                # Alias imported by a recipe must see the scoped suppression too.
+                prompt.pause("recipe completion")
+            if not success:
+                raise RuntimeError("synthetic uninstall failure")
+            terminal.append("done")
+    menu._do_uninstall(["OpsKit"], _make_cls(has_wizard=wizard), Recipe())
+    assert terminal == ["uninstall", "done" if success else "error", "keypress"]
+
+
+def test_multiversion_uninstall_waits_once_after_internal_pause(terminal, monkeypatch):
+    cls = _make_cls(has_wizard=False)
+    cls.has_switch = True
+    class Recipe(_FakeInstance):
+        def installed_versions(self):
+            return ["1.0", "2.0"]
+        def uninstall(self, version=None):
+            terminal.append(version)
+            prompt.pause("internal pause")
+    monkeypatch.setattr(menu, "select", lambda **kwargs: "1")
+    menu._do_uninstall(["OpsKit"], cls, Recipe())
+    assert terminal == ["1.0", "keypress"]
+
+
+def test_legacy_uninstall_menu_does_not_double_pause(terminal, monkeypatch):
+    from software import registry
+    from core import platform, installed_cache, privilege
+    class Recipe(_FakeInstance):
+        key = "fake"
+        platforms = ["linux"]
+        description = "Fake"
+        def uninstall(self, version=None):
+            terminal.append("uninstall")
+            prompt.pause("internal pause")
+    monkeypatch.setattr(registry, "all_recipes", lambda: [Recipe])
+    monkeypatch.setattr(platform, "get_platform", lambda: SimpleNamespace(os_type="linux"))
+    monkeypatch.setattr(installed_cache, "get_detected", lambda cls: "1.0")
+    monkeypatch.setattr(privilege, "ensure_root_for_action", lambda *args: None)
+    monkeypatch.setattr(menu, "select", lambda **kwargs: "1")
+    menu.show_uninstall()
+    assert terminal == ["uninstall", "keypress"]
+
+
+def test_pause_suppression_is_nested_and_restored_after_exception(terminal):
+    with prompt.suppress_pause():
+        with pytest.raises(RuntimeError):
+            with prompt.suppress_pause():
+                prompt.pause("inner")
+                raise RuntimeError("synthetic")
+        prompt.pause("outer")
+    assert terminal == []
+    prompt.pause("final")
+    assert terminal == ["keypress"]
+
+
+@pytest.mark.parametrize("mode", ["noninteractive", "yes"])
+def test_automation_does_not_wait_for_keypress(terminal, monkeypatch, mode):
+    if mode == "noninteractive":
+        configure("json", True)
+    else:
+        monkeypatch.setattr(prompt, "_auto_yes", True)
+    menu._do_uninstall(["OpsKit"], _make_cls(has_wizard=True), _FakeInstance())
+    assert terminal == []
+
+
+def test_cancelled_uninstall_does_not_wait(terminal, monkeypatch):
+    monkeypatch.setattr(menu, "confirm", lambda **kwargs: False)
+    menu._do_uninstall(["OpsKit"], _make_cls(has_wizard=False), _FakeInstance())
+    assert terminal == []

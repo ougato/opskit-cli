@@ -406,6 +406,7 @@ xui:
     unsupported_os: "仅支持 Linux"
     package_manager_missing: "未找到支持的包管理器"
     panel_config_failed: "面板配置失败"
+    port_conflict: "面板端口与 VLESS 端口不能相同，请分别设置。"
     inbound_config_failed: "VLESS 入站创建失败；配置已保存供排查，未完成安装。"
     startup_verify_failed: "X-UI 启动验证失败：请检查服务日志以及面板 {panel_port}、VLESS {vless_port} 的 TCP 监听。"
     reality_key_failed: "REALITY 密钥生成失败"

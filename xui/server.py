@@ -72,9 +72,9 @@ from xui.constants import (
     SERVICE_RESTART_TIMEOUT,
 )
 from xui.links import build_vless_link
-from xui.templates import to_xui_api_payload, vless_reality_tcp_inbound
+from xui.templates import vless_reality_tcp_inbound
+from xui.inbounds import ensure_inbound, connection_values
 from xui.utils import (
-    add_inbound,
     command_exists,
     configure_panel_settings,
     detect_public_host,
@@ -85,6 +85,7 @@ from xui.utils import (
     gen_short_id,
     gen_uuid,
     is_port_listening,
+    installation_listeners_ready,
     is_service_active,
     load_state,
     redact_state,
@@ -123,7 +124,7 @@ def _read_int(breadcrumb: list[str], key: str, default: int) -> int:
         except ValueError:
             print_warning(t("xui.error.invalid_port"))
             continue
-        if value > 0:
+        if 1 <= value <= 65535:
             return value
         print_warning(t("xui.error.invalid_port"))
 
@@ -188,7 +189,7 @@ def _save_pending_inbounds(inbounds: list[dict[str, object]]) -> None:
     write_root_file(
         XUI_PENDING_INBOUNDS_FILE,
         json.dumps(inbounds, indent=2, ensure_ascii=False),
-        "0644",
+        "0600",
     )
 
 
@@ -200,20 +201,21 @@ def _create_inbounds(
     panel_base_path: str,
     inbounds: list[dict[str, object]],
 ) -> bool:
-    ok = True
-    payloads = [to_xui_api_payload(inbound) for inbound in inbounds]
-    for payload in payloads:
-        if not add_inbound(panel_port, panel_user, panel_password, panel_base_path, payload):
-            ok = False
-    if not ok:
+    try:
+        for inbound in inbounds:
+            saved = ensure_inbound(panel_port, panel_user, panel_password, panel_base_path, inbound)
+            inbound.clear()
+            inbound.update(saved)
+    except InstallError:
         _save_pending_inbounds(inbounds)
-    return ok
+        raise
+    return True
 
 
 def _verify_installation(panel_port: int, vless_port: int) -> None:
     # systemctl restart can return before the panel has started its Xray child.
     for attempt in range(10):
-        if is_service_active() and all(is_port_listening(port) for port in (panel_port, vless_port)):
+        if is_service_active() and installation_listeners_ready(panel_port, vless_port):
             return
         if attempt < 9:
             time.sleep(1)
@@ -285,6 +287,11 @@ def install_server(options: dict | None = None) -> dict | None:
         if not systemd_available():
             raise InstallError("scripted XUI installation requires systemd")
 
+    if any(type(port) is not int or not 1 <= port <= 65535 for port in (panel_port, vless_port)):
+        raise InstallError(t("xui.error.invalid_port"))
+    if panel_port == vless_port:
+        raise InstallError(t("xui.error.port_conflict"))
+
     if options is None and not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
         return
 
@@ -353,15 +360,6 @@ def install_server(options: dict | None = None) -> dict | None:
             dest=dest,
             remark=DEFAULT_VLESS_REMARK,
         )
-        vless_link = build_vless_link(
-            uuid=uuid,
-            host=host,
-            port=vless_port,
-            public_key=public_key,
-            sni=sni,
-            short_id=short_id,
-            remark=DEFAULT_VLESS_REMARK,
-        )
         inbounds = [vless]
 
         sp.step(t("xui.step.create_vless_tcp"))
@@ -375,6 +373,22 @@ def install_server(options: dict | None = None) -> dict | None:
         )
         if not api_ok:
             raise InstallError(t("xui.error.inbound_config_failed"))
+
+        values = connection_values(vless)
+        if values["private_key"] != private_key:
+            from xui.utils import reality_public_key
+            public_key = reality_public_key(values["private_key"])
+        private_key, uuid, short_id = values["private_key"], values["uuid"], values["short_id"]
+        sni, dest = values["sni"], values["dest"]
+        vless_link = build_vless_link(
+            uuid=uuid,
+            host=host,
+            port=vless_port,
+            public_key=public_key,
+            sni=sni,
+            short_id=short_id,
+            remark=DEFAULT_VLESS_REMARK,
+        )
 
         sp.step(t("xui.step.start_service"))
         enable_service()

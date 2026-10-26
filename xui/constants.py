@@ -142,7 +142,6 @@ CLIENT_TOTAL_GB = 0  # 3x-ui: zero means unlimited traffic.
 
 XUI_API_LOGIN_PATH = "/login"
 XUI_API_CSRF_PATH = "/csrf-token"
-XUI_API_ADD_INBOUND_PATH = "/panel/api/inbounds/add"
 
 HTTP_STATUS_OK = 200
 HTTP_STATUS_REDIRECT_MIN = 300

@@ -116,7 +116,7 @@ def test_systemctl_nonzero_is_an_install_failure(monkeypatch, stage):
 def test_verification_rejects_missing_service_or_listener(monkeypatch, service, panel, inbound):
     from xui import server
     monkeypatch.setattr(server, "is_service_active", lambda: service)
-    monkeypatch.setattr(server, "is_port_listening", lambda port: panel if port == 54321 else inbound)
+    monkeypatch.setattr(server, "installation_listeners_ready", lambda *args: panel and inbound)
     monkeypatch.setattr(server.time, "sleep", lambda delay: None)
     with pytest.raises(server.InstallError):
         server._verify_installation(54321, 443)
@@ -126,7 +126,7 @@ def test_verification_waits_for_xray_listener(monkeypatch):
     from xui import server
     attempts = iter([False, True])
     monkeypatch.setattr(server, "is_service_active", lambda: True)
-    monkeypatch.setattr(server, "is_port_listening", lambda port: True if port == 54321 else next(attempts))
+    monkeypatch.setattr(server, "installation_listeners_ready", lambda *args: next(attempts))
     monkeypatch.setattr(server.time, "sleep", lambda delay: None)
     server._verify_installation(54321, 443)
 
@@ -139,3 +139,18 @@ def test_installer_adds_listener_tool_when_missing(monkeypatch, manager, package
     monkeypatch.setattr(server, "run_as_root", lambda command, **kwargs: calls.append(command))
     server._install_base_packages()
     assert package in calls[-1]
+
+
+@pytest.mark.parametrize("panel,vless", [(0, 443), (54321, 65536), (443, 443), (True, 443)])
+def test_invalid_ports_fail_before_system_changes(monkeypatch, panel, vless):
+    from xui import server
+    monkeypatch.setattr(server, "_ensure_linux", lambda: None)
+    monkeypatch.setattr(server, "systemd_available", lambda: True)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("preflight must run before installation effects")
+    monkeypatch.setattr(server, "_install_base_packages", forbidden)
+    options = {"panel_port": panel, "panel_user": "test", "panel_password": "synthetic",
+               "panel_base_path": "", "host": "example.invalid", "vless_port": vless,
+               "sni": "example.invalid", "dest": "example.invalid:443"}
+    with pytest.raises(server.InstallError):
+        server.install_server(options)
