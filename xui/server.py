@@ -21,13 +21,9 @@ from xui.constants import (
     APT_ASSUME_YES_ARG,
     APT_INSTALL_COMMAND,
     APT_UPDATE_COMMAND,
-    BBR_KERNEL_MODULE,
+    BBR_MODULES_FILE,
     BBR_SYSCTL_FILE,
-    BBR_SYSCTL_FILE_CONTENT,
     BBR_SYSPARAMS,
-    MODPROBE_COMMAND,
-    SYSCTL_COMMAND,
-    SYSCTL_WRITE_ARG,
     SYSTEMCTL_COMMAND,
     XUI_SERVER_RECIPE_KEY,
     DEBIAN_FRONTEND_ENV,
@@ -173,16 +169,8 @@ def _install_base_packages() -> None:
 
 
 def _enable_bbr() -> None:
-    run_as_root(
-        [MODPROBE_COMMAND, BBR_KERNEL_MODULE],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    for param, value in BBR_SYSPARAMS.items():
-        run_as_root(
-            [SYSCTL_COMMAND, SYSCTL_WRITE_ARG, f"{param}={value}"],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-    write_root_file(BBR_SYSCTL_FILE, BBR_SYSCTL_FILE_CONTENT, "0644")
+    from xui.network_tuning import enable
+    enable()
 
 
 def _save_pending_inbounds(inbounds: list[dict[str, object]]) -> None:
@@ -458,7 +446,7 @@ def uninstall_server() -> None:
             sp.step(descs[1])
             uninstall_traffic_timer()
             remove_xui_artifacts()
-            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE)], check=True, capture_output=True,
+            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE), str(BBR_MODULES_FILE)], check=True, capture_output=True,
                         timeout=SERVICE_RESTART_TIMEOUT)
 
             sp.step(descs[2])

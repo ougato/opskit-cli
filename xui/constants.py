@@ -168,11 +168,12 @@ SYSCTL_WRITE_ARG = "-w"
 MODPROBE_COMMAND = "modprobe"
 BBR_KERNEL_MODULE = "tcp_bbr"
 BBR_SYSPARAMS = {
-    "net.core.default_qdisc": "fq",
     "net.ipv4.tcp_congestion_control": "bbr",
+    "net.ipv4.tcp_mtu_probing": "1",
 }
 BBR_SYSCTL_FILE = Path("/etc/sysctl.d/99-xui-bbr.conf")
 BBR_SYSCTL_FILE_CONTENT = "".join(f"{key} = {value}\n" for key, value in BBR_SYSPARAMS.items())
+BBR_MODULES_FILE = Path("/etc/modules-load.d/opskit-xui-bbr.conf")
 
 SENSITIVE_STATE_KEYS = frozenset(
     {
