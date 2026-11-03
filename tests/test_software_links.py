@@ -96,7 +96,7 @@ def test_source_link_cannot_publish_command_outside_managed_root(system_bin, tmp
 
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
-def test_late_publication_failure_restores_entire_command_group(system_bin, tmp_path, monkeypatch, existing, cancel):
+def test_late_publication_failure_restores_entire_command_group(system_bin, tmp_path, monkeypatch, existing, cancel, symlink_capable):
     root = tmp_path / "managed"
     old, new = root / "old", root / "new"
     old.mkdir(parents=True)
@@ -127,7 +127,7 @@ def test_late_publication_failure_restores_entire_command_group(system_bin, tmp_
     assert not list(system_bin.glob(".opskit-link-*"))
 
 
-def test_rollback_preserves_external_command_change(system_bin, tmp_path, monkeypatch):
+def test_rollback_preserves_external_command_change(system_bin, tmp_path, monkeypatch, symlink_capable):
     from software.base import InstallError
     root = tmp_path / "managed"
     root.mkdir()

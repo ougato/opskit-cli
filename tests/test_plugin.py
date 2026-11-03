@@ -16,6 +16,7 @@ from core.plugin import discover_plugins, list_manifests, load_manifest, load_pl
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke
 
 
+
 def _write_manifest(plugin_dir: Path, content: str) -> None:
     plugin_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / "plugin.yaml").write_text(textwrap.dedent(content), encoding="utf-8")
@@ -345,7 +346,7 @@ def test_hot_reload_after_update(plugins_root) -> None:
     assert info.order == 55
 
 
-def test_update_invalidates_trust(plugins_root, tmp_path) -> None:
+def test_update_invalidates_trust(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """未变内容保留信任，拉取不同内容后必须撤销旧指纹授权。"""
     import subprocess
 
@@ -357,11 +358,11 @@ def test_update_invalidates_trust(plugins_root, tmp_path) -> None:
     subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
 
-    dest = plugins_root / "demo"
-    cloned = subprocess.run(["git", "clone", "-q", str(origin), str(dest)], capture_output=True, text=True)
-    assert cloned.returncode == 0, cloned.stderr
-    _trust(dest)
-    manifest = load_manifest(dest)
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert error == "" and manifest is not None
+    dest = manifest.root
+    assert not (dest / ".git").exists()
+    commands.grant_trust(manifest)
     assert commands.trust_status(manifest) == commands.TRUST_OK
 
     ok, msg = commands.update(manifest)
@@ -434,7 +435,7 @@ def test_invalid_semver_version_rejected(plugins_root) -> None:
     assert load_manifest(plugin_dir) is None
 
 
-def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
+def test_update_downgrade_requires_confirm(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """更新后版本回退不自动继承信任，交由用户显式确认（防降级攻击）"""
     import subprocess
 
@@ -446,10 +447,11 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
     subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
 
-    dest = plugins_root / "demo"
-    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
-    _trust(dest)
-    manifest = load_manifest(dest)
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert error == "" and manifest is not None
+    dest = manifest.root
+    assert not (dest / ".git").exists()
+    commands.grant_trust(manifest)
 
     manifest_path = origin / "plugin.yaml"
     manifest_path.write_text(
@@ -465,27 +467,20 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
     assert commands.trust_status(refreshed) != commands.TRUST_OK
 
 
-def test_git_error_reason_maps_common_failures() -> None:
-    """git 失败转可读原因：认证 / 仓库不存在 / 网络，未识别取 stderr 末行"""
-    import subprocess
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_native_git_errors_use_fixed_localized_categories(monkeypatch, language) -> None:
+    """Native acquisition must not render arbitrary Git stderr as a platform error."""
+    from core import i18n
+    from core.native_git_https import TRANSFER_ERRORS
+    from core.native_sandbox import NativeSandboxError
 
-    from core.i18n import t
-    from plugin import commands
-
-    def _result(stderr: str, code: int = 128) -> subprocess.CompletedProcess:
-        return subprocess.CompletedProcess(args=["git"], returncode=code, stdout="", stderr=stderr)
-
-    assert commands.git_error_reason(
-        _result("git@host: Permission denied (publickey).\nfatal: Could not read from remote repository.")
-    ) == t("plugin.git_auth_failed")
-    assert commands.git_error_reason(
-        _result("ERROR: Repository not found.\nfatal: Could not read from remote repository.")
-    ) == t("plugin.git_repo_not_found")
-    assert commands.git_error_reason(
-        _result("ssh: connect to host git.example.com port 22: Connection reset by peer\nfatal: ...")
-    ) == t("plugin.git_network_failed")
-    assert commands.git_error_reason(_result("fatal: some unknown failure")) == "fatal: some unknown failure"
-    assert commands.git_error_reason(_result("", code=130)) == t("plugin.git_exit", code=130)
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    monkeypatch.setattr(i18n, "_lang", language)
+    for code in TRANSFER_ERRORS:
+        error = NativeSandboxError(code)
+        assert error.code == code
+        assert str(error) == i18n.t("plugin_native.errors." + code)
+        assert "plugin_native." not in str(error)
 
 
 def test_parse_install_input_branch_forms() -> None:
@@ -513,6 +508,9 @@ def test_plugin_install_dir_from_source_path() -> None:
         "https://git.icerror.top/mydea/ghost/client-tools.git"
     ) == "mydea-ghost-client-tools"
     assert commands.dir_name_from_url("https://git.icerror.top/client-tools.git") == "client-tools"
+    assert commands.dir_name_from_url("ssh://git@127.0.0.1:2222/team/repo.git") == "team-repo"
+    assert commands.dir_name_from_url("ssh://git@example.com/team/repo.git") == "team-repo"
+    assert commands.dir_name_from_url("git@example.com:team/repo.git") == "team-repo"
 
 
 def test_install_alias_validation(plugins_root, tmp_path) -> None:
@@ -524,7 +522,7 @@ def test_install_alias_validation(plugins_root, tmp_path) -> None:
     assert err == "bad_alias:../escape"
 
 
-def test_install_alias_overrides_directory(plugins_root, tmp_path) -> None:
+def test_install_alias_overrides_directory(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """--as 覆盖自动生成目录，但不改变 plugin.yaml name"""
     import subprocess
 
@@ -542,7 +540,7 @@ def test_install_alias_overrides_directory(plugins_root, tmp_path) -> None:
     assert manifest.root == plugins_root / "custom-client-tools"
 
 
-def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path) -> None:
+def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """不同安装目录里的 plugin.yaml name 仍必须全局唯一，冲突时回滚刚克隆目录"""
     import subprocess
 
@@ -566,8 +564,8 @@ def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path) -> N
     assert not (plugins_root / "second-client-tools").exists()
 
 
-def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> None:
-    """-b 指定分支安装：clone 该分支，之后更新固定 pull 安装时的分支"""
+def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """隔离采集明确分支，更新继续使用安装时绑定的分支。"""
     import subprocess
 
     from plugin import commands

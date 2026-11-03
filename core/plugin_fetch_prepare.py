@@ -12,7 +12,7 @@ import time
 import uuid
 
 from core.plugin_fetch_candidate import MAX_ENTRIES, MAX_TREE_BYTES, validated_archive
-from core.plugin_workspace import Workspace, journal_binding
+from core.plugin_workspace import Workspace, validate_binding
 from core.process_file import _SpawnFile
 
 
@@ -28,7 +28,7 @@ class PreparedCandidate:
 
 def _binding(workspace):
     from core.plugin_state import _directory
-    journal_binding(workspace)
+    validate_binding(workspace)
     for path in (workspace.root, *workspace.root.parents):
         _directory(path)
     if (_directory(workspace.root) != workspace.identity
@@ -207,7 +207,7 @@ def prepare_candidate(response, workspace, *, timeout):
     if (not isinstance(workspace, Workspace) or type(timeout) not in (int, float)
             or not math.isfinite(timeout) or timeout <= 0):
         raise ValueError("invalid candidate preparation request")
-    journal_binding(workspace)
+    validate_binding(workspace)
     deadline = time.monotonic() + timeout
     descriptor = response.fileno()
     request = uuid.uuid4().hex

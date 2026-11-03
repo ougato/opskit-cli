@@ -33,7 +33,7 @@ def test_regular_existing_command_never_deleted(routing):
 
 @pytest.mark.parametrize("restore", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
-def test_profile_failure_restores_previous_link(routing, monkeypatch, restore, cancel):
+def test_profile_failure_restores_previous_link(routing, monkeypatch, restore, cancel, symlink_capable):
     driver, link, (old, target) = routing
     link.symlink_to(old)
     previous = link.readlink()
@@ -50,7 +50,7 @@ def test_profile_failure_restores_previous_link(routing, monkeypatch, restore, c
     assert not list(link.parent.glob(".opskit-link-*"))
 
 
-def test_relative_dangling_original_link_restored_exactly(routing):
+def test_relative_dangling_original_link_restored_exactly(routing, symlink_capable):
     driver, link, (old, _) = routing
     link.symlink_to(old)
     driver.restore_original(str(link), "../missing-original", False)
@@ -66,7 +66,7 @@ def test_restore_arbitrary_snapshot_path_rejected(routing, tmp_path):
     assert foreign.read_bytes() == b"preserve"
 
 
-def test_external_link_change_preserved_and_rollback_reported(routing, tmp_path, monkeypatch):
+def test_external_link_change_preserved_and_rollback_reported(routing, tmp_path, monkeypatch, symlink_capable):
     driver, link, (old, target) = routing
     link.symlink_to(old)
     external = tmp_path / "administrator-interpreter"

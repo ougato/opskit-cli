@@ -16,6 +16,56 @@ class Workspace:
     identity: list
 
 
+def validate_binding(workspace):
+    """Recheck a native workspace and its recorded parent without a journal."""
+    from core.plugin_state import _directory, _valid_identity
+    if (not isinstance(workspace, Workspace) or not workspace.root.is_absolute()
+            or '..' in workspace.root.parts
+            or not _valid_identity(workspace.identity)
+            or not _valid_identity(workspace.parent_identity)):
+        raise ValueError('invalid workspace binding')
+    journal_binding(workspace)
+    for path in (workspace.root, *workspace.root.parents):
+        _directory(path)
+    if (_directory(workspace.root) != workspace.identity
+            or _directory(workspace.root.parent) != workspace.parent_identity):
+        raise ValueError('workspace identity changed')
+
+
+def recorded_workspace_intent(value):
+    """Resolve an allocation attempt; it grants no directory ownership."""
+    import re
+    from core.paths import data_dir
+    from core.plugin_state import _valid_identity
+    if (not isinstance(value, dict) or set(value) != {"name", "parent"}
+            or not isinstance(value["name"], str)
+            or re.fullmatch(r"opskit-sandbox-[0-9a-f]{32}", value["name"]) is None
+            or not _valid_identity(value["parent"])):
+        raise ValueError("invalid workspace allocation intent")
+    root = data_dir().absolute() / "plugin-runtimes" / "workspaces" / value["name"]
+    return root, value['parent']
+
+
+def recorded_workspace(value):
+    """Resolve a strict identity binding in the current platform namespace."""
+    from core.plugin_state import _valid_identity
+    if (not isinstance(value, dict) or set(value) != {'name', 'parent', 'identity'}
+            or not _valid_identity(value['identity'])):
+        raise ValueError('invalid workspace journal binding')
+    root, parent = recorded_workspace_intent({key: value[key] for key in ('name', 'parent')})
+    return Workspace(root, parent, value['identity'])
+
+
+def journal_binding(workspace):
+    if not isinstance(workspace, Workspace):
+        raise ValueError("invalid workspace ownership")
+    value = {"name": workspace.root.name, "parent": workspace.parent_identity,
+             "identity": workspace.identity}
+    if recorded_workspace(value) != workspace:
+        raise ValueError("workspace outside platform namespace")
+    return value
+
+
 def _inspect_workspaces_worker(connection, request, limit):
     import os
     import re
@@ -70,7 +120,7 @@ def _inspect_workspaces_worker(connection, request, limit):
 def inspect_workspaces(*, timeout, limit=256):
     """Observe direct entries, never infer ownership or authorize deletion.
 
-    No recursive reads, resource journals, locks, Docker calls or mutations.
+    No recursive reads, ownership claims, locks or mutations.
     O(min(direct entries, 4097)) scan time; at most 256 returned observations.
     """
     import re
@@ -105,41 +155,7 @@ def inspect_workspaces(*, timeout, limit=256):
     return {'entries': entries, 'unknown': unknown}
 
 
-def recorded_workspace_intent(value):
-    """Resolve an allocation attempt; it grants no directory ownership."""
-    import re
-    from core.paths import data_dir
-    from core.plugin_state import _valid_identity
-    if (not isinstance(value, dict) or set(value) != {"name", "parent"}
-            or not isinstance(value["name"], str)
-            or re.fullmatch(r"opskit-sandbox-[0-9a-f]{32}", value["name"]) is None
-            or not _valid_identity(value["parent"])):
-        raise ValueError("invalid workspace allocation intent")
-    root = data_dir().absolute() / "plugin-runtimes" / "workspaces" / value["name"]
-    return root, value['parent']
-
-
-def recorded_workspace(value):
-    """Resolve a strict identity binding in the current platform namespace."""
-    from core.plugin_state import _valid_identity
-    if (not isinstance(value, dict) or set(value) != {'name', 'parent', 'identity'}
-            or not _valid_identity(value['identity'])):
-        raise ValueError('invalid workspace journal binding')
-    root, parent = recorded_workspace_intent({key: value[key] for key in ('name', 'parent')})
-    return Workspace(root, parent, value['identity'])
-
-
-def journal_binding(workspace):
-    if not isinstance(workspace, Workspace):
-        raise ValueError("invalid workspace ownership")
-    value = {"name": workspace.root.name, "parent": workspace.parent_identity,
-             "identity": workspace.identity}
-    if recorded_workspace(value) != workspace:
-        raise ValueError("workspace outside platform namespace")
-    return value
-
-
-def _allocate_worker(connection, request, buffer=None, length=0, resource_record=None):
+def _allocate_worker(connection, request, buffer=None, length=0):
     import os
     import stat
     from core.plugin_state import _directory
@@ -171,14 +187,8 @@ def _allocate_worker(connection, request, buffer=None, length=0, resource_record
                     _directory(directory)
             parent_identity = _directory(parent)
             reserve_workspace(parent)
-            if resource_record is not None:
-                from core.plugin_resource_io import record_workspace_intent
-                resource_record = record_workspace_intent(resource_record, root.name, parent_identity)
             root.mkdir(mode=0o700)
             identity = _directory(root)
-        if resource_record is not None:
-            from core.plugin_resource_io import bind_workspace_record
-            bind_workspace_record(resource_record, Workspace(root, parent_identity, identity))
         if buffer is not None:
             target = root / "request.json"
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -193,8 +203,8 @@ def _allocate_worker(connection, request, buffer=None, length=0, resource_record
                     view.release()
                 stream.flush()
                 if os.name == "posix":
-                    # The container's unprivileged UID must read its bind mount.
-                    # The host's private workspace parent restricts discovery.
+                    # Immutable request input; the host's private workspace
+                    # parent restricts discovery independently of file mode.
                     os.fchmod(stream.fileno(), 0o444)
                 current = target.lstat()
                 if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
@@ -215,7 +225,7 @@ def _allocate_worker(connection, request, buffer=None, length=0, resource_record
         connection.close()
 
 
-def allocate(*, timeout, request_text=None, resource_record=None):
+def allocate(*, timeout, request_text=None):
     from core.plugin_json import MAX_TEXT
     from core.plugin_state import _valid_identity
     from network.worker import run
@@ -236,8 +246,6 @@ def allocate(*, timeout, request_text=None, resource_record=None):
         finally:
             view.release()
         arguments = (buffer, len(encoded))
-    if resource_record is not None:
-        arguments = (*(arguments or (None, 0)), resource_record)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("plugin workspace allocation deadline exceeded")
@@ -255,6 +263,19 @@ def allocate(*, timeout, request_text=None, resource_record=None):
 
 
 def _cleanup_worker(connection, root, parent_identity, identity, request):
+    from core.plugin_workspace_recovery import cleanup_lease
+    try:
+        with cleanup_lease(root):
+            _cleanup_worker_unlocked(connection, root, parent_identity, identity, request)
+    except (OSError, ValueError, RuntimeError):
+        from network.worker import send
+        try:
+            send(connection, {"ok": False})
+        finally:
+            connection.close()
+
+
+def _cleanup_worker_unlocked(connection, root, parent_identity, identity, request):
     import re
     from core.plugin_metadata import path_present, sync_directory
     from core.plugin_state import _directory, _remove_owned_tree
@@ -298,13 +319,26 @@ def cleanup(workspace, *, timeout):
 
 
 @contextmanager
-def owned_workspace(*, timeout, cleanup_timeout, request_text=None, resource=None):
+def owned_workspace(*, timeout, cleanup_timeout, request_text=None):
+    from core.paths import data_dir
+    from core.plugin_disk_policy import check_space
+    from core.plugin_workspace_budget import WORKSPACE_BYTES
+    check_space(data_dir().absolute(), reserve_bytes=WORKSPACE_BYTES)
     from core.plugin_sandbox import SandboxError
     try:
-        workspace = (allocate(timeout=timeout, request_text=request_text) if resource is None
-                     else resource.allocate_workspace(timeout=timeout, request_text=request_text))
+        workspace = allocate(timeout=timeout, request_text=request_text)
     except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
         raise SandboxError("plugin workspace allocation failed; evidence retained") from exc
+    from core.plugin_workspace_recovery import track
+    with track(workspace):
+        with _use_workspace(workspace, cleanup_timeout=cleanup_timeout):
+            yield workspace
+
+
+@contextmanager
+def _use_workspace(workspace, *, cleanup_timeout):
+    from core.plugin_sandbox import SandboxError
+    from core.plugin_workspace_recovery import retire
     failure = None
     try:
         yield workspace
@@ -313,8 +347,8 @@ def owned_workspace(*, timeout, cleanup_timeout, request_text=None, resource=Non
         raise
     finally:
         try:
-            if resource is None:
-                cleanup(workspace, timeout=cleanup_timeout)
+            cleanup(workspace, timeout=cleanup_timeout)
+            retire(workspace)
         except BaseException as exc:
             if failure is None:
                 if isinstance(exc, Exception):

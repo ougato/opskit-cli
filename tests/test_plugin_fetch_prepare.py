@@ -71,7 +71,7 @@ def test_second_preparation_cannot_replace_existing_candidate(lease):
 
 def test_wrong_workspace_identity_refuses_writes(lease):
     changed = replace(lease, identity=[lease.identity[0], lease.identity[1] + 1])
-    with pytest.raises(ValueError, match="preparation rejected"):
+    with pytest.raises(ValueError, match="workspace identity changed"):
         prepare(changed)
     assert list(lease.root.iterdir()) == []
 

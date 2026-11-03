@@ -1,12 +1,10 @@
 """A live proxy cannot retain revoked private grants until its next invocation."""
-from contextlib import closing, contextmanager
-import json
-from types import SimpleNamespace
+from contextlib import closing
 
 import psutil
 import pytest
 
-from core import config, plugin_gateway, plugin_inspection as inspection, plugin_sandbox as sandbox
+from core import config, plugin_inspection as inspection, plugin_sandbox as sandbox
 from core import plugin_trust as trust
 
 
@@ -61,46 +59,3 @@ def test_bad_network_snapshot_never_starts_reader(networks, tmp_path):
         with pytest.raises(ValueError, match='invalid plugin authorization'):
             reader.authorize(tmp_path, tmp_path, (), (), networks=networks, timeout=30)
         assert reader.pid is None
-
-
-@pytest.mark.parametrize('cancel', [False, True])
-@pytest.mark.parametrize('invocation', [False, True])
-def test_network_scope_retains_grants_until_commit_and_cleans_resources(monkeypatch, cancel, invocation):
-    previous = (('outer', ('outer:80',)),)
-    monkeypatch.setattr(sandbox._invocations, 'stack', ['demo'] if invocation else [], raising=False)
-    monkeypatch.setattr(sandbox._invocations, 'network_authorizations', previous, raising=False)
-    monkeypatch.setattr(sandbox, '_read_sandbox_setting', lambda *args: ['peer:443'])
-    monkeypatch.setattr(plugin_gateway, 'image', lambda *args: 'gateway')
-    active = []
-
-    @contextmanager
-    def resources(command, kind, name):
-        active.append((kind, name))
-        try:
-            yield SimpleNamespace(labels=[])
-        finally:
-            active.remove((kind, name))
-
-    def control(command, *args):
-        if args[0] == 'inspect':
-            return json.dumps({args[-1].removesuffix('-proxy'): {'IPAddress': '172.19.0.2'}})
-        return ''
-
-    monkeypatch.setattr(sandbox, '_resource_scope', resources)
-    monkeypatch.setattr(sandbox, '_control', control)
-    try:
-        with sandbox._network(SimpleNamespace(name='demo', permissions=['network']), ['docker']):
-            assert sandbox._invocations.network_authorizations == (*previous, ('demo', ('peer:443',)))
-            if cancel:
-                raise KeyboardInterrupt
-    except KeyboardInterrupt:
-        assert cancel
-    if invocation:
-        assert sandbox._invocations.network_authorizations == (*previous, ('demo', ('peer:443',)))
-        save({'outer': ['outer:80'], 'demo': []})
-        with sandbox._execution_budget():
-            with pytest.raises(sandbox.SandboxError, match='private network authorization revoked'):
-                sandbox._check_live_authorizations()
-    else:
-        assert sandbox._invocations.network_authorizations is previous
-    assert not active

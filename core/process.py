@@ -15,9 +15,15 @@ def terminate_tree(process: subprocess.Popen) -> None:
     job = getattr(process, "_opskit_job", None)
     if job is not None:
         from core.windows_job import close
-        close(job)
-        process._opskit_job = None
-        process.wait(timeout=3)
+        from core.windows_job_lifecycle import terminate_and_wait
+        try:
+            terminate_and_wait(job)
+        finally:
+            try:
+                close(job)
+            finally:
+                process._opskit_job = None
+                process.wait(timeout=3)
         return
     if os.name != "nt":
         try:
@@ -80,10 +86,13 @@ def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False, s
     return process
 
 
-def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=None, stdin=None) -> Iterator[str]:
+def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=None, stdin=None,
+           checkpoint=None) -> Iterator[str]:
     if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         raise ValueError("process timeout must be finite and positive")
     deadline = time.monotonic() + timeout if timeout is not None else None
+    if checkpoint is not None:
+        checkpoint()
     process = start(cmd, cwd=cwd, env=env, stdin=stdin)
     if process_ref is not None:
         process_ref.append(process)
@@ -110,21 +119,42 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
             put(None)
 
     thread = threading.Thread(target=reader, daemon=True)
+    tree_stopped = False
     try:
         thread.start()
         while True:
+            if checkpoint is not None:
+                checkpoint()
             remaining = deadline - time.monotonic() if deadline is not None else None
             if remaining is not None and remaining <= 0:
                 raise subprocess.TimeoutExpired(list(cmd), timeout)
             try:
                 chunk = output.get(timeout=min(remaining, 0.1) if remaining is not None else 0.1)
             except queue.Empty:
+                # A completed leader can leave descendants holding stdout open.
+                # Stop the owned tree, then drain remaining output to EOF rather
+                # than waiting until the whole operation's deadline expires.
+                if not tree_stopped and process.poll() is not None:
+                    terminate_tree(process)
+                    tree_stopped = True
                 continue
             if chunk is None:
                 break
             yield chunk.rstrip("\n")
         remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
-        return process.wait(timeout=remaining)
+        while process.poll() is None:
+            if checkpoint is not None:
+                checkpoint()
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise subprocess.TimeoutExpired(list(cmd), timeout)
+            try:
+                process.wait(timeout=min(remaining, 0.1) if remaining is not None else 0.1)
+            except subprocess.TimeoutExpired:
+                continue
+        if checkpoint is not None:
+            checkpoint()
+        return process.returncode
     finally:
         stopped.set()
         terminate_tree(process)
@@ -132,6 +162,14 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
             thread.join(timeout=3)
         if not thread.is_alive() and process.stdout is not None:
             process.stdout.close()
+
+
+def checked_output(command, *, timeout, stdin=subprocess.DEVNULL, max_bytes=4096):
+    """Bounded command output; errors never include captured diagnostics."""
+    result = capture(command, timeout=timeout, stdin=stdin, max_bytes=max_bytes)
+    if result.returncode:
+        raise RuntimeError("command failed")
+    return result.stdout.strip()
 
 
 def capture(cmd: Sequence[str], *, timeout, max_bytes=65536, env=None, stdin=None, cwd=None):

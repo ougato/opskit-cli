@@ -24,7 +24,7 @@ class ExtendedLimits(ctypes.Structure):
                 ("peak_process", ctypes.c_size_t), ("peak_job", ctypes.c_size_t)]
 
 
-def attach_running(process_handle):
+def attach_running(process_handle, *, memory_bytes=None, max_processes=None):
     """Attach an existing process; caller gates work until assignment succeeds."""
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
@@ -38,6 +38,16 @@ def attach_running(process_handle):
     try:
         limits = ExtendedLimits()
         limits.basic.flags = 0x2000
+        if memory_bytes is not None:
+            if type(memory_bytes) is not int or memory_bytes < 16 * 1024**2:
+                raise ValueError("invalid Job memory limit")
+            limits.basic.flags |= 0x200
+            limits.job_memory = memory_bytes
+        if max_processes is not None:
+            if type(max_processes) is not int or not 1 <= max_processes <= 64:
+                raise ValueError("invalid Job process limit")
+            limits.basic.flags |= 0x8
+            limits.basic.active_processes = max_processes
         if not kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             raise ctypes.WinError(ctypes.get_last_error())
         if not kernel.AssignProcessToJobObject(job, int(process_handle)):

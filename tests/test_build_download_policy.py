@@ -36,6 +36,8 @@ def test_nuitka_refuses_interactive_downloads_and_update_checks(tmp_path, monkey
     assert "--update-check=never" in command
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert "--jobs=2" in command
+    assert any(item.startswith("--include-data-dir=") and item.endswith(
+        "=core/native-probe-packaging") for item in command)
 
 
 @pytest.mark.parametrize("value", ["0", "-1"])
@@ -53,6 +55,45 @@ def test_nuitka_failure_does_not_report_existing_output_as_success(tmp_path, mon
     (build.DIST_DIR / "opskit-test").write_bytes(b"old compiled file")
     monkeypatch.setattr(build, "_run", lambda *args, **kwargs: 1)
     assert build.build_nuitka("opskit-test", False) is None
+
+
+def test_pyinstaller_collects_dynamic_official_modules_without_ambient_upx(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "DIST_DIR", tmp_path / "dist")
+    monkeypatch.setattr(build, "BUILD_DIR", tmp_path / "build")
+    monkeypatch.setattr(build, "_find_tool", lambda name: "reviewed-pyinstaller")
+    monkeypatch.setattr(build, "_plugin_runtime_bundle", lambda: tmp_path / "sdk.zip")
+    captured = []
+
+    def run(command, **kwargs):
+        captured.append((command, kwargs))
+        (build.DIST_DIR / "opskit-test.exe").write_bytes(b"synthetic result, never executed")
+        return 0
+
+    monkeypatch.setattr(build, "_run", run)
+    assert build.build_pyinstaller("opskit-test.exe", False) == build.DIST_DIR / "opskit-test.exe"
+    command, kwargs = captured[0]
+    assert {"--collect-submodules=" + name for name in (
+        "core", "plugin", "software", "monitor", "network")} <= set(command)
+    assert "--noupx" in command
+    assert kwargs["stdin"] == subprocess.DEVNULL
+    assert any(item.startswith("--add-data=") and item.endswith(
+        "core/native-probe-packaging") for item in command)
+
+
+def test_probe_bundle_contains_importable_sources_and_no_bytecode(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "BUILD_DIR", tmp_path)
+    bundle = build._native_probe_bundle()
+    files = [path for path in bundle.rglob("*") if path.is_file()]
+    assert files and all(path.suffix == ".py" or path.name == "py.typed" for path in files)
+    result = subprocess.run([
+        build.sys.executable, "-I", "-S", "-B", "-c",
+        "import sys; sys.path.insert(0, sys.argv[1]); "
+        "from packaging.tags import sys_tags; "
+        "from packaging.markers import default_environment; "
+        "assert list(sys_tags()); assert default_environment()['python_version']",
+        str(bundle),
+    ], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
 
 
 def test_installer_refuses_existing_environment_before_executing_packages(tmp_path, monkeypatch):

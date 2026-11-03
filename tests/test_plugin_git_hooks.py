@@ -8,12 +8,15 @@ from plugin import commands
 
 
 @pytest.mark.parametrize('hook_source', ['template', 'repo-default', 'repo-config', 'environment'])
-def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, hook_source):
+def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, native_lifecycle_tools, hook_source):
     operation = 'install' if hook_source == 'template' else 'update'
     origin = tmp_path / 'origin'
     origin.mkdir()
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(tmp_path / 'plugins'))
     monkeypatch.setenv('OPSKIT_DATA_DIR', str(tmp_path / 'state'))
+    from core.native_fetch_catalog import FetchCatalog
+    python, git_runtime, _ = native_lifecycle_tools
+    FetchCatalog().prepare(python, git_runtime)
     # Isolate the test from the developer's actual Git configuration/templates.
     config = tmp_path / 'gitconfig'
     config.write_text('')
@@ -42,11 +45,11 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, hook_source
         manifest, error = commands.install(str(origin), branch='main', alias='demo')
         assert manifest is not None and not error
         if hook_source == 'repo-default':
-            hook(manifest.root / '.git' / 'hooks' / 'post-merge')
+            hook(origin / '.git' / 'hooks' / 'post-merge')
         else:
             hook(hooks / 'post-merge')
             if hook_source == 'repo-config':
-                subprocess.run(['git', '-C', str(manifest.root), 'config',
+                subprocess.run(['git', '-C', str(origin), 'config',
                                 'core.hooksPath', str(hooks)], check=True, capture_output=True, timeout=15)
             else:
                 monkeypatch.setenv('GIT_CONFIG_COUNT', '1')
@@ -61,4 +64,5 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, hook_source
         ok, error = commands.update(manifest)
         assert ok and error == 'updated'
         assert (manifest.root / 'demo.py').read_text() == '# updated\n'
+    assert not (manifest.root / '.git').exists()
     assert not marker.exists(), 'Git hook executed outside sandbox'

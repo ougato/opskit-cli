@@ -85,12 +85,15 @@ def test_install_rolls_back_its_clone_on_incomplete_inventory(tmp_path, monkeypa
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
     from core import plugin_inspection
     monkeypatch.setattr(plugin_inspection, "_inspection_session", _limited_inventory_session)
-    def clone(command, **kwargs):
-        dest = Path(command[-1])
+    def populate(source, destination, **kwargs):
+        dest = Path(destination)
         dest.mkdir()
         (dest / "plugin.yaml").write_text("name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n")
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(commands, "run", clone)
+        from core.native_acquisition import Acquisition
+        from core.plugin_install_receipt import content_receipt
+        from core.plugin_trust import compute_fingerprint
+        return Acquisition(source, "a" * 40, compute_fingerprint(dest), content_receipt(dest))
+    monkeypatch.setattr("core.native_acquisition.populate", populate)
     monkeypatch.setattr(commands, "grant", lambda *args: pytest.fail("incomplete inventory granted trust"))
     manifest, error = commands.install("https://example.invalid/repo.git", alias="demo")
     assert manifest is None

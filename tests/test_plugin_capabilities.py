@@ -1,0 +1,120 @@
+import pytest
+
+from core.native_sandbox import CapabilityRequest, GrantChoice
+from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
+
+
+def request(**overrides):
+    args = dict(plugin="game_release", fingerprint="a" * 64,
+                operation="tool.execute", resource="creator.build.project-one")
+    return CapabilityRequest(**(args | overrides))
+
+
+def live(*args):
+    return True
+
+
+def test_once_is_reused_only_by_same_invocation(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    prompts = []
+    def prompt(value):
+        prompts.append(value)
+        return GrantChoice.ONCE
+    authority.require(request(), check_identity=live, prompt=prompt)
+    authority.require(request(), check_identity=live, prompt=prompt)
+    assert len(prompts) == 1
+    assert authority.list_grants() == []
+    with pytest.raises(CapabilityDenied):
+        CapabilityAuthority(path=authority.path).check(request(), check_identity=live)
+    authority.close()
+    with pytest.raises(CapabilityDenied):
+        authority.check(request(), check_identity=live)
+
+
+def test_permanent_exact_scope_and_identity(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    authority.require(request(), check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
+    other = CapabilityAuthority(path=authority.path)
+    other.check(request(), check_identity=live)
+    for changed in [request(fingerprint="b" * 64), request(resource="creator.build.other"),
+                    request(operation="directory.write")]:
+        with pytest.raises(CapabilityDenied):
+            other.check(changed, check_identity=live)
+    with pytest.raises(CapabilityDenied):
+        other.check(request(), check_identity=lambda *args: False)
+
+
+@pytest.mark.parametrize("choice", [GrantChoice.DENY, None, "always"])
+def test_denied_or_invalid_choice_does_not_persist(tmp_path, choice):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    with pytest.raises(CapabilityDenied):
+        authority.require(request(), check_identity=live, prompt=lambda _: choice)
+    assert authority.list_grants() == []
+
+
+@pytest.mark.parametrize("choice", [GrantChoice.ONCE, GrantChoice.ALWAYS])
+def test_revoke_invalidates_in_flight_and_persistent_permissions(tmp_path, choice):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    authority.require(request(), check_identity=live, prompt=lambda _: choice)
+    CapabilityAuthority(path=authority.path).revoke(request())
+    with pytest.raises(CapabilityDenied):
+        authority.check(request(), check_identity=live)
+
+
+def test_revocation_during_prompt_does_not_regrant(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    def prompt(value):
+        CapabilityAuthority(path=authority.path).revoke(value)
+        return GrantChoice.ALWAYS
+    with pytest.raises(CapabilityDenied):
+        authority.require(request(), check_identity=live, prompt=prompt)
+    assert authority.list_grants() == []
+
+
+def test_corrupt_store_is_preserved_and_denied(tmp_path):
+    path = tmp_path / "grants.yaml"
+    path.write_text("not: an-authority", encoding="utf-8")
+    authority = CapabilityAuthority(path=path)
+    with pytest.raises(CapabilityDenied):
+        authority.require(request(), check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
+    assert path.read_text(encoding="utf-8") == "not: an-authority"
+
+
+def test_noninteractive_permission_cannot_be_approved_by_yes(monkeypatch):
+    from core.cli import non_interactive
+    from core.plugin_capabilities import prompt_grant
+    token = non_interactive.set(True)
+    try:
+        with pytest.raises(CapabilityDenied):
+            prompt_grant(request())
+    finally:
+        non_interactive.reset(token)
+
+
+def test_identity_revoked_during_prompt_does_not_persist(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    trusted = [True]
+    def prompt(value):
+        trusted[0] = False
+        return GrantChoice.ALWAYS
+    with pytest.raises(CapabilityDenied):
+        authority.require(request(), check_identity=lambda *args: trusted[0], prompt=prompt)
+    assert authority.list_grants() == []
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows NUL console semantics")
+def test_windows_nul_is_not_interactive_even_when_isatty_reports_true(monkeypatch):
+    import os
+    from core import plugin_capabilities as capabilities
+    from core.cli import non_interactive
+    with open(os.devnull) as source:
+        monkeypatch.setattr(capabilities.sys, "stdin", source)
+        # NUL's character-device TTY result must not authorize a console prompt.
+        assert not capabilities._interactive_input()
+        token = non_interactive.set(False)
+        try:
+            with pytest.raises(CapabilityDenied) as error:
+                capabilities.prompt_grant(request())
+            assert error.value.code == "interaction_required"
+        finally:
+            non_interactive.reset(token)

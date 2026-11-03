@@ -175,16 +175,29 @@ def _drop_service_edges(data, identity):
 
 
 @_serialized_mutation
-def grant(name: str, fingerprint: str, version: str, source: str = "", branch: str | None = None) -> None:
+def grant(name: str, fingerprint: str, version: str, source: str = "", branch: str | None = None, *,
+          installation_receipt: str | None = None, source_commit: str | None = None) -> None:
     """记录用户对插件当前内容的信任。
 
     branch 为 None 时保留原记录已存的分支（更新重确认不丢失安装分支）。
     """
+    if (installation_receipt is not None or source_commit is not None) and (
+            not isinstance(installation_receipt, str) or re.fullmatch(r"[0-9a-f]{64}", installation_receipt) is None
+            or not isinstance(source_commit, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source_commit) is None):
+        raise ValueError("invalid native installation receipt")
     data = _load()
     _drop_service_edges(data, name)
     if branch is None:
         branch = (data.get(name) or {}).get("branch")
     record = {"fingerprint": fingerprint, "version": version, "source": source}
+    previous = data.get(name) or {}
+    if installation_receipt is not None:
+        record.update(installation_receipt=installation_receipt, source_commit=source_commit)
+    elif previous.get("source") == source:
+        # Reconfirming trust must not bless local source edits as an update base.
+        for key in ("installation_receipt", "source_commit"):
+            if key in previous:
+                record[key] = previous[key]
     if branch:
         record["branch"] = branch
     data[name] = record

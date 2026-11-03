@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 import shutil
 import stat
-import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass, fields
 from pathlib import Path
 from urllib.parse import urlparse
@@ -26,10 +26,8 @@ from core.plugin import (
     load_plugin,
     unload_plugin,
 )
-from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_services import invalidate_service_cache
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record, invalidate
-from core.runner import run
 
 # 插件安装目录名：URL 路径分段转小写连字符，避免不同仓库同 basename 冲突
 _URL_NAME_PATTERN = re.compile(r"([^/\\]+?)(?:\.git)?[/\\]?$")
@@ -38,13 +36,6 @@ _INSTALL_DIR_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 _REMOTE_URL_SCHEMES = {"http", "https", "ssh", "git", "file"}
 
 _installation_lock = ResourceLock(lambda: plugins_dir() / ".installation.lock", label="plugin installation")
-
-
-def _git_command(*args: str) -> list[str]:
-    # Git (including Git for Windows) treats /dev/null as a non-directory.
-    # Command-line configuration overrides repository/global hooksPath. Never
-    # run lifecycle hooks in the host before the plugin has entered its sandbox.
-    return ["git", "-c", "core.hooksPath=/dev/null", *args]
 
 
 @dataclass
@@ -129,7 +120,7 @@ def dir_name_from_url(url: str) -> str | None:
         return None
 
     path_text: str | None = None
-    scp_match = _SCP_URL_PATTERN.match(raw)
+    scp_match = _SCP_URL_PATTERN.match(raw) if "://" not in raw else None
     if scp_match:
         path_text = scp_match.group("path")
     else:
@@ -180,7 +171,7 @@ def parse_install_input(raw: str) -> tuple[str, str | None, str | None]:
 
 
 def plugin_branch(name: str) -> str | None:
-    """插件安装时记录的分支（更新时据此 pull），未记录返回 None"""
+    """插件安装时记录的分支，更新时据此重新采集；未记录返回 None。"""
     record = trusted_record(name)
     return record.get("branch") if record else None
 
@@ -212,27 +203,6 @@ def is_trusted_source(url: str) -> bool:
     return bool(host) and host in [str(s) for s in sources]
 
 
-# git stderr 常见模式 → 可读原因的文案 key
-_GIT_ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("permission denied", "authentication failed", "could not read username", "could not read password"), "plugin.git_auth_failed"),
-    (("repository not found", "does not appear to be a git repository"), "plugin.git_repo_not_found"),
-    (("could not resolve", "connection reset", "connection refused", "timed out", "unable to access", "network is unreachable"), "plugin.git_network_failed"),
-    (("dubious ownership",), "plugin.git_dubious_ownership"),
-    (("usage: git",), "plugin.git_too_old"),
-)
-
-
-def git_error_reason(result: subprocess.CompletedProcess) -> str:
-    """git 非 0 退出转可读原因：识别常见 stderr 模式，未识别取 stderr 末行"""
-    stderr = (result.stderr or "").strip()
-    low = stderr.lower()
-    for keywords, key in _GIT_ERROR_PATTERNS:
-        if any(k in low for k in keywords):
-            return t(key)
-    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
-    return lines[-1] if lines else t("plugin.git_exit", code=result.returncode)
-
-
 def _manifest_name_conflict(manifest: PluginManifest) -> PluginManifest | None:
     target = Path(manifest.root).resolve()
     for installed in list_manifests():
@@ -244,7 +214,7 @@ def _manifest_name_conflict(manifest: PluginManifest) -> PluginManifest | None:
 
 
 def _remove_tree(path: Path) -> None:
-    """删除 git clone 目录；Windows 上 .git 内只读文件也要能回滚。"""
+    """移除调用方拥有的暂存树，兼容 Windows 旧安装中的只读文件。"""
     if not path.exists():
         return
 
@@ -258,8 +228,9 @@ def _remove_tree(path: Path) -> None:
         pass
 
 
-def install(url: str, branch: str | None = None, alias: str | None = None) -> tuple[PluginManifest | None, str]:
-    """git clone 到插件目录并校验清单。指定 branch 时克隆该分支（git clone --branch）。
+def install(url: str, branch: str | None = None, alias: str | None = None, *,
+            fetch_profile: str | None = None, allow_private: bool = False) -> tuple[PluginManifest | None, str]:
+    """原生隔离采集已提交内容，审核后发布；不执行宿主 Git。
     返回 (清单, 错误串)；信任确认由菜单层负责"""
     if alias is not None and not valid_install_dir_name(alias):
         return None, f"bad_alias:{alias}"
@@ -276,21 +247,16 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
     work = Path(tempfile.mkdtemp(prefix=".opskit-install-", dir=dest.parent))
     owned = work.lstat()
     staging = work / "payload"
-    cmd = _git_command("clone", "--depth", "1")
-    if branch:
-        cmd += ["--branch", branch]
-    cmd += ["--", url, str(staging)]
     try:
-        result = run(cmd, capture=True, check=False, timeout=300)
-        if result.returncode != 0:
-            return None, git_error_reason(result)
+        from core.native_acquisition import populate
+        acquired = populate(url, staging, branch=branch, fetch_profile=fetch_profile, allow_private=allow_private)
         manifest = load_manifest(staging)
         if manifest is None:
             return None, "no_manifest"
         if manifest.name in builtin_module_keys():
             return None, "official_name_conflict"
-        # Clone independently; serialize only identity validation and publication.
-        # Inventory sees neither partial clones nor an unvalidated payload.
+        # Acquire independently; serialize identity validation and publication.
+        # Discovery never sees a partial or unreviewed candidate.
         with _installation_lock.hold():
             try:
                 conflict = _manifest_name_conflict(manifest)
@@ -298,12 +264,18 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
                 return None, "plugin inventory scan failed"
             if conflict is not None:
                 return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
+            if (content_receipt(staging) != acquired.receipt
+                    or compute_fingerprint(staging) != acquired.fingerprint):
+                raise ValueError("installation candidate changed before publication")
             # Fail closed before making content discoverable, including stale trust
             # from an earlier installation of the same name. This grants nothing.
-            grant(manifest.name, "", manifest.version, url, branch)
+            grant(manifest.name, "", manifest.version, acquired.source, branch,
+                  installation_receipt=acquired.receipt, source_commit=acquired.commit)
             payload_identity = staging.lstat()
             parent_identity = dest.parent.lstat()
             payload_content = content_receipt(staging)
+            if payload_content != acquired.receipt:
+                raise ValueError("installation candidate changed during trust invalidation")
             publish_new_directory(staging, dest)
         invalidate_service_cache()
         values = {field.name: getattr(manifest, field.name) for field in fields(PluginManifest)}
@@ -315,7 +287,8 @@ def install(url: str, branch: str | None = None, alias: str | None = None) -> tu
     except FileExistsError:
         return None, f"exists:{name}"
     except Exception as exc:
-        return None, str(exc)
+        from core.native_sandbox import NativeSandboxError
+        return None, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.acquisition_failed")
     finally:
         # Never roll back dest: it may belong to a concurrent writer. The private
         # wrapper is our only cleanup target; replacement means retain and report.
@@ -370,58 +343,98 @@ def rollback_install(manifest: PluginManifest) -> None:
                 wrapper.rmdir()
 
 
-def update(manifest: PluginManifest) -> tuple[bool, str]:
+def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
+           allow_private: bool = False) -> tuple[bool, str]:
     """Exclude active invocations before reading or changing plugin sources."""
     from core.plugin_invocation_lock import hold
     try:
         with hold(plugin=manifest.name, timeout=30):
-            return _update_locked(manifest)
+            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private)
     except (OSError, ValueError, RuntimeError) as exc:
         return False, str(exc)
 
 
-def _update_locked(manifest: PluginManifest) -> tuple[bool, str]:
-    """git pull 更新插件目录（安装时指定过分支则固定 pull 该分支）。
-
-    新内容撤销旧指纹授权，需要重新核对权限并确认信任；以下异常交回菜单层处置：
-      - tampered：内容与 CHECKSUMS.yaml 发布清单不符（可能被篡改）
-      - downgrade：版本回退（防降级攻击，需用户显式确认）
-    返回 (是否成功, "updated" / "unchanged" / "tampered" / "downgrade" / 错误串)。
-    """
-    root = Path(manifest.root)
-    if not (root / ".git").exists():
+def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
+                   allow_private: bool = False) -> tuple[bool, str]:
+    """Acquire a fresh reviewed tree, revoke trust, then replace with rollback."""
+    from core.native_acquisition import populate
+    from core.native_sandbox import NativeSandboxError
+    from core.plugin_state import _directory
+    from core.plugin_trust import authorization_transaction, authorization_snapshot
+    root = Path(manifest.root).absolute()
+    if root.parent != plugins_dir().absolute():
+        raise ValueError("update must target a direct installed plugin")
+    initial = _directory(root)
+    for parent in root.parents:
+        _directory(parent)
+    record = trusted_record(manifest.name)
+    if not record or not record.get("source"):
         return False, "not_git"
-    branch = plugin_branch(manifest.name)
-    pull_cmd = _git_command("pull", "--ff-only")
-    if branch:
-        pull_cmd += ["origin", branch]
+    before = content_receipt(root)
+    if record.get("installation_receipt") != before:
+        return False, t("plugin_native.errors.update_modified")
+    work = root.parent / (".opskit-update-" + uuid.uuid4().hex)
+    work.mkdir(mode=0o700)
+    owned = _directory(work)
+    payload, previous = work / "payload", work / "previous"
     try:
-        head = run(_git_command("rev-parse", "HEAD"), cwd=root, capture=True, check=False)
-        if head.returncode != 0:
-            return False, git_error_reason(head)
-        before = head.stdout.strip()
-        pulled = run(pull_cmd, cwd=root, capture=True, check=False, timeout=300)
-        if pulled.returncode != 0:
-            return False, git_error_reason(pulled)
-        head = run(_git_command("rev-parse", "HEAD"), cwd=root, capture=True, check=False)
-        if head.returncode != 0:
-            return False, git_error_reason(head)
-        after = head.stdout.strip()
-    except Exception as e:
-        return False, str(e)
-    if before == after:
-        return True, "unchanged"
-    invalidate(manifest.name)
-    invalidate_service_cache()
-    refreshed = load_manifest(root)
-    if refreshed is None:
-        return True, "updated"
-    if verify_checksums(root) == CHECK_MISMATCH:
-        return True, "tampered"
-    old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
-    if old_key is not None and new_key is not None and new_key < old_key:
-        return True, "downgrade"
-    return True, "updated"
+        acquired = populate(record["source"], payload, branch=record.get("branch"),
+                            fetch_profile=fetch_profile, allow_private=allow_private)
+        refreshed = load_manifest(payload)
+        if refreshed is None or refreshed.name != manifest.name:
+            raise ValueError("update plugin identity changed")
+        if _directory(root) != initial or content_receipt(root) != before:
+            raise ValueError("installed plugin changed during acquisition")
+        if before == acquired.receipt:
+            return True, "unchanged"
+        replacement = _directory(payload)
+        with _installation_lock.hold(), authorization_transaction():
+            with authorization_snapshot():
+                if trusted_record(manifest.name) != record:
+                    raise ValueError("installation authority changed during acquisition")
+            if (_directory(root) != initial or content_receipt(root) != before
+                    or content_receipt(payload) != acquired.receipt):
+                raise ValueError("update content changed before publication")
+            # Revoke before exposing any new bytes. Rollback does not regrant.
+            from core.plugin_update_recovery import record as record_recovery
+            record_recovery(work, plugin=manifest.name, root=root, old=initial, candidate=replacement,
+                            old_receipt=before, candidate_receipt=acquired.receipt, installation=record)
+            invalidate(manifest.name)
+            published = False
+            try:
+                publish_new_directory(root, previous)
+                if _directory(previous) != initial or content_receipt(previous) != before:
+                    raise ValueError("update withdrawal identity changed")
+                publish_new_directory(payload, root)
+                published = True
+                if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
+                    raise ValueError("update publication identity changed")
+                grant(manifest.name, "", refreshed.version, acquired.source, record.get("branch"),
+                      installation_receipt=acquired.receipt, source_commit=acquired.commit)
+            except BaseException:
+                # Only withdraw the exact newly published object. Never overwrite
+                # an independent writer, and retain old bytes if restoration fails.
+                if published:
+                    if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
+                        raise RuntimeError("changed update retained for recovery") from None
+                    publish_new_directory(root, work / "failed-candidate")
+                if previous.exists():
+                    if _directory(previous) != initial or content_receipt(previous) != before:
+                        raise RuntimeError("changed update backup retained for recovery") from None
+                    publish_new_directory(previous, root)
+                raise
+        invalidate_service_cache()
+        _remove_tree(previous)
+        old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
+        return True, "downgrade" if old_key is not None and new_key is not None and new_key < old_key else "updated"
+    except Exception as exc:
+        return False, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.update_failed")
+    finally:
+        if _directory(work) != owned:
+            raise RuntimeError("update staging identity changed; cleanup refused")
+        # A failed restoration leaves its backup and evidence for recovery.
+        if not previous.exists():
+            _remove_tree(work)
 
 
 def remove(manifest: PluginManifest) -> None:

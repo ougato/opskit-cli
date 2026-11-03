@@ -19,7 +19,7 @@ def request():
     {"action": "entry"}, {"service": "counter"}, {"method": "read"},
     {"service_contract": {}}, {"kwargs": {"silent": True}},
     {"kind": "exec", "entry": "../run"}, {"kind": "exec", "entry": "/bin/sh"},
-    {"kind": "exec", "entry": {"windows": "run.exe"}},
+    {"kind": "exec", "entry": {}},
     {"action": "service.call", "service": "counter", "service_contract": {"api_version": True, "methods": ["read"]}},
     {"action": "service.call", "service": "counter", "method": "delete", "service_contract": {"api_version": 7, "methods": ["read"]}},
     {"action": "service.describe", "service": "counter", "service_contract": {"api_version": 7, "methods": ["read"]}},
@@ -50,4 +50,20 @@ def test_invalid_request_rejected_before_all_operations(tmp_path, monkeypatch, c
 ])
 def test_valid_request_preserves_exact_values(changes):
     payload = {**request(), **changes}
+    assert worker._request(payload) is payload
+
+
+@pytest.mark.parametrize("platform,entry", [("linux", "bin/run"), ("darwin", "bin/run-mac")])
+def test_exec_entry_uses_actual_platform(monkeypatch, platform, entry):
+    monkeypatch.setattr(worker.os, "name", "posix")
+    monkeypatch.setattr(worker.sys, "platform", platform)
+    payload = {**request(), "kind": "exec", "entry": {platform: entry}}
+    assert worker._request(payload) is payload
+    with pytest.raises(ValueError):
+        worker._request({**payload, "entry": {"windows": "run.exe"}})
+
+
+def test_windows_exec_entry_accepted(monkeypatch):
+    monkeypatch.setattr(worker.os, "name", "nt")
+    payload = {**request(), "kind": "exec", "entry": {"windows": "run.exe"}}
     assert worker._request(payload) is payload

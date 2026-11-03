@@ -1,5 +1,7 @@
 # 插件基础镜像 OS 审计
 
+> 历史记录：本文描述已移除的容器实现或当时的验收快照，不适用于当前原生插件运行时。现行接口与未完成项见 [原生沙盒迁移](plugin-native-sandbox-migration.md)。历史命令不能作为当前操作指南。
+
 2026-10-15最新实际SDK7e58与网关359e已按精确ImageID复扫，两者仍Critical0/High44条包记录、对应8个High编号；数据库仍为10月14日版本。八项Debian上游状态、触发条件、unstable修复版本与逐项待办已整理为[当前漏洞处置](plugin-os-vulnerability-disposition.md)。没有新增豁免，发布安全验收仍未通过。
 
 2026-10-15事务锁批次：公共resource_lock的身份复核使SDK代码摘要更新为`5055234979aa7a66ae84b7a9589ff5ee5f4a97115a30e3748f02d824b66bce6c`，实际SDK重建为`sha256:7e58a4a647b25849415bb42cf370745465e647bde184efaf8e4207c58b1ab883`。新镜像真实RPC和网关复验通过；本页下方的历史漏洞/权限报告不能当作该镜像的新扫描结果，发布前仍需按实际摘要扫描，不能宣称OS漏洞已清零。详见[事务监督验收](plugin-state-transaction-supervision.md)。

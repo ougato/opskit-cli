@@ -33,7 +33,8 @@ def test_nested_invocation_cannot_reset_parent_budget(tmp_path, monkeypatch):
     assert getattr(sandbox._invocations, "deadline", None) is None
 
 
-def test_preparation_expiry_does_not_launch_container(tmp_path, monkeypatch):
+@pytest.mark.usefixtures("prepared_native_catalog")
+def test_preparation_expiry_does_not_launch_native_worker(tmp_path, monkeypatch):
     from core.plugin import load_manifest
     from core.plugin_trust import grant
     root = tmp_path / "plugin"
@@ -45,31 +46,19 @@ def test_preparation_expiry_does_not_launch_container(tmp_path, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(sandbox.time, "monotonic", lambda: clock[0])
     grant("demo", sandbox.compute_fingerprint(root), "1.0.0")
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
+    from core.native_runtime_catalog import RuntimeCatalog
+    from core import native_invocation
 
-    def delayed_image(*args):
+    def delayed_catalog(*args, **kwargs):
         clock[0] += 3
-        return "image"
+        return tmp_path, {}
 
-    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
-    monkeypatch.setattr(sandbox, "_image", delayed_image)
-    monkeypatch.setattr(sandbox, "start", lambda *a, **k: pytest.fail("expired preparation launched client"))
+    monkeypatch.setattr(RuntimeCatalog, "load", delayed_catalog)
+    monkeypatch.setattr(native_invocation, "invoke", lambda *a, **k: pytest.fail("expired preparation launched worker"))
     with pytest.raises(sandbox.SandboxError, match="execution deadline"):
         sandbox.invoke(load_manifest(root), "cli")
 
 
-def test_control_caps_timeout_at_remaining_budget(monkeypatch):
-    monkeypatch.setattr(sandbox._invocations, "deadline", 12.0, raising=False)
-    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 10.0)
-    budgets = []
-
-    def capture(*args, **kwargs):
-        budgets.append(kwargs["timeout"])
-        return SimpleNamespace(returncode=0, stdout="ok")
-
-    monkeypatch.setattr(sandbox, "capture", capture)
-    assert sandbox._control(["docker"], "inspect") == "ok"
-    assert budgets == [2.0]
 
 
 def test_nested_shorter_policy_restores_parent_deadline(tmp_path, monkeypatch):
@@ -103,36 +92,8 @@ def test_invalid_policy_cannot_start_execution(tmp_path, monkeypatch, timeout):
     assert getattr(sandbox._invocations, "deadline", None) is None
 
 
-def test_expired_budget_denies_control_but_owned_cleanup_still_runs(monkeypatch):
-    monkeypatch.setattr(sandbox._invocations, "deadline", 9.0, raising=False)
-    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 10.0)
-    calls = []
-
-    def capture(command, **kwargs):
-        calls.append((command, kwargs["timeout"]))
-        return SimpleNamespace(returncode=0, stdout="")
-
-    monkeypatch.setattr(sandbox, "capture", capture)
-    with pytest.raises(sandbox.SandboxError, match="execution deadline"):
-        sandbox._control(["docker"], "run")
-    assert calls == []
-    sandbox._cleanup_control(["docker"], "rm", "-f", "owned")
-    assert calls == [(["docker", "rm", "-f", "owned"], sandbox.CONTROL_TIMEOUT)]
-    assert sandbox._invocations.deadline == 9.0
 
 
-def test_late_control_success_does_not_extend_execution(monkeypatch):
-    clock = [10.0]
-    monkeypatch.setattr(sandbox._invocations, "deadline", 12.0, raising=False)
-    monkeypatch.setattr(sandbox.time, "monotonic", lambda: clock[0])
-
-    def capture(*args, **kwargs):
-        clock[0] = 12.1
-        return SimpleNamespace(returncode=0, stdout="late")
-
-    monkeypatch.setattr(sandbox, "capture", capture)
-    with pytest.raises(sandbox.SandboxError, match="execution deadline"):
-        sandbox._control(["docker"], "inspect")
 
 
 def test_budget_restored_after_cancel_and_next_invocation(tmp_path, monkeypatch):
@@ -153,14 +114,6 @@ def test_budget_restored_after_cancel_and_next_invocation(tmp_path, monkeypatch)
     assert sandbox.invoke(SimpleNamespace(name="demo"), "cli") == "ok"
 
 
-def test_real_silent_control_uses_inherited_short_budget(monkeypatch):
-    import sys
-    import time
-    monkeypatch.setattr(sandbox._invocations, "deadline", time.monotonic() + 0.2, raising=False)
-    started = time.monotonic()
-    with pytest.raises(sandbox.SandboxError):
-        sandbox._control([sys.executable, "-c", "import time; time.sleep(30)"])
-    assert time.monotonic() - started < 5
 
 
 def test_state_lock_wait_is_inside_execution_budget(tmp_path, monkeypatch):

@@ -118,6 +118,7 @@ def test_real_save_state_process_crash_recovers(old_state, phase, expected, monk
     assert not list(root.parent.glob(".state-*"))
 
 
+@pytest.mark.usefixtures("prepared_native_catalog")
 @pytest.mark.parametrize("action,caller", [("cli", "platform"), ("service.call", "caller_a")])
 @pytest.mark.parametrize("published", [False, True])
 @pytest.mark.parametrize("full_staging", [False, True])
@@ -129,10 +130,6 @@ def test_invoke_recovers_partition_under_process_lock_before_resources(tmp_path,
     monkeypatch.setattr(sandbox, "_read_manifest", lambda root: manifest)
     monkeypatch.setattr(sandbox, "check_authorization", lambda manifest: "a" * 64)
     monkeypatch.setattr(sandbox, "_check_live_authorizations", lambda: None)
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
-    # This fixture emulates Docker; capability enforcement has dedicated tests.
-    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
-    monkeypatch.setattr(sandbox, "_image", lambda *args: "image")
     monkeypatch.setattr(sandbox, "_remaining", lambda *args: 30)
     monkeypatch.setattr(sandbox, "_execution_budget", lambda: nullcontext())
     for field in ("stack", "authorizations", "service_edges", "network_authorizations"):
@@ -178,7 +175,7 @@ except SandboxError:
         assert not state.record_path(root).exists()
         assert not candidate.parent.exists()
         raise ResourceBoundary
-    monkeypatch.setattr(sandbox, "_network", reached_resources)
+    monkeypatch.setattr(sandbox, "_encode", reached_resources)
     if full_staging:
         with pytest.raises(sandbox.SandboxError, match="quota check failed"):
             sandbox.invoke(manifest, action, args=[], service="counter", method="count", kwargs={}, caller=caller)

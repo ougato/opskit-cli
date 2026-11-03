@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from core.cli import emit, fail, guarded
+from core.i18n import t
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, invalidate
 from plugin import commands
@@ -15,7 +16,7 @@ from plugin import commands
 def resolve(name):
     matches = [item for item in commands.manifests() if item.name == name]
     if len(matches) != 1:
-        fail("plugin not found or name ambiguous", 2)
+        fail(t("plugin_native.lifecycle.not_found"), 2)
     return matches[0]
 
 
@@ -30,7 +31,58 @@ def describe(manifest):
             "fingerprint": compute_fingerprint(manifest.root)}
 
 
-def register(app):
+def register(app, translate=None):
+    translate = translate or (lambda key: t("plugin_native." + key))
+    @app.command("disk-policy", help=t("plugin_native.disk.help"))
+    @guarded
+    def disk_policy(minimum_free_mib: int = typer.Option(None, "--minimum-free-mib", help=t("plugin_native.disk.minimum")),
+                    output_directory: str = typer.Option(None, "--output-directory", help=t("plugin_native.disk.directory")),
+                    keep_builds: int = typer.Option(None, "--keep-builds", help=t("plugin_native.disk.keep"))):
+        from core.plugin_disk_policy import policy, configure
+        try:
+            value = policy()
+            if any(item is not None for item in (minimum_free_mib, output_directory, keep_builds)):
+                value = configure(minimum_free_mib if minimum_free_mib is not None else value["minimum_free_mib"],
+                    output_directory if output_directory is not None else value["creator_output_directory"],
+                    keep_builds if keep_builds is not None else value["keep_builds"])
+            emit({**value, "hard_quota": False})
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.disk.invalid"), 2)
+
+    @app.command("build-history", help=t("plugin_native.disk.history_help"))
+    @guarded
+    def build_history(project: str):
+        from core.plugin_host_tools import _ordinary
+        from core.plugin_build_history import inspect, project_lock
+        try:
+            root = _ordinary(project, directory=True)
+            with project_lock(root):
+                emit(inspect(root))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.disk.failed"))
+
+    @app.command("clean-build", help=t("plugin_native.disk.clean_help"))
+    @guarded
+    def clean_build(project: str, token: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+        from core.plugin_build_history import clean
+        from core.prompt import confirm
+        if not confirm(["OpsKit"], t("plugin_native.disk.cleanup_confirm"), info_lines=[project, token, record_sha256]):
+            return
+        try:
+            emit(clean(project, token, record_sha256))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.disk.failed"))
+
+    def acquisition_error(message, default):
+        # Only fixed host-generated translations are safe to show. Never render
+        # raw process, repository, credential or filesystem diagnostics.
+        keys = ("fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed",
+                "update_failed", "update_modified", "execution_timeout", "platform_unsupported",
+                "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
+                "fetch_ssh_host_failed", "fetch_ssh_auth_failed")
+        safe = {t("plugin_native.errors." + key) for key in keys}
+        safe.update(t("plugin_native.errors.platform_pending", platform=platform) for platform in ("linux", "darwin"))
+        return message if message in safe else t("plugin_native.errors." + default)
     def state_command(name, caller, digest=None):
         from core.plugin_state import _binding
         from core.plugin_state_operator import state_operation
@@ -40,7 +92,7 @@ def register(app):
             if digest is not None and re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                 raise ValueError("invalid SHA256")
         except ValueError:
-            fail("invalid plugin, caller or record SHA256", 2)
+            fail(t("plugin_native.lifecycle.state_invalid"), 2)
         try:
             with _execution_budget():
                 if digest is None:
@@ -49,33 +101,128 @@ def register(app):
                     with _state_lock(name):
                         result = state_operation(name, caller=caller, digest=digest, timeout=_remaining(CONTROL_TIMEOUT))
         except (ValueError, OSError, RuntimeError):
-            fail("state operation unconfirmed; inspect before retry", 1)
+            fail(t("plugin_native.lifecycle.state_failed"), 1)
         emit(result)
 
-    @app.command("inspect-state", help="Inspect transaction metadata; omitted caller selects self, explicit caller selects a service partition")
+    @app.command("inspect-updates", help=t("plugin_native.lifecycle.inspect_updates_help"))
+    @guarded
+    def inspect_updates(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.plugin_update_recovery import inspect
+        try:
+            emit(inspect(limit=limit))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
+
+    @app.command("recover-update", help=t("plugin_native.lifecycle.recover_update_help"))
+    @guarded
+    def recover_update(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+        from core.plugin_update_recovery import recover
+        try:
+            emit(recover(transaction, record_sha256))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
+
+    @app.command("inspect-native-profiles", help=t("plugin_native.lifecycle.inspect_profiles_help"))
+    @guarded
+    def inspect_native_profiles(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.windows_profile_recovery import inspect
+        from core.native_sandbox import NativeSandboxError
+        try:
+            emit(inspect(limit=limit))
+        except NativeSandboxError as error:
+            fail(str(error), 1)
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.profile_recovery_failed"), 1)
+
+    @app.command("recover-native-profile", help=t("plugin_native.lifecycle.recover_profile_help"))
+    @guarded
+    def recover_native_profile(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+        from core.windows_profile_recovery import recover
+        from core.native_sandbox import NativeSandboxError
+        try:
+            emit(recover(transaction, record_sha256))
+        except NativeSandboxError as error:
+            fail(str(error), 1)
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.profile_recovery_failed"), 1)
+
+    @app.command("inspect-native-workspaces", help=t("plugin_native.lifecycle.inspect_native_workspaces_help"))
+    @guarded
+    def inspect_native_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.plugin_workspace_recovery import inspect
+        try:
+            emit(inspect(limit=limit))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
+
+    @app.command("recover-native-workspace", help=t("plugin_native.lifecycle.recover_workspace_help"))
+    @guarded
+    def recover_native_workspace(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+        from core.plugin_workspace_recovery import recover
+        try:
+            emit(recover(transaction, record_sha256))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
+
+    @app.command("inspect-native-cache", help=t("plugin_native.lifecycle.inspect_cache_help"))
+    @guarded
+    def inspect_native_cache(catalog: str, limit: int = typer.Option(256, "--limit", min=1, max=256)):
+        from core.native_catalog_cleanup import inspect
+        try:
+            emit(inspect(catalog, limit=limit))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
+
+    @app.command("clean-native-cache", help=t("plugin_native.lifecycle.clean_cache_help"))
+    @guarded
+    def clean_native_cache(catalog: str, object_id: str,
+                           record_sha256: str = typer.Option(..., "--record-sha256")):
+        from core.native_catalog_cleanup import collect
+        try:
+            emit(collect(catalog, object_id, record_sha256))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
+
+    @app.command("creator-tools", help=t("plugin_native.lifecycle.creator_tools_help"))
+    @guarded
+    def creator_tools():
+        from core.plugin_tool_config import creators
+        try:
+            emit(creators())
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
+
+    @app.command("configure-creator", help=t("plugin_native.lifecycle.configure_creator_help"))
+    @guarded
+    def configure_creator(name: str, executable: str):
+        from core.plugin_tool_config import configure_creator as configure
+        try:
+            emit(configure(name, executable))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
+
+    @app.command("remove-creator", help=t("plugin_native.lifecycle.remove_creator_help"))
+    @guarded
+    def remove_creator(name: str):
+        from core.plugin_tool_config import remove_creator as remove
+        try:
+            emit(remove(name))
+        except (OSError, ValueError, RuntimeError):
+            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
+
+    @app.command("inspect-state", help=t("plugin_native.lifecycle.inspect_state_help"))
     @guarded
     def inspect_state(name: str, caller: str = typer.Option(None, "--caller")):
         state_command(name, caller)
 
-    @app.command("repair-state", help="Repair a torn transaction tail matching the observed SHA256; preserve original evidence")
+    @app.command("repair-state", help=t("plugin_native.lifecycle.repair_state_help"))
     @guarded
     def repair_state(name: str, record_sha256: str = typer.Option(..., "--record-sha256"),
                      caller: str = typer.Option(None, "--caller")):
         state_command(name, caller, record_sha256)
 
-    @app.command("inspect-locks", help="Inspect bounded resource metadata without changing files; absence of a journal is not retirement permission")
-    @guarded
-    def inspect_locks(limit: int = typer.Option(256, "--limit", min=1, max=256)):
-        from core.plugin_resource_io import inspect_lock_metadata
-        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
-        try:
-            with _execution_budget():
-                result = inspect_lock_metadata(timeout=_remaining(CONTROL_TIMEOUT), limit=limit)
-        except (ValueError, OSError, RuntimeError):
-            fail("resource metadata inspection unconfirmed; no retirement performed", 1)
-        emit(result)
 
-    @app.command("inspect-workspaces", help="Observe bounded workspace entries without reading contents; observations do not establish ownership or authorize deletion")
+    @app.command("inspect-workspaces", help=t("plugin_native.lifecycle.inspect_workspaces_help"))
     @guarded
     def inspect_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.plugin_workspace import inspect_workspaces as inspect
@@ -84,92 +231,65 @@ def register(app):
             with _execution_budget():
                 result = inspect(timeout=_remaining(CONTROL_TIMEOUT), limit=limit)
         except (ValueError, OSError, RuntimeError):
-            fail("workspace inspection unconfirmed; no cleanup performed", 1)
+            fail(t("plugin_native.lifecycle.workspaces_failed"), 1)
         emit(result)
 
-    @app.command("retire-lock", help="Retire one inactive resource metadata lock by its exact token; retain journal evidence")
-    @guarded
-    def retire_lock(token: str):
-        if re.fullmatch(r"[0-9a-f]{32}", token) is None:
-            fail("resource token must be 32 lowercase hexadecimal characters", 2)
-        from core.plugin_resource_io import retire_orphan_lock
-        from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
+
+    @app.command("prepare-fetch", help=translate("prepare_fetch_help"))
+    def prepare_fetch(python_runtime: Path = typer.Option(..., "--python-runtime", help=translate("python_runtime_help")),
+                      git_runtime: Path = typer.Option(..., "--git-runtime", help=translate("git_runtime_help"))):
+        from core.native_fetch_catalog import FetchCatalog
         try:
-            with _execution_budget():
-                status = retire_orphan_lock(token, timeout=_remaining(CONTROL_TIMEOUT))
-        except (ValueError, OSError, RuntimeError):
-            fail("resource metadata retirement unconfirmed; inspect before retry", 1)
-        result = {"token": token, "status": status}
-        if status == "retained":
-            emit(result, error={"code": 1, "message": "resource metadata retained; journal or active lock requires recovery"})
-            raise typer.Exit(1)
-        emit(result)
-
-    @app.command("reconcile", help="Recover inactive, owned sandbox resources")
-    @guarded
-    def reconcile():
-        from core.plugin_resources import reconcile as recover
-        from core.plugin_sandbox import _control, _execution_budget, docker_command
-        with _execution_budget():
-            command = docker_command()
-            result = recover(command, lambda *args: _control(command, *args))
-        if result["pending"] or result["invalid"]:
-            emit(result, error={"code": 1, "message": "sandbox resource recovery incomplete"})
-            raise typer.Exit(1)
-        emit(result)
-
-    @app.command("prepare-fetch", help="Prepare the platform's isolated Git/SSH tool from reviewed offline packages")
-    def prepare_fetch(packages: Path = typer.Option(..., "--packages")):
-        from core.plugin_fetch import prepare_tool
-        try:
-            image = prepare_tool(packages)
+            identity = FetchCatalog().prepare(python_runtime, git_runtime)
         except ValueError:
-            fail("invalid fetch preparation inputs or tool identity", 2)
+            fail(t("plugin_native.errors.fetch_prepare_invalid"), 2)
         except (OSError, RuntimeError, subprocess.SubprocessError):
-            fail("isolated fetch preparation failed")
+            fail(t("plugin_native.errors.fetch_prepare_failed"))
         except KeyboardInterrupt:
             raise typer.Exit(130)
-        emit({"image": image, "prepared": True, "authorized": False})
+        emit({"toolchain": identity, "backend": "native", "prepared": True, "authorized": False})
 
-    @app.command("prepare", help="Build an isolated plugin runtime with operator-approved pinned dependencies")
-    def prepare(path: str, dependency: list[str] = typer.Option([], "--dependency"),
-                base_image: str = typer.Option(..., "--base-image"),
-                lock_file: str = typer.Option(..., "--lock-file")):
+    @app.command("prepare", help=translate("prepare_help"))
+    def prepare(path: str = typer.Argument(..., help=translate("plugin_path_help")),
+                dependency: list[str] = typer.Option([], "--dependency", help=translate("dependency_help")),
+                python_runtime: Path = typer.Option(..., "--python-runtime", help=translate("python_runtime_help")),
+                wheels: Path = typer.Option(..., "--wheels", help=translate("wheels_help")),
+                lock_file: str = typer.Option(..., "--lock-file", help=translate("lock_file_help"))):
         from core.plugin_runtime import build
         root = Path(path)
         if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or not root.is_dir():
-            fail("plugin path must be an ordinary directory", 2)
+            fail(t("plugin_native.lifecycle.path_invalid"), 2)
         try:
-            image = build(root.resolve(), dependency, base_image, lock_file=Path(lock_file))
+            identity = build(root.resolve(), dependency, python_runtime,
+                             wheels=wheels, lock_file=Path(lock_file))
         except ValueError:
-            fail("invalid plugin manifest or runtime parameters", 2)
+            fail(t("plugin_native.errors.prepare_invalid"), 2)
         except (OSError, RuntimeError, subprocess.SubprocessError):
-            # Docker/pip errors can contain credentials, URLs or private paths.
-            fail("plugin runtime preparation failed")
+            fail(t("plugin_native.errors.prepare_failed"))
         except KeyboardInterrupt:
             raise typer.Exit(130)
-        emit({"image": image, "prepared": True, "authorized": False})
+        emit({"runtime": identity, "backend": "native", "prepared": True, "authorized": False})
 
-    @app.command("fingerprint", help="Generate or verify a plugin CHECKSUMS.yaml manifest")
+    @app.command("fingerprint", help=t("plugin_native.lifecycle.fingerprint_help"))
     def fingerprint(path: str = typer.Argument("."), check: bool = typer.Option(False, "--check", "-c")):
         from core.plugin_integrity import CHECK_OK, verify_checksums, write_checksums
         root = Path(path)
         if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or not root.is_dir():
-            fail("plugin path must be an ordinary directory", 2)
+            fail(t("plugin_native.lifecycle.path_invalid"), 2)
         try:
             root = root.resolve()
             if check:
                 status = verify_checksums(root)
                 if status != CHECK_OK:
                     emit({"status": status, "checked": True},
-                         error={"code": 1, "message": "plugin checksum verification failed"})
+                         error={"code": 1, "message": t("plugin_native.lifecycle.checksum_failed")})
                     raise typer.Exit(1)
                 emit({"status": status, "checked": True})
             else:
                 write_checksums(root)
                 emit({"status": "written", "file": "CHECKSUMS.yaml"})
         except (ValueError, OSError):
-            fail("plugin checksum operation failed")
+            fail(t("plugin_native.lifecycle.checksum_operation_failed"))
         except KeyboardInterrupt:
             raise typer.Exit(130)
 
@@ -185,24 +305,29 @@ def register(app):
 
     @app.command("install")
     @guarded
-    def install(url: str, branch: str = typer.Option("", "--branch", "-b"), alias: str = typer.Option("", "--as")):
+    def install(url: str, branch: str = typer.Option("", "--branch", "-b"), alias: str = typer.Option("", "--as"),
+                fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
+                allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
         if url.startswith("-") or branch.startswith("-"):
-            fail("invalid repository or branch", 2)
-        manifest, error = commands.install(url, branch or None, alias or None)
+            fail(t("plugin_native.lifecycle.repository_invalid"), 2)
+        manifest, error = commands.install(url, branch or None, alias or None,
+                                           fetch_profile=fetch_profile, allow_private=allow_private)
         if manifest is None:
             # Git output may include URLs and credentials; only expose stable categories.
-            fail(error if error in {"no_manifest", "official_name_conflict", "invalid url"} else "plugin installation failed")
+            fail(acquisition_error(error, "acquisition_failed"))
         emit(describe(manifest))
 
     @app.command("update")
     @guarded
-    def update(name: str):
+    def update(name: str,
+               fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
+               allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
         manifest = resolve(name)
-        ok, status = commands.update(manifest)
+        ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private)
         if not ok:
-            fail("plugin update failed")
+            fail(acquisition_error(status, "update_failed"))
         if status in {"tampered", "downgrade"}:
-            fail("plugin update rejected: " + status)
+            fail(t("plugin_native.lifecycle.update_rejected", status=status))
         emit({"name": name, "status": status, "authorization_required": status != "unchanged"})
 
     @app.command("remove")
@@ -210,8 +335,8 @@ def register(app):
     def remove(name: str):
         manifest = resolve(name)
         from core.prompt import confirm
-        if not confirm(breadcrumb=["OpsKit", "plugin"], prompt="Remove plugin " + name + "? (state is preserved)"):
-            fail("plugin removal cancelled")
+        if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("plugin_native.lifecycle.remove_confirm", name=name)):
+            fail(t("plugin_native.lifecycle.remove_cancelled"))
         commands.remove(manifest)
         emit({"name": name, "removed": True, "state_preserved": True})
 
@@ -235,14 +360,14 @@ def register(app):
         manifest = resolve(name)
         actual = compute_fingerprint(manifest.root)
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint) or not actual or not hmac.compare_digest(fingerprint, actual):
-            fail("fingerprint does not match current plugin content", 2)
+            fail(t("plugin_native.lifecycle.fingerprint_mismatch"), 2)
         if verify_checksums(manifest.root) == CHECK_MISMATCH:
-            fail("plugin checksum mismatch")
+            fail(t("plugin_native.lifecycle.checksum_mismatch"))
         commands.grant_trust(manifest)
         # Recheck after the persisted grant to reject concurrent content changes.
         if compute_fingerprint(manifest.root) != actual:
             invalidate(name)
-            fail("plugin changed during authorization")
+            fail(t("plugin_native.lifecycle.changed"))
         emit(describe(manifest))
 
     @app.command("revoke")
@@ -252,7 +377,7 @@ def register(app):
         invalidate(name)
         emit({"name": name, "authorized": False})
 
-    @app.command("authorize-service", help="Approve the caller's exact declared service contract")
+    @app.command("authorize-service", help=t("plugin_native.lifecycle.authorize_service_help"))
     @guarded
     def authorize_service(caller: str, service: str,
                           caller_fingerprint: str = typer.Option(..., "--caller-fingerprint"),
@@ -260,7 +385,7 @@ def register(app):
         from core.plugin_services import authorize_service as approve
         emit(approve(caller, service, caller_fingerprint, provider_fingerprint))
 
-    @app.command("revoke-service", help="Revoke one service edge while preserving independent plugin trust")
+    @app.command("revoke-service", help=t("plugin_native.lifecycle.revoke_service_help"))
     @guarded
     def revoke_service(caller: str, service: str):
         from core.plugin_trust import revoke_service as revoke_edge

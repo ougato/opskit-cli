@@ -164,11 +164,11 @@ def test_removed_service_declaration_denied_before_runtime_lookup(tmp_path, monk
     monkeypatch.setattr(sandbox, "check_authorization", lambda manifest: "fingerprint")
     monkeypatch.setattr(config, "load_config", lambda: {})
     monkeypatch.setattr(sandbox, "is_trusted", lambda *a: True)
-    monkeypatch.setattr(sandbox, "docker_command", lambda: pytest.fail("undeclared provider runtime queried"))
     with pytest.raises(sandbox.SandboxError, match="service not provided"):
         sandbox.invoke(load_manifest(root), "service.call", service="storage")
 
 
+@pytest.mark.usefixtures("prepared_native_catalog")
 def test_revocation_during_preparation_denies_launch_with_correct_reason(tmp_path, monkeypatch):
     from core.plugin import load_manifest
     from core.plugin_trust import grant, revoke
@@ -179,16 +179,12 @@ def test_revocation_during_preparation_denies_launch_with_correct_reason(tmp_pat
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(config, "load_config", lambda: {})
     grant("provider", sandbox.compute_fingerprint(root), "1.0.0")
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
 
-    def preparing(*args):
+    def preparing(*args, **kwargs):
         revoke("provider")
-        return "image"
+        return tmp_path, {}
 
-    # This fixture emulates Docker; capability enforcement has dedicated tests.
-    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
-    monkeypatch.setattr(sandbox, "_image", preparing)
-    monkeypatch.setattr(sandbox, "start", lambda *a, **k: pytest.fail("revoked preparation launched client"))
+    monkeypatch.setattr("core.native_runtime_catalog.RuntimeCatalog.load", preparing)
     with pytest.raises(sandbox.SandboxError, match="authorization revoked during execution"):
         sandbox.invoke(load_manifest(root), "cli")
     assert not (tmp_path / "data/plugin-data/provider/self").exists()

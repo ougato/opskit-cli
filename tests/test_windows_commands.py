@@ -117,7 +117,7 @@ def test_external_change_preserved_while_other_commands_are_compensated(tmp_path
 
 
 @pytest.mark.parametrize("kind", ["hardlink", "symlink", "large", "binary"])
-def test_command_path_rejects_links_and_unbounded_or_binary_files(tmp_path, kind):
+def test_command_path_rejects_links_and_unbounded_or_binary_files(tmp_path, kind, request):
     directory, replacements, owned = _transaction(tmp_path)
     directory.mkdir()
     path = directory / "second.cmd"
@@ -126,6 +126,7 @@ def test_command_path_rejects_links_and_unbounded_or_binary_files(tmp_path, kind
     if kind == "hardlink":
         os.link(outside, path)
     elif kind == "symlink":
+        request.getfixturevalue("symlink_capable")
         path.symlink_to(outside)
     else:
         path.write_bytes(b"x" * (1024 * 1024 + 1) if kind == "large" else b"\xff")
@@ -218,7 +219,7 @@ def test_partial_removal_restores_all_commands(tmp_path, monkeypatch, cancel):
     assert {name: (directory / name).read_bytes() for name in replacements} == before
 
 
-def test_managed_root_symlink_is_rejected_before_new_commands(tmp_path):
+def test_managed_root_symlink_is_rejected_before_new_commands(tmp_path, symlink_capable):
     directory = tmp_path / "bin"
     outside = tmp_path / "outside"
     outside.mkdir()

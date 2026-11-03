@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from core import plugin_json, plugin_worker as worker
-from test_plugin_control import client_resource_scope as client_resource_scope
 
 
 @pytest.mark.parametrize("text", [
@@ -134,7 +133,7 @@ def test_host_rejects_invalid_result_envelope_before_publication(wire_client, mo
     sandbox, clients, launch = wire_client
     monkeypatch.setattr(sandbox, "_save_state", lambda *a, **kwargs: pytest.fail("invalid result published"))
     message = plugin_json.dumps_message({"type": "result", **payload})
-    program = "print(" + repr(sandbox.PREFIX + message) + ", flush=True)"
+    program = "print(" + repr(worker.PREFIX + message) + ", flush=True)"
     with pytest.raises(sandbox.SandboxError, match="invalid plugin protocol"):
         launch(program)
     assert clients[0].poll() is not None
@@ -149,8 +148,8 @@ def test_host_rejects_call_after_result_before_dispatch(wire_client, monkeypatch
         {"type": "result", "value": 0, "state": "fixture"},
         {"type": "call", "method": "pause", "args": [], "kwargs": {}},
     ]
-    program = "\n".join("print(" + repr(sandbox.PREFIX + plugin_json.dumps_message(message)) + ", flush=True)" for message in messages)
-    with pytest.raises(sandbox.SandboxError, match="call after terminal result"):
+    program = "\n".join("print(" + repr(worker.PREFIX + plugin_json.dumps_message(message)) + ", flush=True)" for message in messages)
+    with pytest.raises(sandbox.SandboxError, match="invalid plugin protocol"):
         launch(program)
     assert clients[0].poll() is not None
     assert clients[0].stdin.closed and clients[0].stdout.closed
@@ -177,7 +176,7 @@ def test_worker_rejects_version_before_state_or_plugin_operations(tmp_path, monk
 
 
 @pytest.fixture
-def wire_client(tmp_path, monkeypatch, client_resource_scope):
+def wire_client(tmp_path, monkeypatch):
     import sys
     from core import process, plugin_sandbox as sandbox
     from core.plugin import load_manifest
@@ -189,17 +188,32 @@ def wire_client(tmp_path, monkeypatch, client_resource_scope):
     (root / "demo_pkg/__init__.py").write_text("raise RuntimeError('MUST_NOT_IMPORT')\n", encoding="utf-8")
     manifest = load_manifest(root)
     grant("demo", compute_fingerprint(root), "1.0.0")
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["fixture-client"])
-    monkeypatch.setattr(sandbox, "_image", lambda *args: "sha256:" + "a" * 64)
-    monkeypatch.setattr(sandbox, "_cleanup_control", lambda *args: None)
+    from core import native_invocation
+    from core.native_runtime_catalog import RuntimeCatalog
+    from core.native_protocol import exchange, join_io
+    from core.native_sandbox import NativeSandboxError
+    import subprocess
+    import time
+    monkeypatch.setattr(RuntimeCatalog, "load", lambda *a, **k: (tmp_path, {}))
+    from contextlib import nullcontext
+    monkeypatch.setattr(RuntimeCatalog, "acquire", lambda *a, **k: nullcontext((tmp_path, {})))
     clients = []
 
     def launch(program):
-        def start(*args, **kwargs):
-            client = process.start([sys.executable, "-c", program], **kwargs)
+        def invoke(*args, **kwargs):
+            client = process.start([sys.executable, "-c", program], stdin=subprocess.PIPE, binary=True)
             clients.append(client)
-            return client
-        monkeypatch.setattr(sandbox, "start", start)
+            try:
+                return exchange(client, deadline=kwargs["deadline"], dispatch=kwargs["dispatch"],
+                                checkpoint=kwargs["checkpoint"], output=kwargs["output"])
+            except NativeSandboxError as error:
+                raise sandbox.SandboxError("invalid plugin protocol") from error
+            finally:
+                process.terminate_tree(client)
+                join_io(client)
+                client.stdin.close()
+                client.stdout.close()
+        monkeypatch.setattr(native_invocation, "invoke", invoke)
         return sandbox.invoke(manifest, "cli", args=[])
     return sandbox, clients, launch
 
@@ -212,7 +226,7 @@ def test_host_refuses_actual_over_budget_client_before_dispatch(wire_client, mon
     setup = "value=0\nfor _ in range(65): value=[value]" if mode == "depth" else "value=[0]*131072"
     program = ("import json,sys\n" + setup + "\n"
                + "message={'rpc_version':1,'type':'call','method':'pause','args':value,'kwargs':{}}\n"
-               + "sys.stdout.buffer.write(" + repr(sandbox.PREFIX.encode())
+               + "sys.stdout.buffer.write(" + repr(worker.PREFIX.encode())
                + "+json.dumps(message).encode()+bytes([10])); sys.stdout.buffer.flush()")
     with pytest.raises(sandbox.SandboxError, match="invalid plugin protocol"):
         launch(program)
@@ -250,7 +264,7 @@ def test_host_rejects_actual_client_wire_before_state_publish(wire_client, monke
     sandbox, clients, launch = wire_client
     monkeypatch.setattr(sandbox, "_save_state", lambda *args, **kwargs: pytest.fail("invalid wire published state"))
     monkeypatch.setattr(sandbox, "_broker", lambda *args: pytest.fail("invalid wire reached host broker"))
-    wire = sandbox.PREFIX.encode("ascii") + (message if isinstance(message, bytes) else message.encode("utf-8")) + b"\n"
+    wire = worker.PREFIX.encode("ascii") + (message if isinstance(message, bytes) else message.encode("utf-8")) + b"\n"
     program = "import sys; sys.stdout.buffer.write(" + repr(wire) + "); sys.stdout.buffer.flush()"
     with pytest.raises(sandbox.SandboxError, match="invalid plugin protocol"):
         launch(program)
@@ -265,8 +279,8 @@ def test_valid_unicode_callback_and_nonprotocol_output_survive(wire_client, monk
     monkeypatch.setattr(prompt, "pause", lambda text: calls.append(text))
     monkeypatch.setattr(prompt.console, "print", lambda text, **kwargs: displayed.append(text))
     monkeypatch.setattr(sandbox, "_save_state", lambda state, root, **kwargs: states.append(state))
-    call = sandbox.PREFIX + json.dumps({"rpc_version": 1, "type": "call", "method": "pause", "args": ["中文参数"], "kwargs": {}}, ensure_ascii=False)
-    result = sandbox.PREFIX + json.dumps({"rpc_version": 1, "type": "result", "value": "中文结果", "state": "fixture-state"}, ensure_ascii=False)
+    call = worker.PREFIX + json.dumps({"rpc_version": 1, "type": "call", "method": "pause", "args": ["中文参数"], "kwargs": {}}, ensure_ascii=False)
+    result = worker.PREFIX + json.dumps({"rpc_version": 1, "type": "result", "value": "中文结果", "state": "fixture-state"}, ensure_ascii=False)
     program = "\n".join([
         "import sys,json",
         "sys.stdout.buffer.write(b'ordinary-output\\xff\\n'); sys.stdout.buffer.flush()",

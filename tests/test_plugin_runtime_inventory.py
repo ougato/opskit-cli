@@ -33,15 +33,6 @@ def test_unrelated_code_and_private_resources_never_enter_snapshot(tmp_path):
     assert inventory.code_digest(files) == inventory.code_digest(inventory.snapshot(core))
 
 
-def test_gateway_inventory_and_digest_independent_of_plugin_sdk(tmp_path):
-    core = copy_sources(tmp_path)
-    sdk_digest = inventory.code_digest(inventory.snapshot(core))
-    previous = inventory.gateway_source(core)
-    (core / 'plugin_egress.py').write_bytes(previous + b'\n# gateway revision\n')
-    assert inventory.gateway_source(core) != previous
-    assert inventory.code_digest(inventory.snapshot(core)) == sdk_digest
-    assert 'core/plugin_egress.py' not in inventory.snapshot(core)
-    assert 'core/plugin_egress.py' in inventory.bundle_snapshot(core)
 
 
 def test_code_and_resource_changes_invalidate_runtime_digest(tmp_path):
@@ -142,12 +133,12 @@ print(json.dumps({'sdk_exports': sorted(sdk.__all__), 'platform_modules_absent':
 
 
 @pytest.mark.parametrize("backend", ["pyinstaller", "nuitka"])
-@pytest.mark.parametrize("case", ["valid", "extra", "missing", "missing_gateway", "duplicate", "oversize", "badzip"])
+@pytest.mark.parametrize("case", ["valid", "extra", "missing", "missing_worker", "duplicate", "oversize", "badzip"])
 def test_frozen_bundle_is_exact_and_matches_source_digest(tmp_path, monkeypatch, backend, case):
     source_core = copy_sources(tmp_path)
     sources = inventory.bundle_snapshot(source_core)
     sdk_sources = inventory.snapshot(source_core)
-    gateway = inventory.gateway_source(source_core)
+    fetch = inventory.native_fetch_snapshot(source_core)
     core = tmp_path / "frozen/core"
     core.mkdir(parents=True)
     bundle = core / inventory.BUNDLE_NAME
@@ -155,7 +146,7 @@ def test_frozen_bundle_is_exact_and_matches_source_digest(tmp_path, monkeypatch,
         for name, content in sources.items():
             if case == "missing" and name == "core/sdk.py":
                 continue
-            if case == "missing_gateway" and name == "core/plugin_egress.py":
+            if case == "missing_worker" and name == "core/native_fetch_worker.py":
                 continue
             archive.writestr(name, content)
         if case == "extra":
@@ -173,7 +164,7 @@ def test_frozen_bundle_is_exact_and_matches_source_digest(tmp_path, monkeypatch,
         monkeypatch.setattr(inventory, "__compiled__", True, raising=False)
     if case == "valid":
         assert inventory.snapshot(core) == sdk_sources
-        assert inventory.gateway_source(core) == gateway
+        assert inventory.native_fetch_snapshot(core) == fetch
         assert inventory.code_digest(inventory.snapshot(core)) == inventory.code_digest(sdk_sources)
     else:
         with pytest.raises(ValueError):

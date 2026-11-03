@@ -1,47 +1,33 @@
-"""Docker sandbox supervisor. No third-party code runs in the platform process.
+"""Native plugin supervisor. No third-party code runs in the platform process.
 
 Only immutable plugin snapshots and that plugin's state are visible. Persistent
-state is copied into bounded tmpfs and returned over a bounded JSON protocol.
-The container never receives platform credentials, Docker socket or a host shell.
+state is copied into private staging and returned over a bounded JSON protocol.
 """
 from __future__ import annotations
 
-import ipaddress
-import json
 import math
 import os
-import queue
 import re
-import shutil
 import stat
-import subprocess
 import threading
 import time
-import uuid
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 
 from core.paths import data_dir
 from core.plugin_trust import is_trusted
-from core.process import capture, start, terminate_tree
 from core import plugin_json
 from core.plugin_tree import bounded_paths, SKIP_DIRS
 
 STATE_LIMIT = 16 * 1024**2
 WIRE_LIMIT = 32 * 1024**2
 MAX_FILES = 4096
-PREFIX = "OPSKIT_RPC:"
 CONTROL_TIMEOUT = 30
 CONFIG_READ_TIMEOUT = 30
-CONTROL_OUTPUT_LIMIT = 16384
 
 
 class SandboxError(RuntimeError):
     pass
-
-
-class RuntimeCatalogError(SandboxError):
-    """A runtime identity could not be read or validated; never an approval."""
 
 
 def _encode(value, state_root: Path):
@@ -83,15 +69,6 @@ def _encode_host_path(value, state_root):
             inspector.close()
 
 
-def docker_command() -> list[str]:
-    if shutil.which("docker"):
-        return ["docker"]
-    if os.name == "nt" and shutil.which("wsl"):
-        distribution = _read_sandbox_setting("distribution")
-        return ["wsl", "-d", distribution, "--exec", "docker"]
-    raise SandboxError("Docker sandbox unavailable; refusing unisolated plugin execution")
-
-
 def _read_sandbox_setting(field, name=""):
     from core.config import get_config_path
     from core.plugin_inspection import ContentInspector
@@ -115,99 +92,6 @@ def _read_sandbox_setting(field, name=""):
     finally:
         if not scoped:
             inspector.close()
-
-
-def mount_path(path: Path, command: list[str]) -> str:
-    from core.plugin_inspection import ContentInspector
-    scoped = getattr(_invocations, "inspection_scope", False)
-    inspector = getattr(_invocations, "inspector", None) if scoped else None
-    if inspector is None:
-        inspector = ContentInspector()
-        if scoped:
-            _invocations.inspector = inspector
-    try:
-        path = inspector.mount_path(path, timeout=_remaining(CONTROL_TIMEOUT))
-        _remaining()
-    except TimeoutError:
-        raise SandboxError("plugin exceeded execution deadline resolving mount path") from None
-    except (OSError, ValueError, RuntimeError):
-        raise SandboxError("plugin mount path inspection failed") from None
-    finally:
-        if not scoped:
-            inspector.close()
-    if command[0] == "wsl":
-        if not re.fullmatch(r"[A-Za-z]:", path.drive):
-            raise SandboxError("WSL sandbox requires a local drive path")
-        value = "/mnt/" + path.drive[0].lower() + path.as_posix()[2:]
-    else:
-        value = str(path)
-    if any(c in value for c in ",\n\r"):
-        raise SandboxError("unsupported mount path")
-    return value
-
-
-def _control(command: list[str], *args: str) -> str:
-    timeout = _remaining(CONTROL_TIMEOUT)
-    try:
-        result = capture(command + list(args), timeout=timeout,
-                         max_bytes=CONTROL_OUTPUT_LIMIT, stdin=subprocess.DEVNULL)
-    except (OSError, RuntimeError, subprocess.SubprocessError):
-        raise SandboxError("Docker sandbox operation failed") from None
-    if result.returncode:
-        raise SandboxError("Docker sandbox operation failed")
-    _remaining()
-    return result.stdout.strip()
-
-
-def _cleanup_control(command: list[str], *args: str) -> str:
-    """Owned resource cleanup has its own bounded control budget after expiry."""
-    deadline = getattr(_invocations, "deadline", None)
-    _invocations.deadline = None
-    try:
-        return _control(command, *args)
-    finally:
-        _invocations.deadline = deadline
-
-
-def _require_sandbox_capabilities(command):
-    """Reject engines that would silently ignore required resource limits."""
-    template = ('{"os":{{json .OSType}},"memory":{{json .MemoryLimit}},'
-                '"swap":{{json .SwapLimit}},"pids":{{json .PidsLimit}},'
-                '"cpu_quota":{{json .CPUCfsQuota}},"cpu_period":{{json .CPUCfsPeriod}},'
-                '"security":{{json .SecurityOptions}}}')
-    message = "Docker Linux sandbox requires memory, swap, PID, CPU and default seccomp support"
-    try:
-        value = json.loads(_control(command, "info", "--format", template))
-        required = {"memory", "swap", "pids", "cpu_quota", "cpu_period"}
-        if (not isinstance(value, dict) or set(value) != required | {"os", "security"}
-                or value["os"] != "linux" or any(value[key] is not True for key in required)
-                or not isinstance(value["security"], list) or len(value["security"]) > 32
-                or any(not isinstance(option, str) or len(option) > 512 for option in value["security"])
-                or not {"name=seccomp,profile=default", "name=seccomp,profile=builtin"}.intersection(value["security"])):
-            raise ValueError()
-    except (ValueError, TypeError):
-        raise SandboxError(message) from None
-
-
-def _read_runtime_catalog(path, *, gateway=False):
-    if not getattr(_invocations, "inspection_scope", False):
-        with _execution_budget():
-            return _read_runtime_catalog(path, gateway=gateway)
-    from core.plugin_inspection import ContentInspector
-    inspector = getattr(_invocations, "inspector", None)
-    if inspector is None:
-        inspector = ContentInspector()
-        _invocations.inspector = inspector
-    try:
-        record = inspector.runtime_catalog(path, timeout=_remaining(CONTROL_TIMEOUT), gateway=gateway)
-        _remaining()
-        return record
-    except SandboxError:
-        raise
-    except TimeoutError:
-        raise SandboxError("plugin exceeded execution deadline reading runtime catalog") from None
-    except (OSError, ValueError, RuntimeError):
-        raise RuntimeCatalogError("plugin runtime catalog inspection failed") from None
 
 
 def _read_manifest(root):
@@ -251,41 +135,6 @@ def _read_inventory(root, *, select="all", value=""):
         raise PluginInventoryError("plugin inventory inspection deadline exceeded") from None
     except (OSError, ValueError, RuntimeError):
         raise PluginInventoryError("plugin inventory inspection failed") from None
-
-
-def _image(manifest, command) -> str:
-    from core.plugin_runtime_inventory import RUNTIME_POLICY
-    if not getattr(_invocations, "inspection_scope", False):
-        with _execution_budget():
-            return _image(manifest, command)
-    try:
-        record = _read_runtime_catalog(data_dir() / "plugin-runtimes" / (manifest.name + ".json"))
-        image = record["image"]
-        if record["fingerprint"] != compute_fingerprint(manifest.root):
-            raise SandboxError("plugin runtime needs rebuilding for this plugin version")
-        labels = ("org.opskit.sandbox", "org.opskit.lock-sha256",
-                  "org.opskit.base-digest", "org.opskit.code-sha256")
-        # Select only the identity fields: full image metadata may be unbounded
-        # or contain sensitive environment values. One query is one snapshot.
-        fields = ["{{json .Id}}", *("{{json (index .Config.Labels " + json.dumps(label) + ")}}" for label in labels)]
-        response = json.loads(_control(command, "image", "inspect", "--format", "[" + ",".join(fields) + "]", image))
-        if not isinstance(response, list) or len(response) != 5:
-            raise SandboxError("invalid runtime image identity response")
-        if response[0] != image:
-            raise SandboxError("runtime image identity mismatch")
-        if response[1] != str(RUNTIME_POLICY):
-            raise SandboxError("not a platform sandbox runtime")
-        expected = [record["requirements_sha256"], record["base_reference"].rsplit("@", 1)[1], record["code_sha256"]]
-        if response[2:] != expected:
-            raise SandboxError("runtime supply chain identity mismatch")
-        return image
-    except SandboxError:
-        raise
-    except TimeoutError:
-        raise SandboxError("plugin exceeded execution deadline reading runtime catalog") from None
-    except (OSError, KeyError, ValueError, RuntimeError):
-        raise SandboxError("Build the plugin runtime with scripts/build_plugin_runtime.py first") from None
-
 
 
 def _inspect_content(root, *, verify=False):
@@ -483,8 +332,8 @@ def _state_staging(root: Path, state: str, *, plugin: str, caller: str, budget_b
     finally:
         if lease is not None and not retain and not lease.retired:
             try:
-                # As for Docker resource cleanup, expiry has a separate bounded
-                # cleanup allowance. Never replace the primary cancellation.
+                # Expiry has a separate bounded cleanup allowance. Never
+                # replace the primary cancellation.
                 discard_supervised(lease, plugin=plugin, caller=caller, timeout=CONTROL_TIMEOUT)
             except BaseException as exc:
                 if failure is None:
@@ -583,6 +432,87 @@ def _broker(manifest, request: dict):
     fingerprint = check_authorization(manifest)
     _remaining()
     _check_live_authorizations(extra=((manifest.name, fingerprint),))
+    if method == "host.upload_file":
+        if "network" not in manifest.permissions or kwargs or len(args) != 5:
+            raise SandboxError("network capability not granted")
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        private = _read_sandbox_setting("private_targets", manifest.name)
+        previous = getattr(_invocations, "network_authorizations", ())
+        if private:
+            _invocations.network_authorizations = (*previous, (manifest.name, tuple(private)))
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        from core.plugin_upload import upload_file
+        return upload_file(manifest.name, fingerprint, *args, authority=authority,
+                           check_identity=identity, private_targets=private,
+                           deadline=_invocations.deadline, checkpoint=checkpoint)
+    if method == "host.https":
+        if "network" not in manifest.permissions or kwargs or len(args) != 4:
+            raise SandboxError("network capability not granted")
+        import base64
+        if not isinstance(args[3], str) or len(args[3]) > 44000:
+            raise SandboxError("invalid HTTP request body")
+        body = base64.b64decode(args[3], validate=True)
+        private = _read_sandbox_setting("private_targets", manifest.name)
+        previous = getattr(_invocations, "network_authorizations", ())
+        if private:
+            _invocations.network_authorizations = (*previous, (manifest.name, tuple(private)))
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        from core.plugin_http import request as https_request
+        return https_request(*args[:3], body, private_targets=private,
+                             deadline=_invocations.deadline, checkpoint=checkpoint)
+    if method == "host.creator_build":
+        if kwargs or len(args) != 3:
+            raise SandboxError("invalid Creator arguments")
+        from core.plugin_host_tools import creator_build
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        from core.prompt import console
+        return creator_build(manifest.name, fingerprint, *args, authority=authority,
+                             check_identity=identity, deadline=_invocations.deadline,
+                             checkpoint=checkpoint,
+                             output=lambda line: console.print(line, markup=False, highlight=False))
+    if method == "host.artifact_info":
+        if kwargs or len(args) != 2:
+            raise SandboxError("invalid artifact arguments")
+        from core.plugin_artifact import artifact_info
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        return artifact_info(manifest.name, fingerprint, *args, authority=authority,
+                             check_identity=identity, deadline=_invocations.deadline,
+                             checkpoint=checkpoint)
+    if method == "host.read_file":
+        if kwargs or len(args) != 2:
+            raise SandboxError("invalid host file arguments")
+        from core.plugin_host_files import read_file
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        from core.prompt import guard_input
+        with guard_input(lambda: (_remaining(), _check_live_authorizations())):
+            return read_file(manifest.name, fingerprint, *args,
+                             authority=authority, check_identity=identity)
     ui = {"select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
     if method in ui:
         from core import prompt
@@ -792,9 +722,15 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
                 authorizations = getattr(_invocations, "authorizations", ())
                 service_edges = getattr(_invocations, "service_edges", ())
                 network_authorizations = getattr(_invocations, "network_authorizations", ())
+                previous_authority = getattr(_invocations, "capability_authority", None)
+                from core.plugin_capabilities import CapabilityAuthority
+                authority = CapabilityAuthority()
+                _invocations.capability_authority = authority
                 try:
                     return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
                 finally:
+                    authority.close()
+                    _invocations.capability_authority = previous_authority
                     _invocations.stack = stack
                     _invocations.authorizations = authorizations
                     used_edges = getattr(_invocations, "service_edges", ())
@@ -807,83 +743,6 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
                         else network_authorizations)
         finally:
             lock.release()
-
-
-@contextmanager
-def _resource_scope(command, kind, name):
-    from core.plugin_resources import ResourceLease
-    try:
-        lease = ResourceLease(command, kind, name, lambda *args: _control(command, *args))
-    except Exception:
-        raise SandboxError("cannot record sandbox resource; execution refused") from None
-    failed = False
-    try:
-        yield lease
-    except BaseException:
-        failed = True
-        raise
-    finally:
-        deadline = getattr(_invocations, "deadline", None)
-        _invocations.deadline = time.monotonic() + CONTROL_TIMEOUT
-        try:
-            lease.close(lambda *args: _control(command, *args))
-        except Exception:
-            if not failed:
-                raise SandboxError("sandbox resource cleanup pending; recovery required") from None
-            from core.prompt import console
-            console.print("sandbox resource cleanup pending; recovery required", markup=False)
-        finally:
-            _invocations.deadline = deadline
-
-
-@contextmanager
-def _network(manifest, command):
-    if "network" not in manifest.permissions:
-        yield "none", []
-        return
-    name = "opskit-net-" + uuid.uuid4().hex
-    proxy = name + "-proxy"
-    token = uuid.uuid4().hex + uuid.uuid4().hex
-    private = _read_sandbox_setting("private_targets", manifest.name)
-    from core.plugin_gateway import image as gateway_image
-    image = gateway_image(command)
-    with ExitStack() as resources:
-        network_labels = resources.enter_context(_resource_scope(command, "network", name)).labels
-        _control(command, "network", "create", "--driver=bridge", "--internal", "--ipv6=false",
-                 "--opt", "com.docker.network.bridge.inhibit_ipv4=true", *network_labels, name)
-        proxy_labels = resources.enter_context(_resource_scope(command, "container", proxy)).labels
-        _control(command, "run", "-d", "--rm", "--name", proxy, "--pull=never",
-                 *proxy_labels,
-                 "--log-driver=none",
-                 "--read-only", "--user", "65534:65534", "--cap-drop=ALL",
-                 "--security-opt=no-new-privileges", "--pids-limit=32", "--memory=64m", "--cpus=0.5",
-                 "--env", "OPSKIT_PROXY_TOKEN=" + token,
-                 "--env", "OPSKIT_PRIVATE_TARGETS=" + json.dumps(private),
-                 "--entrypoint=python", image, "-I", "-S", "-u", "/runtime/gateway.py")
-        _control(command, "network", "connect", name, proxy)
-        try:
-            network_data = json.loads(_control(command, "inspect", "--format", "{{json .NetworkSettings.Networks}}", proxy))
-            raw_address = network_data[name]["IPAddress"]
-            if not isinstance(raw_address, str):
-                raise ValueError("invalid proxy address type")
-            address = ipaddress.ip_address(raw_address)
-            if (address.version != 4 or address.is_loopback or address.is_reserved
-                    or address.is_link_local or address.is_unspecified or address.is_multicast):
-                raise ValueError("invalid internal proxy address")
-        except (ValueError, KeyError, TypeError):
-            raise SandboxError("invalid sandbox network response") from None
-        url = f"http://opskit:{token}@{address}:8080"
-        previous = getattr(_invocations, "network_authorizations", ())
-        bound = (*previous, (manifest.name, tuple(private))) if private else previous
-        _invocations.network_authorizations = bound
-        try:
-            yield name, ["--env", "HTTP_PROXY=" + url, "--env", "HTTPS_PROXY=" + url,
-                         "--env", "http_proxy=" + url, "--env", "https_proxy=" + url]
-        finally:
-            # Retain used grants through cleanup and state publication, just
-            # like service edges. invoke owns restoration of the outer scope.
-            if not getattr(_invocations, "stack", ()):
-                _invocations.network_authorizations = previous
 
 
 def _invoke(manifest, action, *, args, service, method, kwargs, caller):
@@ -904,29 +763,45 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
         service_contract = manifest.service_contracts[service]
     _invocations.authorizations = (*getattr(_invocations, "authorizations", ()), (manifest.name, fingerprint))
     _check_live_authorizations()
-    command = docker_command()
-    _require_sandbox_capabilities(command)
-    image = _image(manifest, command)
+    from core.native_runtime_catalog import RuntimeCatalog
+    from core.plugin_runtime_inventory import code_digest
+    from core.native_sandbox import NativeSandboxError, get_backend
+    get_backend()
+    with ExitStack() as lease:
+        try:
+            runtime, runtime_record = lease.enter_context(
+                RuntimeCatalog(data_dir() / "native-plugin-runtimes").acquire(
+                    manifest.name, fingerprint=fingerprint, sdk_sha256=code_digest()))
+        except FileNotFoundError:
+            raise NativeSandboxError("runtime_missing") from None
+        except ValueError:
+            raise NativeSandboxError("runtime_invalid") from None
+        return _invoke_prepared(manifest, action, runtime=runtime, runtime_record=runtime_record,
+                                fingerprint=fingerprint, service_contract=service_contract,
+                                args=args, service=service, method=method, kwargs=kwargs, caller=caller)
+
+
+def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, service_contract,
+                     args, service, method, kwargs, caller):
+    from core.native_invocation import invoke as invoke_native
+    from core.native_runtime import inventory
+    from core.plugin_runtime_inventory import code_digest
     _remaining()
     _check_live_authorizations()
     owner_root = data_dir() / "plugin-data" / manifest.name
     state_root = owner_root / "self"
-    # A provider's persistent state is partitioned by the authenticated caller.
     if action.startswith("service"):
         state_root = owner_root / "callers" / caller
-    _recover_state(state_root, plugin=manifest.name,
-                   caller=caller if action.startswith("service") else "platform", initialize=True)
+    state_caller = caller if action.startswith("service") else "platform"
+    _recover_state(state_root, plugin=manifest.name, caller=state_caller, initialize=True)
     _check_staging_quota(state_root)
-    name = "opskit-" + uuid.uuid4().hex
-    payload = {"action": action, "name": manifest.name, "entry": manifest.entry,
-               "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
-               "service": service, "method": method, "caller": caller,
-               "service_contract": service_contract}
-    request_text = plugin_json.dumps_message(_encode(payload, state_root))
+    payload = _encode({"action": action, "name": manifest.name, "entry": manifest.entry,
+                       "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
+                       "service": service, "method": method, "caller": caller,
+                       "service_contract": service_contract}, state_root)
     from core.plugin_workspace import owned_workspace
-    with _network(manifest, command) as (network, proxy_env), _resource_scope(command, "container", name) as resource, owned_workspace(timeout=_remaining(CONTROL_TIMEOUT), cleanup_timeout=CONTROL_TIMEOUT, request_text=request_text, resource=resource) as workspace:
+    with owned_workspace(timeout=_remaining(CONTROL_TIMEOUT), cleanup_timeout=CONTROL_TIMEOUT) as workspace:
         base = workspace.root
-        resource_labels = resource.labels
         _copy_supervised(manifest.root, base / "plugin", 128 * 1024**2)
         if compute_fingerprint(base / "plugin") != fingerprint:
             raise SandboxError("plugin changed during snapshot creation")
@@ -935,178 +810,38 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
         if snapshot_manifest is None or replace(snapshot_manifest, root=manifest.root) != manifest:
             raise SandboxError("plugin manifest changed during authorization")
         _copy_supervised(state_root, base / "seed", STATE_LIMIT, skip_dirs=frozenset())
-        mounts = []
-        for source, target in [(base / "plugin", "/plugin"), (base / "seed", "/seed"), (base / "request.json", "/request.json")]:
-            mounts += ["--mount", f"type=bind,src={mount_path(source, command)},dst={target},readonly"]
-        cmd = command + ["run", "--rm", "--name", name, "--pull=never", "-i",
-            *resource_labels,
-            "--log-driver=none",
-            "--read-only", "--user", "65534:65534", "--cap-drop=ALL",
-            "--security-opt=no-new-privileges", "--pids-limit=64", "--memory=256m",
-            "--memory-swap=256m", "--cpus=1", "--ulimit", "nofile=256:256",
-            "--network", network,
-            *proxy_env,
-            "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777",
-            "--tmpfs", "/data:rw,nosuid,nodev,noexec,size=32m,uid=65534,gid=65534,mode=0700",
-            *mounts, "--env", "HOME=/data", "--env", "OPSKIT_DATA_DIR=/data",
-            "--env", "OPSKIT_SANDBOX=1", "--env", "PYTHONDONTWRITEBYTECODE=1",
-            image, "python", "-u", "-m", "core.plugin_worker", "/request.json"]
-        _remaining()
-        _check_live_authorizations()
-        try:
-            process = start(cmd, stdin=subprocess.PIPE, binary=True)
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            raise SandboxError("sandbox client launch failed") from None
-        lines: queue.Queue = queue.Queue(maxsize=4)
-        stopped = threading.Event()
-
-        def read() -> None:
-            try:
-                while not stopped.is_set():
-                    line = process.stdout.readline(WIRE_LIMIT + 1)
-                    if not line:
-                        break
-                    while not stopped.is_set():
-                        try:
-                            lines.put(line, timeout=0.1)
-                            break
-                        except queue.Full:
-                            pass
-            finally:
-                while not stopped.is_set():
-                    try:
-                        lines.put(None, timeout=0.1)
-                        break
-                    except queue.Full:
-                        pass
-
-        thread = threading.Thread(target=read, daemon=True)
-        deadline = _invocations.deadline
-        next_authorization_check = time.monotonic()
-        result = None
-        total_output = 0
-        writers = []
-        try:
-            thread.start()
-            while True:
-                if time.monotonic() >= deadline:
-                    raise SandboxError("plugin exceeded execution deadline")
-                if time.monotonic() >= next_authorization_check:
-                    _check_live_authorizations()
-                    next_authorization_check = time.monotonic() + 1
-                try:
-                    line = lines.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                if line is None:
-                    break
-                total_output += len(line)
-                if len(line) > WIRE_LIMIT or total_output > WIRE_LIMIT * 2:
-                    raise SandboxError("plugin exceeded output quota")
-                if line.startswith(PREFIX.encode("ascii")):
-                    try:
-                        text = line[len(PREFIX):].decode("utf-8", errors="strict")
-                        message = plugin_json.loads_message(text)
-                        if not isinstance(message, dict):
-                            raise ValueError("protocol message must be an object")
-                    except (ValueError, TypeError, RecursionError):
-                        raise SandboxError("invalid plugin protocol") from None
-                    if message.get("type") == "result":
-                        if result is not None:
-                            raise SandboxError("duplicate plugin result")
-                        try:
-                            result = plugin_json.require_result(message)
-                        except ValueError:
-                            raise SandboxError("invalid plugin protocol") from None
-                    elif message.get("type") == "call":
-                        if result is not None:
-                            raise SandboxError("plugin call after terminal result")
-                        from core.prompt import UserCancel
-                        try:
-                            reply = {"value": _broker(manifest, message)}
-                        except UserCancel:
-                            reply = {"cancel": True}
-                        except Exception:
-                            reply = {"error": "broker request denied or failed"}
-                        if time.monotonic() >= deadline:
-                            raise SandboxError("plugin exceeded execution deadline")
-                        try:
-                            reply_text = plugin_json.dumps_message(reply) + "\n"
-                            if len(reply_text.encode("utf-8")) > WIRE_LIMIT:
-                                raise ValueError("reply exceeds limit")
-                        except (ValueError, TypeError, RecursionError):
-                            raise SandboxError("invalid broker reply") from None
-                        if time.monotonic() >= deadline:
-                            raise SandboxError("plugin exceeded execution deadline")
-                        done = threading.Event()
-                        errors = []
-                        def write_reply():
-                            try:
-                                process.stdin.write(reply_text.encode('utf-8'))
-                                process.stdin.flush()
-                            except (OSError, ValueError):
-                                errors.append(True)
-                            finally:
-                                done.set()
-                        writer = threading.Thread(target=write_reply, daemon=True)
-                        writers.append(writer)
-                        writer.start()
-                        while not done.wait(min(0.1, max(0, deadline - time.monotonic()))):
-                            if time.monotonic() >= deadline:
-                                raise SandboxError("plugin exceeded execution deadline")
-                        writer.join()
-                        writers.clear()
-                        if time.monotonic() >= deadline:
-                            raise SandboxError("plugin exceeded execution deadline")
-                        if errors:
-                            raise SandboxError("broker reply delivery failed")
-                    else:
-                        raise SandboxError("invalid plugin protocol")
-                else:
-                    from core.prompt import console
-                    console.print(line.decode("utf-8", errors="replace").rstrip(), markup=False, highlight=False)
-            try:
-                code = process.wait(timeout=max(0.1, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                raise SandboxError("plugin exceeded execution deadline") from None
-            if time.monotonic() >= deadline:
-                raise SandboxError("plugin exceeded execution deadline")
-            if code or result is None or result.get("error"):
-                raise SandboxError("plugin execution failed")
-            if action == "service.describe":
-                value = result.get("value")
-                expected = {"service_api_version": service_contract["api_version"], "methods": service_contract["methods"]}
-                if (not isinstance(value, dict) or type(value.get("service_api_version")) is not int or value != expected):
-                    raise SandboxError("service description does not match authorized contract")
-            check_authorization(manifest)
-            if compute_fingerprint(manifest.root) != fingerprint:
-                raise SandboxError("plugin changed during execution")
+        seed = base / "seed"
+        seed_files = inventory(seed, allow_empty=True)
+        def checkpoint():
             _remaining()
             _check_live_authorizations()
-        finally:
-            stopped.set()
-            # Release the attached client before Docker removal. A full stdout
-            # pipe otherwise makes daemon removal wait for its blocked attach.
-            # The resource scope removes the owned Docker ID after pipe cleanup.
+        def dispatch(message):
+            from core.prompt import UserCancel
+            from core.i18n import t
             try:
-                terminate_tree(process)
-            finally:
-                for writer in writers:
-                    if writer.ident is not None:
-                        writer.join(timeout=5)
-                if thread.ident is not None:
-                    thread.join(timeout=5)
-                if not any(writer.is_alive() for writer in writers):
-                    process.stdin.close()
-                if not thread.is_alive():
-                    process.stdout.close()
-    # Publish only after all owned resources have been confirmed removed.
-    # Cleanup may consume time or race with a trust/edge revocation.
+                return {"value": _broker(manifest, message)}
+            except UserCancel:
+                return {"cancel": True}
+            except Exception:
+                return {"error": t("plugin_native.errors.broker_denied")}
+        from core.prompt import console
+        result = invoke_native(runtime, runtime_record, base / "plugin", inventory(base / "plugin"),
+                               seed, seed_files, payload, fingerprint=fingerprint,
+                               sdk_sha256=code_digest(), deadline=_invocations.deadline,
+                               checkpoint=checkpoint, dispatch=dispatch,
+                               output=lambda line: console.print(line, markup=False, highlight=False),
+                               staging_parent=base)
+        if action == "service.describe":
+            value = result.get("value")
+            expected = {"service_api_version": service_contract["api_version"],
+                        "methods": service_contract["methods"]}
+            if not isinstance(value, dict) or type(value.get("service_api_version")) is not int or value != expected:
+                raise SandboxError("service description does not match authorized contract")
     _remaining()
     _check_live_authorizations()
     if compute_fingerprint(manifest.root) != fingerprint:
-        raise SandboxError("plugin changed during cleanup")
-    _save_state(result["state"], state_root, plugin=manifest.name,
-                caller=caller if action.startswith("service") else "platform",
+        raise SandboxError("plugin changed during execution")
+    check_authorization(manifest)
+    _save_state(result["state"], state_root, plugin=manifest.name, caller=state_caller,
                 budget_base=data_dir().absolute() / "plugin-data")
     return result.get("value")

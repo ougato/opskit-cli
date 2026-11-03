@@ -49,9 +49,6 @@ def _lock_worker(connection, source, request, confirmed, transport):
             path = data_dir() / 'plugin-runtimes' / (source['plugin'] + '.lock')
             # Absolute conversion stays in this worker as well.
             path = path.absolute()
-        elif 'resource' in source:
-            from core.plugin_resources import _root
-            path = _root() / (source['resource'] + '.lock')
         else:
             path = Path(source['path'])
         # Reject existing links before creation or permission changes.
@@ -74,8 +71,6 @@ def _lock_worker(connection, source, request, confirmed, transport):
         else:
             transport.sendmsg([b'L'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array('i', [descriptor]))])
         result = {'ok': True, 'request': request, 'handle': handle}
-        if 'resource' in source:
-            result['path'] = str(path)
         send(connection, result)
         confirmed.wait()
         # Caller has acquired the nonblocking lock; check the name again now.
@@ -157,7 +152,7 @@ def _acquire(descriptor):
 
 
 @contextmanager
-def hold(path=None, *, timeout, plugin=None, resource=None):
+def hold(path=None, *, timeout, plugin=None):
     """Bound filesystem preparation and confirm identity while caller holds lock.
 
     Native nonblocking lock/close calls still run in the caller. This is not a
@@ -167,14 +162,10 @@ def hold(path=None, *, timeout, plugin=None, resource=None):
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('invalid invocation lock allowance')
     if plugin is not None:
-        if (path is not None or resource is not None or not isinstance(plugin, str)
+        if (path is not None or not isinstance(plugin, str)
                 or re.fullmatch(r'[a-z][a-z0-9_]{0,127}', plugin) is None):
             raise ValueError('invalid invocation lock identity')
         source = {'plugin': plugin}
-    elif resource is not None:
-        if path is not None or not isinstance(resource, str) or re.fullmatch(r'[0-9a-f]{32}', resource) is None:
-            raise ValueError('invalid resource lease identity')
-        source = {'resource': resource}
     else:
         source = str(path)
         if (not 0 < len(source) <= 65536 or '\0' in source or not Path(source).is_absolute()
@@ -186,7 +177,6 @@ def hold(path=None, *, timeout, plugin=None, resource=None):
     confirmed = multiprocessing.get_context('spawn').Event()
     receiver = sender = None
     descriptor = None
-    transferred_path = None
     try:
         if os.name != 'nt':
             receiver, sender = socket.socketpair()
@@ -195,19 +185,11 @@ def hold(path=None, *, timeout, plugin=None, resource=None):
             if sender is not None:
                 sender.close()
             result = wait_result(connection, deadline=deadline, label='plugin invocation lock')
-            fields = {'ok', 'request', 'handle'} | ({'path'} if resource is not None else set())
+            fields = {'ok', 'request', 'handle'}
             if (set(result) != fields or result['ok'] is not True
                     or result['request'] != request or type(result['handle']) is not int
                     or not 0 <= result['handle'] < 2**64):
                 raise RuntimeError('invocation lock opening unconfirmed')
-            if resource is not None:
-                value = result['path']
-                if (not isinstance(value, str) or not 0 < len(value) <= 65536 or '\0' in value
-                        or not Path(value).is_absolute() or '..' in Path(value).parts
-                        or Path(value).name != resource + '.lock'
-                        or Path(value).parent.name != 'plugin-resources'):
-                    raise RuntimeError('resource lease path unconfirmed')
-                transferred_path = Path(value)
             if os.name == 'nt':
                 descriptor = _duplicate_windows_handle(process, result['handle'])
             else:
@@ -222,7 +204,7 @@ def hold(path=None, *, timeout, plugin=None, resource=None):
                 raise RuntimeError('invocation lock confirmation failed')
         if time.monotonic() >= deadline:
             raise TimeoutError('invocation lock acquisition deadline exceeded')
-        yield transferred_path
+        yield
     finally:
         # Do not retain semaphore finalizers in a caught exception traceback.
         confirmed = None

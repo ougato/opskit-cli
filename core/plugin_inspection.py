@@ -30,60 +30,6 @@ class StatePathError(ValueError):
     """A host file argument does not belong to the selected state partition."""
 
 
-def _valid_resource_record_request(request):
-    return (isinstance(request, dict) and set(request) == {"operation", "path"}
-            and request["operation"] == "resource_record" and isinstance(request["path"], str)
-            and 0 < len(request["path"]) <= 65536 and "\0" not in request["path"])
-
-
-def _resource_record_result(request):
-    from core.plugin_resources import _read
-    try:
-        return {"ok": True, "record": _read(Path(request["path"]))}
-    except FileNotFoundError:
-        return {"ok": False, "reason": "missing"}
-    except OSError:
-        return {"ok": False, "reason": "filesystem"}
-    except (ValueError, RuntimeError):
-        return {"ok": False, "reason": "invalid"}
-
-
-def _resource_record_value(result, path):
-    from core.plugin_resources import _record_value
-    if result == {"ok": False, "reason": "missing"}:
-        return "missing", None
-    if result == {"ok": False, "reason": "filesystem"}:
-        return "filesystem", None
-    if result == {"ok": False, "reason": "invalid"}:
-        return "invalid", None
-    if (not isinstance(result, dict) or set(result) != {"ok", "record"}
-            or result["ok"] is not True):
-        raise RuntimeError("invalid resource journal inspection result")
-    return "ok", _record_value(Path(path), result["record"])
-
-
-def _valid_mount_path_request(request):
-    return (isinstance(request, dict) and set(request) == {"operation", "path"}
-            and request["operation"] == "mount_path" and isinstance(request["path"], str)
-            and 0 < len(request["path"]) <= 65536 and "\0" not in request["path"])
-
-
-def _mount_path_result(request):
-    try:
-        return {"ok": True, "path": str(Path(request["path"]).resolve())}
-    except (OSError, ValueError, RuntimeError):
-        return {"ok": False}
-
-
-def _mount_path_value(result):
-    if (not isinstance(result, dict) or set(result) != {"ok", "path"} or result["ok"] is not True
-            or not isinstance(result["path"], str) or not 0 < len(result["path"]) <= 65536
-            or "\0" in result["path"] or not Path(result["path"]).is_absolute()
-            or ".." in Path(result["path"]).parts):
-        raise RuntimeError("invalid plugin mount path result")
-    return Path(result["path"])
-
-
 def _valid_state_path_request(request):
     return (isinstance(request, dict) and set(request) == {"operation", "root", "path"}
             and request["operation"] == "state_path"
@@ -279,10 +225,9 @@ def _valid_setting_request(request):
             and set(request) == {"operation", "config", "field", "name"}
             and request["operation"] == "setting"
             and isinstance(request["config"], str) and 0 < len(request["config"]) <= 65536
-            and ((request["field"] == "distribution" and request["name"] == "")
-                 or (request["field"] in ("private_targets", "enabled") and isinstance(request["name"], str)
+            and (request["field"] in ("private_targets", "enabled") and isinstance(request["name"], str)
                      and len(request["name"]) <= 128
-                     and re.fullmatch(r"[a-z][a-z0-9_]*", request["name"]) is not None)))
+                     and re.fullmatch(r"[a-z][a-z0-9_]*", request["name"]) is not None))
 
 
 def _config_setting(config, field, name):
@@ -296,12 +241,6 @@ def _config_setting(config, field, name):
     if not isinstance(plugin, dict) or not isinstance(plugin.get("sandbox", {}), dict):
         raise SandboxError("invalid sandbox settings")
     settings = plugin.get("sandbox", {})
-    if field == "distribution":
-        value = settings.get("wsl_distribution", "Debian")
-        if (not isinstance(value, str) or not 0 < len(value) <= 128
-                or re.fullmatch(r"[A-Za-z0-9_.-]+", value) is None):
-            raise SandboxError("invalid WSL distribution")
-        return value
     targets = settings.get("private_targets", {})
     if not isinstance(targets, dict):
         raise SandboxError("invalid private network grants")
@@ -330,36 +269,8 @@ def _setting_value(result, field, name):
         if type(result["value"]) is not bool:
             raise RuntimeError("invalid plugin enablement inspection result")
         return result["value"]
-    settings = ({"wsl_distribution": result["value"]} if field == "distribution"
-                else {"private_targets": {name: result["value"]}})
+    settings = {"private_targets": {name: result["value"]}}
     return _config_setting({"plugin": {"sandbox": settings}}, field, name)
-
-
-def _valid_catalog_request(request):
-    return (isinstance(request, dict) and set(request) == {"operation", "path"}
-            and request["operation"] in ("catalog", "gateway_catalog") and isinstance(request["path"], str)
-            and 0 < len(request["path"]) <= 65536)
-
-
-def _catalog_result(request):
-    from yaml import YAMLError
-    from core.plugin_catalog import read_record, read_gateway_record
-    try:
-        read = read_gateway_record if request["operation"] == "gateway_catalog" else read_record
-        return {"ok": True, "record": read(request["path"])}
-    except (OSError, ValueError, RuntimeError, YAMLError):
-        return {"ok": False}
-
-
-def _catalog_value(result, *, gateway=False):
-    from core.plugin_catalog import validate_record, validate_gateway_record
-    if not isinstance(result, dict) or set(result) != {"ok", "record"} or result["ok"] is not True:
-        raise RuntimeError("plugin runtime catalog inspection failed")
-    validate = validate_gateway_record if gateway else validate_record
-    record = validate(result["record"])
-    if record != result["record"]:
-        raise RuntimeError("invalid runtime catalog inspection result")
-    return record
 
 
 def _valid_manifest_request(request):
@@ -468,12 +379,6 @@ def _inspection_session(connection, buffer, length, requested):
                 continue
             try:
                 request = json.loads(bytes(view[:size]))
-                if _valid_resource_record_request(request):
-                    send(connection, _resource_record_result(request))
-                    continue
-                if _valid_mount_path_request(request):
-                    send(connection, _mount_path_result(request))
-                    continue
                 if _valid_state_path_request(request):
                     send(connection, _state_path_result(request))
                     continue
@@ -485,9 +390,6 @@ def _inspection_session(connection, buffer, length, requested):
                     continue
                 if _valid_manifest_request(request):
                     _send_manifest(connection, view, requested, request["root"])
-                    continue
-                if _valid_catalog_request(request):
-                    send(connection, _catalog_result(request))
                     continue
                 if _valid_timeout_request(request):
                     send(connection, _timeout_result(request))
@@ -560,24 +462,6 @@ class ContentInspector:
             raise ValueError("invalid state quota inspection request")
         return self._exchange(request, timeout, _state_quota_value)
 
-    def resource_record(self, path, *, timeout):
-        request = {"operation": "resource_record", "path": str(path)}
-        if not _valid_resource_record_request(request):
-            raise ValueError("invalid resource journal inspection request")
-        status, record = self._exchange(request, timeout, lambda result: _resource_record_value(result, path))
-        if status == "missing":
-            raise FileNotFoundError("resource journal no longer exists")
-        if status == "filesystem":
-            raise OSError("resource journal inspection failed")
-        if status == "invalid":
-            raise ValueError("invalid resource journal record")
-        return record
-
-    def mount_path(self, path, *, timeout):
-        request = {"operation": "mount_path", "path": str(path)}
-        if not _valid_mount_path_request(request):
-            raise ValueError("invalid mount path inspection request")
-        return self._exchange(request, timeout, _mount_path_value)
 
     def state_path(self, root, path, *, timeout):
         request = {"operation": "state_path", "root": str(root), "path": str(path)}
@@ -597,13 +481,6 @@ class ContentInspector:
             raise ValueError("invalid sandbox setting inspection request")
         return self._exchange(request, timeout, lambda result: _setting_value(result, field, name))
 
-    def runtime_catalog(self, path, *, timeout, gateway=False):
-        if type(gateway) is not bool:
-            raise ValueError("invalid runtime catalog kind")
-        request = {"operation": "gateway_catalog" if gateway else "catalog", "path": str(path)}
-        if not _valid_catalog_request(request):
-            raise ValueError("invalid runtime catalog inspection request")
-        return self._exchange(request, timeout, lambda result: _catalog_value(result, gateway=gateway))
 
     def manifest(self, root, *, timeout):
         request = {"operation": "manifest", "root": str(root)}

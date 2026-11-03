@@ -1,5 +1,5 @@
 """Fresh complete manifests use owned, bounded, cancellable host reads."""
-from contextlib import closing, nullcontext
+from contextlib import closing
 from dataclasses import asdict
 import json
 import os
@@ -183,6 +183,7 @@ def test_next_chunk_blocked_uses_same_deadline_and_reaps(tmp_path, monkeypatch, 
     assert marker.exists() and not psutil.pid_exists(int(marker.read_text()))
 
 
+@pytest.mark.usefixtures("prepared_native_catalog")
 @pytest.mark.parametrize("stage", ["initial", "snapshot"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_invocation_manifest_stages_reap_before_container_start(tmp_path, monkeypatch,
@@ -197,14 +198,8 @@ def test_invocation_manifest_stages_reap_before_container_start(tmp_path, monkey
     monkeypatch.setenv("OPSKIT_TEST_MANIFEST_BLOCK_STAGE", stage)
     monkeypatch.setenv("OPSKIT_TEST_MANIFEST_BLOCK_MARKER", str(marker))
     monkeypatch.setattr(inspection, "_inspection_session", block_selected_manifest_session)
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
-    # This fixture emulates Docker; capability enforcement has dedicated tests.
-    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
-    monkeypatch.setattr(sandbox, "_image", lambda *a: "synthetic-image")
     from core.plugin_workspace import allocate
     lease = SimpleNamespace(labels=[], allocate_workspace=allocate)
-    monkeypatch.setattr(sandbox, "_resource_scope", lambda *a: nullcontext(lease))
-    monkeypatch.setattr(sandbox, "start", lambda *a, **k: pytest.fail("blocked manifest launched container"))
     if cancel:
         def clock():
             if marker.exists():

@@ -26,6 +26,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -127,6 +128,35 @@ def _plugin_runtime_bundle() -> Path:
     return target
 
 
+def _native_probe_bundle() -> Path:
+    """Ship ordinary packaging sources for the isolated interpreter probe."""
+    import packaging
+    from core.native_runtime import inventory
+    source = Path(packaging.__file__).parent
+    files = inventory(source)
+    selected = {name: digest for name, digest in files.items()
+                if name.endswith(".py") or name == "py.typed"}
+    if not selected or len(selected) > 128:
+        raise ValueError("invalid native probe source inventory")
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    target = Path(tempfile.mkdtemp(prefix="native-probe-", dir=BUILD_DIR))
+    package = target / "packaging"
+    package.mkdir()
+    total = 0
+    for name, digest in sorted(selected.items()):
+        with (source / name).open("rb") as stream:
+            content = stream.read(2 * 1024**2 + 1)
+        total += len(content)
+        if total > 2 * 1024**2 or hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError("native probe sources changed or exceed size limit")
+        destination = package / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    if inventory(package) != selected or inventory(source) != files:
+        raise ValueError("native probe source snapshot mismatch")
+    return target
+
+
 def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
                  jobs: int | None = None) -> Path | None:
     """使用 Nuitka 编译单文件可执行程序"""
@@ -138,6 +168,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     runtime_bundle = _plugin_runtime_bundle()
+    probe_bundle = _native_probe_bundle()
 
     # onefile 固定解压目录：默认每次启动都把整包解压到随机 /tmp/onefile_<pid>_xxx，
     # 低配机/慢盘上这步要数秒且每次重来。按版本号固定到用户缓存目录后，
@@ -159,6 +190,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
         "--include-data-dir=core/locale=core/locale",
         "--include-data-dir=core/mirrors=core/mirrors",
         f"--include-data-files={runtime_bundle}=core/{runtime_bundle.name}",
+        f"--include-data-dir={probe_bundle}=core/native-probe-packaging",
         "--include-package=rich._unicode_data",
         "--include-module=_registry",
     ]
@@ -208,6 +240,7 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
     spec_out = BUILD_DIR / "spec"
     spec_out.mkdir(parents=True, exist_ok=True)
     runtime_bundle = _plugin_runtime_bundle()
+    probe_bundle = _native_probe_bundle()
 
     # Windows 路径分隔符用 ; Unix 用 :
     sep = ";" if sys.platform == "win32" else ":"
@@ -224,6 +257,7 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         f"--add-data={ROOT / 'core' / 'locale'}{sep}core/locale",
         f"--add-data={ROOT / 'core' / 'mirrors'}{sep}core/mirrors",
         f"--add-data={runtime_bundle}{sep}core",
+        f"--add-data={probe_bundle}{sep}core/native-probe-packaging",
         "--hidden-import=_registry",
         "--hidden-import=software",
         "--hidden-import=software.menu",
@@ -241,6 +275,14 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--hidden-import=network",
         "--hidden-import=network.menu",
         "--hidden-import=network.commands",
+        # Registries and native workers import official modules dynamically.
+        # Hidden-importing only each package __init__ omits recipe drivers and
+        # host broker modules from the frozen executable.
+        "--collect-submodules=core",
+        "--collect-submodules=plugin",
+        "--collect-submodules=software",
+        "--collect-submodules=monitor",
+        "--collect-submodules=network",
         "--exclude-module=tkinter",
         "--exclude-module=matplotlib",
         "--exclude-module=numpy",
@@ -265,12 +307,15 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
             cmd += ["--upx-dir", str(Path(upx_bin).parent)]
         else:
             print("[build] UPX not found, skipping compression")
+            cmd.append("--noupx")
+    else:
+        cmd.append("--noupx")
 
     if sys.platform != "win32":
         cmd.append("--strip")
 
     cmd.append("main.py")
-    rc = _run(cmd, cwd=ROOT)
+    rc = _run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL)
     if rc != 0:
         print(f"[build] PyInstaller failed (exit {rc})")
         return None

@@ -114,6 +114,7 @@ with transaction_guard(root):
     assert (staging / "value").read_bytes() == b"new"
 
 
+@pytest.mark.usefixtures("prepared_native_catalog")
 @pytest.mark.parametrize("action,caller", [("cli", "platform"), ("service.call", "caller_a")])
 def test_unresolved_partition_refused_before_network_or_container(tmp_path, monkeypatch, action, caller):
     monkeypatch.setattr(sandbox, "data_dir", lambda: tmp_path)
@@ -122,18 +123,13 @@ def test_unresolved_partition_refused_before_network_or_container(tmp_path, monk
     monkeypatch.setattr(sandbox, "_read_manifest", lambda root: manifest)
     monkeypatch.setattr(sandbox, "check_authorization", lambda manifest: "a" * 64)
     monkeypatch.setattr(sandbox, "_check_live_authorizations", lambda: None)
-    monkeypatch.setattr(sandbox, "docker_command", lambda: ["docker"])
-    # This fixture emulates Docker; capability enforcement has dedicated tests.
-    monkeypatch.setattr(sandbox, "_require_sandbox_capabilities", lambda command: None)
-    monkeypatch.setattr(sandbox, "_image", lambda *args: "reviewed-image")
     monkeypatch.setattr(sandbox, "_remaining", lambda *args: 30)
     monkeypatch.setattr(sandbox._invocations, "authorizations", (), raising=False)
     monkeypatch.setattr(sandbox._invocations, "service_edges", (), raising=False)
     monkeypatch.setattr("core.plugin_services.resolve_service_access", lambda *args: ())
     def forbidden(*args, **kwargs):
         pytest.fail("unresolved state reached resource creation")
-    monkeypatch.setattr(sandbox, "_network", forbidden)
-    monkeypatch.setattr(sandbox, "_resource_scope", forbidden)
+    monkeypatch.setattr("core.plugin_workspace.owned_workspace", forbidden)
     owner = tmp_path / "plugin-data/provider"
     root = owner / "self" if action == "cli" else owner / "callers" / caller
     backup = root.with_name(root.name + ".previous")

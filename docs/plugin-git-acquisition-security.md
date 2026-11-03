@@ -1,5 +1,7 @@
 # 插件 Git 获取边界
 
+> 2026-11-03：下文为旧 Docker 实现的历史审计记录，其 `prepare-fetch --packages`、镜像与 Linux guest 方案已移除，不是当前使用说明。当前原生 Python/Git 准备、HTTPS/SSH 获取及剩余迁移项以 [原生沙盒迁移](plugin-native-sandbox-migration.md) 为准。
+
 ## 获取工具准备入口（局部验收完成）
 
 2026-10-17：`plugin prepare-fetch --packages DIR` 与 `prepared_tool` 已实现。冻结642文件快照 `0fa8c0aa026f6a71be394122f5dc085190c5e5ac34246970855eb1d2ec15e6ec` 在Windows、Linux3.14、macOS、最低Python3.10各76项通过、零跳过；源码、同名XML用例及最低容器约束已独立核对。此批明确不运行未改动的旧宿主Git安装更新整链路测试。真实Linux CLI使用已有锁定离线包准备工具，新解释器通过固定本地端点选出同一内容寻址镜像，不创建配置或插件目录、不授信。证据 `cache/plugin-fetch-preparation-20261016-r1/audit.json`。

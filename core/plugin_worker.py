@@ -1,4 +1,4 @@
-"""Container-only adapter for Python/exec plugins and the JSON service protocol."""
+"""Isolated Python/exec plugin adapter and bounded JSON service protocol."""
 from __future__ import annotations
 
 import base64
@@ -16,6 +16,18 @@ from core.plugin_tree import bounded_paths
 
 PREFIX = "OPSKIT_RPC:"
 STATE_LIMIT = 16 * 1024**2
+
+
+def _data_root():
+    return Path(os.environ.get("OPSKIT_DATA_DIR", "/data"))
+
+
+def _plugin_root():
+    return Path(os.environ.get("OPSKIT_PLUGIN_ROOT", "/plugin"))
+
+
+def _seed_root():
+    return Path(os.environ.get("OPSKIT_SEED_ROOT", "/seed"))
 
 
 def broker(method, *args, **kwargs):
@@ -49,7 +61,7 @@ def _adapt_sdk(name: str):
     from core import paths
     import core.i18n as i18n
     import core.theme as theme
-    i18n.init()
+    i18n.init(language=os.environ.get("OPSKIT_LANGUAGE"))
     theme.init()
     # paged_select evaluates plugin callbacks locally and calls adapted select.
     for method in ("select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
@@ -62,11 +74,28 @@ def _adapt_sdk(name: str):
         # Legacy namespace is an alias only; it cannot select another owner.
         if namespace not in {name, name.replace("_", "-")}:
             raise PermissionError("plugin namespace belongs to another identity")
-        return Path("/data/state")
+        return _data_root() / "state"
 
     paths.plugin_data_dir = sdk.plugin_data_dir = owned_data
-    paths.plugins_dir = sdk.plugins_dir = lambda: Path("/plugin")
+    paths.plugins_dir = sdk.plugins_dir = _plugin_root
     sdk.get_service = lambda name: RemoteService(name)
+    def read_host_file(directory, relative):
+        reply = broker("host.read_file", directory, relative)
+        if not isinstance(reply, dict) or set(reply) != {"encoding", "content"} or reply["encoding"] != "base64":
+            raise ValueError("invalid host file response")
+        return base64.b64decode(reply["content"], validate=True)
+    sdk.read_host_file = read_host_file
+    sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
+    sdk.creator_build = lambda executable, project, options: broker(
+        "host.creator_build", executable, project, options)
+    def https_request(url, method="GET", headers=None, body=b""):
+        if not isinstance(body, bytes):
+            raise TypeError("HTTPS body must be bytes")
+        reply = broker("host.https", url, method, headers or {}, base64.b64encode(body).decode("ascii"))
+        return {"status": reply["status"], "body": base64.b64decode(reply["body"], validate=True)}
+    sdk.https_request = https_request
+    sdk.upload_file = lambda directory, relative, url, sha256, headers=None: broker(
+        "host.upload_file", directory, relative, url, sha256, headers or {})
     def open_menu(name, breadcrumb, context=None, source=""):
         # Installing a new provider requires the platform's explicit lifecycle.
         broker("service.call", name, "open_menu", [breadcrumb, context or {}], {})
@@ -78,7 +107,7 @@ def _adapt_sdk(name: str):
 
 
 def _pack_state() -> str:
-    root = Path("/data")
+    root = _data_root()
     files = bounded_paths(root, max_entries=4096, skip_dirs=frozenset())
     size = 0
     buffer = io.BytesIO()
@@ -107,8 +136,13 @@ def _value(value):
 def _decode(value):
     if isinstance(value, dict):
         if set(value) == {"__opskit_path__"}:
-            path = Path(value["__opskit_path__"]).resolve()
-            path.relative_to(Path("/data"))
+            portable = PurePosixPath(value["__opskit_path__"])
+            if (not portable.is_absolute() or ".." in portable.parts
+                    or "\\" in str(portable) or "\0" in str(portable)):
+                raise ValueError("invalid portable state path")
+            relative = portable.relative_to(PurePosixPath("/data"))
+            path = (_data_root() / relative).resolve()
+            path.relative_to(_data_root().resolve())
             return path
         return {k: _decode(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -162,7 +196,7 @@ def _request(value):
         if isinstance(entry, dict):
             if set(entry) - {"linux", "windows", "darwin"} or not all(isinstance(item, str) for item in entry.values()):
                 raise ValueError("invalid worker entry")
-            entry = entry.get("linux")
+            entry = entry.get("windows" if os.name == "nt" else sys.platform)
         if (not isinstance(entry, str) or not entry or "\x00" in entry or "\\" in entry
                 or PurePosixPath(entry).is_absolute() or ".." in PurePosixPath(entry).parts):
             raise ValueError("invalid worker entry")
@@ -186,22 +220,22 @@ def main() -> None:
     if os.environ.get("OPSKIT_SANDBOX") != "1":
         raise RuntimeError("plugin worker must run in a platform sandbox")
     request = _decode(_request(plugin_json.loads_message(Path(sys.argv[1]).read_text(encoding="utf-8"))))
-    shutil.copytree("/seed", "/data", dirs_exist_ok=True)
-    Path("/data/state").mkdir(parents=True, exist_ok=True)
+    shutil.copytree(_seed_root(), _data_root(), dirs_exist_ok=True)
+    (_data_root() / "state").mkdir(parents=True, exist_ok=True)
     _adapt_sdk(request["name"])
-    sys.path.append("/plugin")
+    sys.path.append(str(_plugin_root()))
     value = None
     try:
         if request["kind"] == "exec":
             entry = request["entry"]
             if isinstance(entry, dict):
-                entry = entry.get("linux")
-            path = (Path("/plugin") / entry).resolve()
-            path.relative_to(Path("/plugin"))
-            value = subprocess.call([str(path), *request["args"]], cwd="/plugin")
+                entry = entry.get("windows" if os.name == "nt" else sys.platform)
+            path = (_plugin_root() / entry).resolve()
+            path.relative_to(_plugin_root().resolve())
+            value = subprocess.call([str(path), *request["args"]], cwd=str(_plugin_root()))
         else:
             module = importlib.import_module(request["entry"])
-            Path(module.__file__).resolve().relative_to(Path("/plugin"))
+            Path(module.__file__).resolve().relative_to(_plugin_root().resolve())
             action = request["action"]
             if action == "entry":
                 value = module.register().entry()

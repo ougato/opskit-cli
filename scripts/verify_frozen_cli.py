@@ -31,11 +31,22 @@ def verify(binary, build, output, *, timeout=60):
     for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
         env.pop(name, None)
     roots = ([], ["software"], ["monitor"], ["network"], ["plugin"], ["preferences"],
-             ["theme"], ["language"], ["tailscale"], ["ohmyzsh"], ["xui"], ["wireguard"], ["update"])
+             ["theme"], ["language"], ["tailscale"], ["ohmyzsh"], ["xui"], ["wireguard"], ["update"],
+             ["plugin", "permissions"], ["plugin", "prepare-fetch"])
     cases = [(root + ["--help"], 0, False) for root in roots]
     cases += [
         (["--output", "json", "--version"], 0, True),
-        (["--output", "json", "plugin", "inspect-locks"], 0, True),
+        (["plugin", "prepare", "--help"], 0, False),
+        (["plugin", "recover-update", "--help"], 0, False),
+        (["plugin", "recover-native-profile", "--help"], 0, False),
+        (["--output", "json", "plugin", "inspect-native-profiles"], 0, True),
+        (["plugin", "recover-native-workspace", "--help"], 0, False),
+        (["--output", "json", "plugin", "inspect-native-workspaces"], 0, True),
+        (["plugin", "clean-native-cache", "--help"], 0, False),
+        (["plugin", "configure-creator", "--help"], 0, False),
+        (["--output", "json", "plugin", "creator-tools"], 0, True),
+        (["--output", "json", "plugin", "inspect-native-cache", "runtime"], 0, True),
+        (["--output", "json", "plugin", "inspect-updates"], 0, True),
         (["--output", "json", "plugin", "inspect-workspaces"], 0, True),
         (["--output", "json", "plugin", "inspect-state", "acceptance_missing"], 0, True),
         (["--output", "json", "plugin", "repair-state", "acceptance_missing", "--record-sha256", "BAD"], 2, True),

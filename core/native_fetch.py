@@ -1,0 +1,74 @@
+"""Native acquisition assembly; no plugin import and no host Git execution."""
+from contextlib import contextmanager
+import json
+import tempfile
+import time
+
+from core.native_capture import capture
+from core.native_process import open_worker
+from core.native_runtime import absolute_path, inventory, stage
+from core.native_sandbox import NativeSandboxError, get_backend
+from core.plugin_fetch_candidate import supervised_inventory
+from core.plugin_runtime_inventory import native_fetch_snapshot
+from core.private_file import temporary_private_file
+
+
+@contextmanager
+def local_candidate(python, git_runtime, source, *, staging_parent, deadline,
+                    checkpoint, branch=None, tool_files=None, pack=None):
+    """Yield a validated candidate only after the isolated Git tree is dead.
+
+    Tool inputs must come from platform preparation, never plugin metadata.
+    Snapshot the source including .git, but grant no access to the original.
+    Checkout hooks, working changes and source writes are not part of acquisition.
+    The lifecycle layer still owns publication, replacement and authorization.
+    """
+    if branch is not None and (not isinstance(branch, str) or not 0 < len(branch.encode()) <= 256
+                               or branch.startswith("-") or any(ord(char) < 32 for char in branch)):
+        raise ValueError("invalid native fetch branch")
+    def check():
+        checkpoint()
+        if time.monotonic() >= deadline:
+            raise NativeSandboxError("execution_timeout")
+
+    check()
+    backend = get_backend()
+    backend.probe()
+    # Capture identities before creating output; recursive overlap is rejected by
+    # stage, and any link/reparse/hardlink in the input fails before execution.
+    if tool_files is not None and (not isinstance(tool_files, dict) or set(tool_files) != {"python", "git"}):
+        raise ValueError("invalid prepared native fetch inventories")
+    snapshots = [("python", python, inventory(python) if tool_files is None else tool_files["python"]),
+                 ("git", git_runtime, inventory(git_runtime) if tool_files is None else tool_files["git"]),
+                 ("source", source, inventory(source))]
+    check()
+    with temporary_private_file() as response:
+        with tempfile.TemporaryDirectory(prefix="native-fetch-", dir=absolute_path(staging_parent)) as temporary:
+            base = absolute_path(temporary)
+            for name, origin, files in snapshots:
+                check()
+                stage(origin, base / name, files)
+            work = base / "work"
+            work.mkdir()
+            code = base / "code"
+            (code / "core").mkdir(parents=True)
+            for name, body in native_fetch_snapshot().items():
+                (code / name).write_bytes(body)
+            executable = base / "python" / "python.exe"
+            git = base / "git" / "git.exe"
+            if not executable.is_file() or not git.is_file():
+                raise ValueError("native fetch tool executables are missing")
+            request = base / "request.json"
+            request.write_text(json.dumps({"git": str(git), "source": str(base / "source"),
+                                           "work": str(work), "branch": branch, "pack": pack}), encoding="utf-8")
+            bootstrap = ("import sys,runpy; sys.path.insert(0," + repr(str(code)) +
+                         "); sys.argv=['core.native_fetch_worker'," + repr(str(request)) +
+                         "]; runpy.run_module('core.native_fetch_worker',run_name='__main__')")
+            check()
+            with open_worker(backend, str(executable), ["-I", "-S", "-B", "-u", "-c", bootstrap],
+                             readonly_trees=(base,), writable_trees=(work,), cwd=str(work)) as child:
+                capture(child, response, deadline=deadline, checkpoint=check)
+        check()
+        result = supervised_inventory(response, timeout=deadline - time.monotonic())
+        check()
+        yield result, response

@@ -1,5 +1,38 @@
 # 发布流水线安全验收
 
+## Windows GCC 预置（2026-11-03）
+
+`scripts/install_windows_compiler.py CACHE [--archive ZIP] [--source release|api]` 为锁定的 Nuitka 4.3
+提供独立 Windows x64 GCC 缓存，不修改系统 PATH 或系统安装。
+固定 winlibs `15.2.0posix-13.0.0-msvcrt-r6`，ZIP 大小 267135426 字节，SHA256
+`d73d02c9caed172db0f3331fb4030e0a3b85947aefff9cc1da4dd81b7423c3a1`。
+摘要与大小已从该版本的 GitHub release asset 元数据独立读取：
+`https://api.github.com/repos/brechtsanders/winlibs_mingw/releases/tags/15.2.0posix-13.0.0-msvcrt-r6`。
+安装先校验完整归档，再检查路径、链接、重复名称和展开限额，写入全新私有缓存并保留凭据。
+支持操作员预先下载的同一 ZIP，离线输入也执行相同摘要校验。构建仍关闭自动辅助下载。
+`--source api` 仅选择同一官方固定 asset ID 360334926 的下载接口，不接收任意镜像 URL；
+无论选择哪个入口，摘要和大小要求不变。实际 API 响应已确认返回相同声明大小的二进制，
+完整下载在 600 秒有界期限处结束，仍无完整归档，不能把成功响应当作编译器已可用。
+
+`scripts/install_windows_compiler.py CACHE [--archive ZIP]` provisions Nuitka 4.3's exact
+Windows x64 GCC into a fresh private cache, without system installation or PATH changes.
+The pinned archive size and SHA256 above were verified against upstream GitHub release asset
+metadata. Full digest verification precedes bounded archive validation and extraction. Offline
+archives receive identical checks. This does not enable Nuitka's automatic downloads.
+`--source api` selects only the same fixed official asset ID 360334926, never an arbitrary
+mirror. The required size and digest are unchanged. A real API response returned binary data
+with the expected declared length; full downloading hit its bounded 600-second deadline
+without completing. The compiler remains unavailable.
+
+本次 10 项提供器测试通过，包括 API 入口不得绕过摘要校验及未知入口拒绝。
+实际 release URL 的 HTTPX 下载连接被中断，PowerShell 独立下载连接超时，
+未取得完整归档，也未执行该编译器。该项仍不能作为冻结构建成功的证据。
+
+Ten provisioner tests passed, including digest enforcement for API input and unknown-source refusal.
+Actual release-URL HTTPX downloading disconnected, and an independent
+PowerShell download timed out. No complete archive was obtained or compiler executed;
+this is not successful frozen-build evidence.
+
 2026-10-16补充运行兼容边界：归档非覆盖发布在旧glibc下新增受限的Linux renameat2系统调用路径，实际固定manylinux/glibc2.17 x86_64专项通过。未知ABI或内核不支持仍拒绝，不以普通rename替代；aarch64只有模拟ABI证据。此修复属于最新585兼容候选，不在当前584冻结编译输入内；旧ELF符号基线或版本命令通过不能证明全部归档安装能力。完整范围及原失败记录见[最新台账](validation-status-20261015.md)。
 
 2026-10-15：当前是本地与原生专项验收，尚未触发 GitHub 实际发布，不代表发布门槛关闭。
@@ -91,3 +124,34 @@ CI锁11文件完整夹具ZIP摘要 `799caa18847d9fcb9e98a1e993f43e03e0e57e9fa122
 完整Linux冻结编译的568文件快照与当前CI锁增量分开记录：前者输入ZIP为 `4ebd9c0571aa31b7084daad137470731d3220e982a8326c372a2f60b9983a3e9`，见cache/native-compile-source-20261015-r1。首轮禁网容器完成Python分析后在C阶段退出1：SCons DefaultEnvironment默认PATH不含/opt/rh/devtoolset-10，回退到缺失ilink。独立探针复现原失败，给同一GCC/g++添加/usr/local/bin链接后探针通过；发布流程已接入此预置，当时第二轮完整编译已启动，最终成功结果及验收见本节开头。首轮compiler.log、nuitka-crash-report.xml、failed-container-state.json及探针保留，重试句柄在retry-container.json。scons-diagnostic-status.json的0仅为诊断包装器退出，内部日志仍显示编译失败，不能作为编译通过。Nuitka报告可能排除_json和_bisect加速模块，后续需检查实际产物与性能；本次未做前后性能比较，不宣称运行提速。
 
 草稿写入、失败重试与公开切换尚未在真实GitHub验收仓库执行。资产digest缺失或超过1000条发布记录的查找范围会明确拒绝，不降级为只核对大小。草稿不向普通下载者公开不等于仓库写入者不可见；检查不能阻止有权限的外部操作者在检查后改tag或资产，生产仍需tag保护及权限约束。发布test任务及回归环境的依赖锁已接入，六组合原生与真实远端安装运行尚待完成；Nuitka所需编译器/辅助工具需要预置并审核来源，不能恢复自动同意下载。完整四平台冻结构建、manylinux镜像漏洞审查、action远端执行及源码审查仍待验收。tag创建权限、生产签名密钥、Intel macOS依赖兼容性与远端CI仍需验收。GitHub并发配置尚无实际远端运行证据。上述专项不替代全项目最终回归，也不修改插件OS漏洞处置门槛。
+
+## 2026-11-03 Windows 原生插件冻结验证（进行中）
+
+在独立 CPython 3.12 环境按哈希锁安装 PyInstaller，附加工具锁为
+`requirements-windows-pyinstaller.txt`；安装后 `pip check` 通过。
+Nuitka 的审核编译器下载仍未完成，不能据此宣称 Nuitka 构建通过。
+
+首个真实 PyInstaller 产物通过 32 项 CLI 检查，但原生 prepare 失败。
+隔离 Python 探测需要可读取的 packaging 源码，仅冻结模块字节码不足。
+现为 PyInstaller 和 Nuitka 显式打入普通源码资源，限制文件数及总大小，
+校验源与快照摘要；冻结宿主从该资源准备隔离探测，不回退宿主执行。
+新增隔离 `-I -S` 源码导入测试，构建专项共 9 项通过。
+
+修复版在独立源码快照重新构建成功，证据目录：
+`cache/native-pyinstaller-build-20261103-probe`。
+真实冻结原生 prepare/run/rollback/revoke 验收仍进行中；
+不能将构建成功或 CLI 帮助检查等同于原生任务成功。
+中英文交互均为后续必验项；本段不证明真实 S3 或生产发布完成。
+
+修复版英文真实冻结验收已通过，报告：
+`cache/native-pyinstaller-native-20261103-probe-en/verification.json`。
+同一产物 SHA256 为
+`7269de78fdbd6dcc79d09f54c749d93ebbfbf8e45977a40593a311a3eb233826`。
+验证覆盖正式 CLI prepare、trust、AppContainer 运行与语言继承、失败状态回滚、
+revoke 后拒绝再次运行；不包含 Creator 或真实 S3。中文同产物验收及
+修复版 32 项 CLI 检查已启动，结果待核对。
+
+中文同产物真实冻结验收也已通过：
+`cache/native-pyinstaller-native-20261103-probe-zh/verification.json`。
+与英文覆盖相同的准备、运行、语言继承、回滚及撤权流程。
+上述结果不替代完整回归或冻结 Creator/上传链路验证。

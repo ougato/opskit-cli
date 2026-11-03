@@ -1,4 +1,4 @@
-"""Explicit Linux guest code inventory, shared by preparation and execution."""
+"""Explicit guest SDK code inventory, shared by preparation and execution."""
 import hashlib
 import io
 import os
@@ -7,7 +7,7 @@ import stat
 import sys
 import zipfile
 
-RUNTIME_POLICY = 7
+RUNTIME_POLICY = 8
 BUNDLE_NAME = "plugin-runtime-sources.zip"
 MAX_SOURCE_BYTES = 4 * 1024**2
 MAX_CONTEXT_SOURCE_BYTES = 16 * 1024**2
@@ -15,11 +15,11 @@ RUNTIME_FILES = (
     "__init__.py", "bounded_yaml.py", "cli.py", "config.py", "constants.py", "i18n.py", "logger.py",
     "module.py", "paths.py", "plugin_json.py", "plugin_tree.py", "plugin_worker.py", "process.py",
     "prompt.py", "resource_lock.py", "runner.py", "sdk.py", "secrets.py", "theme.py", "yamlio.py",
+    "windows_job.py", "windows_job_lifecycle.py",
     "locale/en.yaml", "locale/zh.yaml", "themes/catppuccin.yaml",
 )
-FETCH_FILES = ("__init__.py", "plugin_egress.py", "plugin_fetch_worker.py", "plugin_fetch_source.py",
-               "plugin_fetch_https.py", "plugin_fetch_ssh.py", "plugin_fetch_transport.py")
-BUNDLED_FILES = tuple(dict.fromkeys((*RUNTIME_FILES, *FETCH_FILES)))
+NATIVE_FETCH_FILES = ("__init__.py", "native_fetch_worker.py", "plugin_git_archive.py")
+BUNDLED_FILES = tuple(dict.fromkeys((*RUNTIME_FILES, *NATIVE_FETCH_FILES)))
 
 
 def _read_file(source, core, limit):
@@ -77,23 +77,13 @@ def _snapshot(core, names):
 
 
 def snapshot(core=None):
-    """Only guest SDK files; gateway code cannot enter a plugin image."""
+    """Only guest SDK files; host network brokers never enter the sandbox."""
     return _snapshot(core, RUNTIME_FILES)
 
 
-def gateway_source(core=None):
-    """Independent stdlib-only proxy source, including frozen distributions."""
-    return _snapshot(core, ("plugin_egress.py",))["core/plugin_egress.py"]
-
-
-def fetch_source(core=None):
-    """Standalone acquisition worker; never included in a plugin SDK image."""
-    return _snapshot(core, ("plugin_fetch_worker.py",))["core/plugin_fetch_worker.py"]
-
-
-def fetch_snapshot(core=None):
-    """Explicit stdlib acquisition inventory, separate from plugin SDK sources."""
-    return _snapshot(core, FETCH_FILES)
+def native_fetch_snapshot(core=None):
+    """Fixed native Git object reader, including frozen distributions."""
+    return _snapshot(core, NATIVE_FETCH_FILES)
 
 
 def bundle_snapshot(core=None):

@@ -20,30 +20,30 @@ def installation(tmp_path, monkeypatch):
     (origin / "plugin.yaml").write_text(
         "name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n")
     (origin / "demo.py").write_text("# inert plugin; never imported\n")
-    for args in [["init", "-q", str(origin)], ["-C", str(origin), "add", "."],
-                 ["-C", str(origin), "-c", "user.name=test", "-c", "user.email=test@example.invalid",
-                  "commit", "-qm", "fixture"]]:
-        subprocess.run(["git", *args], check=True, capture_output=True, timeout=10)
+    from tests.native_tool_fixtures import populate_synthetic
+    monkeypatch.setattr("core.native_acquisition.populate", populate_synthetic)
     return plugins, origin
 
 
 @pytest.mark.parametrize("populated", [False, True])
-@pytest.mark.parametrize("clone_failure", [False, True])
-def test_real_other_writer_survives_clone_or_publication_failure(installation, monkeypatch, populated, clone_failure):
+@pytest.mark.parametrize("acquisition_failure", [False, True])
+def test_real_other_writer_survives_acquisition_or_publication_failure(installation, monkeypatch, populated, acquisition_failure):
     plugins, origin = installation
     target = plugins / "demo"
-    real_run = commands.run
+    from core import native_acquisition
+    real_populate = native_acquisition.populate
 
-    def compete(command, **kwargs):
+    def compete(source, destination, **kwargs):
         writer = "import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.mkdir();"
         if populated:
             writer += "(p/'keep').write_bytes(b'other writer')"
         subprocess.run([sys.executable, "-I", "-c", writer, str(target)], check=True, timeout=10)
-        if clone_failure:
-            command = [*command[:-2], str(origin / "absent"), command[-1]]
-        return real_run(command, **kwargs)
+        if acquisition_failure:
+            from core.native_sandbox import NativeSandboxError
+            raise NativeSandboxError("fetch_transfer_failed")
+        return real_populate(source, destination, **kwargs)
 
-    monkeypatch.setattr(commands, "run", compete)
+    monkeypatch.setattr(native_acquisition, "populate", compete)
     manifest, error = commands.install(str(origin), alias="demo")
     assert manifest is None and error
     assert target.is_dir()
@@ -61,24 +61,26 @@ def test_trust_write_failure_never_publishes(installation, monkeypatch):
 
     monkeypatch.setattr(commands, "grant", deny)
     manifest, error = commands.install(str(origin), alias="demo")
-    assert manifest is None and "trust store failure" in error
+    from core.i18n import t
+    assert manifest is None and error == t("plugin_native.errors.acquisition_failed")
+    assert "trust store failure" not in error
     assert not (plugins / "demo").exists()
     assert not list(plugins.glob(".opskit-install-*"))
 
 
-def test_cancel_cleans_private_clone_and_preserves_target(installation, monkeypatch):
+def test_cancel_cleans_private_candidate_and_preserves_target(installation, monkeypatch):
     plugins, origin = installation
     target = plugins / "demo"
 
-    def cancel(command, **kwargs):
-        payload = Path(command[-1])
+    def cancel(source, destination, **kwargs):
+        payload = Path(destination)
         payload.mkdir()
         (payload / "partial").write_bytes(b"partial")
         target.mkdir()
         (target / "keep").write_bytes(b"keep")
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(commands, "run", cancel)
+    monkeypatch.setattr("core.native_acquisition.populate", cancel)
     with pytest.raises(KeyboardInterrupt):
         commands.install(str(origin), alias="demo")
     assert (target / "keep").read_bytes() == b"keep"
@@ -229,9 +231,10 @@ sys.path.insert(0, sys.argv[1])
 from plugin import commands
 def main():
     barrier = pathlib.Path(sys.argv[2])
-    real_run = commands.run
-    def simultaneous(command, **kwargs):
-        result = real_run(command, **kwargs)
+    from core import native_acquisition
+    from tests.native_tool_fixtures import populate_synthetic
+    def simultaneous(source, destination, **kwargs):
+        result = populate_synthetic(source, destination, **kwargs)
         (barrier / (sys.argv[3] + '.ready')).touch()
         deadline = time.monotonic() + 15
         while len(list(barrier.glob('*.ready'))) < 2:
@@ -239,7 +242,7 @@ def main():
                 raise RuntimeError('second installer did not reach publication barrier')
             time.sleep(.01)
         return result
-    commands.run = simultaneous
+    native_acquisition.populate = simultaneous
     manifest, error = commands.install(sys.argv[5], alias=sys.argv[4])
     print(json.dumps({'installed': manifest is not None, 'error': error}), flush=True)
 if __name__ == '__main__':

@@ -9,6 +9,56 @@ import pytest
 from core import process
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job process tree")
+def test_exited_windows_leader_does_not_leave_owned_descendant(tmp_path):
+    marker = tmp_path / "descendant.pid"
+    program = '''
+import subprocess, sys
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+Path(sys.argv[1]).write_text(str(child.pid))
+print('owned', flush=True)
+'''
+    child = process.start([sys.executable, "-c", program, str(marker)])
+    descendant = None
+    try:
+        assert child.stdout.read().strip() == "owned"
+        child.wait(timeout=5)
+        descendant = psutil.Process(int(marker.read_text()))
+        assert descendant.is_running()
+        process.terminate_tree(child)
+        # Windows retains the terminated process object while psutil holds its
+        # handle; wait() proves exit without mistaking that object for a live PID.
+        assert descendant.wait(timeout=3) is not None
+        assert child._opskit_job is None
+    finally:
+        if child._opskit_job is not None:
+            process.terminate_tree(child)
+        if descendant is not None:
+            try:
+                descendant.kill()
+                descendant.wait(timeout=3)
+            except psutil.NoSuchProcess:
+                pass
+        child.stdout.close()
+
+
+def test_job_confirmation_failure_is_visible_and_still_disposes_handles(monkeypatch):
+    from core import windows_job, windows_job_lifecycle
+    observed = []
+    def fail(job):
+        raise TimeoutError("tree still active")
+    monkeypatch.setattr(windows_job_lifecycle, "terminate_and_wait", fail)
+    monkeypatch.setattr(windows_job, "close", lambda job: observed.append(job))
+    child = SimpleNamespace(_opskit_job=123, wait=lambda timeout: observed.append("reaped"))
+    with pytest.raises(TimeoutError, match="tree still active"):
+        process.terminate_tree(child)
+    assert observed == [123, "reaped"]
+    assert child._opskit_job is None
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
 def test_exited_owned_group_is_reaped_without_permission_failure():
     child = process.start([sys.executable, "-c", "print('owned', flush=True)"])

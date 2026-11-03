@@ -29,38 +29,18 @@ def git(root, *args):
     subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-C", str(root), *args], check=True, capture_output=True)
 
 
-def test_real_install_trust_update_revoke_remove(isolated):
+def test_install_without_prepared_native_tools_does_not_publish_or_trust(isolated):
     origin = isolated / "origin"
     origin.mkdir()
-    git(origin, "init", "-b", "main")
     manifest = origin / "plugin.yaml"
     manifest.write_text("name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo_pkg\n", encoding="utf-8")
     (origin / "demo_pkg").mkdir()
     (origin / "demo_pkg" / "__init__.py").write_text("# do not import\n", encoding="utf-8")
-    git(origin, "add", "plugin.yaml", "demo_pkg/__init__.py")
-    git(origin, "commit", "-m", "initial")
     installed = call("plugin", "install", str(origin), "--branch", "main")
-    assert installed.exit_code == 0, installed.output
-    payload = json.loads(installed.stdout)["data"]
-    digest = payload["fingerprint"]
-    assert not is_trusted("demo", digest)
-    assert trusted_record("demo")["branch"] == "main"
-    rejected = call("plugin", "trust", "demo", "--fingerprint", "0" * 64)
-    assert rejected.exit_code == 2
-    accepted = call("plugin", "trust", "demo", "--fingerprint", digest)
-    assert accepted.exit_code == 0 and is_trusted("demo", digest)
-    assert call("plugin", "disable", "demo").exit_code == 0
-    assert not json.loads(call("plugin", "show", "demo").stdout)["data"]["enabled"]
-    assert call("plugin", "enable", "demo").exit_code == 0
-    manifest.write_text(manifest.read_text().replace("1.0.0", "1.1.0"), encoding="utf-8")
-    git(origin, "add", "plugin.yaml")
-    git(origin, "commit", "-m", "update")
-    updated = call("plugin", "update", "demo")
-    assert updated.exit_code == 0, updated.output
-    assert trusted_record("demo")["fingerprint"] == ""
-    assert call("plugin", "revoke", "demo").exit_code == 0
-    assert call("--yes", "plugin", "remove", "demo").exit_code == 0
-    assert json.loads(call("plugin", "list").stdout)["data"] == []
+    assert installed.exit_code == 1, installed.output
+    assert json.loads(installed.stdout)["ok"] is False
+    assert trusted_record("demo") is None
+    assert not (isolated / "plugins/origin").exists()
 
 
 def test_trust_write_failure_is_not_silenced(isolated, monkeypatch):
@@ -105,7 +85,8 @@ def test_prepare_errors_do_not_expose_private_details(isolated, monkeypatch, err
     def failed(*args, **kwargs):
         raise error
     monkeypatch.setattr(plugin_runtime, "build", failed)
-    result = call("plugin", "prepare", str(isolated), "--base-image", "python@sha256:" + "b" * 64,
+    result = call("plugin", "prepare", str(isolated), "--python-runtime", str(isolated / "python"),
+                  "--wheels", str(isolated / "wheels"),
                   "--lock-file", str(isolated / "requirements.lock"))
     assert result.exit_code == code and "SECRET" not in result.output
     if code != 130:
@@ -117,16 +98,17 @@ def test_prepare_json_preserves_runtime_arguments_without_authorizing(isolated, 
     calls = []
     def build(*args, **kwargs):
         calls.append((args, kwargs))
-        return "sha256:" + "a" * 64
+        return "a" * 32
     monkeypatch.setattr(plugin_runtime, "build", build)
     result = call("plugin", "prepare", str(isolated), "--dependency", "one==1.0",
-                  "--dependency", "two==2.0", "--base-image", "python@sha256:" + "b" * 64,
+                  "--dependency", "two==2.0", "--python-runtime", str(isolated / "python"),
+                  "--wheels", str(isolated / "wheels"),
                   "--lock-file", str(isolated / "requirements.lock"))
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["data"] == {"image": "sha256:" + "a" * 64,
+    assert json.loads(result.stdout)["data"] == {"runtime": "a" * 32, "backend": "native",
                                                 "prepared": True, "authorized": False}
-    assert calls == [((isolated.resolve(), ["one==1.0", "two==2.0"], "python@sha256:" + "b" * 64),
-                     {"lock_file": isolated / "requirements.lock"})]
+    assert calls == [((isolated.resolve(), ["one==1.0", "two==2.0"], isolated / "python"),
+                     {"lock_file": isolated / "requirements.lock", "wheels": isolated / "wheels"})]
     assert not (isolated / "data").exists()
 
 
@@ -137,19 +119,20 @@ def test_prepare_requires_operator_lock_and_base_before_any_build(isolated, monk
     assert result.exit_code == 2 and json.loads(result.stdout)["ok"] is False
 
 
-def test_prepare_fetch_uses_explicit_offline_packages_without_boot_or_trust(isolated, monkeypatch):
+def test_prepare_fetch_uses_explicit_native_tools_without_boot_or_trust(isolated, monkeypatch):
     import main
-    from core import plugin_fetch
+    from core.native_fetch_catalog import FetchCatalog
     calls = []
     monkeypatch.setattr(main, "_boot", lambda: pytest.fail("preparation must not boot"))
-    def prepare(packages):
-        calls.append(packages)
-        return "sha256:" + "a" * 64
-    monkeypatch.setattr(plugin_fetch, "prepare_tool", prepare)
-    result = call("plugin", "prepare-fetch", "--packages", str(isolated / "offline"))
+    def prepare(self, python, git):
+        calls.append((python, git))
+        return "a" * 32
+    monkeypatch.setattr(FetchCatalog, "prepare", prepare)
+    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated / "python"),
+                  "--git-runtime", str(isolated / "git"))
     assert result.exit_code == 0, result.output
-    assert calls == [isolated / "offline"]
-    assert json.loads(result.stdout)["data"] == {"image": "sha256:" + "a" * 64,
+    assert calls == [(isolated / "python", isolated / "git")]
+    assert json.loads(result.stdout)["data"] == {"toolchain": "a" * 32, "backend": "native",
                                                 "prepared": True, "authorized": False}
     assert not (isolated / "data").exists() and not (isolated / "plugins").exists()
 
@@ -158,19 +141,19 @@ def test_prepare_fetch_uses_explicit_offline_packages_without_boot_or_trust(isol
     (RuntimeError("SECRET"), 1), (PermissionError("SECRET"), 1),
     (subprocess.CalledProcessError(1, ["SECRET"]), 1), (KeyboardInterrupt(), 130)])
 def test_prepare_fetch_sanitizes_failures(isolated, monkeypatch, error, code):
-    from core import plugin_fetch
+    from core.native_fetch_catalog import FetchCatalog
     def failed(*args):
         raise error
-    monkeypatch.setattr(plugin_fetch, "prepare_tool", failed)
-    result = call("plugin", "prepare-fetch", "--packages", str(isolated))
+    monkeypatch.setattr(FetchCatalog, "prepare", failed)
+    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated), "--git-runtime", str(isolated))
     assert result.exit_code == code and "SECRET" not in result.output
     if code != 130:
         assert json.loads(result.stdout)["ok"] is False
 
 
-def test_prepare_fetch_requires_packages_before_build(isolated, monkeypatch):
-    from core import plugin_fetch
-    monkeypatch.setattr(plugin_fetch, "prepare_tool", lambda *args: pytest.fail("missing packages built tool"))
+def test_prepare_fetch_requires_native_tool_inputs_before_build(isolated, monkeypatch):
+    from core.native_fetch_catalog import FetchCatalog
+    monkeypatch.setattr(FetchCatalog, "prepare", lambda *args: pytest.fail("missing inputs built tool"))
     result = call("plugin", "prepare-fetch")
     assert result.exit_code == 2 and json.loads(result.stdout)["ok"] is False
 

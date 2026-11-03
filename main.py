@@ -87,7 +87,10 @@ def _preboot_locale() -> dict[str, str]:
 
     data = _load_lang(lang)
     cli_section = data.get("cli", {})
-    return {k: str(v) for k, v in cli_section.items()}
+    result = {k: str(v) for k, v in cli_section.items()}
+    result.update({"plugin_native_" + key: value for key, value in
+                   data.get("plugin_native", {}).items() if isinstance(value, str)})
+    return result
 
 
 _CLI = _preboot_locale()
@@ -561,7 +564,9 @@ app.add_typer(mon_app, name="monitor")
 app.add_typer(net_app, name="network")
 app.add_typer(plugin_app, name="plugin")
 from plugin.lifecycle_cli import register as register_plugin_lifecycle
-register_plugin_lifecycle(plugin_app)
+register_plugin_lifecycle(plugin_app, translate=lambda key: _ct("plugin_native_" + key))
+from plugin.capability_cli import register as register_plugin_capabilities
+register_plugin_capabilities(plugin_app, translate=lambda key: _ct("plugin_native_" + key))
 
 
 @plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help="Run a plugin's own CLI: plugin run NAME -- ARGS")
@@ -569,9 +574,10 @@ def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     from plugin.cli import run_plugin
     from core.plugin import PluginInventoryError
     from core.plugin_sandbox import SandboxError
+    from core.native_sandbox import NativeSandboxError
     try:
         code = run_plugin(name, list(ctx.args))
-    except (SandboxError, PluginInventoryError) as exc:
+    except (SandboxError, PluginInventoryError, NativeSandboxError) as exc:
         _direct_fail(str(exc), _EXIT_RUNTIME)
         return
     except KeyboardInterrupt:

@@ -3,6 +3,8 @@ import bz2
 import gzip
 import io
 import lzma
+import os
+from pathlib import Path
 import struct
 import tarfile
 import zipfile
@@ -69,7 +71,11 @@ def test_normal_long_unicode_paths_preserve_layout(tmp_path, format, compression
     source = io.BytesIO(compress(data))
     with reader.open_tar(fileobj=source) as archive:
         extract_tar(archive, tmp_path / "dest", strip_components=1)
-    assert (tmp_path / "dest" / name.removeprefix("root/")).read_bytes() == b"inert"
+    target = tmp_path / "dest" / name.removeprefix("root/")
+    # Verify the actual long file without requiring a machine registry setting.
+    if os.name == "nt":
+        target = Path("\\\\?\\" + str(target))
+    assert target.read_bytes() == b"inert"
     assert not source.closed
 
 

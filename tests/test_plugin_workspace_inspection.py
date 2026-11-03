@@ -197,7 +197,7 @@ def test_cli_readonly_output_needs_no_docker_and_hides_unknown_names(tmp_path, m
     parent = namespace(tmp_path)
     (parent / ('opskit-sandbox-' + 'a' * 32)).mkdir()
     (parent / 'private-name-secret').write_bytes(b'keep')
-    monkeypatch.setattr(plugin_sandbox, 'docker_command', lambda: pytest.fail('inspection used Docker'))
+    assert not hasattr(plugin_sandbox, "docker_command")
     try:
         result = CliRunner().invoke(main.app, ['--output', 'json', 'plugin', 'inspect-workspaces'])
         assert result.exit_code == 0, result.output
@@ -231,7 +231,9 @@ def test_cli_filesystem_error_is_operational_and_redacted(tmp_path, monkeypatch)
         assert result.exit_code == 1, result.output
         value = json.loads(result.output)
         assert value['error']['code'] == 1 and value['data'] is None
-        assert 'unconfirmed' in value['error']['message'] and '/private' not in result.output
+        from core.i18n import t
+        assert value['error']['message'] == t('plugin_native.lifecycle.workspaces_failed')
+        assert '/private' not in result.output
     finally:
         configure('text', False)
 

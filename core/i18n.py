@@ -100,7 +100,7 @@ def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
-def init() -> None:
+def init(*, language: str | None = None) -> None:
     """
     语言决策优先级（从高到低）：
 
@@ -112,9 +112,16 @@ def init() -> None:
     """
     global _current, _lang
 
-    from core.config import load_config
-    cfg = load_config()
-    lang_cfg = cfg.get("language", "auto")
+    # Isolated workers inherit the host's resolved language without reading or
+    # modifying the host configuration. Ordinary startup keeps existing behavior.
+    if language is not None:
+        if language not in ("zh", "en"):
+            raise ValueError("unsupported explicit language")
+        lang_cfg = language
+    else:
+        from core.config import load_config
+        cfg = load_config()
+        lang_cfg = cfg.get("language", "auto")
 
     if lang_cfg in ("zh", "en"):
         _lang = lang_cfg

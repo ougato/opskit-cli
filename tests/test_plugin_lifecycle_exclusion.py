@@ -17,7 +17,6 @@ def test_active_invocation_prevents_source_mutation(tmp_path, monkeypatch, opera
     plugins = tmp_path / 'plugins'
     root = plugins / 'demo'
     root.mkdir(parents=True)
-    (root / '.git').mkdir()
     (root / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n')
     (root / 'demo.py').write_bytes(b'# retained source')
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(plugins))
@@ -44,7 +43,7 @@ if __name__ == '__main__':
             assert process.poll() is None, process.communicate()[1]
             assert time.monotonic() < deadline, 'lock holder did not become ready'
             time.sleep(.02)
-        monkeypatch.setattr(commands, 'run', lambda *a, **k: pytest.fail('git ran during active invocation'))
+        monkeypatch.setattr('core.native_acquisition.populate', lambda *a, **k: pytest.fail('acquisition ran during active invocation'))
         if operation == 'update':
             ok, error = commands.update(manifest)
             assert not ok and 'busy' in error
@@ -83,7 +82,7 @@ def test_remove_menu_reports_busy_without_success(monkeypatch):
 
 
 @pytest.mark.parametrize('failure', ['nonzero', 'timeout', 'cancel'])
-def test_changed_source_after_failed_git_is_not_authorized(tmp_path, monkeypatch, failure):
+def test_failed_acquisition_preserves_installed_source_and_authorization(tmp_path, monkeypatch, failure):
     from core import plugin_sandbox as sandbox, plugin_trust as trust
     origin = tmp_path / 'origin'
     origin.mkdir()
@@ -97,6 +96,8 @@ def test_changed_source_after_failed_git_is_not_authorized(tmp_path, monkeypatch
     git('commit','-qm','initial')
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR',str(tmp_path / 'plugins'))
     monkeypatch.setenv('OPSKIT_DATA_DIR',str(tmp_path / 'state'))
+    from tests.native_tool_fixtures import populate_synthetic
+    monkeypatch.setattr('core.native_acquisition.populate', populate_synthetic)
     manifest, error = commands.install(str(origin), branch='main', alias='demo')
     assert manifest is not None and not error
     old_digest = trust.compute_fingerprint(manifest.root)
@@ -104,28 +105,23 @@ def test_changed_source_after_failed_git_is_not_authorized(tmp_path, monkeypatch
     (origin / 'demo.py').write_text('# inert version two\n')
     git('add','.')
     git('commit','-qm','next')
-    real_run = commands.run
-    def failed_after_actual_pull(command, **kwargs):
-        result = real_run(command, **kwargs)
-        if command == commands._git_command('pull', '--ff-only', 'origin', 'main'):
-            assert result.returncode == 0
-            if failure == 'nonzero':
-                return subprocess.CompletedProcess(command,1,stdout='',stderr='injected lost success')
-            if failure == 'timeout':
-                raise subprocess.TimeoutExpired(command,300)
-            raise KeyboardInterrupt
-        return result
-    monkeypatch.setattr(commands,'run',failed_after_actual_pull)
+    def failed_after_acquisition(source, destination, **kwargs):
+        acquired = populate_synthetic(source, destination, **kwargs)
+        assert acquired.fingerprint != old_digest
+        if failure == 'nonzero':
+            raise RuntimeError('injected lost candidate success')
+        if failure == 'timeout':
+            raise TimeoutError('injected acquisition timeout')
+        raise KeyboardInterrupt
+    monkeypatch.setattr('core.native_acquisition.populate', failed_after_acquisition)
     if failure == 'cancel':
         with pytest.raises(KeyboardInterrupt):
             commands.update(manifest)
     else:
         ok, error = commands.update(manifest)
         assert not ok and error
-    new_digest = trust.compute_fingerprint(manifest.root)
-    assert new_digest and new_digest != old_digest
-    # Current failure paths can leave the old record, but live content checks
-    # must still reject execution. This does not prove rollback/recovery.
+    assert trust.compute_fingerprint(manifest.root) == old_digest
+    assert (manifest.root / 'demo.py').read_text() == '# inert version one\n'
     assert trust.trusted_record('demo')['fingerprint'] == old_digest
-    with pytest.raises(sandbox.SandboxError):
-        sandbox.check_authorization(manifest)
+    sandbox.check_authorization(manifest)
+    assert not list(manifest.root.parent.glob('.opskit-update-*'))

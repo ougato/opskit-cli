@@ -17,9 +17,13 @@ def send(connection, message):
 
 
 def _owned_target(connection, lifetime, ready, parent_pid, target, arguments):
+    # The supervisor owns interactive cancellation and reaps this process.
+    # Windows broadcasts console Ctrl+C to attached helper processes too;
+    # do not let an idle helper print a misleading multiprocessing traceback.
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     if sys.platform.startswith("linux"):
         import ctypes
-        import signal
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
             raise OSError(ctypes.get_errno(), "worker parent-death protection failed")

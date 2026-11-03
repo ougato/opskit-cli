@@ -98,6 +98,11 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 
 
 __all__ = [
+    "read_host_file",
+    "artifact_info",
+    "creator_build",
+    "https_request",
+    "upload_file",
     "SDK_API_VERSION",
     "ModuleInfo",
     "t", "current_lang", "register_locale",
@@ -113,3 +118,30 @@ __all__ = [
     "ensure_software",
     "software_bin",
 ]
+
+
+def read_host_file(directory: str, relative: str) -> bytes:
+    """Read up to 1MiB after host-owned directory authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def artifact_info(directory: str, relative: str) -> dict:
+    """Return bytes/SHA256 for an authorized ordinary host file, up to 512MiB."""
+    raise PermissionError("artifact API requires an isolated plugin worker")
+
+
+def creator_build(executable: str, project: str, options: dict) -> dict:
+    """Build into a fresh project output; success includes inspected artifact metadata."""
+    raise PermissionError("host tool API requires an isolated plugin worker")
+
+
+def https_request(url: str, method: str = "GET", headers: dict | None = None,
+                  body: bytes = b"") -> dict:
+    """Bounded HTTPS request; returns status and body bytes, requires network permission."""
+    raise PermissionError("network API requires an isolated plugin worker")
+
+
+def upload_file(directory: str, relative: str, url: str, sha256: str,
+                headers: dict | None = None) -> dict:
+    """PUT a checksum-bound file (up to 512MiB); requires network and directory consent."""
+    raise PermissionError("upload API requires an isolated plugin worker")

@@ -7,6 +7,7 @@ import os
 from pathlib import PurePosixPath
 import re
 import stat
+import sys
 import tarfile
 import time
 import uuid
@@ -14,7 +15,7 @@ import uuid
 from core.plugin_fetch_candidate import MAX_ENTRIES, MAX_TREE_BYTES, validated_archive
 from core.plugin_fetch_prepare import PreparedCandidate, _private_root
 from core.process_file import _SpawnFile
-from core.plugin_workspace import Workspace, journal_binding
+from core.plugin_workspace import Workspace, validate_binding
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,8 @@ def _entry(manifest, inventory):
         if not {manifest.entry + ".py", manifest.entry + "/__init__.py"} & files:
             raise ValueError("candidate Python entry is missing")
     else:
-        entry = manifest.entry.get("linux") if isinstance(manifest.entry, dict) else manifest.entry
+        platform = "windows" if os.name == "nt" else sys.platform
+        entry = manifest.entry.get(platform) if isinstance(manifest.entry, dict) else manifest.entry
         if entry not in files:
             raise ValueError("candidate executable entry is missing")
         selected = next(item for item in inventory.files if item.path == entry)
@@ -174,7 +176,7 @@ def review_candidate(response, workspace, prepared, *, timeout):
             or type(prepared.bytes) is not int or not 0 <= prepared.bytes <= MAX_TREE_BYTES
             or type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
         raise ValueError("invalid candidate review request")
-    journal_binding(workspace)
+    validate_binding(workspace)
     deadline = time.monotonic() + timeout
     descriptor = response.fileno()
     request = uuid.uuid4().hex

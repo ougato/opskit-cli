@@ -7,7 +7,9 @@ import stat
 from core.plugin_state import _plain, _directory
 
 MAX_WORKSPACES = 8
-WORKSPACE_BYTES = 192 * 1024**2
+# A workspace may hold a single 512MiB checksum-bound upload snapshot. Reserve
+# that full amount for each live/retained workspace before allocating another.
+WORKSPACE_BYTES = 512 * 1024**2
 WORKSPACE_ENTRIES = 16388
 MAX_WORKSPACE_BYTES = MAX_WORKSPACES * WORKSPACE_BYTES
 MAX_WORKSPACE_ENTRIES = MAX_WORKSPACES * WORKSPACE_ENTRIES

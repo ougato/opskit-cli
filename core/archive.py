@@ -167,7 +167,13 @@ def extract_tar(archive: tarfile.TarFile, dest: str | Path, *, strip_components=
         selected.append((member, name))
     links = _tar_links(selected, archive=archive)
     def filesystem_path(path):
-        return str(path).encode("utf-8") if utf8_paths else path
+        if utf8_paths:
+            return str(path).encode("utf-8")
+        if os.name == "nt":
+            value = str(path)
+            if not value.startswith("\\\\?\\"):
+                return "\\\\?\\UNC\\" + value[2:] if value.startswith("\\\\") else "\\\\?\\" + value
+        return path
 
     os.makedirs(filesystem_path(root), exist_ok=True)
     for member, name in selected:

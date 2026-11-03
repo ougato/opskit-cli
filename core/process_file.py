@@ -2,14 +2,14 @@
 import os
 
 
-def _received_file(value, windows):
+def _received_file(value, windows, writable=False):
     if windows:
         import msvcrt
-        descriptor = msvcrt.open_osfhandle(value, os.O_RDONLY | os.O_BINARY)
+        descriptor = msvcrt.open_osfhandle(value, (os.O_RDWR if writable else os.O_RDONLY) | os.O_BINARY)
     else:
         descriptor = value.detach()
     try:
-        return os.fdopen(descriptor, "rb")
+        return os.fdopen(descriptor, "r+b" if writable else "rb")
     except BaseException:
         os.close(descriptor)
         raise
@@ -31,4 +31,8 @@ class _SpawnFile:
             value = spawning.duplicate_for_child(msvcrt.get_osfhandle(self.descriptor))
         else:
             value = reduction.DupFd(self.descriptor)
-        return _received_file, (value, os.name == "nt")
+        return _received_file, (value, os.name == "nt", isinstance(self, _SpawnWritableFile))
+
+
+class _SpawnWritableFile(_SpawnFile):
+    """Explicit output descriptor for a trusted, supervised platform worker."""

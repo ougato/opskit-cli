@@ -130,6 +130,13 @@ def _manage() -> None:
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
             {"key": "2", "label": f"{get_icon('update')} {t('plugin.update')}"},
             {"key": "3", "label": f"{get_icon('trash')} {t('plugin.remove')}"},
+            {"key": "4", "label": t("plugin_native.permissions")},
+            {"key": "5", "label": t("plugin_native.update_recovery.menu")},
+            {"key": "6", "label": t("plugin_native.profile_recovery.menu")},
+            {"key": "7", "label": t("plugin_native.workspace_recovery.menu")},
+            {"key": "8", "label": t("plugin_native.cache_cleanup.menu")},
+            {"key": "9", "label": t("plugin_native.tool_config.menu")},
+            {"key": "10", "label": t("plugin_native.disk.menu")},
         ]
         try:
             key = select(
@@ -150,6 +157,27 @@ def _manage() -> None:
                 _update()
             elif key == "3":
                 _remove()
+            elif key == "4":
+                from plugin.capability_menu import entry as permissions_entry
+                permissions_entry()
+            elif key == "5":
+                from plugin.update_recovery_menu import entry as recovery_entry
+                recovery_entry()
+            elif key == "6":
+                from plugin.native_profile_menu import entry as profile_entry
+                profile_entry()
+            elif key == "7":
+                from plugin.workspace_recovery_menu import entry as workspace_entry
+                workspace_entry()
+            elif key == "8":
+                from plugin.cache_cleanup_menu import entry as cache_entry
+                cache_entry()
+            elif key == "9":
+                from plugin.tool_config_menu import entry as tool_entry
+                tool_entry()
+            elif key == "10":
+                from plugin.disk_menu import entry as disk_entry
+                disk_entry()
         except (KeyboardInterrupt, UserCancel):
             pass
 
@@ -191,7 +219,7 @@ def _install() -> None:
     if not commands.is_trusted_source(url):
         print_warning(t("plugin.source_warning"))
     print_info(t("plugin.cloning_branch", branch=branch) if branch else t("plugin.cloning"))
-    manifest, err = commands.install(url, branch, alias)
+    manifest, err = commands.install(url, branch, alias, **_fetch_options(url))
     if manifest is None:
         if err.startswith("exists:"):
             print_error(t("plugin.install_exists", name=err.split(":", 1)[1]))
@@ -218,6 +246,44 @@ def _install() -> None:
         return
     print_success(t("plugin.install_success", name=_display_name(manifest)))
     pause()
+
+
+def _fetch_options(source):
+    """Ask once per exact remote source; never persist secrets or private access."""
+    from core.native_acquisition import source_identity
+    from core.plugin_fetch_source import remote_source
+    from rich.markup import escape
+    if not source:
+        return {}
+    try:
+        canonical, local = source_identity(source)
+        if local:
+            return {}
+        remote = remote_source(canonical)
+    except ValueError:
+        print_error(t("plugin_native.lifecycle.repository_invalid"))
+        raise UserCancel() from None
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin_native.fetch_access")]
+    modes = {"1": (False, False), "2": (False, True), "3": (True, True), "4": (True, False)}
+    choices = [{"key": key, "label": t("plugin_native.fetch_modes." + key)} for key in modes
+               if remote.kind == "https" or modes[key][1]]
+    key = select(breadcrumb=crumb, subtitle=t("plugin_native.fetch_access"), choices=choices,
+                 description=escape(canonical) + "\n" + t("plugin_native.fetch_access_hint"), theme_key=_THEME_KEY)
+    if key not in {choice["key"] for choice in choices}:
+        raise UserCancel()
+    private, credential = modes[key]
+    profile = None
+    if credential:
+        profile = text_input(breadcrumb=crumb, prompt=t("plugin_native.fetch_profile_prompt"),
+                             hint=t("plugin_native.fetch_profile_help"), theme_key=_THEME_KEY).strip()
+        if not profile:
+            raise UserCancel()
+    return {"fetch_profile": profile, "allow_private": private}
+
+
+def _update_fetch_options(manifest):
+    record = commands.trusted_record(manifest.name) or {}
+    return _fetch_options(record.get("source", ""))
 
 
 def _manifest_grouped(manifests):
@@ -354,7 +420,7 @@ def _update_all() -> None:
             if declined:
                 print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
                 continue
-        ok, msg = commands.update(manifest)
+        ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
         if not ok:
             if msg == "not_git":
                 print_error(t("plugin.update_not_git", name=_display_name(manifest)))
@@ -396,7 +462,7 @@ def _update() -> None:
             pause()
             return
     old_version = manifest.version
-    ok, msg = commands.update(manifest)
+    ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), _display_name(manifest)]
     clear_screen()
     print_header(crumb)
