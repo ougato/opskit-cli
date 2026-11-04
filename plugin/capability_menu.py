@@ -8,7 +8,7 @@ from rich.markup import escape
 
 def entry():
     authority = CapabilityAuthority()
-    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin_native.permissions")]
+    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.permissions")]
     try:
         while True:
             grants = authority.list_grants()
@@ -16,7 +16,7 @@ def entry():
                 print_info(t("plugin_native.no_grants"))
                 pause()
                 return
-            choices = [{"key": str(index + 1), "label": escape(request.plugin) + " · " +
+            choices = [{"key": str(index + 1), "label": get_icon("plugin_permissions") + " " + escape(request.plugin) + " · " +
                         t("plugin_native.operations." + request.operation)}
                        for index, request in enumerate(grants)]
             key = select(breadcrumb, t("plugin_native.select_grant"), choices, back_label=f"{get_icon('back')} {t('plugin_native.back')}")

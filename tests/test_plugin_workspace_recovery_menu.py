@@ -1,6 +1,7 @@
 import pytest
 
 from core import i18n
+from core.theme import get_icon
 from plugin import workspace_recovery_menu as menu
 
 
@@ -16,7 +17,7 @@ def test_menu_requires_review_and_confirmation(monkeypatch, language, approved):
         assert kwargs["back_label"]
         assert breadcrumb[-1] == i18n.t("plugin_native.workspace_recovery.menu")
         assert title == i18n.t("plugin_native.workspace_recovery.select")
-        assert choices[0]["label"] == item["directory"]
+        assert choices[0]["label"] == f"{get_icon('workspace_cleanup')} {item['directory']}"
         return "1"
     def confirm(breadcrumb, title, **kwargs):
         assert title == i18n.t("plugin_native.workspace_recovery.confirm")

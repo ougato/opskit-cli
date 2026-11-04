@@ -18,7 +18,7 @@ def entry():
             print_info(t("plugin_native.update_recovery.empty"))
             pause()
             return
-        choices = [{"key": str(index + 1), "label": escape(item["plugin"]) + " · " + item["transaction"]}
+        choices = [{"key": str(index + 1), "label": get_icon("restore") + " " + escape(item["plugin"]) + " · " + item["transaction"]}
                    for index, item in enumerate(valid)]
         key = select(breadcrumb, t("plugin_native.update_recovery.select"), choices, back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(valid):

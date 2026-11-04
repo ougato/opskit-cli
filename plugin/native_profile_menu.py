@@ -17,7 +17,7 @@ def entry():
             pause()
             return
         key = select(breadcrumb, t("plugin_native.profile_recovery.select"),
-                     [{"key": str(index + 1), "label": item["profile"]}
+                     [{"key": str(index + 1), "label": f"{get_icon('sandbox_cleanup')} {item['profile']}"}
                       for index, item in enumerate(confirmed)], back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(confirmed):
             return

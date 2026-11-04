@@ -18,7 +18,7 @@ from core.native_sandbox import NativeSandboxError
 
 
 TRANSFER_ERRORS = frozenset({"fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
-                             "fetch_ssh_host_failed", "fetch_ssh_auth_failed"})
+                             "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed"})
 
 
 @contextmanager
@@ -46,6 +46,9 @@ def _request(source, material, allow_private, method, suffix, body=b""):
             headers["Authorization"] = material["authorization"]
         connection.request(method, urlsplit(source.url).path + suffix, body=body, headers=headers)
         response = connection.getresponse()
+        if response.status in (401, 403):
+            from core.native_git_ssh import SSHFailure
+            raise SSHFailure("fetch_http_auth_failed")
         expected = headers["Accept"]
         length = response.getheader("Content-Length")
         maximum = MAX_ADVERTISEMENT if method == "GET" else MAX_PACK + 65536
@@ -70,8 +73,19 @@ def _download(source, profile, allow_private, destination, branch):
     if source.kind != "https" or type(allow_private) is not bool:
         raise ValueError("invalid Git HTTPS request")
     material = authentication(source, profile).payload()
-    with _request(source, material, allow_private, "GET", "/info/refs?service=git-upload-pack") as response:
-        raw = response.read(MAX_ADVERTISEMENT + 1)
+    from core.native_git_ssh import SSHFailure
+    try:
+        with _request(source, material, allow_private, "GET", "/info/refs?service=git-upload-pack") as response:
+            raw = response.read(MAX_ADVERTISEMENT + 1)
+    except SSHFailure as error:
+        if error.code != "fetch_http_auth_failed" or profile is not None:
+            raise
+        from core.native_git_credentials import https_material
+        material = https_material(source)
+        if material is None:
+            raise
+        with _request(source, material, allow_private, "GET", "/info/refs?service=git-upload-pack") as response:
+            raw = response.read(MAX_ADVERTISEMENT + 1)
     selection, body = advertisement(raw, branch)
     with _request(source, material, allow_private, "POST", "/git-upload-pack", body) as response:
         return receive_pack(response, destination, selection)
@@ -107,7 +121,8 @@ def remote_pack(source, *, profile=None, allow_private=False, branch=None,
     Only the native Git worker is allowed to parse/decompress the downloaded pack.
     """
     source = remote_source(source)
-    authentication(source, profile)
+    if profile is not None or source.kind != "ssh":
+        authentication(source, profile)
     if (source.kind not in {"https", "ssh"} or type(allow_private) is not bool
             or type(deadline) not in (int, float) or not math.isfinite(deadline)
             or not callable(checkpoint)):

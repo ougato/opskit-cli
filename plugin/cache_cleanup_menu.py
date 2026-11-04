@@ -10,10 +10,10 @@ def entry():
     breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance"), t(prefix + "menu")]
     try:
         kind = select(breadcrumb, t(prefix + "catalog"), [
-            {"key": "1", "label": t(prefix + "runtime")},
-            {"key": "2", "label": t(prefix + "fetch")},
-            {"key": "3", "label": t(prefix + "prepare")},
-        ], back_label=f"{get_icon('back')} {t('plugin_native.back')}")
+            {"key": "1", "label": f"{get_icon('runtime_cache')} {t(prefix + 'runtime')}"},
+            {"key": "2", "label": f"{get_icon('fetch_cache')} {t(prefix + 'fetch')}"},
+            {"key": "3", "label": f"{get_icon('prepare_cache')} {t(prefix + 'prepare')}"},
+        ], description=t(prefix + "hint"), back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if kind not in {"1", "2", "3"}:
             return
         kind = {"1": "runtime", "2": "fetch", "3": "prepare"}[kind]
@@ -26,7 +26,7 @@ def entry():
             pause()
             return
         key = select(breadcrumb, t(prefix + "select"), [
-            {"key": str(index + 1), "label": item["object"]}
+            {"key": str(index + 1), "label": f"{get_icon('cache_cleanup')} {item['object']}"}
             for index, item in enumerate(candidates)], back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(candidates):
             return

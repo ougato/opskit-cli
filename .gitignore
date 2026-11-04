@@ -94,3 +94,9 @@ cache/*.pending
 /.windsurf/
 /.windsurfrules
 /CURSOR.md
+
+# Immutable native plugin catalogs and recovery records
+/native-fetch-tools/
+/native-plugin-runtimes/
+/native-fetch-staging/
+/native-preparations/

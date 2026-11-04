@@ -229,7 +229,8 @@ def _remove_tree(path: Path) -> None:
 
 
 def install(url: str, branch: str | None = None, alias: str | None = None, *,
-            fetch_profile: str | None = None, allow_private: bool = False) -> tuple[PluginManifest | None, str]:
+            fetch_profile: str | None = None, allow_private: bool = False, fetch_interaction=None,
+            automatic: bool = False, progress=None) -> tuple[PluginManifest | None, str]:
     """原生隔离采集已提交内容，审核后发布；不执行宿主 Git。
     返回 (清单, 错误串)；信任确认由菜单层负责"""
     if alias is not None and not valid_install_dir_name(alias):
@@ -249,7 +250,18 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
     staging = work / "payload"
     try:
         from core.native_acquisition import populate
-        acquired = populate(url, staging, branch=branch, fetch_profile=fetch_profile, allow_private=allow_private)
+        from core.native_sandbox import NativeSandboxError
+        if automatic:
+            from core.plugin_bootstrap import ensure_fetch
+            try:
+                ensure_fetch(progress or (lambda *args: None))
+            except NativeSandboxError:
+                raise
+            except Exception:
+                raise NativeSandboxError("fetch_setup_failed") from None
+        if progress:
+            progress("fetch", branch or "")
+        acquired = populate(url, staging, branch=branch, fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
         manifest = load_manifest(staging)
         if manifest is None:
             return None, "no_manifest"
@@ -267,6 +279,14 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
             if (content_receipt(staging) != acquired.receipt
                     or compute_fingerprint(staging) != acquired.fingerprint):
                 raise ValueError("installation candidate changed before publication")
+            if automatic:
+                from core.plugin_bootstrap import ensure_runtime
+                try:
+                    ensure_runtime(manifest, progress or (lambda *args: None))
+                except NativeSandboxError:
+                    raise
+                except Exception:
+                    raise NativeSandboxError("runtime_setup_failed") from None
             # Fail closed before making content discoverable, including stale trust
             # from an earlier installation of the same name. This grants nothing.
             grant(manifest.name, "", manifest.version, acquired.source, branch,
@@ -287,6 +307,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
     except FileExistsError:
         return None, f"exists:{name}"
     except Exception as exc:
+        from core.prompt import UserCancel
+        if isinstance(exc, UserCancel):
+            raise
         from core.native_sandbox import NativeSandboxError
         return None, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.acquisition_failed")
     finally:
@@ -344,18 +367,18 @@ def rollback_install(manifest: PluginManifest) -> None:
 
 
 def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
-           allow_private: bool = False) -> tuple[bool, str]:
+           allow_private: bool = False, fetch_interaction=None) -> tuple[bool, str]:
     """Exclude active invocations before reading or changing plugin sources."""
     from core.plugin_invocation_lock import hold
     try:
         with hold(plugin=manifest.name, timeout=30):
-            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private)
+            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
     except (OSError, ValueError, RuntimeError) as exc:
         return False, str(exc)
 
 
 def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
-                   allow_private: bool = False) -> tuple[bool, str]:
+                   allow_private: bool = False, fetch_interaction=None) -> tuple[bool, str]:
     """Acquire a fresh reviewed tree, revoke trust, then replace with rollback."""
     from core.native_acquisition import populate
     from core.native_sandbox import NativeSandboxError
@@ -379,7 +402,7 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
     payload, previous = work / "payload", work / "previous"
     try:
         acquired = populate(record["source"], payload, branch=record.get("branch"),
-                            fetch_profile=fetch_profile, allow_private=allow_private)
+                            fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
         refreshed = load_manifest(payload)
         if refreshed is None or refreshed.name != manifest.name:
             raise ValueError("update plugin identity changed")

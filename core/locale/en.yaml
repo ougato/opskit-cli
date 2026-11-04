@@ -863,7 +863,7 @@ network:
   public_ip_failed: "Failed to get public IP"
 
 plugin_native:
-  back: "Back to parent"
+  back: "Back"
   maintenance: Plugin maintenance
   disk:
     menu: Space settings
@@ -877,10 +877,11 @@ plugin_native:
     help: Inspect or configure framework disk headroom; no filesystem hard quota.
   cache_cleanup:
     menu: Cache cleanup
-    catalog: "Select the cache to inspect"
-    runtime: "Plugin runtimes"
-    fetch: "Git acquisition tools"
-    prepare: "Interrupted runtime or tool preparations"
+    catalog: "Cache categories"
+    hint: "Runtime cache: isolated plugin runtimes and dependencies.\nFetch cache: Git tools used for isolated repository acquisition.\nPreparation remnants: interrupted runtime or tool preparation directories. Only recorded, inactive, unreferenced objects can be collected."
+    runtime: "Runtime cache"
+    fetch: "Fetch cache"
+    prepare: "Preparation remnants"
     uncertain: "Invalid ownership records are retained. Unrecorded objects are never adopted."
     empty: "No recorded unreferenced cache objects were found."
     select: "Select a cache object to review"
@@ -919,14 +920,13 @@ plugin_native:
   upload:
     starting: "Preparing and uploading file to {host}..."
     completed: "File upload completed ({bytes} bytes)."
-  fetch_access: "Repository access"
-  fetch_access_hint: "Only for this acquisition; credentials and private-network access are not saved. Allow private access only for a trusted target."
-  fetch_profile_prompt: "Private repository credential file path"
-  fetch_modes:
-    "1": "Public network, no credentials"
-    "2": "Public network, private credential file"
-    "3": "Allow this repository on a private network, with credential file"
-    "4": "Allow this repository on a private network, no credentials"
+  bootstrap:
+    tools: "Preparing plugin acquisition tools…"
+    download: "Checking and preparing {name}…"
+    runtime: "Preparing the runtime for plugin {name}…"
+  fetch_private_confirm: "The repository resolves to a private or reserved address. Allow this connection only?"
+  fetch_credentials_hint: "Local authentication is unavailable or server identity is unverified. Provide a repository-bound credential file with verified server keys; leave blank to cancel."
+  fetch_profile_prompt: "Repository credential file path"
   fetch_profile_help: "Private credential file bound to this exact repository; never saved or automatically reused"
   allow_private_help: "Allow private IPs for this exact repository for this acquisition only; specify again when updating"
   prepare_fetch_help: "Prepare isolated native Git acquisition from reviewed offline Python and Git directories"
@@ -946,7 +946,7 @@ plugin_native:
   once: "Allow this time"
   always: "Always allow"
   deny: "Deny"
-  deny_return: "Deny and return"
+  deny_return: "Back"
   permissions_help: "Inspect and revoke persistent plugin host permissions"
   list_help: "List saved persistent permissions"
   revoke_help: "Revoke a permission and invalidate active one-time grants"
@@ -962,6 +962,8 @@ plugin_native:
     sdk_required: "Plugin is missing, ambiguous or incompatible; SDK 3 is required. Upgrade older plugin manifests and code."
     fetch_prepare_invalid: "Invalid native Git or Python runtime. Use reviewed standalone tool directories."
     fetch_profile_invalid: "Cannot securely read repository credentials. Check private file permissions, format and exact repository binding."
+    fetch_ssh_connection_failed: "SSH disconnected before server identity verification. Check the repository server, SSH port and proxy/TUN settings."
+    fetch_http_auth_failed: "Repository access denied. Check credentials and repository permissions."
     fetch_private_denied: "The repository resolves to a private or reserved IP. Add --allow-private for this command only after checking the target."
     fetch_tls_failed: "Repository TLS validation failed. Check its certificate; for a private CA, supply ca_pem in the repository credential file."
     fetch_protocol_failed: "The repository response violates the bounded Git protocol. Check the URL, credentials and repository size."
@@ -969,6 +971,8 @@ plugin_native:
     fetch_ssh_host_failed: "SSH host verification failed. Confirm its key with the repository administrator before updating the private profile; new keys are never accepted automatically."
     fetch_ssh_auth_failed: "SSH private-key authentication failed. Check the key, passphrase and repository access; local agents and other keys are never tried."
     fetch_prepare_failed: "Native Git tool preparation or its isolated verification failed."
+    fetch_setup_failed: "Acquisition tool preparation failed. Check network, free space and directory permissions, then retry installation. Verified downloads are reused."
+    runtime_setup_failed: "Plugin runtime preparation failed; installation was not completed. Check network, free space and directory permissions, then retry."
     fetch_tools_missing: "Prepare the native Git toolchain first with plugin prepare-fetch --python-runtime PATH --git-runtime PATH."
     fetch_tools_invalid: "The prepared native Git toolchain is stale or damaged. Run plugin prepare-fetch again."
     acquisition_failed: "Isolated plugin acquisition failed. The candidate was not published."

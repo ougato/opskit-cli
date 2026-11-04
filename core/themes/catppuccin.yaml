@@ -75,6 +75,9 @@ icons:
   sandbox_cleanup: "\U0001F512"    # 🔒
   workspace_cleanup: "\U0001F4C2"  # 📂
   cache_cleanup: "\U0001F9F9"      # 🧹
+  runtime_cache: "\U0001F4E6"      # 📦
+  fetch_cache: "\U0001F4E5"        # 📥
+  prepare_cache: "\U0001F6A7"      # 🚧
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧

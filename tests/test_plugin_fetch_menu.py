@@ -1,57 +1,38 @@
-"""Trusted menu collects per-acquisition scope without persisting credentials."""
+"""Remote menus prompt only when the transport needs user input."""
 import pytest
-
-from core import i18n
 from core.prompt import UserCancel
+from core import i18n
 from plugin import menu
 
 
-@pytest.mark.parametrize("language", ["zh", "en"])
-@pytest.mark.parametrize("source,key,private,credential", [
-    ("https://example.com/team/repo", "1", False, False),
-    ("https://example.com/team/repo", "3", True, True),
-    ("git@example.com:team/repo", "2", False, True),
-    ("git@example.com:team/repo", "3", True, True),
-])
-def test_remote_options_and_prompts_are_scoped_and_localized(monkeypatch, language, source, key, private, credential):
-    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
-    seen = []
-    def select(**kwargs):
-        seen.append(kwargs)
-        return key
-    def text_input(**kwargs):
-        assert credential
-        assert kwargs["prompt"] == i18n.t("plugin_native.fetch_profile_prompt")
-        return "C:\\private\\repo.json"
-    monkeypatch.setattr(menu, "select", select)
-    monkeypatch.setattr(menu, "text_input", text_input)
-    options = menu._fetch_options(source)
-    assert options == {"allow_private": private, "fetch_profile": "C:\\private\\repo.json" if credential else None}
-    assert seen[0]["subtitle"] == i18n.t("plugin_native.fetch_access")
-    assert "example.com" in seen[0]["description"]
-    assert i18n.t("plugin_native.fetch_access_hint") in seen[0]["description"]
-    if source.startswith("git@"):
-        assert {item["key"] for item in seen[0]["choices"]} == {"2", "3"}
-    assert "plugin_native." not in str(seen)
+@pytest.mark.parametrize("source", ["https://example.com/team/repo", "git@example.com:team/repo"])
+def test_remote_does_not_show_access_menu(monkeypatch, source):
+    monkeypatch.setattr(menu, "select", lambda **kw: pytest.fail("unexpected access menu"))
+    monkeypatch.setattr(menu, "text_input", lambda **kw: pytest.fail("premature credentials prompt"))
+    assert menu._fetch_options(source) == {"fetch_interaction": menu._fetch_interaction}
 
 
-def test_local_source_does_not_prompt(monkeypatch, tmp_path):
-    monkeypatch.setattr(menu, "select", lambda **kwargs: pytest.fail("local source requested network access"))
+def test_local_does_not_prompt(tmp_path):
     assert menu._fetch_options(str(tmp_path)) == {}
 
 
-@pytest.mark.parametrize("key", [None, "invalid", "1"])
-def test_ssh_cannot_select_unauthenticated_or_invalid_access(monkeypatch, key):
-    monkeypatch.setattr(menu, "select", lambda **kwargs: key)
-    with pytest.raises(UserCancel):
-        menu._fetch_options("git@example.com:team/repo")
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("approved", [True, False])
+def test_private_confirmation_is_scoped(monkeypatch, language, approved):
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    def confirm(**kw):
+        assert kw["info_lines"] == ["ssh://git@example.com:22/team/repo"]
+        assert kw["prompt"] == i18n.t("plugin_native.fetch_private_confirm")
+        return approved
+    monkeypatch.setattr(menu, "confirm", confirm)
+    assert menu._fetch_interaction("ssh://git@example.com:22/team/repo", "fetch_private_denied") is approved
 
 
-def test_invalid_source_is_safe_and_never_prompts(monkeypatch):
-    messages = []
-    monkeypatch.setattr(menu, "print_error", messages.append)
-    monkeypatch.setattr(menu, "select", lambda **kwargs: pytest.fail("invalid source prompted"))
-    with pytest.raises(UserCancel):
-        menu._fetch_options("https://user:SECRET@example.com/team/repo")
-    assert messages == [i18n.t("plugin_native.lifecycle.repository_invalid")]
-    assert "SECRET" not in str(messages)
+@pytest.mark.parametrize("answer", ["", "C:/private/repo.json"])
+def test_missing_credentials_can_cancel(monkeypatch, answer):
+    monkeypatch.setattr(menu, "text_input", lambda **kw: answer)
+    if not answer:
+        with pytest.raises(UserCancel):
+            menu._fetch_interaction("git@example.com:team/repo", "fetch_ssh_auth_failed")
+    else:
+        assert menu._fetch_interaction("git@example.com:team/repo", "fetch_ssh_auth_failed") == answer

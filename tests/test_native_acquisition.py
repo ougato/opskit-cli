@@ -27,3 +27,29 @@ def test_remote_requires_prepared_native_tools_without_host_fallback(tmp_path, m
 def test_invalid_or_credential_bearing_sources_are_rejected(source):
     with pytest.raises(ValueError):
         native_acquisition.source_identity(source)
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_private_retry_is_scoped_and_bounded(tmp_path, monkeypatch, accepted):
+    from contextlib import contextmanager
+    from core import native_git_https
+    from core.native_fetch_catalog import FetchCatalog
+    monkeypatch.setattr(native_acquisition, "get_backend", lambda: SimpleNamespace(probe=lambda: None))
+    monkeypatch.setattr(FetchCatalog, "load", lambda self: None)
+    calls, prompts = [], []
+    @contextmanager
+    def remote(source, **kwargs):
+        calls.append((source, kwargs["allow_private"]))
+        raise NativeSandboxError("fetch_private_denied")
+        yield
+    monkeypatch.setattr(native_git_https, "remote_pack", remote)
+    def interaction(source, code):
+        prompts.append((source, code))
+        return accepted
+    with pytest.raises(NativeSandboxError):
+        native_acquisition.populate("https://example.com/team/repo", tmp_path / "payload",
+                                    fetch_interaction=interaction)
+    assert len(prompts) == 1
+    assert calls == [("https://example.com:443/team/repo", False)] + (
+        [("https://example.com:443/team/repo", True)] if accepted else [])
+    assert not (tmp_path / "payload").exists()

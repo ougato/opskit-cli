@@ -42,20 +42,27 @@ def cli(argv: list[str]) -> int:
 
 ## 采集、审核与更新
 
-先准备独立采集工具：
+Windows x64 的安装入口自动准备独立采集工具和 SDK 运行环境，无需先手动执行准备命令：
 
 ```text
-opskit plugin prepare-fetch --python-runtime C:\tools\python --git-runtime C:\tools\git
 opskit plugin install https://git.example.com/team/hello.git --branch main
 ```
 
-工具先复制并在 AppContainer 中探测，通过后才发布 catalog。采集不执行宿主 Git，不运行插件导入、checkout hooks 或任意宿主命令。HTTPS/SSH 下载使用平台受限传输，pack 在隔离 Git 中校验与导出，随后核对候选内容再发布。
+菜单流程为：输入来源 → 自动准备采集工具 → 受限传输及隔离审核 → 自动准备并校验运行环境 → 展示版本、权限并确认信任 → 安装成功。拒绝信任或在确认时取消，按本次安装凭据撤回目录；不能证明目录归属时保留并报告。命令行安装同样自动准备，但保留显式授信语义，输出的 trust 状态不会被自动改成已授权。
 
-私有仓库使用 `--fetch-profile` 指向当前用户私有凭据文件，绑定完整来源；内网另需本次命令的 `--allow-private`。更新不继承前次凭据或私网许可。SSH 必须预先核实主机公钥，不自动接受首次主机，不使用宿主 SSH agent/config。凭据格式见迁移文档。
+自动准备使用随发行包固定的 `core/plugin-bootstrap.json`，固定 Python、MinGit 和 SDK wheel 的来源、版本、大小与 SHA256；运行时不查询 GitHub releases API、不运行宿主 pip、安装脚本或仓库代码。下载缓存先校验，工具复制后在 AppContainer 中探测，通过后才发布 catalog。传输 pack 在隔离 Git 中校验与导出。首次下载失败可重新安装，已完成且校验通过的组件会复用；失败不会发布半成品插件。
+
+SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。内网仅按本次来源确认或使用 `--allow-private`，不保存许可。
 
 `opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml；它是内容校验，不是发布者签名。安装后核对来源、权限、指纹并授信。内容更新撤销旧信任与相关授权，不自动继承。更新必须保留用户本地修改，无法安全替换时拒绝；不能强行覆盖以完成更新。
 
-## 准备运行时
+## 高级离线准备
+
+自动安装包含 SDK 基础依赖。具有额外依赖的插件仍需维护者提供经过审核的完整离线 wheel 和哈希锁；不会执行仓库的 requirements、setup.py 或自动安装任意依赖。以下命令保留给高级离线准备和维护使用，普通安装不需要手动执行。
+
+```text
+opskit plugin prepare-fetch --python-runtime C:\tools\python --git-runtime C:\tools\git
+```
 
 ```text
 opskit plugin prepare plugins/hello --python-runtime C:\tools\python --wheels C:\reviewed\wheels --lock-file C:\reviewed\requirements.lock

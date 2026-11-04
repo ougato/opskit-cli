@@ -36,6 +36,7 @@ def test_nuitka_refuses_interactive_downloads_and_update_checks(tmp_path, monkey
     assert "--update-check=never" in command
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert "--jobs=2" in command
+    assert "--include-data-files=core/plugin-bootstrap.json=core/plugin-bootstrap.json" in command
     assert any(item.startswith("--include-data-dir=") and item.endswith(
         "=core/native-probe-packaging") for item in command)
 
@@ -75,6 +76,7 @@ def test_pyinstaller_collects_dynamic_official_modules_without_ambient_upx(tmp_p
     assert {"--collect-submodules=" + name for name in (
         "core", "plugin", "software", "monitor", "network")} <= set(command)
     assert "--noupx" in command
+    assert any(item.startswith("--add-data=") and "plugin-bootstrap.json" in item for item in command)
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert any(item.startswith("--add-data=") and item.endswith(
         "core/native-probe-packaging") for item in command)

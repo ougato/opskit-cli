@@ -203,3 +203,73 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     assert load_manifest(root).version == "1.1.0"
     assert not (root / ".git").exists()
     cli.configure("text", False)
+
+
+def test_local_identity_is_used_only_after_host_verification(ssh_repository, tmp_path, monkeypatch):
+    from pathlib import Path
+    from core.native_git_ssh import download, SSHFailure
+    from core.plugin_fetch_source import remote_source
+    url, profile, commit, attempts, commands, _ = ssh_repository
+    source = remote_source(url)
+    home = tmp_path / "home"
+    ssh = home / ".ssh"
+    ssh.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    key = paramiko.Ed25519Key.from_private_key(io.StringIO(profile["authentication"]["private_key"]),
+                                             password="synthetic-passphrase")
+    used = []
+    class Agent:
+        def __init__(self):
+            used.append("opened")
+        def get_keys(self):
+            return [key]
+        def close(self):
+            used.append("closed")
+    monkeypatch.setattr(paramiko, "Agent", Agent)
+    with io.BytesIO() as output:
+        with pytest.raises(SSHFailure) as error:
+            download(url, None, True, output, None)
+    assert error.value.code == "fetch_ssh_host_failed"
+    assert not used and not attempts
+    other = paramiko.RSAKey.generate(2048)
+    filename = ssh / "known_hosts"
+    filename.write_text(f"[{source.host}]:{source.port} {other.get_name()} {other.get_base64()}\n")
+    with io.BytesIO() as output:
+        with pytest.raises(SSHFailure) as error:
+            download(url, None, True, output, None)
+    assert error.value.code == "fetch_ssh_host_failed"
+    assert not used and not attempts
+    filename.write_text(f"[{source.host}]:{source.port} " + profile["authentication"]["host_keys"][0] + "\n")
+    with io.BytesIO() as output:
+        result = download(url, None, True, output, None)
+    assert result["commit"] == commit
+    assert used == ["opened", "closed"]
+    assert commands == [b"git-upload-pack /team/repo.git"]
+
+
+def test_disconnected_server_does_not_request_credentials(tmp_path, monkeypatch):
+    from pathlib import Path
+    from core.native_git_ssh import download, SSHFailure
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(10)
+    port = listener.getsockname()[1]
+    key = paramiko.RSAKey.generate(2048)
+    (home / ".ssh/known_hosts").write_text(f"[127.0.0.1]:{port} {key.get_name()} {key.get_base64()}\n")
+    def disconnect():
+        raw, _ = listener.accept()
+        raw.close()
+    thread = threading.Thread(target=disconnect)
+    thread.start()
+    monkeypatch.setattr(paramiko, "Agent", lambda: pytest.fail("credentials used before handshake"))
+    try:
+        with io.BytesIO() as output, pytest.raises(SSHFailure) as error:
+            download(f"ssh://git@127.0.0.1:{port}/repo.git", None, True, output, None)
+        assert error.value.code == "fetch_ssh_connection_failed"
+    finally:
+        listener.close()
+        thread.join(timeout=10)

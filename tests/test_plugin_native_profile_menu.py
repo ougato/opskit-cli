@@ -1,6 +1,7 @@
 import pytest
 
 from core import i18n
+from core.theme import get_icon
 from plugin import native_profile_menu as menu
 
 
@@ -22,7 +23,7 @@ def test_confirmed_profile_requires_explicit_confirmation(language, monkeypatch,
         assert kwargs["back_label"]
         assert breadcrumb[-1] == i18n.t("plugin_native.profile_recovery.menu")
         assert title == i18n.t("plugin_native.profile_recovery.select")
-        assert choices == [{"key": "1", "label": item["profile"]}]
+        assert choices == [{"key": "1", "label": f"{get_icon('sandbox_cleanup')} {item['profile']}"}]
         return "1"
 
     def confirm(breadcrumb, title, **kwargs):

@@ -28,7 +28,7 @@ def source_identity(value):
     return str(Path(value).absolute()), True
 
 
-def populate(source, destination, *, branch=None, timeout=300, fetch_profile=None, allow_private=False):
+def populate(source, destination, *, branch=None, timeout=300, fetch_profile=None, allow_private=False, fetch_interaction=None):
     """No host Git fallback, imports, grant or discoverable publication.
 
     Fetch, independent archive validation, private writes and manifest review all
@@ -71,15 +71,37 @@ def populate(source, destination, *, branch=None, timeout=300, fetch_profile=Non
         if not local:
             from core.native_git_https import remote_pack
             from core.plugin_fetch_profile import load_profile
-            if not canonical.startswith("https://") and fetch_profile is None:
-                raise NativeSandboxError("fetch_profile_invalid")
             try:
                 profile = None if fetch_profile is None else load_profile(canonical, fetch_profile, timeout=remaining())
             except (OSError, ValueError, RuntimeError):
                 raise NativeSandboxError("fetch_profile_invalid") from None
-            candidate_source, pack = stack.enter_context(remote_pack(
-                canonical, profile=profile, allow_private=allow_private, branch=branch,
-                staging_parent=parent, deadline=deadline, checkpoint=remaining))
+            prompted = set()
+            while True:
+                try:
+                    candidate_source, pack = stack.enter_context(remote_pack(
+                        canonical, profile=profile, allow_private=allow_private, branch=branch,
+                        staging_parent=parent, deadline=deadline, checkpoint=remaining))
+                    break
+                except NativeSandboxError as error:
+                    code = error.code
+                    category = "private" if code == "fetch_private_denied" else "credentials"
+                    if (fetch_interaction is None or category in prompted or code not in {
+                            "fetch_private_denied", "fetch_ssh_auth_failed", "fetch_ssh_host_failed", "fetch_http_auth_failed"}):
+                        raise
+                    prompted.add(category)
+                    answer = fetch_interaction(canonical, code)
+                    remaining()
+                    if category == "private":
+                        if answer is not True:
+                            raise
+                        allow_private = True
+                    else:
+                        if not answer:
+                            raise
+                        try:
+                            profile = load_profile(canonical, answer, timeout=remaining())
+                        except (OSError, ValueError, RuntimeError):
+                            raise NativeSandboxError("fetch_profile_invalid") from None
             selected_branch = None
         inventory, response = stack.enter_context(catalog.local_candidate(
             candidate_source, staging_parent=parent, deadline=deadline,

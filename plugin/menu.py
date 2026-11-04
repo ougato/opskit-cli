@@ -223,8 +223,8 @@ def _install() -> None:
         return
     if not commands.is_trusted_source(url):
         print_warning(t("plugin.source_warning"))
-    print_info(t("plugin.cloning_branch", branch=branch) if branch else t("plugin.cloning"))
-    manifest, err = commands.install(url, branch, alias, **_fetch_options(url))
+    manifest, err = commands.install(url, branch, alias, automatic=True,
+                                     progress=_install_progress, **_fetch_options(url))
     if manifest is None:
         if err.startswith("exists:"):
             print_error(t("plugin.install_exists", name=err.split(":", 1)[1]))
@@ -239,13 +239,13 @@ def _install() -> None:
             print_error(t("plugin.install_failed", error=err))
         pause()
         return
-    if not confirm_trust(manifest, source=url.strip(), branch=branch):
-        try:
-            commands.rollback_install(manifest)
-        except (OSError, ValueError, RuntimeError) as exc:
-            print_error(t("plugin.install_failed", error=str(exc)))
-            pause()
-            return
+    try:
+        accepted = _confirm_install(manifest, source=url.strip(), branch=branch)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print_error(t("plugin.install_failed", error=str(exc)))
+        pause()
+        return
+    if not accepted:
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return
@@ -253,38 +253,51 @@ def _install() -> None:
     pause()
 
 
+def _confirm_install(manifest, source, branch=None):
+    accepted = False
+    try:
+        accepted = confirm_trust(manifest, source=source, branch=branch)
+        return accepted
+    finally:
+        if not accepted:
+            commands.rollback_install(manifest)
+            from core.plugin_trust import invalidate
+            invalidate(manifest.name)
+
+
+def _install_progress(phase, name=""):
+    if phase == "fetch":
+        print_info(t("plugin.cloning_branch", branch=name) if name else t("plugin.cloning"))
+    else:
+        print_info(t("plugin_native.bootstrap." + phase, name=name))
+
+
 def _fetch_options(source):
-    """Ask once per exact remote source; never persist secrets or private access."""
+    """Defer exceptional authentication/network prompts until transport needs them."""
     from core.native_acquisition import source_identity
-    from core.plugin_fetch_source import remote_source
-    from rich.markup import escape
     if not source:
         return {}
     try:
         canonical, local = source_identity(source)
         if local:
             return {}
-        remote = remote_source(canonical)
     except ValueError:
         print_error(t("plugin_native.lifecycle.repository_invalid"))
         raise UserCancel() from None
-    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin_native.fetch_access")]
-    modes = {"1": (False, False), "2": (False, True), "3": (True, True), "4": (True, False)}
-    choices = [{"key": key, "label": t("plugin_native.fetch_modes." + key)} for key in modes
-               if remote.kind == "https" or modes[key][1]]
-    key = select(breadcrumb=crumb, subtitle=t("plugin_native.fetch_access"), choices=choices,
-                 description=escape(canonical) + "\n" + t("plugin_native.fetch_access_hint"),
-                 back_label=f"{get_icon('back')} {t('plugin_native.back')}", theme_key=_THEME_KEY)
-    if key not in {choice["key"] for choice in choices}:
+    return {"fetch_interaction": _fetch_interaction}
+
+
+def _fetch_interaction(source, code):
+    from rich.markup import escape
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
+    if code == "fetch_private_denied":
+        return confirm(breadcrumb=crumb, prompt=t("plugin_native.fetch_private_confirm"),
+                       info_lines=[escape(source)], theme_key=_THEME_KEY)
+    profile = text_input(breadcrumb=crumb, prompt=t("plugin_native.fetch_profile_prompt"),
+                         hint=t("plugin_native.fetch_credentials_hint"), theme_key=_THEME_KEY).strip()
+    if not profile:
         raise UserCancel()
-    private, credential = modes[key]
-    profile = None
-    if credential:
-        profile = text_input(breadcrumb=crumb, prompt=t("plugin_native.fetch_profile_prompt"),
-                             hint=t("plugin_native.fetch_profile_help"), theme_key=_THEME_KEY).strip()
-        if not profile:
-            raise UserCancel()
-    return {"fetch_profile": profile, "allow_private": private}
+    return profile
 
 
 def _update_fetch_options(manifest):

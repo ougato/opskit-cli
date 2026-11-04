@@ -207,23 +207,22 @@ def _guided_install(name: str, source: str) -> object | None:
     if not source:
         return None
     from plugin import commands as plugin_commands
-    from plugin.menu import _display_name, confirm_trust
+    from plugin.menu import _display_name, _confirm_install, _install_progress, _fetch_options
 
     clear_screen()
     print_header([APP_NAME, t("service.installing", service=name)])
-    print_info(t("plugin.cloning"))
-    manifest, err = plugin_commands.install(source)
+    manifest, err = plugin_commands.install(source, automatic=True, progress=_install_progress, **_fetch_options(source))
     if manifest is None:
         print_error(t("plugin.install_failed", error=err))
         pause()
         return None
-    if not confirm_trust(manifest, source=source):
-        try:
-            plugin_commands.rollback_install(manifest)
-        except (OSError, ValueError, RuntimeError) as exc:
-            print_error(t("plugin.install_failed", error=str(exc)))
-            pause()
-            return None
+    try:
+        accepted = _confirm_install(manifest, source=source)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print_error(t("plugin.install_failed", error=str(exc)))
+        pause()
+        return None
+    if not accepted:
         print_error(t("plugin.trust_declined", name=_display_name(manifest)))
         pause()
         return None

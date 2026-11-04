@@ -26,7 +26,7 @@ def test_management_and_maintenance_structure(monkeypatch, language):
     for screen in captured:
         assert screen["back_label"]
         if language == "zh":
-            assert "返回上层" in screen["back_label"]
+            assert screen["back_label"] == theme.get_icon("back") + " 返回"
         for item in screen["choices"]:
             icon, label = item["label"].split(" ", 1)
             assert icon != "•" and cell_len(icon) == 2
@@ -68,3 +68,31 @@ def test_active_framework_has_no_business_implementation():
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "select":
                 assert any(kw.arg == "back_label" for kw in node.keywords), (path, node.lineno)
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_permission_prompt_uses_icons_and_keeps_deny_return(monkeypatch, language):
+    from core import plugin_capabilities as capabilities, prompt
+    from core.cli import non_interactive
+    from core.native_sandbox import CapabilityRequest, GrantChoice
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    theme.init()
+    monkeypatch.setattr(capabilities, "_interactive_input", lambda: True)
+    captured = []
+    monkeypatch.setattr(prompt, "select", lambda *args, **kwargs: captured.append((args, kwargs)))
+    token = non_interactive.set(False)
+    try:
+        result = capabilities.prompt_grant(CapabilityRequest("demo", "a" * 64, "directory.read", "E:/project"))
+    finally:
+        non_interactive.reset(token)
+    assert result is GrantChoice.DENY
+    args, kwargs = captured[0]
+    labels = [item["label"] for item in args[2]]
+    assert kwargs["back_label"] == theme.get_icon("back") + " " + ("返回" if language == "zh" else "Back")
+    for label in labels:
+        icon, text = label.split(" ", 1)
+        assert cell_len(icon) == 2 and icon != "•"
+        if language == "zh":
+            assert len(text) == 4
+    assert i18n.t("plugin_native.description", operation=i18n.t("plugin_native.operations.directory.read"),
+                  resource="E:/project", fingerprint="a" * 64) == kwargs["description"]

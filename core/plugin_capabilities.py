@@ -52,16 +52,17 @@ def prompt_grant(request: CapabilityRequest) -> GrantChoice:
     from core.prompt import select
     from rich.markup import escape
     from core.i18n import t
+    from core.theme import get_icon
     if non_interactive.get() or not _interactive_input():
         raise CapabilityDenied("interaction_required")
     answer = select(
         [t("plugin_native.permissions"), request.plugin], t("plugin_native.request"),
-        [{"key": "1", "label": t("plugin_native.once")},
-         {"key": "2", "label": t("plugin_native.always")},
-         {"key": "3", "label": t("plugin_native.deny")}],
+        [{"key": "1", "label": f"{get_icon('success')} {t('plugin_native.once')}"},
+         {"key": "2", "label": f"{get_icon('plugin_permissions')} {t('plugin_native.always')}"},
+         {"key": "3", "label": f"{get_icon('error')} {t('plugin_native.deny')}"}],
         description=t("plugin_native.description", operation=t("plugin_native.operations." + request.operation),
                       resource=escape(request.resource), fingerprint=request.fingerprint),
-        back_label=t("plugin_native.deny_return"),
+        back_label=f"{get_icon('back')} {t('plugin_native.deny_return')}",
     )
     return {"1": GrantChoice.ONCE, "2": GrantChoice.ALWAYS}.get(answer, GrantChoice.DENY)
 

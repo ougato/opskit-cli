@@ -1,13 +1,16 @@
 import pytest
 
-from core import i18n
+from core import i18n, theme
+from core.theme import get_icon
+from rich.cells import cell_len
 from plugin import cache_cleanup_menu as menu
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
 @pytest.mark.parametrize("approved", [False, True])
-@pytest.mark.parametrize("selection,kind", [("1", "runtime"), ("3", "prepare")])
+@pytest.mark.parametrize("selection,kind", [("1", "runtime"), ("2", "fetch"), ("3", "prepare")])
 def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, language, approved, selection, kind):
+    theme.init()
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     item = {"object": "a" * 32, "record_sha256": "b" * 64, "valid": True, "referenced": False}
     monkeypatch.setattr(menu.cleanup, "inspect", lambda kind: [
@@ -18,9 +21,15 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
         calls.append(title)
         if len(calls) == 1:
             assert title == i18n.t("plugin_native.cache_cleanup.catalog")
-            assert choices[-1]["label"] == i18n.t("plugin_native.cache_cleanup.prepare")
+            assert kwargs["description"] == i18n.t("plugin_native.cache_cleanup.hint")
+            for choice, name in zip(choices, ("runtime", "fetch", "prepare")):
+                icon, label = choice["label"].split(" ", 1)
+                assert icon == get_icon(name + "_cache") and cell_len(icon) == 2
+                assert label == i18n.t("plugin_native.cache_cleanup." + name)
+                if language == "zh":
+                    assert len(label) == 4 and all("\u4e00" <= c <= "\u9fff" for c in label)
             return selection
-        assert choices == [{"key": "1", "label": item["object"]}]
+        assert choices == [{"key": "1", "label": f"{get_icon('cache_cleanup')} {item['object']}"}]
         return "1"
     def confirm(breadcrumb, title, **kwargs):
         assert title == i18n.t("plugin_native.cache_cleanup.confirm")
@@ -41,6 +50,7 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
 
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_cache_failure_uses_localized_error(monkeypatch, language):
+    theme.init()
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     monkeypatch.setattr(menu, "select", lambda *args, **kwargs: "2")
     def fail(kind):

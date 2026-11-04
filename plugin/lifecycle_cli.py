@@ -46,10 +46,10 @@ def register(app, translate=None):
     def acquisition_error(message, default):
         # Only fixed host-generated translations are safe to show. Never render
         # raw process, repository, credential or filesystem diagnostics.
-        keys = ("fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed",
+        keys = ("fetch_setup_failed", "runtime_setup_failed", "fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed",
                 "update_failed", "update_modified", "execution_timeout", "platform_unsupported",
                 "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
-                "fetch_ssh_host_failed", "fetch_ssh_auth_failed")
+                "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
         safe.update(t("plugin_native.errors.platform_pending", platform=platform) for platform in ("linux", "darwin"))
         return message if message in safe else t("plugin_native.errors." + default)
@@ -254,7 +254,7 @@ def register(app, translate=None):
         if url.startswith("-") or branch.startswith("-"):
             fail(t("plugin_native.lifecycle.repository_invalid"), 2)
         manifest, error = commands.install(url, branch or None, alias or None,
-                                           fetch_profile=fetch_profile, allow_private=allow_private)
+                                           fetch_profile=fetch_profile, allow_private=allow_private, automatic=True)
         if manifest is None:
             # Git output may include URLs and credentials; only expose stable categories.
             fail(acquisition_error(error, "acquisition_failed"))
