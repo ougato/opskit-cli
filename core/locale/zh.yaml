@@ -972,6 +972,7 @@ plugin_native:
     fetch_prepare_failed: "原生 Git 工具准备或隔离验证失败。"
     fetch_python_failed: "Python 无法在隔离环境中启动，未继续安装。请检查系统运行库或安全软件拦截。"
     fetch_git_failed: "Git 未通过隔离环境自检，未继续安装。请检查工具依赖或安全软件拦截。"
+    fetch_dependency_missing: "当前 OpsKit Python 环境缺少传输依赖。请使用项目虚拟环境，或安装项目声明的依赖后重试。"
     fetch_git_command_failed: "Git 隔离执行失败（步骤 {operation}，错误码 {exit_code}），本次未完成安装。"
     fetch_setup_failed: "采集工具准备失败，请检查网络、可用空间及目录权限后重试安装。已校验的下载会自动复用。"
     runtime_setup_failed: "插件运行环境准备失败，本次未完成安装。请检查网络、可用空间及目录权限后重试。"

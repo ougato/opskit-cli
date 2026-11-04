@@ -18,7 +18,7 @@ from core.native_sandbox import NativeSandboxError
 
 
 TRANSFER_ERRORS = frozenset({"fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
-                             "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed"})
+                             "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed", "fetch_dependency_missing"})
 
 
 @contextmanager
@@ -103,7 +103,8 @@ def _worker(connection, source, profile, allow_private, output, branch):
         send(connection, {"value": value})
     except Exception as error:
         from core.native_git_ssh import SSHFailure
-        code = (error.code if isinstance(error, SSHFailure) and error.code in TRANSFER_ERRORS else
+        code = ("fetch_dependency_missing" if isinstance(error, ImportError) else
+                error.code if isinstance(error, SSHFailure) and error.code in TRANSFER_ERRORS else
                 "fetch_private_denied" if isinstance(error, PermissionError) else
                 "fetch_tls_failed" if isinstance(error, ssl.SSLError) else
                 "fetch_protocol_failed" if isinstance(error, ValueError) else "fetch_transfer_failed")

@@ -25,6 +25,10 @@ def test_python_snapshot_excludes_user_packages_and_resets_search_paths(tmp_path
     assert (source / "python314._pth").read_text().startswith("C:/external")
     assert (result / "python314.dll").read_bytes() == b"fixture DLL"
     assert (result / "unicodedata.pyd").read_bytes() == b"fixture extension"
+    import zipfile
+    with zipfile.ZipFile(result / "python314.zip") as library:
+        assert library.read("encodings/__init__.py") == b"# fixture"
+    assert not (result / "Lib/encodings/__init__.py").exists()
 
 
 def test_python_snapshot_rejects_an_incompatible_interpreter(tmp_path):

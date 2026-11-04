@@ -4,6 +4,8 @@ import shutil
 import sys
 import os
 import stat
+import zipfile
+from contextlib import ExitStack
 
 from core.plugin_runtime_inventory import _read_file
 
@@ -115,14 +117,24 @@ def snapshot(source, destination, kind):
         raise ValueError("invalid local tool snapshot")
     destination.mkdir()
     total = 0
-    for path in paths:
-        body = _installed_file(path, min(128 * 1024**2, MAX_BYTES - total))
-        total += len(body)
-        if total > MAX_BYTES:
-            raise ValueError("local tool snapshot exceeds budget")
-        target = destination / path.relative_to(source)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(body)
+    # Hundreds of small standard-library files otherwise get copied, hashed and
+    # ACL-processed at every isolation stage. Python can import the same bytes
+    # from one uncompressed archive; native extensions remain ordinary files.
+    pack_library = kind == "python" and not (source / "python314.zip").is_file()
+    with ExitStack() as stack:
+        library = stack.enter_context(zipfile.ZipFile(destination / "python314.zip", "w", compression=zipfile.ZIP_STORED)) if pack_library else None
+        for path in paths:
+            body = _installed_file(path, min(128 * 1024**2, MAX_BYTES - total))
+            total += len(body)
+            if total > MAX_BYTES:
+                raise ValueError("local tool snapshot exceeds budget")
+            relative = path.relative_to(source)
+            if library is not None and relative.parts[0] == "Lib" and path.suffix.lower() not in {".dll", ".pyd"}:
+                library.writestr(relative.relative_to("Lib").as_posix(), body)
+            else:
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(body)
     if kind == "python":
         # Never inherit an installed interpreter's user-customized search paths.
         (destination / "python314._pth").write_text("python314.zip\n.\nLib\nDLLs\n", encoding="ascii")

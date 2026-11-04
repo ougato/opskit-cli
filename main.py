@@ -55,6 +55,10 @@ else:
 # ── venv 自举：必须在所有第三方 import 之前，确保后续 import 使用 venv 内的包 ──
 # 打包模式（Nuitka __compiled__ / PyInstaller sys.frozen）跳过 venv bootstrap
 _is_packed = getattr(sys, "frozen", False) or "__compiled__" in dir()
+if __name__ == "__main__" and sys.platform == "win32" and not _is_packed:
+    from pathlib import Path as _Path
+    from core.venv_bootstrap import reenter_existing_windows_venv as _reenter_windows_venv
+    _reenter_windows_venv(_Path(__file__).parent.resolve())
 if __name__ == "__main__" and sys.platform != "win32" and not _is_packed:
     from pathlib import Path as _Path
     from core.venv_bootstrap import ensure_venv as _ensure_venv

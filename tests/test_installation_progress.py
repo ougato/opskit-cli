@@ -16,7 +16,7 @@ def test_one_status_is_updated_suspended_and_closed_on_cancel(monkeypatch):
         def update(self, message):
             events.append('update')
     monkeypatch.setattr(ui, 'Status', Status)
-    monkeypatch.setattr(ui, 'console', SimpleNamespace(is_terminal=True))
+    monkeypatch.setattr(ui, 'console', SimpleNamespace(is_terminal=True, print=lambda: events.append('blank')))
     with pytest.raises(KeyboardInterrupt):
         with ui.InstallationProgress() as progress:
             progress('tools')
@@ -25,7 +25,7 @@ def test_one_status_is_updated_suspended_and_closed_on_cancel(monkeypatch):
                 events.append('prompt')
                 raise KeyboardInterrupt
             progress.interaction(cancelled)()
-    assert events == ['create', 'start', 'update', 'stop', 'prompt', 'start', 'stop']
+    assert events == ['blank', 'create', 'start', 'update', 'stop', 'prompt', 'start', 'stop']
 
 
 def test_redirected_output_does_not_emit_animation_or_stage_lines(monkeypatch):

@@ -7,6 +7,15 @@ import sys
 from pathlib import Path
 
 
+def reenter_existing_windows_venv(project_root: Path) -> None:
+    """Reuse the project's prepared environment without changing system Python."""
+    if sys.prefix != sys.base_prefix or os.environ.get("VIRTUAL_ENV"):
+        return
+    executable = project_root / ".venv" / "Scripts" / "python.exe"
+    if executable.is_file():
+        _exec_reenter(executable)
+
+
 def ensure_venv(project_root: Path | None = None) -> None:
     """
     确保当前进程使用虚拟环境，尊重显式选择的外部环境。
@@ -273,6 +282,10 @@ def _exec_reenter(venv_python: Path) -> None:
     """exec 重入 venv，完整传递 sys.argv"""
     python_str = str(venv_python)
     try:
+        if sys.platform == "win32":
+            # Windows execv detaches the replacement from callers waiting on
+            # the original process. Preserve CLI streams and exit status.
+            raise SystemExit(subprocess.call([python_str] + sys.argv))
         os.execv(python_str, [python_str] + sys.argv)
     except Exception as e:
         print(f"[OpsKit ERROR] exec 重入失败：{e}")

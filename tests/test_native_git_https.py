@@ -64,7 +64,7 @@ def test_exact_numeric_destination_sni_path_and_explicit_auth(transport):
     assert calls[-1] == "close"
 
 
-@pytest.mark.parametrize("change", [{"status": 301}, {"status": 401}, {"Content-Type": "text/html"},
+@pytest.mark.parametrize("change", [{"status": 301}, {"Content-Type": "text/html"},
     {"Content-Encoding": "gzip"}, {"Content-Length": "999999999"}, {"Content-Length": "-1"},
     {"Content-Length": "invalid"}])
 def test_response_rejected_without_redirect_or_diagnostics(transport, change):
@@ -76,6 +76,20 @@ def test_response_rejected_without_redirect_or_diagnostics(transport, change):
             pytest.fail("unsafe response accepted")
     assert "SECRET" not in str(error.value)
     assert len([item for item in calls if isinstance(item, tuple) and item[0] == "connect"]) == 1
+    assert calls[-1] == "close"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_authentication_response_keeps_fixed_category_and_hides_credentials(transport, status):
+    from core.native_git_ssh import SSHFailure
+    calls, state = transport
+    state.update(status=status)
+    with pytest.raises(SSHFailure) as error:
+        with https._request(remote_source("https://example.com/repo"),
+                            {"authorization": "Bearer SECRET"}, False, "GET", "/info/refs?service=git-upload-pack"):
+            pytest.fail("authentication response accepted")
+    assert error.value.code == "fetch_http_auth_failed"
+    assert "SECRET" not in str(error.value)
     assert calls[-1] == "close"
 
 

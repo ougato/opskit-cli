@@ -23,13 +23,15 @@ class InstallationProgress:
         if phase not in {"fetch", "tools", "repair", "runtime"}:
             return
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
-        message = Text(t(key, branch=name), style=get_color("muted"), no_wrap=True, overflow="ellipsis")
+        color = get_color("success")
+        message = Text(t(key, branch=name), style=color, no_wrap=True, overflow="ellipsis")
         # Redirected output stays clean; final success/error remains available.
         if not console.is_terminal:
             return
         if self.status is None:
-            self.status = Status(message, console=console, spinner="squareCorners",
-                                 spinner_style=get_color("progress.bar_complete"))
+            console.print()
+            self.status = Status(message, console=console, spinner="dots",
+                                 spinner_style=color)
             self.status.start()
         else:
             self.status.update(message)
