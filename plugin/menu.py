@@ -266,6 +266,8 @@ def _confirm_install(manifest, source, branch=None):
 
 
 def _install_progress(phase, name=""):
+    if phase not in {"fetch", "tools", "repair", "runtime"}:
+        return
     if phase == "fetch":
         print_info(t("plugin.cloning_branch", branch=name) if name else t("plugin.cloning"))
     else:

@@ -142,3 +142,64 @@ def test_menu_success_follows_runtime_and_trust(installation, monkeypatch, accep
     menu._install()
     assert len(success) == int(accepted)
     assert (plugins / "origin").exists() is accepted
+
+
+@pytest.mark.parametrize("python_local,git_local,bad_git,expected", [
+    (True, True, False, []), (False, True, False, ["python"]),
+    (True, False, False, ["git"]), (False, False, False, ["python", "git"]),
+    (True, True, True, ["git"]),
+])
+def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkeypatch, python_local, git_local, bad_git, expected):
+    from contextlib import contextmanager
+    import zipfile
+    from core import local_toolchain, native_preparation, native_interpreter, native_fetch_catalog
+    events, downloads = [], []
+    class Catalog:
+        prepared = False
+        def load(self):
+            if not self.prepared:
+                raise FileNotFoundError()
+            return None
+        def prepare(self, python, git):
+            if bad_git and git.name == "git-0":
+                raise NativeSandboxError("worker_failed")
+            self.prepared = True
+    monkeypatch.setattr(native_fetch_catalog, "FetchCatalog", Catalog)
+    @contextmanager
+    def workspace():
+        yield tmp_path
+    monkeypatch.setattr(native_preparation, "workspace", workspace)
+    monkeypatch.setattr(local_toolchain, "python_candidates", lambda: [Path("python")] if python_local else [])
+    monkeypatch.setattr(local_toolchain, "git_candidates", lambda: [Path("git")] if git_local else [])
+    monkeypatch.setattr(local_toolchain, "snapshot", lambda source, target, kind: target)
+    monkeypatch.setattr(native_interpreter, "probe", lambda *a, **k: ({SimpleNamespaceTag()}, {"python_version": "3.14"}))
+    @contextmanager
+    def inputs(kinds, progress):
+        kind = next(iter(kinds))
+        downloads.append(kind)
+        filename = tmp_path / (kind + ".zip")
+        with zipfile.ZipFile(filename, "w") as archive:
+            archive.writestr("python.exe" if kind == "python" else "ucrt64/bin/git.exe", b"fixture")
+        yield tmp_path, [({"kind": kind}, filename)]
+    monkeypatch.setattr(bootstrap, "_inputs", inputs)
+    bootstrap.ensure_fetch(lambda phase, name="": events.append(phase))
+    assert downloads == expected
+    assert events == (["tools", "repair"] if expected else ["tools"])
+
+
+class SimpleNamespaceTag:
+    platform = "win_amd64"
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_install_progress_does_not_print_package_names(monkeypatch, language):
+    from core import i18n
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    seen = []
+    monkeypatch.setattr(menu, "print_info", seen.append)
+    menu._install_progress("download", "python-very-long-archive-name.zip")
+    assert seen == []
+    for phase in ("tools", "repair", "runtime"):
+        menu._install_progress(phase, "internal-name")
+    assert len(seen) == 3
+    assert not any("internal-name" in text or "plugin_native." in text for text in seen)

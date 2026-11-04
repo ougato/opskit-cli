@@ -50,7 +50,7 @@ opskit plugin install https://git.example.com/team/hello.git --branch main
 
 菜单流程为：输入来源 → 自动准备采集工具 → 受限传输及隔离审核 → 自动准备并校验运行环境 → 展示版本、权限并确认信任 → 安装成功。拒绝信任或在确认时取消，按本次安装凭据撤回目录；不能证明目录归属时保留并报告。命令行安装同样自动准备，但保留显式授信语义，输出的 trust 状态不会被自动改成已授权。
 
-自动准备使用随发行包固定的 `core/plugin-bootstrap.json`，固定 Python、MinGit 和 SDK wheel 的来源、版本、大小与 SHA256；运行时不查询 GitHub releases API、不运行宿主 pip、安装脚本或仓库代码。下载缓存先校验，工具复制后在 AppContainer 中探测，通过后才发布 catalog。传输 pack 在隔离 Git 中校验与导出。首次下载失败可重新安装，已完成且校验通过的组件会复用；失败不会发布半成品插件。
+自动准备优先复制本机可用工具，在 AppContainer 中探测后才发布 catalog；本机安装目录不会被修改，也不会直接执行宿主包装脚本。Python 必须满足 SDK wheel 所需的 CPython 3.14 Windows x64 ABI。只对缺少、不兼容或自检失败的组件使用随发行包固定的 `core/plugin-bootstrap.json` 补齐，固定 Python、MinGit 和 SDK wheel 的来源、版本、大小与 SHA256；运行时不查询 GitHub releases API、不运行宿主 pip、安装脚本或仓库代码。下载缓存先校验。传输 pack 在隔离 Git 中校验与导出。首次下载失败可重新安装，已完成且校验通过的组件会复用；失败不会发布半成品插件。正常界面只报告检查环境、必要补齐、获取仓库和准备运行环境，不逐项打印压缩包或依赖文件名。
 
 SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。内网仅按本次来源确认或使用 `--allow-private`，不保存许可。
 

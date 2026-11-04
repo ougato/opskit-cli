@@ -104,7 +104,6 @@ def _inputs(kinds, progress):
             selected = []
             for asset in assets:
                 if asset["kind"] in kinds:
-                    progress("download", asset["filename"])
                     selected.append((asset, _download(asset, root, deadline)))
             yield Path(temporary), selected
 
@@ -118,17 +117,61 @@ def ensure_fetch(progress=lambda phase, name="": None):
     except (FileNotFoundError, ValueError):
         pass
     progress("tools", "")
-    with _inputs({"python", "git"}, progress) as (base, selected):
-        from core.archive import extract_zip
-        from core.archive_reader import open_zip
-        for asset, archive in selected:
-            target = base / asset["kind"]
-            with open_zip(archive) as content:
-                extract_zip(content, target)
-        # MinGit's object reader needs only git.exe and its adjacent DLLs.
-        # Preserve the official layout; snapshot that binary directory intact.
-        catalog.prepare(base / "python", base / "git" / "ucrt64" / "bin")
-    catalog.load()
+    from core.local_toolchain import python_candidates, git_candidates, snapshot
+    from core.native_preparation import workspace
+    from core.native_interpreter import probe
+    from core.logger import get_logger
+    from contextlib import ExitStack
+    def rejected(component, error):
+        # Fixed component and error category only; never tool output or paths.
+        get_logger("opskit.plugin.bootstrap").debug("Local %s rejected: %s", component, type(error).__name__)
+    with ExitStack() as stack:
+        base = Path(stack.enter_context(workspace()))
+        python = None
+        for index, source in enumerate(python_candidates()):
+            try:
+                candidate = snapshot(source, base / ("python-" + str(index)), "python")
+                tags, markers = probe(candidate, staging_parent=base)
+                if not markers["python_version"] == "3.14" or not any(tag.platform == "win_amd64" for tag in tags):
+                    raise ValueError("incompatible local Python ABI")
+                python = candidate
+                break
+            except (OSError, ValueError, RuntimeError) as error:
+                rejected("Python", error)
+        repaired = False
+        def downloaded(kind):
+            nonlocal repaired
+            if not repaired:
+                progress("repair", "")
+                repaired = True
+            with _inputs({kind}, progress) as (_, selected):
+                from core.archive import extract_zip
+                from core.archive_reader import open_zip
+                asset, archive = selected[0]
+                target = base / ("download-" + kind)
+                with open_zip(archive) as content:
+                    extract_zip(content, target)
+            return target if kind == "python" else target / "ucrt64" / "bin"
+        if python is None:
+            python = downloaded("python")
+            # Distinguish interpreter failure from Git self-test failure.
+            try:
+                probe(python, staging_parent=base)
+            except NativeSandboxError as error:
+                raise NativeSandboxError("fetch_python_failed") from error
+        for index, source in enumerate(git_candidates()):
+            try:
+                git = snapshot(source, base / ("git-" + str(index)), "git")
+                catalog.prepare(python, git)
+                catalog.load()
+                return
+            except (OSError, ValueError, RuntimeError) as error:
+                rejected("Git", error)
+        try:
+            catalog.prepare(python, downloaded("git"))
+        except NativeSandboxError as error:
+            raise NativeSandboxError("fetch_git_failed") from error
+        catalog.load()
 
 
 def ensure_runtime(manifest, progress=lambda phase, name="": None):
