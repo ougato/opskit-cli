@@ -35,43 +35,13 @@ def register(app, translate=None):
     translate = translate or (lambda key: t("plugin_native." + key))
     @app.command("disk-policy", help=t("plugin_native.disk.help"))
     @guarded
-    def disk_policy(minimum_free_mib: int = typer.Option(None, "--minimum-free-mib", help=t("plugin_native.disk.minimum")),
-                    output_directory: str = typer.Option(None, "--output-directory", help=t("plugin_native.disk.directory")),
-                    keep_builds: int = typer.Option(None, "--keep-builds", help=t("plugin_native.disk.keep"))):
+    def disk_policy(minimum_free_mib: int = typer.Option(None, "--minimum-free-mib", help=t("plugin_native.disk.minimum"))):
         from core.plugin_disk_policy import policy, configure
         try:
-            value = policy()
-            if any(item is not None for item in (minimum_free_mib, output_directory, keep_builds)):
-                value = configure(minimum_free_mib if minimum_free_mib is not None else value["minimum_free_mib"],
-                    output_directory if output_directory is not None else value["creator_output_directory"],
-                    keep_builds if keep_builds is not None else value["keep_builds"])
+            value = policy() if minimum_free_mib is None else configure(minimum_free_mib)
             emit({**value, "hard_quota": False})
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.disk.invalid"), 2)
-
-    @app.command("build-history", help=t("plugin_native.disk.history_help"))
-    @guarded
-    def build_history(project: str):
-        from core.plugin_host_tools import _ordinary
-        from core.plugin_build_history import inspect, project_lock
-        try:
-            root = _ordinary(project, directory=True)
-            with project_lock(root):
-                emit(inspect(root))
-        except (OSError, ValueError, RuntimeError):
-            fail(t("plugin_native.disk.failed"))
-
-    @app.command("clean-build", help=t("plugin_native.disk.clean_help"))
-    @guarded
-    def clean_build(project: str, token: str, record_sha256: str = typer.Option(..., "--record-sha256")):
-        from core.plugin_build_history import clean
-        from core.prompt import confirm
-        if not confirm(["OpsKit"], t("plugin_native.disk.cleanup_confirm"), info_lines=[project, token, record_sha256]):
-            return
-        try:
-            emit(clean(project, token, record_sha256))
-        except (OSError, ValueError, RuntimeError):
-            fail(t("plugin_native.disk.failed"))
 
     def acquisition_error(message, default):
         # Only fixed host-generated translations are safe to show. Never render
@@ -182,33 +152,6 @@ def register(app, translate=None):
             emit(collect(catalog, object_id, record_sha256))
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
-
-    @app.command("creator-tools", help=t("plugin_native.lifecycle.creator_tools_help"))
-    @guarded
-    def creator_tools():
-        from core.plugin_tool_config import creators
-        try:
-            emit(creators())
-        except (OSError, ValueError, RuntimeError):
-            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
-
-    @app.command("configure-creator", help=t("plugin_native.lifecycle.configure_creator_help"))
-    @guarded
-    def configure_creator(name: str, executable: str):
-        from core.plugin_tool_config import configure_creator as configure
-        try:
-            emit(configure(name, executable))
-        except (OSError, ValueError, RuntimeError):
-            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
-
-    @app.command("remove-creator", help=t("plugin_native.lifecycle.remove_creator_help"))
-    @guarded
-    def remove_creator(name: str):
-        from core.plugin_tool_config import remove_creator as remove
-        try:
-            emit(remove(name))
-        except (OSError, ValueError, RuntimeError):
-            fail(t("plugin_native.lifecycle.tool_config_failed"), 1)
 
     @app.command("inspect-state", help=t("plugin_native.lifecycle.inspect_state_help"))
     @guarded

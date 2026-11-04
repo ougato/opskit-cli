@@ -23,14 +23,14 @@ def _make_provider(root: Path, name: str = "storagey") -> Path:
     _write_manifest(plugin_dir, f"""\
         name: {name}
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: {name}_pkg
         provides:
           - storage
         service_contracts:
           storage:
-            api_version: 1
+            api_version: 3
             methods: [open_menu]
     """)
     pkg = plugin_dir / f"{name}_pkg"
@@ -81,7 +81,7 @@ def test_manifest_parses_provides_and_uses(tmp_path) -> None:
     _write_manifest(plugin_dir, """\
         name: p
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: p_pkg
         provides:
@@ -105,7 +105,7 @@ def test_manifest_defaults_empty_provides_uses(tmp_path) -> None:
     _write_manifest(plugin_dir, """\
         name: p
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: p_pkg
     """)

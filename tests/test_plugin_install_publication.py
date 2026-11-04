@@ -18,7 +18,7 @@ def installation(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     origin.mkdir()
     (origin / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n")
+        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n")
     (origin / "demo.py").write_text("# inert plugin; never imported\n")
     from tests.native_tool_fixtures import populate_synthetic
     monkeypatch.setattr("core.native_acquisition.populate", populate_synthetic)

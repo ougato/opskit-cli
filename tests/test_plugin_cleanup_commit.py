@@ -18,7 +18,7 @@ def test_state_commit_waits_for_resource_cleanup(tmp_path, monkeypatch, failure,
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     root = tmp_path / "plugin"
     root.mkdir()
-    (root / "plugin.yaml").write_text("name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n")
+    (root / "plugin.yaml").write_text("name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n")
     (root / "demo.py").write_text("raise RuntimeError('host must not import')")
     manifest = load_manifest(root)
     grant("demo", compute_fingerprint(root), "1.0.0")

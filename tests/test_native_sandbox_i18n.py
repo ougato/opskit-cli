@@ -66,6 +66,7 @@ def test_native_run_failure_uses_cli_error_boundary(monkeypatch, language):
 
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_lifecycle_help_and_resolution_errors_follow_language(monkeypatch, language):
+    monkeypatch.setenv("COLUMNS", "240")
     import typer
     from typer.testing import CliRunner
     from plugin import commands
@@ -85,9 +86,6 @@ def test_lifecycle_help_and_resolution_errors_follow_language(monkeypatch, langu
                          ("recover-native-workspace", "recover_workspace_help"),
                          ("inspect-native-cache", "inspect_cache_help"),
                          ("clean-native-cache", "clean_cache_help"),
-                         ("creator-tools", "creator_tools_help"),
-                         ("configure-creator", "configure_creator_help"),
-                         ("remove-creator", "remove_creator_help"),
                          ("fingerprint", "fingerprint_help"),
                          ("authorize-service", "authorize_service_help")):
         result = runner.invoke(app, [command, "--help"], terminal_width=240)

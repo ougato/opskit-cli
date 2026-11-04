@@ -100,7 +100,7 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 __all__ = [
     "read_host_file",
     "artifact_info",
-    "creator_build",
+    "host_execute", "host_artifacts", "host_path_info",
     "https_request",
     "upload_file",
     "SDK_API_VERSION",
@@ -130,9 +130,19 @@ def artifact_info(directory: str, relative: str) -> dict:
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
-def creator_build(executable: str, project: str, options: dict) -> dict:
-    """Build into a fresh project output; success includes inspected artifact metadata."""
+def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
+    """Execute an explicitly approved host tool; returns raw status and pending output."""
     raise PermissionError("host tool API requires an isolated plugin worker")
+
+
+def host_artifacts(action: str, parameters: dict) -> dict | list:
+    """Commit/list/collect identity-bound outputs owned by the current plugin."""
+    raise PermissionError("artifact receipt API requires an isolated plugin worker")
+
+
+def host_path_info(path: str, directory: bool = False) -> dict:
+    """Validate a consent-bound ordinary absolute host path without executing it."""
+    raise PermissionError("host path API requires an isolated plugin worker")
 
 
 def https_request(url: str, method: str = "GET", headers: dict | None = None,

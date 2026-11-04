@@ -12,7 +12,8 @@ def test_menu_displays_exact_record_before_optional_rollback(monkeypatch, langua
             "record_sha256": "b" * 64, "valid": True}
     monkeypatch.setattr(menu.recovery, "inspect", lambda: [item])
     titles, details, recovered, success = [], [], [], []
-    def select(breadcrumb, title, choices):
+    def select(breadcrumb, title, choices, **kwargs):
+        assert kwargs["back_label"]
         titles.append(title)
         assert breadcrumb[-1] == i18n.t("plugin_native.update_recovery.menu")
         assert item["transaction"] in choices[0]["label"]

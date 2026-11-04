@@ -22,7 +22,7 @@ def _write_manifest(plugin_dir: Path, content: str) -> None:
     (plugin_dir / "plugin.yaml").write_text(textwrap.dedent(content), encoding="utf-8")
 
 
-def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 1) -> Path:
+def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 3) -> Path:
     plugin_dir = root / name
     _write_manifest(plugin_dir, f"""\
         name: {name}
@@ -58,7 +58,7 @@ def _make_exec_plugin(root: Path, name: str = "extool") -> Path:
     _write_manifest(plugin_dir, f"""\
         name: {name}
         version: 0.1.0
-        api_version: 1
+        api_version: 3
         kind: exec
         entry: bin/run.sh
         label:
@@ -128,7 +128,7 @@ def test_invalid_name_skipped(plugins_root) -> None:
     _write_manifest(plugins_root / "badname", """\
         name: Bad-Name
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: pkg
     """)
@@ -146,7 +146,7 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     _write_manifest(broken, """\
         name: broken
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: broken_pkg
     """)
@@ -165,7 +165,7 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     _write_manifest(exiting, """\
         name: exiting
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: exiting_pkg
     """)
@@ -242,7 +242,7 @@ def test_entry_shadowing_core_rejected(plugins_root) -> None:
     _write_manifest(shadow, """\
         name: shadow
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: core
     """)
@@ -281,7 +281,7 @@ def test_exec_entry_escape_rejected(plugins_root) -> None:
     _write_manifest(plugins_root / "escape", """\
         name: escape
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: exec
         entry: ../../outside.sh
     """)
@@ -643,7 +643,7 @@ def test_manifest_group_fields(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: grouped
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: grouped_pkg
         group: insight-flow
@@ -664,7 +664,7 @@ def test_manifest_invalid_group_ignored(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: badgroup
         version: 1.0.0
-        api_version: 1
+        api_version: 3
         kind: python
         entry: badgroup_pkg
         group: "Bad Group!"

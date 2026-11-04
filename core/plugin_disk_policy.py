@@ -5,39 +5,29 @@ import shutil
 from core.config import configuration_transaction, load_config, set_config_value
 from core.i18n import t
 
-DEFAULTS = {"minimum_free_mib": 2048, "creator_output_directory": "", "keep_builds": 5}
+DEFAULTS = {"minimum_free_mib": 2048}
 
 
 def policy():
     plugin = load_config().get("plugin", {})
-    if not isinstance(plugin, dict):
+    if not isinstance(plugin, dict) or not isinstance(plugin.get("disk", {}), dict):
         raise ValueError(t("plugin_native.disk.invalid"))
-    value = plugin.get("disk", {})
-    if not isinstance(value, dict) or set(value) - set(DEFAULTS):
-        raise ValueError(t("plugin_native.disk.invalid"))
-    return validate({**DEFAULTS, **value})
+    # Read only the framework threshold. Preserve, but never interpret legacy keys.
+    return validate({"minimum_free_mib": plugin.get("disk", {}).get("minimum_free_mib", 2048)})
 
 
 def validate(value):
-    if (type(value["minimum_free_mib"]) is not int or not 256 <= value["minimum_free_mib"] <= 1048576
-            or type(value["keep_builds"]) is not int or not 1 <= value["keep_builds"] <= 100):
+    if (not isinstance(value, dict) or set(value) != set(DEFAULTS)
+            or type(value["minimum_free_mib"]) is not int
+            or not 256 <= value["minimum_free_mib"] <= 1048576):
         raise ValueError(t("plugin_native.disk.invalid"))
-    directory = value["creator_output_directory"]
-    if not isinstance(directory, str):
-        raise ValueError(t("plugin_native.disk.invalid"))
-    if directory:
-        from core.plugin_host_tools import _ordinary
-        value = dict(value, creator_output_directory=str(_ordinary(directory, directory=True)))
-        if ";" in directory:
-            raise ValueError(t("plugin_native.disk.invalid"))
     return dict(value)
 
 
-def configure(minimum_free_mib, creator_output_directory, keep_builds):
-    value = validate(dict(minimum_free_mib=minimum_free_mib,
-                          creator_output_directory=creator_output_directory, keep_builds=keep_builds))
+def configure(minimum_free_mib):
+    value = validate({"minimum_free_mib": minimum_free_mib})
     with configuration_transaction():
-        set_config_value({}, "plugin.disk", value)
+        set_config_value({}, "plugin.disk.minimum_free_mib", minimum_free_mib)
     return value
 
 

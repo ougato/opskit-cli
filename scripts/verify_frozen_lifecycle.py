@@ -47,7 +47,7 @@ def main():
     host_git("init", "--initial-branch=main")
     def commit(version):
         (repository / "plugin.yaml").write_text(
-            "name: lifecycle_probe\nversion: " + version + "\napi_version: 2\nkind: python\nentry: lifecycle_probe\n",
+            "name: lifecycle_probe\nversion: " + version + "\napi_version: 3\nkind: python\nentry: lifecycle_probe\n",
             encoding="utf-8")
         (repository / "lifecycle_probe.py").write_text(
             "from core.sdk import plugin_data_dir,current_lang\n"

@@ -17,7 +17,7 @@ def test_active_invocation_prevents_source_mutation(tmp_path, monkeypatch, opera
     plugins = tmp_path / 'plugins'
     root = plugins / 'demo'
     root.mkdir(parents=True)
-    (root / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n')
+    (root / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n')
     (root / 'demo.py').write_bytes(b'# retained source')
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(plugins))
     monkeypatch.setenv('OPSKIT_DATA_DIR', str(tmp_path / 'state'))
@@ -86,7 +86,7 @@ def test_failed_acquisition_preserves_installed_source_and_authorization(tmp_pat
     from core import plugin_sandbox as sandbox, plugin_trust as trust
     origin = tmp_path / 'origin'
     origin.mkdir()
-    (origin / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo\n')
+    (origin / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n')
     (origin / 'demo.py').write_text('# inert version one\n')
     def git(*args):
         subprocess.run(['git','-C',str(origin),'-c','user.name=test','-c','user.email=test@example.invalid',*args],

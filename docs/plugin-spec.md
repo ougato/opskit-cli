@@ -1,4 +1,4 @@
-# OpsKit 插件规范（SDK API2，原生沙盒）
+# OpsKit 插件规范（SDK API3，原生沙盒）
 
 ## 平台与边界
 
@@ -16,7 +16,7 @@ For migration steps and bilingual SDK examples, see the native upgrade guide.
 ```yaml
 name: hello
 version: 1.0.0
-api_version: 2
+api_version: 3
 kind: python
 entry: hello_pkg
 permissions: []
@@ -82,15 +82,17 @@ Both operations share the same scoped grant; once consent is reused within the i
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
 - `read_host_file(directory, relative)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。
-- `creator_build(executable, project, options)`：固定 Creator 构建操作。Windows 工具须为 Creator.exe 或 CocosCreator.exe；当前 options 仅支持 platform 和 debug。授权绑定插件指纹、工具内容、项目和构建参数。
-  每次显式输出到 `build/opskit-平台-随机ID`，授权另绑定输出策略；成功退出后检查新产物，返回 `artifact: {directory, files, bytes}`。
-  后续摘要/上传使用返回目录。产物检查上限 2 GiB/65536 条目/64 层，拒绝链接；网页须有非空 index.html。完成后检查不是磁盘硬配额，也不是原生包编译/安装验收。
-  返回 `success`、原始 `returncode` 和 `platform`；调用者检查 `success`，不要假定所有成功退出码为零。[Creator 3.8 官方文档](https://docs.cocos.com/creator/3.8/manual/en/editor/publish/publish-in-command-line.html)规定 36 为构建成功、32/34 为失败；兼容返回 0 的启动器。平台摘要随当前语言切换，第三方原始日志保留原文。
+- `host_path_info(path, directory=False)`：授权后验证绝对普通路径与目录身份。
+- `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell，不解释业务成功码。返回原始 `returncode`。
+  options 只支持 `output_parent`；提供时创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。
+- `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
+  `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
+  显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
 - `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
 - `upload_file(directory, relative, url, sha256, headers=None)`：单文件 HTTPS PUT，最多 512MiB；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
-Creator 在宿主执行，可能执行项目构建脚本；授权界面必须说明此边界。它不是让插件取得任意 shell。通用目录写入、大文件传输与 S3 工具链不能因能力类型已预留就视为可用。
+宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
 
 授权选项为本次、永久、拒绝；永久授权绑定内容身份与精确范围，可通过菜单或 `plugin permissions list` / `plugin permissions revoke ID` 查看和撤销。非交互模式没有授权时明确拒绝。
 
@@ -165,12 +167,12 @@ digest describes locally verified outgoing content. Multipart uploads, cross-fil
 URL signing and directory uploads are not included. Plugins invoke the bounded file API
 per object. Bilingual progress summaries display only the destination hostname.
 
-SDK 源码摘要已因新增接口改变，已有插件须重新 prepare；API2 的旧接口保持兼容。
+SDK 源码摘要已因新增接口改变，已有插件须重新 prepare；旧 SDK 1/2 插件必须升级到 3；不兼容时执行前拒绝，不保留旧业务接口。
 工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，
 仍不是文件系统磁盘硬配额。上传快照持有实际 worker 租约，清理与恢复使用同一身份记录。
 
 The SDK source digest changed; existing plugins must prepare their runtimes again. Existing
-API2 calls remain compatible. Workspace logical reservation is now 512MiB per workspace,
+SDK 1/2 plugins must migrate to SDK 3 and prepare their runtime again. Workspace logical reservation is now 512MiB per workspace,
 up to eight workspaces / 4GiB, including retained workspaces. This is not a filesystem hard
 quota. Upload snapshots hold a worker lease and share identity-bound cleanup/recovery.
 
@@ -191,29 +193,6 @@ Interrupted updates can be reviewed under **Plugin management → Recover interr
 
 Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、更新、取消/超时、状态回滚、宿主访问拒绝、真实构建与上传。Linux/macOS 后端未实现期间必须明确拒绝。源码测试、冻结包、实际 Creator 和 S3 是不同证据，不能互相替代。完整未完成清单见迁移文档。
 
-### 本机 Creator 配置 / Local Creator configuration
+### SDK 3 迁移
 
-在“插件管理 → 配置 Creator 工具”保存本机软件路径，或使用：
-
-```text
-opskit plugin configure-creator creator-3-8 "D:\cocos\creator\editors\Creator\3.8.7\CocosCreator.exe"
-opskit plugin creator-tools
-opskit plugin remove-creator creator-3-8
-```
-
-路径保存于当前 OpsKit 数据目录的 `config/common.yaml` 中 `host_tools.creators`，不属于游戏工程或插件清单，不应提交其他机器的绝对路径。
-支持多个命名工具，名称以小写字母开头，可含数字、下划线、连字符，最长 64 字符，最多 32 项。
-插件可调用 `creator_build("@creator/creator-3-8", project, {"platform": "web-mobile"})`；原绝对路径调用仍支持。
-保存配置只做路径校验，不启动软件、不授予执行权限。实际调用仍核对软件内容摘要、项目和选项并请求授权；执行期间工具名指向变化会拒绝继续。
-移除配置不会卸载软件或撤销历史授权；授权记录在权限管理中独立检查和撤销。
-
-Save local paths using **Plugin management → Configure Creator tools** or the commands above.
-Paths live in `host_tools.creators` in the active OpsKit data directory's `config/common.yaml`,
-separate from game and plugin configuration. Do not distribute machine-specific absolute paths.
-Up to 32 named tools are supported. Names start with a lowercase letter and may contain lowercase
-letters, digits, underscores and hyphens, up to 64 characters. Plugins use
-`creator_build("@creator/creator-3-8", project, {"platform": "web-mobile"})` or an explicit path.
-Saving validates the path without executing the application or granting permission. Calls still
-bind authorization to the executable digest, project and options; changing the named path during
-execution is refused. Removing a configuration neither uninstalls software nor revokes historical
-grants; inspect and revoke those separately in permission management.
+见 [业务分离与迁移](sdk3-business-separation.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。

@@ -69,7 +69,7 @@ def _entry() -> None:
                 subtitle=t("prompt.select"),
                 choices=choices,
                 theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
+                back_label=f"{get_icon('back')} {t('plugin_native.back')}",
             )
         except UserCancel:
             break
@@ -109,7 +109,7 @@ def _group_menu(group_id: str) -> None:
                 subtitle=t("prompt.select"),
                 choices=choices,
                 theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
+                back_label=f"{get_icon('back')} {t('plugin_native.back')}",
             )
         except UserCancel:
             break
@@ -130,13 +130,8 @@ def _manage() -> None:
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
             {"key": "2", "label": f"{get_icon('update')} {t('plugin.update')}"},
             {"key": "3", "label": f"{get_icon('trash')} {t('plugin.remove')}"},
-            {"key": "4", "label": t("plugin_native.permissions")},
-            {"key": "5", "label": t("plugin_native.update_recovery.menu")},
-            {"key": "6", "label": t("plugin_native.profile_recovery.menu")},
-            {"key": "7", "label": t("plugin_native.workspace_recovery.menu")},
-            {"key": "8", "label": t("plugin_native.cache_cleanup.menu")},
-            {"key": "9", "label": t("plugin_native.tool_config.menu")},
-            {"key": "10", "label": t("plugin_native.disk.menu")},
+            {"key": "4", "label": f"{get_icon('plugin_permissions')} {t('plugin_native.permissions')}"},
+            {"key": "5", "label": f"{get_icon('diagnose')} {t('plugin_native.maintenance')}"},
         ]
         try:
             key = select(
@@ -144,7 +139,7 @@ def _manage() -> None:
                 subtitle=t("prompt.select"),
                 choices=choices,
                 theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
+                back_label=f"{get_icon('back')} {t('plugin_native.back')}",
             )
         except UserCancel:
             break
@@ -161,25 +156,35 @@ def _manage() -> None:
                 from plugin.capability_menu import entry as permissions_entry
                 permissions_entry()
             elif key == "5":
-                from plugin.update_recovery_menu import entry as recovery_entry
-                recovery_entry()
-            elif key == "6":
-                from plugin.native_profile_menu import entry as profile_entry
-                profile_entry()
-            elif key == "7":
-                from plugin.workspace_recovery_menu import entry as workspace_entry
-                workspace_entry()
-            elif key == "8":
-                from plugin.cache_cleanup_menu import entry as cache_entry
-                cache_entry()
-            elif key == "9":
-                from plugin.tool_config_menu import entry as tool_entry
-                tool_entry()
-            elif key == "10":
-                from plugin.disk_menu import entry as disk_entry
-                disk_entry()
+                _maintenance()
         except (KeyboardInterrupt, UserCancel):
             pass
+
+
+def _maintenance() -> None:
+    items = [
+        ("restore", "update_recovery", "plugin.update_recovery_menu"),
+        ("sandbox_cleanup", "profile_recovery", "plugin.native_profile_menu"),
+        ("workspace_cleanup", "workspace_recovery", "plugin.workspace_recovery_menu"),
+        ("cache_cleanup", "cache_cleanup", "plugin.cache_cleanup_menu"),
+        ("disk", "disk", "plugin.disk_menu"),
+    ]
+    while True:
+        try:
+            key = select(
+                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance")],
+                subtitle=t("prompt.select"),
+                choices=[{"key": str(i + 1), "label": f"{get_icon(icon)} {t('plugin_native.' + name + '.menu')}"}
+                         for i, (icon, name, _) in enumerate(items)],
+                back_label=f"{get_icon('back')} {t('plugin_native.back')}", theme_key=_THEME_KEY,
+            )
+            if key is None:
+                return
+            if key.isdecimal() and 0 < int(key) <= len(items):
+                import importlib
+                importlib.import_module(items[int(key) - 1][2]).entry()
+        except (KeyboardInterrupt, UserCancel):
+            return
 
 
 def _summary_lines(manifest) -> list[str]:
@@ -268,7 +273,8 @@ def _fetch_options(source):
     choices = [{"key": key, "label": t("plugin_native.fetch_modes." + key)} for key in modes
                if remote.kind == "https" or modes[key][1]]
     key = select(breadcrumb=crumb, subtitle=t("plugin_native.fetch_access"), choices=choices,
-                 description=escape(canonical) + "\n" + t("plugin_native.fetch_access_hint"), theme_key=_THEME_KEY)
+                 description=escape(canonical) + "\n" + t("plugin_native.fetch_access_hint"),
+                 back_label=f"{get_icon('back')} {t('plugin_native.back')}", theme_key=_THEME_KEY)
     if key not in {choice["key"] for choice in choices}:
         raise UserCancel()
     private, credential = modes[key]
@@ -335,7 +341,7 @@ def _pick_member(subtitle_key: str, members):
             subtitle=t("plugin.select"),
             choices=choices,
             theme_key=_THEME_KEY,
-            back_label=f"{get_icon('back')} {t('menu.back')}",
+            back_label=f"{get_icon('back')} {t('plugin_native.back')}",
         )
     except UserCancel:
         return None
@@ -387,7 +393,7 @@ def _pick(subtitle_key: str, all_label: str = ""):
                 subtitle=t("plugin.select"),
                 choices=choices,
                 theme_key=_THEME_KEY,
-                back_label=f"{get_icon('back')} {t('menu.back')}",
+                back_label=f"{get_icon('back')} {t('plugin_native.back')}",
             )
         except UserCancel:
             return None

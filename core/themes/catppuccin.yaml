@@ -71,6 +71,10 @@ icons:
   toolkit: "\U0001F527"       # 🔧
   plugin: "\U0001F9E9"        # 🧩
   plugin_manage: "\U0001F9F0"  # 🧰
+  plugin_permissions: "\U0001F510" # 🔐
+  sandbox_cleanup: "\U0001F512"    # 🔒
+  workspace_cleanup: "\U0001F4C2"  # 📂
+  cache_cleanup: "\U0001F9F9"      # 🧹
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧

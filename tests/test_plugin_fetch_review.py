@@ -13,7 +13,7 @@ from test_plugin_fetch_candidate import archive, response
 from worker_test_markers import publish_process_marker, marked_process_exists
 
 
-BASE = {"name": "demo", "version": "1.0.0", "api_version": 2, "kind": "python", "entry": "demo"}
+BASE = {"name": "demo", "version": "1.0.0", "api_version": 3, "kind": "python", "entry": "demo"}
 
 
 def entries(manifest=None, *, checksums=False, executable=False):

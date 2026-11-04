@@ -8,7 +8,7 @@ from core.plugin import load_manifest
 def manifest(tmp_path, **fields):
     root = tmp_path / "owner"
     root.mkdir()
-    data = {"name": "owner", "version": "1.0.0", "api_version": 2,
+    data = {"name": "owner", "version": "1.0.0", "api_version": 3,
             "kind": "python", "entry": "owner_pkg", **fields}
     (root / "plugin.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     return load_manifest(root)
@@ -19,7 +19,7 @@ def test_provider_business_contract_is_independent_of_sdk_version(tmp_path):
     result = manifest(tmp_path, provides=["storage"], service_contracts=contract)
     assert result is not None
     assert result.service_contracts == contract
-    assert result.api_version == 2
+    assert result.api_version == 3
 
 
 def test_caller_restrictions_are_preserved_exactly(tmp_path):

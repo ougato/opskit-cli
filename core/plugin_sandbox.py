@@ -165,6 +165,10 @@ def compute_fingerprint(root):
 
 
 def check_authorization(manifest) -> str:
+    from core.constants import PLUGIN_API_VERSION
+    if manifest.api_version != PLUGIN_API_VERSION:
+        from core.i18n import t
+        raise SandboxError(t("plugin_native.errors.sdk_required"))
     if not getattr(_invocations, "inspection_scope", False):
         with _execution_budget():
             return check_authorization(manifest)
@@ -468,10 +472,10 @@ def _broker(manifest, request: dict):
         from core.plugin_http import request as https_request
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
-    if method == "host.creator_build":
-        if kwargs or len(args) != 3:
-            raise SandboxError("invalid Creator arguments")
-        from core.plugin_host_tools import creator_build
+    if method in {"host.execute", "host.artifacts", "host.path_info"}:
+        expected = 4 if method == "host.execute" else 2
+        if kwargs or len(args) != expected:
+            raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
@@ -481,10 +485,17 @@ def _broker(manifest, request: dict):
             _remaining()
             _check_live_authorizations()
         from core.prompt import console
-        return creator_build(manifest.name, fingerprint, *args, authority=authority,
-                             check_identity=identity, deadline=_invocations.deadline,
-                             checkpoint=checkpoint,
-                             output=lambda line: console.print(line, markup=False, highlight=False))
+        context = dict(authority=authority, check_identity=identity, deadline=_invocations.deadline,
+                       checkpoint=checkpoint,
+                       output=lambda line: console.print(line, markup=False, highlight=False))
+        if method == "host.execute":
+            from core.plugin_host_tools import execute
+            return execute(manifest.name, fingerprint, *args, **context)
+        if method == "host.path_info":
+            from core.plugin_host_tools import path_info
+            return path_info(manifest.name, fingerprint, *args, **context)
+        from core.plugin_artifacts import manage
+        return manage(manifest.name, fingerprint, *args, **context)
     if method == "host.artifact_info":
         if kwargs or len(args) != 2:
             raise SandboxError("invalid artifact arguments")

@@ -7,7 +7,7 @@ import stat
 import sys
 import zipfile
 
-RUNTIME_POLICY = 8
+RUNTIME_POLICY = 9
 BUNDLE_NAME = "plugin-runtime-sources.zip"
 MAX_SOURCE_BYTES = 4 * 1024**2
 MAX_CONTEXT_SOURCE_BYTES = 16 * 1024**2

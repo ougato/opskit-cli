@@ -15,7 +15,7 @@ from worker_test_markers import publish_marker
 from core import plugin, plugin_inspection as inspection, plugin_sandbox as sandbox
 
 
-BASE = {"name": "demo", "version": "1.0.0", "api_version": 2,
+BASE = {"name": "demo", "version": "1.0.0", "api_version": 3,
         "kind": "python", "entry": "demo_pkg"}
 
 

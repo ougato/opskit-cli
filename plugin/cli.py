@@ -12,7 +12,8 @@ def run_plugin(name: str, argv: list[str]) -> int:
         matches = [m for m in list_manifests() if m.name == name]
         _remaining()
         if len(matches) != 1:
-            raise SandboxError("plugin missing or identity ambiguous")
+            from core.i18n import t
+            raise SandboxError(t("plugin_native.errors.sdk_required"))
         result = invoke(matches[0], "cli", args=argv)
     if result is None:
         return 0

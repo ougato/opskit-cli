@@ -5,7 +5,7 @@ import pytest
 
 from core import plugin, bounded_yaml as metadata
 
-VALID = b"name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo_pkg\n"
+VALID = b"name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo_pkg\n"
 
 
 @pytest.mark.parametrize("content", [b"x" * (1024 * 1024 + 1), b"[" * 65 + b"0" + b"]" * 65,

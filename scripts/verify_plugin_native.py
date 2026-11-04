@@ -49,7 +49,7 @@ def verify(output, *, python_runtime, wheels, lock_file, language="en"):
     plugin = output / "plugins/native_probe"
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text(
-        "name: native_probe\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: native_probe\n",
+        "name: native_probe\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: native_probe\n",
         encoding="utf-8")
     (plugin / "native_probe.py").write_text(PROBE, encoding="utf-8")
     secret = output / "host-secret.txt"

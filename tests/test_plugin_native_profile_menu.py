@@ -18,7 +18,8 @@ def test_confirmed_profile_requires_explicit_confirmation(language, monkeypatch,
     monkeypatch.setattr(menu.recovery, "inspect", lambda: [item])
     recovered, messages = [], []
 
-    def select(breadcrumb, title, choices):
+    def select(breadcrumb, title, choices, **kwargs):
+        assert kwargs["back_label"]
         assert breadcrumb[-1] == i18n.t("plugin_native.profile_recovery.menu")
         assert title == i18n.t("plugin_native.profile_recovery.select")
         assert choices == [{"key": "1", "label": item["profile"]}]

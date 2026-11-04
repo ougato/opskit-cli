@@ -862,42 +862,20 @@ network:
   public_ip_failed: "获取公网 IP 失败"
 
 plugin_native:
+  back: "返回上层"
+  maintenance: 插件维护
   disk:
-    removed: 已删除选中的历史构建。
-    build_details: "{directory}；{size} 字节；{status}"
-    candidate: "可申请清理"
-    protected: "保留或已修改"
-    invalid: 容量配置无效：最低剩余空间须为 256..1048576 MiB，保留数须为 1..100，输出位置须为已存在的普通绝对目录（留空使用 project/build）。
-    low_space: '{path} 剩余空间不足：至少需要 {required} MiB，当前 {available} MiB。这是空间检查，不是磁盘硬配额。'
-    menu: 磁盘空间与构建历史
-    configure: 设置容量检查
-    history: 查看并清理旧构建产物
+    menu: 空间设置
     minimum: 最低剩余空间（MiB，256..1048576）
-    directory: Creator 输出目录（留空：project/build）
-    keep: 保留已完成构建数量（1..100）
-    project: 项目绝对路径
-    confirm: 保存容量配置？这是容量检查，不是磁盘硬配额。
-    cleanup_confirm: 删除这份有记录的旧构建？请先停止使用该产物的外部工具。未知或已修改产物会保留。
-    saved: 容量配置已保存。
-    failed: 磁盘操作被拒绝，请检查配置、剩余空间、目录归属及活动任务。
-    details: 最低剩余：{minimum} MiB；输出：{directory}；保留：{keep} 份
-    help: 查看或设置逻辑容量检查，不是文件系统硬配额。
-    history_help: 查看有归属记录的已完成 Creator 构建，不接管未知产物。
-    clean_help: 按已审核凭据清理一份旧构建，最新保留数量内的构建不可删除。
-  tool_config:
-    menu: "配置 Creator 工具"
-    select: "选择配置操作"
-    configure: "新增或更新 Creator 工具"
-    remove: "移除 Creator 工具配置"
-    name: "工具名（小写字母开头，可含数字、下划线或连字符）"
-    path: "Creator.exe 或 CocosCreator.exe 的绝对路径"
-    details: "工具名：{name}\n软件路径：{path}"
-    confirm: "保存本机路径？插件调用时仍须单独申请执行权限。"
-    confirm_remove: "移除此配置？软件和已有授权记录会保留。"
-    saved: "Creator 工具配置已保存，未授予执行权限。"
-    removed: "Creator 工具配置已移除。"
+    confirm: 保存空间阈值？这是剩余空间检查，不是磁盘硬配额。
+    saved: 空间阈值已保存。
+    failed: 空间设置被拒绝，请检查配置和剩余容量。
+    details: 最低剩余：{minimum} MiB；不提供磁盘硬配额。
+    invalid: 最低剩余空间必须为 256..1048576 MiB 的整数。
+    low_space: '{path} 剩余空间不足：至少需要 {required} MiB，当前 {available} MiB。这是空间检查，不是磁盘硬配额。'
+    help: 查看或设置插件框架最低剩余空间，不提供文件系统硬配额。
   cache_cleanup:
-    menu: "清理闲置原生缓存"
+    menu: 缓存清理
     catalog: "选择要检查的缓存"
     runtime: "插件运行时"
     fetch: "Git 采集工具"
@@ -909,7 +887,7 @@ plugin_native:
     confirm: "删除这项闲置缓存？活动读取、当前版本引用或身份变化都会阻止删除。"
     completed: "已删除所选闲置缓存对象。"
   workspace_recovery:
-    menu: "恢复原生沙盒临时目录"
+    menu: 临时清理
     empty: "未发现已确认归属的临时目录记录；不会接管没有记录的目录。"
     uncertain: "无效的临时目录记录已保留，需人工检查。"
     select: "选择临时目录记录查看详情"
@@ -917,7 +895,7 @@ plugin_native:
     confirm: "在无活动任务占用时删除此临时目录？记录的父目录和目录身份必须仍然匹配。"
     completed: "已删除记录中的原生沙盒临时目录及其恢复记录。"
   profile_recovery:
-    menu: "恢复原生沙盒配置"
+    menu: 沙盒清理
     empty: "未发现已确认创建的原生沙盒配置记录。"
     uncertain: "未确认或无效的配置记录已保留，需人工检查，不能作为删除依据。"
     select: "选择沙盒配置记录查看详情"
@@ -927,7 +905,7 @@ plugin_native:
     confirm_removed: "这项配置已确认删除，是否仅清理残留记录？不会再次删除任何配置。"
     completed_removed: "已清理删除完成后的残留记录。"
   update_recovery:
-    menu: "恢复中断更新"
+    menu: 更新回滚
     empty: "未发现有效的中断更新记录。"
     invalid: "部分更新目录的记录缺失或无效，已保留，需人工检查。"
     select: "选择中断更新查看详情"
@@ -940,25 +918,6 @@ plugin_native:
   upload:
     starting: "正在准备并上传文件到 {host}…"
     completed: "文件上传完成（{bytes} 字节）。"
-  creator:
-    invalid_artifact: "构建产物缺失、为空、已变化或包含不允许的链接，请查看工具输出。"
-    artifact_limit_exceeded: "构建产物超过检查上限（2 GiB、65536 个条目或 64 层目录）。"
-    artifact_failed: "Creator 已退出，但产物检查未通过，本次任务不会标记为成功；已有构建文件保留。"
-    system_unavailable: "无法定位 Windows 系统目录，请检查系统环境。"
-    absolute_path_required: "工具和工程必须使用有效的绝对路径。"
-    linked_path_forbidden: "工具和工程路径不能经过符号链接或重解析点。"
-    invalid_resource: "工具文件或工程目录无效，请检查配置路径。"
-    unsupported_executable: "当前仅支持 Windows 上的 Creator.exe 或 CocosCreator.exe。"
-    invalid_options: "Creator 构建仅支持 platform 和 debug 选项。"
-    invalid_platform: "不支持此构建平台，请选择 web-mobile、web-desktop、windows 或 android。"
-    invalid_debug: "debug 选项必须为布尔值。"
-    resource_changed: "工具或工程路径已改变，本次任务已停止，请重新确认后授权。"
-    executable_changed: "Creator 程序在授权期间发生变化，请重新确认后授权。"
-    log_limit_exceeded: "Creator 日志超过 16 MiB 上限，本次任务已停止。"
-    starting: "正在启动 Creator 构建（{platform}）…"
-    completed: "Creator 构建完成（{platform}）。"
-    failed: "Creator 构建失败（退出码 {code}），请查看上方工具原始输出。"
-    interrupted: "Creator 构建已中断或未能结束，正在停止本次任务的进程树。"
   fetch_access: "仓库访问方式"
   fetch_access_hint: "仅对本次仓库采集生效，不保存凭据或内网许可；仅在确认目标可信时允许内网。"
   fetch_profile_prompt: "私有仓库凭据文件路径"
@@ -991,7 +950,7 @@ plugin_native:
   revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
   id_help: "permissions list 显示的完整权限 ID"
   deny_return: "拒绝并返回"
-  description: "操作：{operation}\n资源：{resource}\n插件指纹：{fingerprint}\n宿主工具及项目构建脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离。权限可在插件权限管理中撤销。"
+  description: "操作：{operation}\n资源：{resource}\n插件指纹：{fingerprint}\n宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离。权限可在插件权限管理中撤销。"
   operations:
     directory:
       read: "读取目录"
@@ -999,6 +958,7 @@ plugin_native:
     tool:
       execute: "调用本机工具"
   errors:
+    sdk_required: "插件不存在、身份不唯一或 SDK 版本不兼容；当前要求 SDK 3，旧插件须升级清单和代码。"
     fetch_prepare_invalid: "原生 Git 或 Python 运行目录无效，请提供已审核的独立工具目录。"
     fetch_profile_invalid: "无法安全读取仓库凭据。请检查私有文件权限、格式及绑定的完整仓库地址。"
     fetch_private_denied: "仓库地址解析到了私网或保留 IP。确认目标可信后，可在本次命令添加 --allow-private。"
@@ -1052,10 +1012,6 @@ plugin_native:
     inspect_cache_help: "查看原生归属记录；catalog 为 runtime、fetch 或 prepare（准备临时目录）。"
     clean_cache_help: "使用完整归属记录 SHA256 清理闲置对象；catalog 为 runtime、fetch 或 prepare。"
     cache_cleanup_failed: "缓存清理被拒绝或未能确认完成；活动、被引用、已变化或归属未知的对象均保留。"
-    creator_tools_help: "查看本机已配置的 Creator 工具名及软件路径。"
-    configure_creator_help: "以工具名保存本机 Creator 软件路径；保存配置不授予执行权限。"
-    remove_creator_help: "移除本机 Creator 工具配置，不删除软件。"
-    tool_config_failed: "Creator 工具配置失败，请检查名称、软件路径及本机配置。"
     inspect_updates_help: "检查中断更新的恢复记录，不修改文件"
     recover_update_help: "恢复记录中的旧版本，撤销信任并保留全部恢复证据"
     update_recovery_failed: "无法确认更新恢复完成；文件和证据已保留，请重新检查该事务。"

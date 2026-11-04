@@ -86,8 +86,10 @@ def _adapt_sdk(name: str):
         return base64.b64decode(reply["content"], validate=True)
     sdk.read_host_file = read_host_file
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
-    sdk.creator_build = lambda executable, project, options: broker(
-        "host.creator_build", executable, project, options)
+    sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
+        "host.execute", executable, arguments, directory, {} if options is None else options)
+    sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
+    sdk.host_path_info = lambda path, directory=False: broker("host.path_info", path, directory)
     def https_request(url, method="GET", headers=None, body=b""):
         if not isinstance(body, bytes):
             raise TypeError("HTTPS body must be bytes")

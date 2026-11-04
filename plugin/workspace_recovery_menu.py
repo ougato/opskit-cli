@@ -2,11 +2,11 @@
 from core import plugin_workspace_recovery as recovery
 from core.i18n import t
 from core.prompt import select, confirm, pause, UserCancel
-from core.theme import print_info, print_error, print_success
+from core.theme import print_info, print_error, print_success, get_icon
 
 
 def entry():
-    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin_native.workspace_recovery.menu")]
+    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance"), t("plugin_native.workspace_recovery.menu")]
     try:
         records = recovery.inspect()
         confirmed = [item for item in records if item["valid"]]
@@ -18,7 +18,7 @@ def entry():
             return
         key = select(breadcrumb, t("plugin_native.workspace_recovery.select"),
                      [{"key": str(index + 1), "label": item["directory"]}
-                      for index, item in enumerate(confirmed)])
+                      for index, item in enumerate(confirmed)], back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(confirmed):
             return
         item = confirmed[int(key) - 1]

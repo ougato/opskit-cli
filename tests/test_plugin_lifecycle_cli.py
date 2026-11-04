@@ -33,7 +33,7 @@ def test_install_without_prepared_native_tools_does_not_publish_or_trust(isolate
     origin = isolated / "origin"
     origin.mkdir()
     manifest = origin / "plugin.yaml"
-    manifest.write_text("name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo_pkg\n", encoding="utf-8")
+    manifest.write_text("name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo_pkg\n", encoding="utf-8")
     (origin / "demo_pkg").mkdir()
     (origin / "demo_pkg" / "__init__.py").write_text("# do not import\n", encoding="utf-8")
     installed = call("plugin", "install", str(origin), "--branch", "main")

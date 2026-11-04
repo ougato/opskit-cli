@@ -19,7 +19,7 @@ from core import plugin_services as services
 def make_plugin(root, directory="demo", name="demo", **changes):
     target = root / directory
     target.mkdir(parents=True, exist_ok=True)
-    record = {"name": name, "version": "1.0.0", "api_version": 2, "kind": "python", "entry": "demo_pkg", **changes}
+    record = {"name": name, "version": "1.0.0", "api_version": 3, "kind": "python", "entry": "demo_pkg", **changes}
     (target / "plugin.yaml").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     (target / "demo_pkg").mkdir(exist_ok=True)
     (target / "demo_pkg" / "__init__.py").write_text("raise RuntimeError('inventory must never import plugin code')")

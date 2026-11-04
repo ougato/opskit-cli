@@ -40,7 +40,7 @@ def main():
     plugin = plugins / "frozen_upload_probe"
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text(
-        "name: frozen_upload_probe\nversion: 1.0.0\napi_version: 2\nkind: python\n"
+        "name: frozen_upload_probe\nversion: 1.0.0\napi_version: 3\nkind: python\n"
         "entry: frozen_upload_probe\npermissions: [network]\n", encoding="utf-8")
     (plugin / "frozen_upload_probe.py").write_text(
         "from core.sdk import upload_file,artifact_info,current_lang,plugin_data_dir\n"

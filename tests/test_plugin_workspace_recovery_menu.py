@@ -12,7 +12,8 @@ def test_menu_requires_review_and_confirmation(monkeypatch, language, approved):
             "record_sha256": "b" * 64, "valid": True}
     monkeypatch.setattr(menu.recovery, "inspect", lambda: [item])
     recovered, messages = [], []
-    def select(breadcrumb, title, choices):
+    def select(breadcrumb, title, choices, **kwargs):
+        assert kwargs["back_label"]
         assert breadcrumb[-1] == i18n.t("plugin_native.workspace_recovery.menu")
         assert title == i18n.t("plugin_native.workspace_recovery.select")
         assert choices[0]["label"] == item["directory"]

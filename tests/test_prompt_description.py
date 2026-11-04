@@ -23,6 +23,6 @@ def test_info_optional_icon_preserves_default(monkeypatch):
     assert '🔨 default' in stream.getvalue()
 
 
-def test_title_segments_have_no_padding_or_terminal_period():
-    assert prompt._seg_text('  文件冲突：ContentAdapter.ts。  ',prompt._INPUT_SEG).plain=='文件冲突：ContentAdapter.ts'
-    assert prompt._seg_text('OpsKit.',prompt._INPUT_SEG).plain=='OpsKit'
+def test_title_segments_have_single_space_padding_and_no_terminal_period():
+    assert prompt._seg_text('  文件冲突：ContentAdapter.ts。  ',prompt._INPUT_SEG).plain==' 文件冲突：ContentAdapter.ts '
+    assert prompt._seg_text('OpsKit.',prompt._INPUT_SEG).plain==' OpsKit '

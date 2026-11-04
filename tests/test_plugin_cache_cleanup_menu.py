@@ -13,7 +13,8 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
     monkeypatch.setattr(menu.cleanup, "inspect", lambda kind: [
         {"valid": False}, {"valid": True, "referenced": True}, item])
     calls, recovered, messages, notices = [], [], [], []
-    def select(breadcrumb, title, choices):
+    def select(breadcrumb, title, choices, **kwargs):
+        assert kwargs["back_label"]
         calls.append(title)
         if len(calls) == 1:
             assert title == i18n.t("plugin_native.cache_cleanup.catalog")
@@ -41,7 +42,7 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_cache_failure_uses_localized_error(monkeypatch, language):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
-    monkeypatch.setattr(menu, "select", lambda *args: "2")
+    monkeypatch.setattr(menu, "select", lambda *args, **kwargs: "2")
     def fail(kind):
         assert kind == "fetch"
         raise RuntimeError("internal path and secret")

@@ -95,18 +95,17 @@ def parse_release_versions(payload: object) -> list[str]:
 
 
 def fetch_versions() -> list[str]:
-    import httpx
+    from core.http import get_json
     from core.constants import TIMEOUT_VERSION_FETCH
 
-    resp = httpx.get(
+    data = get_json(
         CLICKHOUSE_RELEASES_API_URL,
-        params={"per_page": 30},
-        headers={"User-Agent": "opskit"},
         timeout=TIMEOUT_VERSION_FETCH,
+        retries=1,
     )
-    if resp.status_code != 200:
+    if data is None:
         return []
-    return parse_release_versions(resp.json())
+    return parse_release_versions(data)
 
 
 def download_clickhouse_tarball(version: str, dest: Path, progress_callback=None) -> Path:

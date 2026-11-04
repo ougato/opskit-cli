@@ -4,11 +4,11 @@ from rich.markup import escape
 from core.i18n import t
 from core import plugin_update_recovery as recovery
 from core.prompt import select, confirm, pause, UserCancel
-from core.theme import print_error, print_info, print_success
+from core.theme import print_error, print_info, print_success, get_icon
 
 
 def entry():
-    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin_native.update_recovery.menu")]
+    breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance"), t("plugin_native.update_recovery.menu")]
     try:
         records = recovery.inspect()
         valid = [item for item in records if item["valid"]]
@@ -20,7 +20,7 @@ def entry():
             return
         choices = [{"key": str(index + 1), "label": escape(item["plugin"]) + " · " + item["transaction"]}
                    for index, item in enumerate(valid)]
-        key = select(breadcrumb, t("plugin_native.update_recovery.select"), choices)
+        key = select(breadcrumb, t("plugin_native.update_recovery.select"), choices, back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(valid):
             return
         item = valid[int(key) - 1]

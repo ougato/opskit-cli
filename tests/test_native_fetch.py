@@ -156,7 +156,7 @@ def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch
         FetchCatalog().prepare(python, git_runtime)
         def version(value):
             (source / "plugin.yaml").write_text(
-                f"name: native_example\nversion: {value}\napi_version: 2\nkind: python\nentry: native_example\n")
+                f"name: native_example\nversion: {value}\napi_version: 3\nkind: python\nentry: native_example\n")
             (source / "native_example.py").write_text("raise RuntimeError('INSTALL_MUST_NOT_IMPORT')\n")
             for arguments in (["add", "plugin.yaml", "native_example.py"], ["commit", "-m", value]):
                 subprocess.run([host_git, "-c", "user.name=Test", "-c", "user.email=native@test.invalid",
@@ -281,7 +281,7 @@ def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
         assert {file.path for file in result.files} == {"plugin.yaml", "binary.dat"}
     def commit_version(version):
         (source / "plugin.yaml").write_text(
-            f"name: native_example\nversion: {version}\napi_version: 2\nkind: python\nentry: native_example\n")
+            f"name: native_example\nversion: {version}\napi_version: 3\nkind: python\nentry: native_example\n")
         (source / "native_example.py").write_text("raise RuntimeError('INSTALL_MUST_NOT_IMPORT')\n")
         for arguments in (["add", "plugin.yaml", "native_example.py"], ["commit", "-m", version]):
             subprocess.run([host_git, "-c", "user.name=Test", "-c", "user.email=native@test.invalid",

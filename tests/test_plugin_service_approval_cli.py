@@ -19,7 +19,7 @@ def installed(tmp_path, monkeypatch):
         root.mkdir(parents=True)
         (root / (name + "_pkg")).mkdir()
         (root / (name + "_pkg") / "__init__.py").write_text("raise RuntimeError('must never import during approval')\n")
-        data = {"name": name, "version": "1.0.0", "api_version": 2, "kind": "python", "entry": name + "_pkg"}
+        data = {"name": name, "version": "1.0.0", "api_version": 3, "kind": "python", "entry": name + "_pkg"}
         if name == "caller":
             data["uses"] = [{"service": "storage", "provider": "provider", "api_version": 7, "methods": ["read"]}]
         else:

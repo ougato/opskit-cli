@@ -52,7 +52,7 @@ def test_platform_never_imports_plugin_on_discovery(tmp_path, monkeypatch):
     from core.plugin_trust import grant, compute_fingerprint
     plugin = tmp_path / "plugins" / "evil"
     (plugin / "evil_pkg").mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: evil\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: evil_pkg\n")
+    (plugin / "plugin.yaml").write_text("name: evil\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: evil_pkg\n")
     marker = tmp_path / "polluted"
     (plugin / "evil_pkg" / "__init__.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
     grant("evil", compute_fingerprint(plugin), "1.0.0")
@@ -76,7 +76,7 @@ def test_service_proxy_rechecks_revocation(tmp_path, monkeypatch):
     from core.plugin_services import get_service, invalidate_service_cache
     plugin = tmp_path / "plugins" / "provider"
     plugin.mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: provider\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: provider_pkg\nprovides: [storage]\n")
+    (plugin / "plugin.yaml").write_text("name: provider\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: provider_pkg\nprovides: [storage]\n")
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(plugin.parent))
     grant("provider", compute_fingerprint(plugin), "1.0.0")
     invalidate_service_cache()

@@ -2,7 +2,7 @@
 from core.i18n import t
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied, _key
 from core.prompt import select, confirm, pause, UserCancel
-from core.theme import print_info, print_error, print_success
+from core.theme import print_info, print_error, print_success, get_icon
 from rich.markup import escape
 
 
@@ -19,7 +19,7 @@ def entry():
             choices = [{"key": str(index + 1), "label": escape(request.plugin) + " · " +
                         t("plugin_native.operations." + request.operation)}
                        for index, request in enumerate(grants)]
-            key = select(breadcrumb, t("plugin_native.select_grant"), choices)
+            key = select(breadcrumb, t("plugin_native.select_grant"), choices, back_label=f"{get_icon('back')} {t('plugin_native.back')}")
             if key is None:
                 return
             if not key.isdecimal() or not 0 < int(key) <= len(grants):

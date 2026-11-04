@@ -40,7 +40,7 @@ def test_preparation_expiry_does_not_launch_native_worker(tmp_path, monkeypatch)
     root = tmp_path / "plugin"
     root.mkdir()
     (root / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo_pkg\n")
+        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo_pkg\n")
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(config, "load_config", lambda: {"plugin": {"sandbox": {"timeout": 2}}})
     clock = [100.0]

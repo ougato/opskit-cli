@@ -184,7 +184,7 @@ def wire_client(tmp_path, monkeypatch):
     root = tmp_path / "plugin"
     (root / "demo_pkg").mkdir(parents=True)
     (root / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: demo_pkg\n", encoding="utf-8")
+        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo_pkg\n", encoding="utf-8")
     (root / "demo_pkg/__init__.py").write_text("raise RuntimeError('MUST_NOT_IMPORT')\n", encoding="utf-8")
     manifest = load_manifest(root)
     grant("demo", compute_fingerprint(root), "1.0.0")

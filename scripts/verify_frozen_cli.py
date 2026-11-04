@@ -43,8 +43,6 @@ def verify(binary, build, output, *, timeout=60):
         (["plugin", "recover-native-workspace", "--help"], 0, False),
         (["--output", "json", "plugin", "inspect-native-workspaces"], 0, True),
         (["plugin", "clean-native-cache", "--help"], 0, False),
-        (["plugin", "configure-creator", "--help"], 0, False),
-        (["--output", "json", "plugin", "creator-tools"], 0, True),
         (["--output", "json", "plugin", "inspect-native-cache", "runtime"], 0, True),
         (["--output", "json", "plugin", "inspect-updates"], 0, True),
         (["--output", "json", "plugin", "inspect-workspaces"], 0, True),

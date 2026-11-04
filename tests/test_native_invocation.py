@@ -69,7 +69,7 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     plugin = tmp_path / "plugin"
     plugin.mkdir()
     (plugin / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 2\nkind: python\nentry: public_example\n")
+        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: public_example\n")
     (plugin / "public_example.py").write_text(
         "from core.sdk import plugin_data_dir\n"
         "def cli(argv):\n"

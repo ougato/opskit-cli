@@ -863,49 +863,20 @@ network:
   public_ip_failed: "Failed to get public IP"
 
 plugin_native:
+  back: "Back to parent"
+  maintenance: Plugin maintenance
   disk:
-    removed: Selected build output removed.
-    build_details: "{directory}; {size} bytes; {status}"
-    candidate: "Available for reviewed cleanup"
-    protected: "Retained or modified"
-    invalid: Invalid disk policy. Minimum free space must be 256..1048576 MiB, retained
-      builds 1..100, and output must be an existing ordinary absolute directory (empty
-      uses project/build).
-    low_space: 'Insufficient free space at {path}: need at least {required} MiB, available
-      {available} MiB. No hard quota is enforced.'
-    menu: Disk space and build history
-    configure: Configure capacity checks
-    history: Review and clean old build outputs
+    menu: Space settings
     minimum: Minimum free space (MiB, 256..1048576)
-    directory: 'Creator output directory (empty: project/build)'
-    keep: Completed builds to retain (1..100)
-    project: Absolute project directory
-    confirm: Save disk policy? This is a capacity check, not a hard quota.
-    cleanup_confirm: Delete this recorded old build? Stop external tools using this
-      output first. Unknown or modified outputs are retained.
-    saved: Disk policy saved.
-    failed: Disk operation refused. Check configuration, free space, ownership and active
-      tasks.
-    details: 'Minimum: {minimum} MiB; output: {directory}; retain: {keep}'
-    help: Inspect or configure logical disk policy; this is not a filesystem hard quota.
-    history_help: Inspect recorded completed Creator builds; unknown outputs are never
-      adopted.
-    clean_help: Remove one recorded old build matching the reviewed receipt; newest
-      retained builds are protected.
-  tool_config:
-    menu: "Configure Creator tools"
-    select: "Select a configuration action"
-    configure: "Add or update a Creator tool"
-    remove: "Remove a Creator tool configuration"
-    name: "Tool name (lowercase letters, digits, underscores or hyphens)"
-    path: "Absolute path to Creator.exe or CocosCreator.exe"
-    details: "Name: {name}\nExecutable: {path}"
-    confirm: "Save this local path? Plugins must still request execution permission."
-    confirm_remove: "Remove this configuration? The application and existing permission records will remain."
-    saved: "Creator tool configuration saved. No execution permission was granted."
-    removed: "Creator tool configuration removed."
+    confirm: Save the free-space threshold? This is a check, not a disk quota.
+    saved: Space threshold saved.
+    failed: Space configuration refused; check configuration and available capacity.
+    details: 'Minimum free: {minimum} MiB; no filesystem quota.'
+    invalid: Minimum free space must be an integer from 256 to 1048576 MiB.
+    low_space: 'Insufficient space at {path}: need {required} MiB, available {available} MiB. This is a check, not a hard quota.'
+    help: Inspect or configure framework disk headroom; no filesystem hard quota.
   cache_cleanup:
-    menu: "Clean unused native cache"
+    menu: Cache cleanup
     catalog: "Select the cache to inspect"
     runtime: "Plugin runtimes"
     fetch: "Git acquisition tools"
@@ -917,7 +888,7 @@ plugin_native:
     confirm: "Delete this unused cache object? Active readers, current references and changed identities will prevent deletion."
     completed: "The selected unused cache object was removed."
   workspace_recovery:
-    menu: "Recover native workspaces"
+    menu: Workspace cleanup
     empty: "No confirmed native workspace records were found. Unrecorded directories are never adopted."
     uncertain: "Invalid workspace records are retained for manual inspection."
     select: "Select a workspace record to inspect"
@@ -925,7 +896,7 @@ plugin_native:
     confirm: "Remove this temporary workspace if inactive? The recorded parent and directory identities must still match."
     completed: "The recorded native workspace and its recovery record were removed."
   profile_recovery:
-    menu: "Recover native sandbox profiles"
+    menu: Sandbox cleanup
     empty: "No confirmed native profile records were found."
     uncertain: "Unconfirmed or invalid profile records are retained for manual inspection; they cannot authorize removal."
     select: "Select a profile record to inspect"
@@ -935,7 +906,7 @@ plugin_native:
     confirm_removed: "Profile deletion was already confirmed. Retire only this residual record? No profile will be deleted again."
     completed_removed: "The completed profile deletion record was retired."
   update_recovery:
-    menu: "Recover interrupted update"
+    menu: Update rollback
     empty: "No valid interrupted update records were found."
     invalid: "Some update directories have invalid or missing records. They are retained for manual inspection."
     select: "Select an interrupted update to inspect"
@@ -948,25 +919,6 @@ plugin_native:
   upload:
     starting: "Preparing and uploading file to {host}..."
     completed: "File upload completed ({bytes} bytes)."
-  creator:
-    invalid_artifact: "Build output is missing, empty, changed or contains a forbidden link. Check the tool output."
-    artifact_limit_exceeded: "Build output exceeds inspection limits (2 GiB, 65536 entries or 64 directory levels)."
-    artifact_failed: "Creator exited, but output inspection did not pass. The task is not marked successful; existing build files are retained."
-    system_unavailable: "The Windows system directory is unavailable. Check the system environment."
-    absolute_path_required: "The tool and project require valid absolute paths."
-    linked_path_forbidden: "Tool and project paths must not traverse symbolic links or reparse points."
-    invalid_resource: "The tool file or project directory is invalid. Check the configured paths."
-    unsupported_executable: "Only Creator.exe or CocosCreator.exe on Windows is currently supported."
-    invalid_options: "Creator builds only accept platform and debug options."
-    invalid_platform: "Unsupported build platform. Choose web-mobile, web-desktop, windows or android."
-    invalid_debug: "The debug option must be a boolean."
-    resource_changed: "The tool or project resource changed. The task was stopped; review it and authorize again."
-    executable_changed: "Creator changed during authorization. Review it and authorize again."
-    log_limit_exceeded: "Creator logs exceeded the 16 MiB limit. The task was stopped."
-    starting: "Starting Creator build ({platform})..."
-    completed: "Creator build completed ({platform})."
-    failed: "Creator build failed (exit code {code}). See the original tool output above."
-    interrupted: "Creator build was interrupted or could not finish; its owned process tree is being stopped."
   fetch_access: "Repository access"
   fetch_access_hint: "Only for this acquisition; credentials and private-network access are not saved. Allow private access only for a trusted target."
   fetch_profile_prompt: "Private repository credential file path"
@@ -1007,6 +959,7 @@ plugin_native:
     tool:
       execute: "Run a host tool"
   errors:
+    sdk_required: "Plugin is missing, ambiguous or incompatible; SDK 3 is required. Upgrade older plugin manifests and code."
     fetch_prepare_invalid: "Invalid native Git or Python runtime. Use reviewed standalone tool directories."
     fetch_profile_invalid: "Cannot securely read repository credentials. Check private file permissions, format and exact repository binding."
     fetch_private_denied: "The repository resolves to a private or reserved IP. Add --allow-private for this command only after checking the target."
@@ -1060,10 +1013,6 @@ plugin_native:
     inspect_cache_help: "Inspect native ownership records; catalog is runtime, fetch or prepare (preparation workspaces)."
     clean_cache_help: "Remove one unused recorded object using its full ownership SHA256; catalog is runtime, fetch or prepare."
     cache_cleanup_failed: "Cache cleanup was refused or could not be confirmed. Active, referenced, changed or unknown objects are retained."
-    creator_tools_help: "List locally configured Creator tool names and executable paths."
-    configure_creator_help: "Save a local Creator executable under a tool name; this does not grant execution permission."
-    remove_creator_help: "Remove a local Creator tool configuration without deleting the application."
-    tool_config_failed: "Creator tool configuration failed. Check the name, executable path and local configuration."
     inspect_updates_help: "Inspect interrupted update records without changing files"
     recover_update_help: "Restore the recorded previous version; revoke trust and retain all recovery evidence"
     update_recovery_failed: "Update recovery could not be confirmed. Files and evidence are retained; inspect the transaction again."

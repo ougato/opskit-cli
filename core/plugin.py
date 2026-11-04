@@ -181,7 +181,7 @@ def _parse_manifest(data, plugin_root: Path) -> PluginManifest | None:
     except (TypeError, ValueError):
         _log.warning("plugin %s: api_version is not an integer", name)
         return None
-    if api_version not in (1, PLUGIN_API_VERSION):
+    if api_version != PLUGIN_API_VERSION:
         _log.warning(
             "plugin %s: api_version %s incompatible with SDK %s, skipped",
             name, api_version, PLUGIN_API_VERSION,
