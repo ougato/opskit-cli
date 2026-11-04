@@ -18,11 +18,13 @@ def test_python_snapshot_excludes_user_packages_and_resets_search_paths(tmp_path
     (source / "Lib/site-packages").mkdir()
     (source / "Lib/site-packages/private.py").write_text("private = True")
     (source / "python314._pth").write_text("C:/external/packages\nimport site\n")
+    (source / "unicodedata.pyd").write_bytes(b"fixture extension")
     result = tools.snapshot(source, tmp_path / "snapshot", "python")
     assert not (result / "Lib/site-packages").exists()
     assert (result / "python314._pth").read_text() == "python314.zip\n.\nLib\nDLLs\n"
     assert (source / "python314._pth").read_text().startswith("C:/external")
     assert (result / "python314.dll").read_bytes() == b"fixture DLL"
+    assert (result / "unicodedata.pyd").read_bytes() == b"fixture extension"
 
 
 def test_python_snapshot_rejects_an_incompatible_interpreter(tmp_path):

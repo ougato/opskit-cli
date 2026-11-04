@@ -170,6 +170,8 @@ def ensure_fetch(progress=lambda phase, name="": None):
         try:
             catalog.prepare(python, downloaded("git"))
         except NativeSandboxError as error:
+            if error.code == "fetch_git_command_failed":
+                raise
             raise NativeSandboxError("fetch_git_failed") from error
         catalog.load()
 

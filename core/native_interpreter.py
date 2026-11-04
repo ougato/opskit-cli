@@ -21,7 +21,8 @@ def probe(source, *, staging_parent):
                    else Path(packaging.__file__).parent)
         (root / "libraries").mkdir()
         stage(package, root / "libraries" / "packaging", inventory(package))
-        code = ("import sys,json; sys.path.insert(0," + repr(str(root / "libraries")) + "); "
+        code = ("import sys,json,hashlib,tarfile,tempfile,unicodedata,subprocess,threading,queue,"
+                "ssl,socket,ctypes,bz2,lzma,zlib; sys.path.insert(0," + repr(str(root / "libraries")) + "); "
                 "from packaging.tags import sys_tags; from packaging.markers import default_environment; "
                 "print('OPSKIT_RPC:'+json.dumps({'rpc_version':1,'type':'result','state':'',"
                 "'value':{'tags':[str(tag) for tag in sys_tags()], 'markers':default_environment()}}),flush=True)")

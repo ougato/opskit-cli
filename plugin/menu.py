@@ -223,8 +223,7 @@ def _install() -> None:
         return
     if not commands.is_trusted_source(url):
         print_warning(t("plugin.source_warning"))
-    manifest, err = commands.install(url, branch, alias, automatic=True,
-                                     progress=_install_progress, **_fetch_options(url))
+    manifest, err = _install_with_progress(url, branch, alias)
     if manifest is None:
         if err.startswith("exists:"):
             print_error(t("plugin.install_exists", name=err.split(":", 1)[1]))
@@ -265,13 +264,13 @@ def _confirm_install(manifest, source, branch=None):
             invalidate(manifest.name)
 
 
-def _install_progress(phase, name=""):
-    if phase not in {"fetch", "tools", "repair", "runtime"}:
-        return
-    if phase == "fetch":
-        print_info(t("plugin.cloning_branch", branch=name) if name else t("plugin.cloning"))
-    else:
-        print_info(t("plugin_native.bootstrap." + phase, name=name))
+def _install_with_progress(url, branch=None, alias=None):
+    from core.installation_progress import InstallationProgress
+    options = _fetch_options(url)
+    with InstallationProgress() as progress:
+        if "fetch_interaction" in options:
+            options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
+        return commands.install(url, branch, alias, automatic=True, progress=progress, **options)
 
 
 def _fetch_options(source):

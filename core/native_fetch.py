@@ -67,8 +67,33 @@ def local_candidate(python, git_runtime, source, *, staging_parent, deadline,
             check()
             with open_worker(backend, str(executable), ["-I", "-S", "-B", "-u", "-c", bootstrap],
                              readonly_trees=(base,), writable_trees=(work,), cwd=str(work)) as child:
-                capture(child, response, deadline=deadline, checkpoint=check)
+                try:
+                    capture(child, response, deadline=deadline, checkpoint=check)
+                except NativeSandboxError as error:
+                    if error.code == "worker_failed":
+                        _worker_failure(response, child.poll())
+                    raise
         check()
         result = supervised_inventory(response, timeout=deadline - time.monotonic())
         check()
         yield result, response
+
+
+def _worker_failure(response, exit_code):
+    """Accept only bounded fixed diagnostics, never render raw worker output."""
+    from core.logger import get_logger
+    response.seek(0)
+    body = response.read(512)
+    prefix = b"OPSKIT_FETCH_ERROR:"
+    if body.startswith(prefix):
+        try:
+            data = json.loads(body[len(prefix):])
+            if (set(data) == {"operation", "code"} and data["operation"] in {
+                    "check-ref-format", "rev-parse", "ls-tree", "cat-file", "index-pack", "unknown"}
+                    and type(data["code"]) is int and -(2**31) <= data["code"] < 2**32):
+                get_logger("opskit.plugin.bootstrap").debug("Isolated Git operation=%s exit=%s", data["operation"], data["code"])
+                raise NativeSandboxError("fetch_git_command_failed", operation=data["operation"], exit_code=data["code"])
+        except (ValueError, TypeError, KeyError):
+            pass
+    if type(exit_code) is int:
+        get_logger("opskit.plugin.bootstrap").debug("Native fetch worker exit=%s", exit_code)

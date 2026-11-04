@@ -148,6 +148,7 @@ def test_menu_success_follows_runtime_and_trust(installation, monkeypatch, accep
     (True, True, False, []), (False, True, False, ["python"]),
     (True, False, False, ["git"]), (False, False, False, ["python", "git"]),
     (True, True, True, ["git"]),
+    ("broken", True, False, ["python"]),
 ])
 def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkeypatch, python_local, git_local, bad_git, expected):
     from contextlib import contextmanager
@@ -172,7 +173,11 @@ def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkey
     monkeypatch.setattr(local_toolchain, "python_candidates", lambda: [Path("python")] if python_local else [])
     monkeypatch.setattr(local_toolchain, "git_candidates", lambda: [Path("git")] if git_local else [])
     monkeypatch.setattr(local_toolchain, "snapshot", lambda source, target, kind: target)
-    monkeypatch.setattr(native_interpreter, "probe", lambda *a, **k: ({SimpleNamespaceTag()}, {"python_version": "3.14"}))
+    def probe(source, **kwargs):
+        if python_local == "broken" and source.name == "python-0":
+            raise NativeSandboxError("worker_failed")
+        return {SimpleNamespaceTag()}, {"python_version": "3.14"}
+    monkeypatch.setattr(native_interpreter, "probe", probe)
     @contextmanager
     def inputs(kinds, progress):
         kind = next(iter(kinds))
@@ -194,12 +199,25 @@ class SimpleNamespaceTag:
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_install_progress_does_not_print_package_names(monkeypatch, language):
     from core import i18n
+    from core import installation_progress as ui
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     seen = []
-    monkeypatch.setattr(menu, "print_info", seen.append)
-    menu._install_progress("download", "python-very-long-archive-name.zip")
-    assert seen == []
-    for phase in ("tools", "repair", "runtime"):
-        menu._install_progress(phase, "internal-name")
+    class Status:
+        def __init__(self, message, **kwargs):
+            assert kwargs["spinner"] == "squareCorners"
+            seen.append(str(message))
+        def start(self):
+            pass
+        def stop(self):
+            pass
+        def update(self, message):
+            seen.append(str(message))
+    monkeypatch.setattr(ui, "Status", Status)
+    monkeypatch.setattr(ui, "console", SimpleNamespace(is_terminal=True))
+    with ui.InstallationProgress() as progress:
+        progress("download", "python-very-long-archive-name.zip")
+        assert seen == []
+        for phase in ("tools", "repair", "runtime"):
+            progress(phase, "internal-name")
     assert len(seen) == 3
     assert not any("internal-name" in text or "plugin_native." in text for text in seen)

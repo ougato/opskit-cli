@@ -52,6 +52,10 @@ def register(app, translate=None):
                 "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
         safe.update(t("plugin_native.errors.platform_pending", platform=platform) for platform in ("linux", "darwin"))
+        template = re.escape(t("plugin_native.errors.fetch_git_command_failed", operation="OPERATION", exit_code="CODE"))
+        pattern = template.replace("OPERATION", r"(?:check-ref-format|rev-parse|ls-tree|cat-file|index-pack|unknown)").replace("CODE", r"-?\d{1,10}")
+        if re.fullmatch(pattern, message):
+            return message
         return message if message in safe else t("plugin_native.errors." + default)
     def state_command(name, caller, digest=None):
         from core.plugin_state import _binding

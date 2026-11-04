@@ -96,7 +96,7 @@ def snapshot(source, destination, kind):
         if not (source / "python.exe").is_file() or not (source / "python314.dll").is_file():
             raise ValueError("incompatible local Python")
         paths = [path for path in source.iterdir() if path.is_file() and (
-            path.name == "python.exe" or path.suffix.lower() == ".dll" or path.name == "python314.zip")]
+            path.name == "python.exe" or path.suffix.lower() in {".dll", ".pyd"} or path.name == "python314.zip")]
         for name in ("Lib", "DLLs"):
             tree = source / name
             if tree.exists():

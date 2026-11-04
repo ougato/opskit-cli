@@ -973,6 +973,7 @@ plugin_native:
     fetch_prepare_failed: "Native Git tool preparation or its isolated verification failed."
     fetch_python_failed: "Python could not start in isolation. Check system runtime libraries or security software."
     fetch_git_failed: "Git failed its isolated self-test. Check tool dependencies or security software."
+    fetch_git_command_failed: "Isolated Git execution failed (step {operation}, code {exit_code}); installation was not completed."
     fetch_setup_failed: "Acquisition tool preparation failed. Check network, free space and directory permissions, then retry installation. Verified downloads are reused."
     runtime_setup_failed: "Plugin runtime preparation failed; installation was not completed. Check network, free space and directory permissions, then retry."
     fetch_tools_missing: "Prepare the native Git toolchain first with plugin prepare-fetch --python-runtime PATH --git-runtime PATH."

@@ -207,11 +207,11 @@ def _guided_install(name: str, source: str) -> object | None:
     if not source:
         return None
     from plugin import commands as plugin_commands
-    from plugin.menu import _display_name, _confirm_install, _install_progress, _fetch_options
+    from plugin.menu import _display_name, _confirm_install, _install_with_progress
 
     clear_screen()
     print_header([APP_NAME, t("service.installing", service=name)])
-    manifest, err = plugin_commands.install(source, automatic=True, progress=_install_progress, **_fetch_options(source))
+    manifest, err = _install_with_progress(source)
     if manifest is None:
         print_error(t("plugin.install_failed", error=err))
         pause()

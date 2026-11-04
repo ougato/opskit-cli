@@ -14,6 +14,13 @@ from core.plugin_git_archive import (
 )
 
 
+class GitCommandError(RuntimeError):
+    def __init__(self, operation, code):
+        self.operation = operation
+        self.code = code
+        super().__init__("isolated Git command failed")
+
+
 def _work_quota(work):
     count, size = 0, 0
     pending = [work]
@@ -54,9 +61,14 @@ def _run(git, arguments, work, deadline, limit, *, input_file=None, output_file=
             "-c", "core.hooksPath=" + _git_path(work / "empty"),
             "-c", "core.attributesFile=" + _git_path(work / "empty-config"),
             "-c", "protocol.allow=never", *arguments]
-    process = subprocess.Popen(args, cwd=work, env=environment,
-                               stdin=input_file if input_file is not None else subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    operation = next((arg for arg in arguments if arg in {
+        "check-ref-format", "rev-parse", "ls-tree", "cat-file", "index-pack"}), "unknown")
+    try:
+        process = subprocess.Popen(args, cwd=work, env=environment,
+                                   stdin=input_file if input_file is not None else subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as error:
+        raise GitCommandError(operation, error.winerror if hasattr(error, "winerror") else error.errno) from None
     pending = queue.Queue(maxsize=4)
     stopped = threading.Event()
 
@@ -108,8 +120,11 @@ def _run(git, arguments, work, deadline, limit, *, input_file=None, output_file=
             else:
                 output_file.write(body)
         remaining = deadline - time.monotonic()
-        if remaining <= 0 or process.wait(timeout=remaining) != 0:
-            raise ValueError("native Git command failed")
+        if remaining <= 0:
+            raise ValueError("native fetch deadline exceeded")
+        code = process.wait(timeout=remaining)
+        if code != 0:
+            raise GitCommandError(operation, code)
         return bytes(result)
     finally:
         stopped.set()
@@ -219,6 +234,13 @@ def main(request_file):
 if __name__ == "__main__":
     try:
         main(sys.argv[1])
+    except GitCommandError as error:
+        # Fixed operation and numeric code only. Never expose tool stderr,
+        # repository data, local paths or credentials through diagnostics.
+        sys.stdout.buffer.write(b"OPSKIT_FETCH_ERROR:" + json.dumps({
+            "operation": error.operation, "code": error.code}).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+        sys.exit(1)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         # No repository path, credentials or tool output in diagnostics.
         sys.exit(1)
