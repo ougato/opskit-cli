@@ -83,7 +83,13 @@ def _snapshot(core, names):
             raise ValueError("runtime source inventory exceeds limits")
         result["core/" + name] = content
     if "native_fetch_worker.py" in names:
-        import dulwich
+        try:
+            import dulwich
+        except ImportError as error:
+            from core.logger import get_logger
+            from core.native_sandbox import NativeSandboxError
+            get_logger("opskit.plugin.bootstrap").debug("Fetch source dependency unavailable: %s", type(error).__name__)
+            raise NativeSandboxError("fetch_dependency_missing") from error
         package = Path(dulwich.__file__).parent
         for source in package.rglob("*.py"):
             if "tests" in source.relative_to(package).parts:
