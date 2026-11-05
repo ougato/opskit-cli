@@ -45,26 +45,10 @@ def test_directory_nodes_consume_entry_budget(monkeypatch):
         worker._records(record(b"a/b/file"))
 
 
-def test_environment_does_not_inherit_host_config_credentials_or_execution(monkeypatch, tmp_path):
+def test_fetch_worker_does_not_launch_a_git_subprocess(monkeypatch, tmp_path):
     from core import native_fetch_worker as native
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
-    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.sshCommand")
-    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "fixture-private")
-    monkeypatch.setenv("LD_PRELOAD", "fixture-private")
-    monkeypatch.setenv("SystemRoot", "C:\\Windows")
-    captured = {}
-    class Captured(RuntimeError):
-        pass
-    def process(args, **kwargs):
-        captured.update(kwargs["env"])
-        raise Captured()
-    monkeypatch.setattr(native.subprocess, "Popen", process)
-    with pytest.raises(Captured):
-        native._run(tmp_path / "git.exe", [], tmp_path, 100, 100)
-    environment = captured
-    assert "fixture-private" not in repr(environment)
-    assert "GIT_CONFIG_COUNT" not in environment and "LD_PRELOAD" not in environment
-    assert environment["GIT_CONFIG_GLOBAL"] == native._git_path(tmp_path / "empty-config")
+    assert not hasattr(native, "subprocess")
+    assert not hasattr(native, "_run")
 
 
 def test_duplicate_request_fields_refused():
@@ -72,9 +56,76 @@ def test_duplicate_request_fields_refused():
         worker._object([("branch", None), ("branch", "main")])
 
 
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_format):
+    import subprocess
+    import shutil
+    from core import native_fetch_worker as native
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is needed only to produce a pack fixture")
+    repo = tmp_path / "source"
+    repo.mkdir()
+    subprocess.run([git, "-C", str(repo), "init", "-q", "--object-format=" + object_format], check=True)
+    (repo / "plugin.yaml").write_text("name: pack_fixture\n", encoding="utf-8")
+    subprocess.run([git, "-C", str(repo), "add", "plugin.yaml"], check=True)
+    subprocess.run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@test.invalid",
+                    "commit", "-qm", "fixture"], check=True)
+    commit = subprocess.check_output([git, "-C", str(repo), "rev-parse", "HEAD"]).decode().strip()
+    packed = tmp_path / "packed"
+    packed.mkdir()
+    (packed / "objects.pack").write_bytes(subprocess.check_output(
+        [git, "-C", str(repo), "pack-objects", "--stdout", "--all"]))
+    work = tmp_path / "work"
+    work.mkdir()
+    repository = work / "repository"
+    (repository / "objects" / "pack").mkdir(parents=True)
+    (repository / "objects" / "info").mkdir()
+    (repository / "refs" / "heads").mkdir(parents=True)
+    (repository / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+    if object_format == "sha256":
+        (repository / "config").write_text(
+            "[core]\n bare = true\n repositoryformatversion = 1\n"
+            "[extensions]\n objectFormat = sha256\n", encoding="ascii")
+    else:
+        (repository / "config").write_text(
+            "[core]\n bare = true\n repositoryformatversion = 0\n", encoding="ascii")
+    metadata, archive = native.fetch_pack(packed, work, {"commit": commit, "shallow": []})
+    assert metadata["commit"] == commit
+    assert metadata["entries"] == 1
+    assert archive.is_file()
+
+
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, object_format):
+    import subprocess
+    import shutil
+    from core import native_fetch_worker as native
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is needed only to produce a repository fixture")
+    repo = tmp_path / "source"
+    repo.mkdir()
+    subprocess.run([git, "-C", str(repo), "init", "-q", "--object-format=" + object_format], check=True)
+    (repo / "file.txt").write_text("committed\n", encoding="utf-8")
+    subprocess.run([git, "-C", str(repo), "add", "file.txt"], check=True)
+    subprocess.run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@test.invalid",
+                    "commit", "-qm", "fixture"], check=True)
+    commit = subprocess.check_output([git, "-C", str(repo), "rev-parse", "HEAD"]).decode().strip()
+    (repo / "file.txt").write_text("uncommitted\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    metadata, archive = native.fetch_local(repo, work)
+    assert metadata["commit"] == commit
+    assert archive.is_file()
+
+
 def test_worker_bundled_independently_of_sdk_and_gateway():
     sources = inventory.native_fetch_snapshot()
-    assert set(sources) == {"core/" + name for name in inventory.NATIVE_FETCH_FILES}
+    assert {"core/" + name for name in inventory.NATIVE_FETCH_FILES} <= set(sources)
+    assert "core/dulwich/__init__.py" in sources
     for name, source in sources.items():
         assert source == inventory.bundle_snapshot()[name]
         if name != "core/__init__.py":
@@ -85,6 +136,5 @@ def test_worker_bundled_independently_of_sdk_and_gateway():
 def test_unsupported_platform_does_not_execute_git(monkeypatch, tmp_path):
     from core import native_fetch_worker as native
     monkeypatch.setattr(native.sys, "platform", "linux")
-    monkeypatch.setattr(native.subprocess, "Popen", lambda *a, **k: pytest.fail("unsupported host execution"))
     with pytest.raises(ValueError, match="platform pending"):
-        native.fetch_local(tmp_path / "git", tmp_path / "source", tmp_path)
+        native.fetch_local(tmp_path / "source", tmp_path)

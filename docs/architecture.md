@@ -42,6 +42,6 @@ HTTPS 首先匿名请求，收到 401／403 后可读取 Windows 凭据管理器
 
 Windows x64 的菜单、服务引导安装和命令行安装使用同一自动准备链路。准备采集工具后才报告正在克隆，候选通过来源/内容审核后准备指纹绑定的运行环境，工具与运行时校验通过才发布插件目录。菜单原有版本/权限/信任确认继续执行，拒绝或取消时按安装凭据回滚；命令行保留独立显式授信。
 
-采集工具优先发现本机安装并复制必要文件，在 AppContainer 中验证后复用；不修改本机工具、不执行宿主包装脚本。Python 必须满足 SDK 的 CPython 3.14 Windows x64 ABI，仅缺失、不兼容或自检失败的组件需要补齐。固定输入见 `core/plugin-bootstrap.json`：Python Windows 嵌入式发行、MinGit 与 SDK wheel 均锁定 URL、大小和 SHA256，下载跳转仅限 HTTPS 官方分发域名，缓存每次核验。来源由 Python 官方发布的 Sigstore 摘要、Git for Windows 发行页校验表及 PyPI 文件元数据核对；不在运行时采用 latest 或联网解析插件依赖。首次准备只在安装时触发，帮助/列表等只读入口不会下载或初始化工具。平台之外不降级到宿主执行。
+采集工具优先发现本机 CPython 3.10+ Windows x64 与 Git 安装并复制必要文件，在 AppContainer 中验证后复用；不修改本机工具、不执行宿主包装脚本。插件执行运行时单独使用 SDK 所需的 CPython 3.14 Windows x64 ABI。仅缺失、不兼容或自检失败的组件需要补齐。固定输入见 `core/plugin-bootstrap.json`：Python Windows 嵌入式发行、MinGit 与 SDK wheel 均锁定 URL、大小和 SHA256，下载跳转仅限 HTTPS 官方分发域名，缓存每次核验。来源由 Python 官方发布的 Sigstore 摘要、Git for Windows 发行页校验表及 PyPI 文件元数据核对；不在运行时采用 latest 或联网解析插件依赖。首次准备只在安装时触发，帮助/列表等只读入口不会下载或初始化工具。平台之外不降级到宿主执行。
 
 基础 SDK 依赖自动准备；自定义业务依赖继续走审核过的离线输入，不读取仓库安装脚本。准备失败不会发布插件，已验证工具与下载缓存可在重试时复用，未知或损坏记录不被自动清理。

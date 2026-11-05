@@ -4,12 +4,53 @@ import shutil
 import sys
 import os
 import stat
+import re
 import zipfile
 from contextlib import ExitStack
 
 from core.plugin_runtime_inventory import _read_file
 
 _SKIP = frozenset({"site-packages", "__pycache__", "test", "tests", "idlelib", "tkinter", "ensurepip"})
+
+
+def _python_abi(source):
+    """Read the interpreter ABI from its PE version resource, without running it."""
+    executable = source / "python.exe"
+    matches = {int(match[2]): match[1] for path in source.glob("python3*.dll")
+               if (match := re.fullmatch(r"(python3([0-9]{1,2}))\.dll", path.name, re.IGNORECASE))}
+    version = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        library = ctypes.WinDLL("version", use_last_error=True)
+        size_of = library.GetFileVersionInfoSizeW
+        size_of.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD))
+        size_of.restype = wintypes.DWORD
+        size = size_of(str(executable), None)
+        if size:
+            data = ctypes.create_string_buffer(size)
+            get_info = library.GetFileVersionInfoW
+            get_info.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID)
+            get_info.restype = wintypes.BOOL
+            if get_info(str(executable), 0, size, data):
+                value = ctypes.c_void_p()
+                length = wintypes.UINT()
+                query = library.VerQueryValueW
+                query.argtypes = (wintypes.LPCVOID, wintypes.LPCWSTR,
+                                  ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT))
+                query.restype = wintypes.BOOL
+                if query(data, "\\", ctypes.byref(value), ctypes.byref(length)) and length.value >= 16:
+                    fields = ctypes.cast(value, ctypes.POINTER(wintypes.DWORD * 13)).contents
+                    if fields[0] == 0xFEEF04BD:
+                        version = (fields[2] >> 16, fields[2] & 0xFFFF)
+    except (AttributeError, OSError, ValueError):
+        pass
+    if version is None and len(matches) == 1:
+        version = (3, next(iter(matches)))
+    if (version is None or version[0] != 3 or version[1] < 10
+            or version[1] not in matches):
+        raise ValueError("unsupported local Python ABI")
+    return version[1], matches[version[1]]
 
 
 def _installed_file(path, limit):
@@ -78,7 +119,6 @@ def git_candidates():
     binary = Path(executable).absolute().parent
     # The PATH cmd/git.exe is a launcher, not a standalone Git object reader.
     roots = [binary.parent / name / "bin" for name in ("ucrt64", "mingw64")]
-    roots.append(binary)
     return list(dict.fromkeys(roots))
 
 
@@ -95,16 +135,19 @@ def snapshot(source, destination, kind):
     for parent in (source, *source.parents):
         _directory(parent)
     if kind == "python":
-        if not (source / "python.exe").is_file() or not (source / "python314.dll").is_file():
+        if not (source / "python.exe").is_file():
             raise ValueError("incompatible local Python")
+        minor, dll = _python_abi(source)
+        library_zip = f"python3{minor}.zip"
         paths = [path for path in source.iterdir() if path.is_file() and (
-            path.name == "python.exe" or path.suffix.lower() in {".dll", ".pyd"} or path.name == "python314.zip")]
+            path.name == "python.exe" or path.name.lower() in {"python3.dll", dll.lower()}
+            or path.suffix.lower() in {".dll", ".pyd"} or path.name.lower() == library_zip.lower())]
         for name in ("Lib", "DLLs"):
             tree = source / name
             if tree.exists():
                 paths.extend(path for path in bounded_paths(tree, max_entries=MAX_ENTRIES, skip_dirs=_SKIP)
                              if path.is_file() and path.suffix.lower() not in {".pyc", ".pyo"})
-        if not (source / "python314.zip").is_file() and not (source / "Lib/encodings/__init__.py").is_file():
+        if not (source / library_zip).is_file() and not (source / "Lib/encodings/__init__.py").is_file():
             raise ValueError("local Python standard library missing")
     elif kind == "git":
         if not (source / "git.exe").is_file():
@@ -120,9 +163,9 @@ def snapshot(source, destination, kind):
     # Hundreds of small standard-library files otherwise get copied, hashed and
     # ACL-processed at every isolation stage. Python can import the same bytes
     # from one uncompressed archive; native extensions remain ordinary files.
-    pack_library = kind == "python" and not (source / "python314.zip").is_file()
+    pack_library = kind == "python" and not (source / library_zip).is_file()
     with ExitStack() as stack:
-        library = stack.enter_context(zipfile.ZipFile(destination / "python314.zip", "w", compression=zipfile.ZIP_STORED)) if pack_library else None
+        library = stack.enter_context(zipfile.ZipFile(destination / library_zip, "w", compression=zipfile.ZIP_STORED)) if pack_library else None
         for path in paths:
             body = _installed_file(path, min(128 * 1024**2, MAX_BYTES - total))
             total += len(body)
@@ -137,6 +180,7 @@ def snapshot(source, destination, kind):
                 target.write_bytes(body)
     if kind == "python":
         # Never inherit an installed interpreter's user-customized search paths.
-        (destination / "python314._pth").write_text("python314.zip\n.\nLib\nDLLs\n", encoding="ascii")
+        (destination / f"python3{minor}._pth").write_text(
+            f"{library_zip}\n.\nLib\nDLLs\n", encoding="ascii")
     inventory(destination)
     return destination

@@ -14,11 +14,9 @@ from core.plugin_fetch_candidate import CandidateFile, CandidateInventory
 def prepared(tmp_path, monkeypatch):
     from core import native_fetch_catalog as catalog, native_fetch
     monkeypatch.setattr(catalog, "get_backend", lambda: SimpleNamespace(probe=lambda: None))
-    python, git = tmp_path / "python", tmp_path / "git"
+    python = tmp_path / "python"
     python.mkdir()
-    git.mkdir()
     (python / "python.exe").write_bytes(b"test-only-executable-not-run")
-    (git / "git.exe").write_bytes(b"test-only-git-not-run")
     @contextmanager
     def probe(*args, **kwargs):
         root = args[2]
@@ -27,31 +25,30 @@ def prepared(tmp_path, monkeypatch):
         yield CandidateInventory(commit, "a" * 64, (file,), 19), None
     monkeypatch.setattr(native_fetch, "local_candidate", probe)
     value = FetchCatalog(tmp_path / "catalog")
-    identity = value.prepare(python, git)
-    return value, identity, python, git
+    identity = value.prepare(python)
+    return value, identity, python
 
 
 def test_published_tools_remain_independent_of_originals(prepared):
-    catalog, identity, python, git = prepared
+    catalog, identity, python = prepared
     (python / "python.exe").write_bytes(b"changed-original")
-    (git / "git.exe").unlink()
     runtime, record = catalog.load()
     assert runtime.parent.name == identity
     assert (runtime / "python/python.exe").read_bytes() == b"test-only-executable-not-run"
-    assert set(record["files"]) == {"python/python.exe", "git/git.exe"}
+    assert set(record["files"]) == {"python/python.exe"}
 
 
 @pytest.mark.parametrize("mutation", ["bytes", "extra", "manifest", "policy", "pointer", "bool"])
 def test_tampered_or_stale_catalog_is_rejected(prepared, monkeypatch, mutation):
-    catalog, identity, _, _ = prepared
+    catalog, identity, _ = prepared
     obj = catalog.root / "objects" / identity
     if mutation == "bytes":
-        (obj / "runtime/git/git.exe").write_bytes(b"changed")
+        (obj / "runtime/python/python.exe").write_bytes(b"changed")
     elif mutation == "extra":
-        (obj / "runtime/git/injected.dll").write_bytes(b"changed")
+        (obj / "runtime/python/injected.dll").write_bytes(b"changed")
     elif mutation == "manifest":
         record = json.loads((obj / "manifest.json").read_text())
-        record["files"]["git/git.exe"] = "0" * 64
+        record["files"]["python/python.exe"] = "0" * 64
         (obj / "manifest.json").write_text(json.dumps(record))
     elif mutation == "policy":
         monkeypatch.setattr("core.native_fetch_catalog.native_fetch_snapshot", lambda: {"changed": b"policy"})
@@ -65,7 +62,7 @@ def test_tampered_or_stale_catalog_is_rejected(prepared, monkeypatch, mutation):
 
 
 def test_failed_preparation_preserves_previous_pointer(prepared, monkeypatch):
-    catalog, _, python, git = prepared
+    catalog, _, python = prepared
     before = (catalog.root / "current.json").read_bytes()
     from core import native_fetch
     @contextmanager
@@ -74,7 +71,7 @@ def test_failed_preparation_preserves_previous_pointer(prepared, monkeypatch):
         yield
     monkeypatch.setattr(native_fetch, "local_candidate", failed)
     with pytest.raises(RuntimeError, match="probe failed"):
-        catalog.prepare(python, git)
+        catalog.prepare(python)
     assert (catalog.root / "current.json").read_bytes() == before
     from core import native_catalog_cleanup
     assert native_catalog_cleanup.inspect("prepare") == []
@@ -82,13 +79,12 @@ def test_failed_preparation_preserves_previous_pointer(prepared, monkeypatch):
 
 
 def test_loaded_inventories_are_passed_to_execution_snapshot(prepared, monkeypatch, tmp_path):
-    catalog, _, _, _ = prepared
+    catalog, _, _ = prepared
     from core import native_fetch
     @contextmanager
     def snapshot(python, git, source, **kwargs):
         assert kwargs["tool_files"] == {
             "python": {"python.exe": hashlib.sha256(b"test-only-executable-not-run").hexdigest()},
-            "git": {"git.exe": hashlib.sha256(b"test-only-git-not-run").hexdigest()},
         }
         yield "inventory", "response"
     monkeypatch.setattr(native_fetch, "local_candidate", snapshot)

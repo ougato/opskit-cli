@@ -10,7 +10,7 @@ import zipfile
 RUNTIME_POLICY = 9
 BUNDLE_NAME = "plugin-runtime-sources.zip"
 MAX_SOURCE_BYTES = 4 * 1024**2
-MAX_CONTEXT_SOURCE_BYTES = 16 * 1024**2
+MAX_CONTEXT_SOURCE_BYTES = 24 * 1024**2
 RUNTIME_FILES = (
     "__init__.py", "bounded_yaml.py", "cli.py", "config.py", "constants.py", "i18n.py", "logger.py",
     "module.py", "paths.py", "plugin_json.py", "plugin_tree.py", "plugin_worker.py", "process.py",
@@ -51,8 +51,14 @@ def _bundle_snapshot(core):
     try:
         with open_zip(fileobj=io.BytesIO(content)) as archive:
             members = archive.infolist()
-            expected = {"core/" + name for name in BUNDLED_FILES}
-            if (len(members) != len(expected) or {member.filename for member in members} != expected
+            names = {member.filename for member in members}
+            fixed = {"core/" + name for name in BUNDLED_FILES}
+            extra = names - fixed
+            valid_extra = (1 <= len(extra) <= 128 and all(
+                name.startswith("core/dulwich/") and name.endswith(".py")
+                and ".." not in Path(name).parts for name in extra))
+            if (len(members) != len(names) or not fixed <= names or extra and not valid_extra
+                    or not any(name == "core/dulwich/__init__.py" for name in extra)
                     or any(member.file_size > MAX_SOURCE_BYTES for member in members)
                     or sum(member.file_size for member in members) > MAX_CONTEXT_SOURCE_BYTES):
                 raise ValueError("invalid packaged runtime source inventory")
@@ -65,7 +71,10 @@ def _snapshot(core, names):
     core = Path(core or Path(__file__).parent).absolute()
     if getattr(sys, "frozen", False) or "__compiled__" in globals():
         files = _bundle_snapshot(core)
-        return {"core/" + name: files["core/" + name] for name in names}
+        result = {"core/" + name: files["core/" + name] for name in names}
+        if "native_fetch_worker.py" in names:
+            result.update({name: body for name, body in files.items() if name.startswith("core/dulwich/")})
+        return result
     result, size = {}, 0
     for name in names:
         content = _read_file(core / name, core, MAX_SOURCE_BYTES)
@@ -73,6 +82,20 @@ def _snapshot(core, names):
         if size > MAX_CONTEXT_SOURCE_BYTES:
             raise ValueError("runtime source inventory exceeds limits")
         result["core/" + name] = content
+    if "native_fetch_worker.py" in names:
+        import dulwich
+        package = Path(dulwich.__file__).parent
+        for source in package.rglob("*.py"):
+            if "tests" in source.relative_to(package).parts:
+                continue
+            name = "dulwich/" + source.relative_to(package).as_posix()
+            content = _read_file(source, package, MAX_SOURCE_BYTES)
+            size += len(content)
+            if size > MAX_CONTEXT_SOURCE_BYTES:
+                raise ValueError("runtime source inventory exceeds limits")
+            result["core/" + name] = content
+        if "core/dulwich/__init__.py" not in result:
+            raise ValueError("Dulwich pure Python sources are unavailable")
     return result
 
 

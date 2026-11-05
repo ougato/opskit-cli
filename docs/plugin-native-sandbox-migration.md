@@ -203,16 +203,16 @@ Chinese AppContainer flow passed with one consent prompt; frozen verification is
 - hooks 真实原生采集 4 项通过。新增公共 `NativeLimits`，Windows 在恢复挂起 worker 前设置内存、进程数和 CPU 速率硬上限，默认 256MiB/16 进程/整机 CPU 25%。真实内核查询确认限额已设置，注入设置失败时验证插件代码未执行；原生边界专项 34 项通过。该证据不覆盖磁盘硬配额，也不代替完整恶意负载及发行包验收。
 - 原生退出新增 Job 主动终止与活动进程数归零确认，确认失败继续释放 Job/进程/线程句柄并向上报错，不把关闭 Job 句柄等同于进程树已退出。实际 AppContainer 后代进程回收及注入确认失败专项纳入原生边界，36 项通过；正式状态提交链另行复验中。
 
-## 当前正式入口（2026-11-03）
+## 当前正式入口（2026-11-05）
 
 - `plugin prepare` 已使用原生运行时和离线 wheel。
-- `plugin prepare-fetch --python-runtime <独立Python目录> --git-runtime <Git运行目录>` 已改为原生准备；不再接受 `--packages`，不构建 Docker 镜像。Windows Git 目录需包含 git.exe 及其依赖 DLL。准备先复制已审核工具，再在 AppContainer 中读取平台生成的已知 Git 对象，探测通过后才原子发布工具指针。准备不授信插件。
+- `plugin prepare-fetch --python-runtime <独立Python目录>` 只准备隔离 Python，不再接受 `--git-runtime` 或 `--packages`，不下载 Git、不构建 Docker 镜像。对象读取与 pack 索引使用随 OpsKit 打包的 Dulwich 纯 Python 源码，在无网络 AppContainer 内完成。准备先复制 Python，再读取平台生成的已知 Git 对象，探测通过后才原子发布工具指针。自动安装优先从当前解释器、PATH 和注册表发现本机 Python，复制必要运行文件并排除第三方包；有效工具缓存直接复用。准备不授信插件。
 - 工具 catalog 绑定完整文件 SHA256、平台和采集代码版本；源工具变化不影响已发布快照，执行快照仍使用准备时的文件身份，损坏或过期则拒绝。准备失败保留旧指针。
 - 正式 `plugin install`、`plugin update` 已移除宿主 Git clone/pull 调用。当前支持本地 Git 仓库已提交内容：AppContainer 采集 → 独立归档校验 → 私有工作目录写入 → 清单/入口/校验和复核 → 原子发布；不导入插件模块，不发布 `.git`、未提交或未跟踪内容。
 - 安装在宿主信任记录保存 `installation_receipt` 与 `source_commit`，不授予执行权限；重新确认信任保留原安装凭据，不把本地修改变成可覆盖的基线。
 - 更新拒绝本地修改和缺少原生安装凭据的旧安装。请先备份再重新安装；不静默删除开发者文件。更新发布前重新核对源配置、安装凭据与内容，先撤销旧信任；发布失败恢复旧树。独立写入者不被覆盖，不能恢复的旧备份留在 `.opskit-update-*` 中供恢复。崩溃恢复操作入口仍待完成。
 - HTTPS 原生采集已接入正式安装、更新入口：宿主监督进程只传输有界 Git smart protocol v0 pack 字节，Git 对象解析及解压在无网络 AppContainer 内完成。验证精确仓库、DNS 全部地址、数字 IP 连接及 TLS；不读取环境代理、Git 配置或凭据助手，不跟随重定向。`--fetch-profile` 显式读取绑定完整仓库地址的私有凭据文件；`--allow-private` 仅本次允许该仓库目标的私网地址，更新需重新指定。凭据及私网选择不写入插件信任记录。
-- SSH 原生采集已接入同一正式入口：使用 Paramiko 的显式私钥认证和已固定主机密钥；不使用本机 SSH 程序、配置、代理或默认密钥。支持加密私钥口令，先核对主机密钥再发送身份认证，只执行固定且路径经 POSIX 引号处理的 `git-upload-pack`。DNS、私网、下载限额、取消与后续 AppContainer 对象解析沿用同一监督边界。
+- SSH 原生采集已接入同一正式入口：使用 Paramiko，先核对主机密钥再发送身份认证，只执行固定且路径经 POSIX 引号处理的 `git-upload-pack`。显式凭据文件绑定完整来源并可提供加密私钥口令；未指定文件时，只读取本机 known_hosts 的精确主机条目、SSH agent 及标准身份文件，不调用本机 SSH 程序或执行 SSH 配置命令。DNS、私网、下载限额、取消与后续 AppContainer 对象解析沿用同一监督边界。
 - 已删除旧 Docker 采集入口、镜像构建器、包锁、Linux guest 及容器 HTTPS/SSH 配置助手，对应容器专用测试移除；路径/条目/归档保护抽为 `plugin_git_archive.py` 并保留 40 项校验测试，正式采集仅包含固定原生 worker 与纯归档模块。旧 gateway、容器资源账本和监听式出口代理也已移除；安装发布事务需要的通用工作区身份记录继续保留。全量测试及构建、文档引用审计未完成，不能宣称插件系统已完全清理 Docker。
 - 新增帮助、工具目录说明、准备失败、缺少工具、远程待迁移、更新保护提示均有 zh/en 文案。CLI 仅公开固定平台错误，不公开工具日志、仓库凭据或底层路径异常。
 - 多语言补查：插件生命周期命令中原先写死英文的状态/锁/工作目录检查帮助、校验与授信错误、移除确认等已接入 zh/en。新增两种语言的实际 CLI 帮助和失败提示测试；本轮语言、权限菜单及生命周期 CLI 回归共 31 项通过。此结果不代表原生沙盒整体迁移完成。

@@ -163,14 +163,14 @@ def test_prepare_fetch_help_and_failure_are_localized(monkeypatch, capsys, langu
     result = runner.invoke(app, ["prepare-fetch", "--help"])
     assert result.exit_code == 0
     assert help_word in result.output
-    assert "--git-runtime" in result.output and "--python-runtime" in result.output
+    assert "--git-runtime" not in result.output and "--python-runtime" in result.output
     assert "--packages" not in result.output
     def fail(*args, **kwargs):
         raise ValueError("SECRET")
     monkeypatch.setattr(FetchCatalog, "prepare", fail)
     cli.configure("json", False)
     try:
-        result = runner.invoke(app, ["prepare-fetch", "--python-runtime", "python", "--git-runtime", "git"])
+        result = runner.invoke(app, ["prepare-fetch", "--python-runtime", "python"])
         assert result.exit_code == 2
         output = result.output + capsys.readouterr().out
         assert i18n.t("plugin_native.errors.fetch_prepare_invalid") in output

@@ -153,7 +153,7 @@ def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch
         monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
         monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path / "plugins"))
         monkeypatch.setattr(main, "_boot", lambda: pytest.fail("acquisition must not boot services"))
-        FetchCatalog().prepare(python, git_runtime)
+        FetchCatalog().prepare(python)
         def version(value):
             (source / "plugin.yaml").write_text(
                 f"name: native_example\nversion: {value}\napi_version: 3\nkind: python\nentry: native_example\n")
@@ -267,7 +267,7 @@ def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
     runner = CliRunner()
     def call(*args):
         return runner.invoke(main.app, ["--output", "json", *args])
-    prepared = call("plugin", "prepare-fetch", "--python-runtime", str(python), "--git-runtime", str(git_runtime))
+    prepared = call("plugin", "prepare-fetch", "--python-runtime", str(python))
     assert prepared.exit_code == 0, prepared.output
     identity = json.loads(prepared.stdout)["data"]["toolchain"]
     catalog = FetchCatalog()

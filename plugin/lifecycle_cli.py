@@ -46,16 +46,12 @@ def register(app, translate=None):
     def acquisition_error(message, default):
         # Only fixed host-generated translations are safe to show. Never render
         # raw process, repository, credential or filesystem diagnostics.
-        keys = ("fetch_dependency_missing", "fetch_python_failed", "fetch_git_failed", "fetch_setup_failed", "runtime_setup_failed", "fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed",
+        keys = ("fetch_dependency_missing", "fetch_python_failed", "fetch_setup_failed", "runtime_setup_failed", "fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed",
                 "update_failed", "update_modified", "execution_timeout", "platform_unsupported",
                 "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
                 "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
         safe.update(t("plugin_native.errors.platform_pending", platform=platform) for platform in ("linux", "darwin"))
-        template = re.escape(t("plugin_native.errors.fetch_git_command_failed", operation="OPERATION", exit_code="CODE"))
-        pattern = template.replace("OPERATION", r"(?:check-ref-format|rev-parse|ls-tree|cat-file|index-pack|unknown)").replace("CODE", r"-?\d{1,10}")
-        if re.fullmatch(pattern, message):
-            return message
         return message if message in safe else t("plugin_native.errors." + default)
     def state_command(name, caller, digest=None):
         from core.plugin_state import _binding
@@ -183,11 +179,10 @@ def register(app, translate=None):
 
 
     @app.command("prepare-fetch", help=translate("prepare_fetch_help"))
-    def prepare_fetch(python_runtime: Path = typer.Option(..., "--python-runtime", help=translate("python_runtime_help")),
-                      git_runtime: Path = typer.Option(..., "--git-runtime", help=translate("git_runtime_help"))):
+    def prepare_fetch(python_runtime: Path = typer.Option(..., "--python-runtime", help=translate("python_runtime_help"))):
         from core.native_fetch_catalog import FetchCatalog
         try:
-            identity = FetchCatalog().prepare(python_runtime, git_runtime)
+            identity = FetchCatalog().prepare(python_runtime)
         except ValueError:
             fail(t("plugin_native.errors.fetch_prepare_invalid"), 2)
         except (OSError, RuntimeError, subprocess.SubprocessError):

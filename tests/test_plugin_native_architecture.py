@@ -34,9 +34,11 @@ def test_guest_bundle_excludes_host_authority():
     })
     # Process supervision is shared SDK code, not a host permission broker.
     assert {'windows_job.py', 'windows_job_lifecycle.py'} <= files
-    assert set(inventory.native_fetch_snapshot()) == {
+    sources = set(inventory.native_fetch_snapshot())
+    assert {
         'core/__init__.py', 'core/native_fetch_worker.py', 'core/plugin_git_archive.py',
-    }
+    } <= sources
+    assert 'core/dulwich/__init__.py' in sources
 
 
 def test_standalone_docker_software_manager_remains_available():

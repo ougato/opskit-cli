@@ -124,14 +124,13 @@ def test_prepare_fetch_uses_explicit_native_tools_without_boot_or_trust(isolated
     from core.native_fetch_catalog import FetchCatalog
     calls = []
     monkeypatch.setattr(main, "_boot", lambda: pytest.fail("preparation must not boot"))
-    def prepare(self, python, git):
-        calls.append((python, git))
+    def prepare(self, python):
+        calls.append(python)
         return "a" * 32
     monkeypatch.setattr(FetchCatalog, "prepare", prepare)
-    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated / "python"),
-                  "--git-runtime", str(isolated / "git"))
+    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated / "python"))
     assert result.exit_code == 0, result.output
-    assert calls == [(isolated / "python", isolated / "git")]
+    assert calls == [isolated / "python"]
     assert json.loads(result.stdout)["data"] == {"toolchain": "a" * 32, "backend": "native",
                                                 "prepared": True, "authorized": False}
     assert not (isolated / "data").exists() and not (isolated / "plugins").exists()
@@ -145,7 +144,7 @@ def test_prepare_fetch_sanitizes_failures(isolated, monkeypatch, error, code):
     def failed(*args):
         raise error
     monkeypatch.setattr(FetchCatalog, "prepare", failed)
-    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated), "--git-runtime", str(isolated))
+    result = call("plugin", "prepare-fetch", "--python-runtime", str(isolated))
     assert result.exit_code == code and "SECRET" not in result.output
     if code != 130:
         assert json.loads(result.stdout)["ok"] is False

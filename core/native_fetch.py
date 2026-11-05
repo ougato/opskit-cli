@@ -1,6 +1,7 @@
 """Native acquisition assembly; no plugin import and no host Git execution."""
 from contextlib import contextmanager
 import json
+import re
 import tempfile
 import time
 
@@ -36,10 +37,10 @@ def local_candidate(python, git_runtime, source, *, staging_parent, deadline,
     backend.probe()
     # Capture identities before creating output; recursive overlap is rejected by
     # stage, and any link/reparse/hardlink in the input fails before execution.
-    if tool_files is not None and (not isinstance(tool_files, dict) or set(tool_files) != {"python", "git"}):
+    if tool_files is not None and (not isinstance(tool_files, dict) or "python" not in tool_files
+                                   or set(tool_files) - {"python", "git"}):
         raise ValueError("invalid prepared native fetch inventories")
     snapshots = [("python", python, inventory(python) if tool_files is None else tool_files["python"]),
-                 ("git", git_runtime, inventory(git_runtime) if tool_files is None else tool_files["git"]),
                  ("source", source, inventory(source))]
     check()
     with temporary_private_file() as response:
@@ -50,16 +51,28 @@ def local_candidate(python, git_runtime, source, *, staging_parent, deadline,
                 stage(origin, base / name, files)
             work = base / "work"
             work.mkdir()
+            if pack is not None:
+                repository = work / "repository"
+                (repository / "objects" / "pack").mkdir(parents=True)
+                (repository / "objects" / "info").mkdir()
+                (repository / "refs" / "heads").mkdir(parents=True)
+                (repository / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+                sha256 = isinstance(pack, dict) and isinstance(pack.get("commit"), str) and len(pack["commit"]) == 64
+                (repository / "config").write_text(
+                    "[core]\n bare = true\n repositoryformatversion = " +
+                    ("1\n[extensions]\n objectFormat = sha256\n" if sha256 else "0\n"), encoding="ascii")
             code = base / "code"
             (code / "core").mkdir(parents=True)
             for name, body in native_fetch_snapshot().items():
-                (code / name).write_bytes(body)
+                relative = name[len("core/"):] if name.startswith("core/dulwich/") else name
+                target = code / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(body)
             executable = base / "python" / "python.exe"
-            git = base / "git" / "git.exe"
-            if not executable.is_file() or not git.is_file():
-                raise ValueError("native fetch tool executables are missing")
+            if not executable.is_file():
+                raise ValueError("native fetch Python executable is missing")
             request = base / "request.json"
-            request.write_text(json.dumps({"git": str(git), "source": str(base / "source"),
+            request.write_text(json.dumps({"source": str(base / "source"),
                                            "work": str(work), "branch": branch, "pack": pack}), encoding="utf-8")
             bootstrap = ("import sys,runpy; sys.path.insert(0," + repr(str(code)) +
                          "); sys.argv=['core.native_fetch_worker'," + repr(str(request)) +
@@ -84,15 +97,26 @@ def _worker_failure(response, exit_code):
     from core.logger import get_logger
     response.seek(0)
     body = response.read(512)
-    prefix = b"OPSKIT_FETCH_ERROR:"
-    if body.startswith(prefix):
+    failure_prefix = b"OPSKIT_FETCH_FAILURE:"
+    if not body.startswith(failure_prefix):
+        response.seek(max(0, response.seek(0, 2) - 512))
+        body = response.read(512)
+    if body.startswith(failure_prefix):
         try:
-            data = json.loads(body[len(prefix):])
-            if (set(data) == {"operation", "code"} and data["operation"] in {
-                    "check-ref-format", "rev-parse", "ls-tree", "cat-file", "index-pack", "unknown"}
-                    and type(data["code"]) is int and -(2**31) <= data["code"] < 2**32):
-                get_logger("opskit.plugin.bootstrap").debug("Isolated Git operation=%s exit=%s", data["operation"], data["code"])
-                raise NativeSandboxError("fetch_git_command_failed", operation=data["operation"], exit_code=data["code"])
+            data = json.loads(body[len(failure_prefix):])
+            if (set(data) == {"kind", "code", "phase"}
+                    and isinstance(data["kind"], str)
+                    and re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", data["kind"])
+                    and (data["code"] is None or type(data["code"]) is int)
+                    and data["phase"] in {"request", "open-local", "read-local-commit", "init-object-store", "open-object-store",
+                                          "read-pack", "write-pack", "index-pack", "read-selected-commit",
+                                          "export-tree", "write-response", "copy-archive", "validate-pack",
+                                          "load-dulwich", "read-request", "decode-request", "validate-request"}):
+                get_logger("opskit.plugin.bootstrap").debug(
+                    "Native fetch worker failure=%s code=%s phase=%s", data["kind"], data["code"], data["phase"])
+                error = NativeSandboxError("worker_failed")
+                error.phase = data["phase"]
+                raise error
         except (ValueError, TypeError, KeyError):
             pass
     if type(exit_code) is int:

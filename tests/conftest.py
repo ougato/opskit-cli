@@ -82,5 +82,5 @@ def native_lifecycle_tools(tmp_path_factory):
 def prepared_fetch_tools(isolated_data_dir, native_lifecycle_tools):
     """Real per-test tool catalog; never borrow or modify user preparation."""
     from core.native_fetch_catalog import FetchCatalog
-    python, git, _ = native_lifecycle_tools
-    FetchCatalog().prepare(python, git)
+    python, _, _ = native_lifecycle_tools
+    FetchCatalog().prepare(python)

@@ -30,13 +30,13 @@ def _manifest():
     for asset in assets:
         name = asset["filename"]
         if (not isinstance(name, str) or Path(name).name != name or any(c in name for c in "\\:/")
-                or name in names or asset["kind"] not in {"python", "git", "wheel"}
+                or name in names or asset["kind"] not in {"python", "wheel"}
                 or type(asset["size"]) is not int or not 0 < asset["size"] <= 128 * 1024**2
                 or len(asset["sha256"]) != 64):
             raise ValueError("invalid platform input asset")
         _url(asset["url"])
         names.add(name)
-    if len(assets) > 64 or sum(a["kind"] == "python" for a in assets) != 1 or sum(a["kind"] == "git" for a in assets) != 1:
+    if len(assets) > 64 or sum(a["kind"] == "python" for a in assets) != 1:
         raise ValueError("invalid platform input selection")
     return assets
 
@@ -117,25 +117,21 @@ def ensure_fetch(progress=lambda phase, name="": None):
     except (FileNotFoundError, ValueError):
         pass
     progress("tools", "")
-    from core.local_toolchain import python_candidates, git_candidates, snapshot
+    from core.local_toolchain import python_candidates, snapshot
     from core.native_preparation import workspace
-    from core.native_interpreter import probe
     from core.logger import get_logger
     from contextlib import ExitStack
     def rejected(component, error):
         # Fixed component and error category only; never tool output or paths.
-        get_logger("opskit.plugin.bootstrap").debug("Local %s rejected: %s", component, type(error).__name__)
+        category = error.code if isinstance(error, NativeSandboxError) else type(error).__name__
+        get_logger("opskit.plugin.bootstrap").debug("Local %s rejected: %s", component, category)
     with ExitStack() as stack:
         base = Path(stack.enter_context(workspace()))
-        python = None
         for index, source in enumerate(python_candidates()):
             try:
                 candidate = snapshot(source, base / ("python-" + str(index)), "python")
-                tags, markers = probe(candidate, staging_parent=base)
-                if not markers["python_version"] == "3.14" or not any(tag.platform == "win_amd64" for tag in tags):
-                    raise ValueError("incompatible local Python ABI")
-                python = candidate
-                break
+                catalog.prepare(candidate)
+                return
             except (OSError, ValueError, RuntimeError) as error:
                 rejected("Python", error)
         repaired = False
@@ -151,29 +147,12 @@ def ensure_fetch(progress=lambda phase, name="": None):
                 target = base / ("download-" + kind)
                 with open_zip(archive) as content:
                     extract_zip(content, target)
-            return target if kind == "python" else target / "ucrt64" / "bin"
-        if python is None:
-            python = downloaded("python")
-            # Distinguish interpreter failure from Git self-test failure.
-            try:
-                probe(python, staging_parent=base)
-            except NativeSandboxError as error:
-                raise NativeSandboxError("fetch_python_failed") from error
-        for index, source in enumerate(git_candidates()):
-            try:
-                git = snapshot(source, base / ("git-" + str(index)), "git")
-                catalog.prepare(python, git)
-                catalog.load()
-                return
-            except (OSError, ValueError, RuntimeError) as error:
-                rejected("Git", error)
+            return target
         try:
-            catalog.prepare(python, downloaded("git"))
+            catalog.prepare(downloaded("python"))
         except NativeSandboxError as error:
-            if error.code == "fetch_git_command_failed":
-                raise
-            raise NativeSandboxError("fetch_git_failed") from error
-        catalog.load()
+            get_logger("opskit.plugin.bootstrap").debug("Isolated Python fetch runtime rejected: %s", error.code)
+            raise NativeSandboxError("fetch_python_failed") from error
 
 
 def ensure_runtime(manifest, progress=lambda phase, name="": None):
@@ -189,21 +168,28 @@ def ensure_runtime(manifest, progress=lambda phase, name="": None):
         pass
     ensure_fetch(progress)
     progress("runtime", manifest.name)
-    from core.native_fetch_catalog import FetchCatalog
     from core.plugin_runtime import build
-    with FetchCatalog().acquire() as (runtime, _):
-        with _inputs({"wheel"}, progress) as (base, selected):
-            wheels = base / "wheels"
-            wheels.mkdir()
-            requirements = []
-            for asset, path in selected:
-                # _download verified a bounded ordinary file under the input lock.
-                content = _read_file(path, Path(path.anchor), asset["size"])
-                if hashlib.sha256(content).hexdigest() != asset["sha256"]:
-                    raise ValueError("wheel cache changed")
-                (wheels / asset["filename"]).write_bytes(content)
-                requirements.append(asset["package"] + "==" + asset["version"] + " --hash=sha256:" + asset["sha256"])
-            lock = base / "requirements.lock"
-            lock.write_text("\n".join(requirements) + "\n", encoding="utf-8")
-            build(Path(manifest.root), [], runtime / "python", wheels=wheels, lock_file=lock)
+    with _inputs({"python", "wheel"}, progress) as (base, selected):
+        wheels = base / "wheels"
+        wheels.mkdir()
+        python = None
+        requirements = []
+        from core.archive import extract_zip
+        from core.archive_reader import open_zip
+        for asset, path in selected:
+            if asset["kind"] == "python":
+                python = base / "runtime-python"
+                with open_zip(path) as content:
+                    extract_zip(content, python)
+                continue
+            content = _read_file(path, Path(path.anchor), asset["size"])
+            if hashlib.sha256(content).hexdigest() != asset["sha256"]:
+                raise ValueError("wheel cache changed")
+            (wheels / asset["filename"]).write_bytes(content)
+            requirements.append(asset["package"] + "==" + asset["version"] + " --hash=sha256:" + asset["sha256"])
+        if python is None:
+            raise ValueError("pinned runtime Python input missing")
+        lock = base / "requirements.lock"
+        lock.write_text("\n".join(requirements) + "\n", encoding="utf-8")
+        build(Path(manifest.root), [], python, wheels=wheels, lock_file=lock)
     catalog.load(manifest.name, fingerprint=fingerprint, sdk_sha256=code_digest())

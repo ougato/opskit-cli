@@ -109,6 +109,7 @@ def test_pinned_manifest_has_complete_sdk_wheels(monkeypatch):
 def test_bad_download_never_becomes_cache_file(tmp_path, monkeypatch):
     import hashlib
     import httpx
+    monkeypatch.setattr("core.plugin_disk_policy.check_space", lambda *args, **kwargs: None)
     asset = {"filename": "input.zip", "url": "https://www.python.org/input.zip",
              "size": 4, "sha256": hashlib.sha256(b"good").hexdigest()}
     response = httpx.Response(200, content=b"evil")
@@ -146,8 +147,8 @@ def test_menu_success_follows_runtime_and_trust(installation, monkeypatch, accep
 
 @pytest.mark.parametrize("python_local,git_local,bad_git,expected", [
     (True, True, False, []), (False, True, False, ["python"]),
-    (True, False, False, ["git"]), (False, False, False, ["python", "git"]),
-    (True, True, True, ["git"]),
+    (True, False, False, []), (False, False, False, ["python"]),
+    (True, True, True, []),
     ("broken", True, False, ["python"]),
 ])
 def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkeypatch, python_local, git_local, bad_git, expected):
@@ -161,8 +162,8 @@ def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkey
             if not self.prepared:
                 raise FileNotFoundError()
             return None
-        def prepare(self, python, git):
-            if bad_git and git.name == "git-0":
+        def prepare(self, python, git=None):
+            if python_local == "broken" and Path(python).name == "python-0":
                 raise NativeSandboxError("worker_failed")
             self.prepared = True
     monkeypatch.setattr(native_fetch_catalog, "FetchCatalog", Catalog)
@@ -171,7 +172,7 @@ def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkey
         yield tmp_path
     monkeypatch.setattr(native_preparation, "workspace", workspace)
     monkeypatch.setattr(local_toolchain, "python_candidates", lambda: [Path("python")] if python_local else [])
-    monkeypatch.setattr(local_toolchain, "git_candidates", lambda: [Path("git")] if git_local else [])
+    monkeypatch.setattr(local_toolchain, "git_candidates", lambda: pytest.fail("Git must not be prepared"))
     monkeypatch.setattr(local_toolchain, "snapshot", lambda source, target, kind: target)
     def probe(source, **kwargs):
         if python_local == "broken" and source.name == "python-0":
@@ -184,7 +185,7 @@ def test_only_missing_or_failed_local_components_are_downloaded(tmp_path, monkey
         downloads.append(kind)
         filename = tmp_path / (kind + ".zip")
         with zipfile.ZipFile(filename, "w") as archive:
-            archive.writestr("python.exe" if kind == "python" else "ucrt64/bin/git.exe", b"fixture")
+            archive.writestr("python.exe", b"fixture")
         yield tmp_path, [({"kind": kind}, filename)]
     monkeypatch.setattr(bootstrap, "_inputs", inputs)
     bootstrap.ensure_fetch(lambda phase, name="": events.append(phase))

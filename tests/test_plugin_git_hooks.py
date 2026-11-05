@@ -15,8 +15,8 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, native_life
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(tmp_path / 'plugins'))
     monkeypatch.setenv('OPSKIT_DATA_DIR', str(tmp_path / 'state'))
     from core.native_fetch_catalog import FetchCatalog
-    python, git_runtime, _ = native_lifecycle_tools
-    FetchCatalog().prepare(python, git_runtime)
+    python, _, _ = native_lifecycle_tools
+    FetchCatalog().prepare(python)
     # Isolate the test from the developer's actual Git configuration/templates.
     config = tmp_path / 'gitconfig'
     config.write_text('')

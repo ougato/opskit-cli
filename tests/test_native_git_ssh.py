@@ -171,7 +171,7 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path / "plugins"))
     monkeypatch.setattr(main, "_boot", lambda: pytest.fail("acquisition must not boot services"))
-    FetchCatalog().prepare(python, git_runtime)
+    FetchCatalog().prepare(python)
     def version(value):
         (source / "plugin.yaml").write_text(
             f"name: native_example\nversion: {value}\napi_version: 3\nkind: python\nentry: native_example\n")

@@ -31,11 +31,28 @@ def test_python_snapshot_excludes_user_packages_and_resets_search_paths(tmp_path
     assert not (result / "Lib/encodings/__init__.py").exists()
 
 
-def test_python_snapshot_rejects_an_incompatible_interpreter(tmp_path):
+def test_python_snapshot_supports_installed_python_312(tmp_path):
     source = python_tree(tmp_path / "installed")
     (source / "python314.dll").rename(source / "python313.dll")
-    with pytest.raises(ValueError, match="incompatible"):
-        tools.snapshot(source, tmp_path / "snapshot", "python")
+    (source / "python313.dll").rename(source / "python312.dll")
+    result = tools.snapshot(source, tmp_path / "snapshot", "python")
+    assert (result / "python312._pth").read_text() == "python312.zip\n.\nLib\nDLLs\n"
+    assert (result / "python312.zip").is_file()
+
+
+def test_python_snapshot_prunes_ignored_directories_before_enumeration(tmp_path, monkeypatch):
+    source = python_tree(tmp_path / "installed")
+    (source / "Lib/site-packages/large/nested").mkdir(parents=True)
+    (source / "Lib/site-packages/large/nested/private.py").write_text("private")
+    original = tools.os.scandir
+    visited = []
+    def observe(path):
+        visited.append(Path(path))
+        return original(path)
+    monkeypatch.setattr(tools.os, "scandir", observe)
+    result = tools.snapshot(source, tmp_path / "snapshot", "python")
+    assert not any("site-packages" in path.parts for path in visited)
+    assert (result / "python314.zip").is_file()
 
 
 def test_git_snapshot_copies_only_object_reader_and_libraries(tmp_path):
@@ -64,4 +81,4 @@ def test_git_discovery_prefers_real_binary_over_path_launcher(monkeypatch):
     roots = tools.git_candidates()
     assert roots[0] == Path("C:/Git/ucrt64/bin").absolute()
     assert roots[1] == Path("C:/Git/mingw64/bin").absolute()
-    assert roots[-1] == Path("C:/Git/cmd").absolute()
+    assert len(roots) == 2

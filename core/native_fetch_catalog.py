@@ -56,8 +56,8 @@ def _validate(runtime, record):
             or record["code_sha256"] != code_digest(native_fetch_snapshot())):
         raise ValueError("native fetch toolchain policy changed")
     verify(runtime, record["files"])
-    if not {"python/python.exe", "git/git.exe"} <= set(record["files"]):
-        raise ValueError("native fetch executables missing")
+    if "python/python.exe" not in record["files"]:
+        raise ValueError("native fetch Python executable missing")
 
 
 class FetchCatalog:
@@ -68,8 +68,8 @@ class FetchCatalog:
         self.root = absolute_path(root)
         self.lock = ResourceLock(lambda: self.root / ".catalog.lock", label="native fetch tools")
 
-    def prepare(self, python, git_runtime, *, timeout=300):
-        """Snapshot explicit reviewed tools, prove acquisition, then switch pointer.
+    def prepare(self, python, git_runtime=None, *, timeout=300):
+        """Snapshot an explicit Python runtime, prove acquisition, then publish it.
 
         No source Git, pip, package scripts or plugin code executes on the host.
         Preparation does not authorize installation or grant plugin permissions.
@@ -80,7 +80,6 @@ class FetchCatalog:
         def check():
             if time.monotonic() >= deadline:
                 raise NativeSandboxError("execution_timeout")
-        get_backend().probe()
         with self.lock.hold():
             # Take a private immutable snapshot before executing the probe; later
             # source edits cannot change what is tested and published.
@@ -91,13 +90,12 @@ class FetchCatalog:
                 candidate.mkdir()
                 stage(python, candidate / "python", inventory(python))
                 check()
-                stage(git_runtime, candidate / "git", inventory(git_runtime))
                 record = _record(candidate)
                 _validate(candidate, record)
                 source = base / "probe-repository"
                 expected_commit = _probe_repository(source)
                 from core.native_fetch import local_candidate
-                with local_candidate(candidate / "python", candidate / "git", source,
+                with local_candidate(candidate / "python", None, source,
                                      staging_parent=base, deadline=deadline, checkpoint=check,
                                      branch="main") as (result, _):
                     if (result.reported_commit != expected_commit or len(result.files) != 1
@@ -160,8 +158,8 @@ class FetchCatalog:
         """Carry prepared file identities through snapshot creation, not just load."""
         from core.native_fetch import local_candidate
         with self.acquire() as (runtime, record):
-            tools = {name: {path[len(name) + 1:]: digest for path, digest in record["files"].items()
-                            if path.startswith(name + "/")} for name in ("python", "git")}
-            with local_candidate(runtime / "python", runtime / "git", source, staging_parent=staging_parent,
+            tools = {"python": {path[len("python") + 1:]: digest for path, digest in record["files"].items()
+                                if path.startswith("python/")}}
+            with local_candidate(runtime / "python", None, source, staging_parent=staging_parent,
                                  deadline=deadline, checkpoint=checkpoint, branch=branch, tool_files=tools, pack=pack) as result:
                 yield result
