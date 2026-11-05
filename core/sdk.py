@@ -28,6 +28,7 @@ from core.theme import (
 # ─── 交互 ─────────────────────────────────────────────────────────────────────
 from core.prompt import (
     select,
+    select_input,
     multi_select,
     paged_select,
     confirm,
@@ -99,8 +100,11 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 
 __all__ = [
     "read_host_file",
+    "compare_write_host_file",
+    "create_host_file",
+    "host_file_status",
     "artifact_info",
-    "host_execute", "host_artifacts", "host_path_info",
+    "host_execute", "host_artifacts", "host_path_info", "host_file_version", "host_archive_directories",
     "https_request",
     "upload_file",
     "SDK_API_VERSION",
@@ -108,7 +112,7 @@ __all__ = [
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "select", "select_input", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
     "get_service", "open_service_menu",
     "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",
@@ -125,13 +129,33 @@ def read_host_file(directory: str, relative: str) -> bytes:
     raise PermissionError("host file API requires an isolated plugin worker")
 
 
+def compare_write_host_file(directory: str, relative: str, expected_sha256: str, content: bytes) -> dict:
+    """Replace an unchanged bounded host file after exact write authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def create_host_file(directory: str, relative: str, content: bytes) -> dict:
+    """Create a new bounded host file with exact authorization; never overwrite."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def host_file_status(directory: str, relative: str) -> dict:
+    """Read a bounded ordinary file's existence and digest after authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def host_archive_directories(directory: str, relative: str, member: str) -> list[str]:
+    """List bounded immediate ASAR directories after host directory authorization."""
+    raise PermissionError("host archive API requires an isolated plugin worker")
+
+
 def artifact_info(directory: str, relative: str) -> dict:
     """Return bytes/SHA256 for an authorized ordinary host file, up to 512MiB."""
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
-    """Execute an explicitly approved host tool; returns raw status and pending output."""
+    """Execute an approved host tool with bounded input, output and execution time."""
     raise PermissionError("host tool API requires an isolated plugin worker")
 
 
@@ -143,6 +167,11 @@ def host_artifacts(action: str, parameters: dict) -> dict | list:
 def host_path_info(path: str, directory: bool = False) -> dict:
     """Validate a consent-bound ordinary absolute host path without executing it."""
     raise PermissionError("host path API requires an isolated plugin worker")
+
+
+def host_file_version(path: str) -> dict:
+    """Inspect Windows fixed file/product versions after directory authorization."""
+    raise PermissionError("host version API requires an isolated plugin worker")
 
 
 def https_request(url: str, method: str = "GET", headers: dict | None = None,

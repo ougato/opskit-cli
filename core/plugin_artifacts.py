@@ -37,12 +37,14 @@ def resource_lock(resource):
         yield
 
 
-def _snapshot(path, checkpoint):
+def _snapshot(path, checkpoint, expected_files=None):
     from core.plugin_tree import bounded_paths
     from core.host_file_access import open_bounded
     path = _ordinary(str(path), directory=True)
     identity = _directory(path)
     digest = hashlib.sha256()
+    expected_files = expected_files or {}
+    found = set()
     size = files = 0
     paths = list(bounded_paths(path, max_entries=MAX_OUTPUT_ENTRIES, max_depth=64,
                               skip_dirs=frozenset(), checkpoint=checkpoint))
@@ -59,14 +61,24 @@ def _snapshot(path, checkpoint):
         if size > MAX_OUTPUT_BYTES:
             raise ValueError("output exceeds limit")
         if stat.S_ISREG(info.st_mode):
+            relative_name = child.relative_to(path).as_posix()
+            file_digest = hashlib.sha256() if relative_name in expected_files else None
             with open_bounded(child, path, MAX_OUTPUT_BYTES) as source:
                 while body := source.read(1024**2):
                     checkpoint()
                     digest.update(body)
+                    if file_digest is not None:
+                        file_digest.update(body)
+            if file_digest is not None:
+                if file_digest.hexdigest() != expected_files[relative_name]:
+                    raise ValueError("output file hash does not match validated content")
+                found.add(relative_name)
         digest.update(json.dumps([child.relative_to(path).as_posix(), info.st_dev, info.st_ino,
             info.st_mode, info.st_size, info.st_mtime_ns], separators=(",", ":")).encode())
     if _directory(path) != identity:
         raise ValueError("output replaced")
+    if found != set(expected_files):
+        raise ValueError("validated output file missing")
     return {"identity": list(identity), "parent_identity": list(_directory(path.parent)),
             "inventory_sha256": digest.hexdigest(), "bytes": size, "files": files}
 
@@ -159,12 +171,23 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     allowed = {"list": {"resource", "keep"}, "commit": {"id", "required_files"},
                "clean": {"id", "record_sha256", "keep"},
                "adopt": {"resource", "directory", "snapshot", "required_files", "completed_ns"}}
-    if action not in allowed or set(parameters) != allowed[action]:
+    optional = {"expected_files"} if action == "commit" else set()
+    if action not in allowed or not allowed[action] <= set(parameters) or set(parameters) - allowed[action] - optional:
         raise ValueError("invalid artifact operation")
-    inspection_deadline = min(deadline, time.monotonic() + 30)
+    expected_files = parameters.get("expected_files", {})
+    if (not isinstance(expected_files, dict) or len(expected_files) > 32
+            or any(not isinstance(name, str) or not name or "\\" in name
+                   or PurePosixPath(name).is_absolute() or any(part in {"..", "."} or ":" in part for part in PurePosixPath(name).parts)
+                   or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                   for name, digest in expected_files.items())):
+        raise ValueError("invalid expected output file hashes")
+    initial_deadline = deadline() if callable(deadline) else deadline
+    inspection_deadline = min(initial_deadline, time.monotonic() + 30)
     def check():
         checkpoint()
-        if time.monotonic() >= inspection_deadline:
+        current_deadline = deadline() if callable(deadline) else deadline
+        effective_deadline = min(current_deadline, inspection_deadline + max(0, current_deadline - initial_deadline))
+        if time.monotonic() >= effective_deadline:
             raise TimeoutError("artifact operation deadline exceeded")
     if action == "list":
         resource = _ordinary(parameters["resource"], directory=True)
@@ -192,12 +215,22 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             # Reload after acquiring the shared build/cleanup lock.
             value, digest = _load(plugin, parameters["id"])
             path = _ordinary(value["directory"], directory=True)
-        scope = _grant(plugin, fingerprint, "directory.write", str(path), authority, check_identity, check)
+        if action == "commit":
+            # An execution-created pending output has a host-chosen random name.
+            # Authorize its stable parent, while continuing to verify the owned
+            # token and both directory identities before recording a receipt.
+            if value["phase"] != "pending" or path.name != "opskit-" + parameters["id"]:
+                raise ValueError("invalid pending output")
+            permission_path = _ordinary(str(path.parent), directory=True)
+        else:
+            # Adoption and especially deletion retain exact-output consent.
+            permission_path = path
+        scope = _grant(plugin, fingerprint, "directory.write", str(permission_path), authority, check_identity, check)
         def live():
             check()
             authority.check(scope, check_identity=check_identity)
         live()
-        snapshot = _snapshot(path, live)
+        snapshot = _snapshot(path, live, expected_files) if expected_files else _snapshot(path, live)
         if action == "adopt":
             expected = parameters["snapshot"]
             # Import never trusts caller-provided content hashes without recomputing them.

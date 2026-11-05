@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import time
+import base64
+import hashlib
 
 import pytest
 
@@ -43,7 +45,11 @@ def test_raw_exit_code_no_business_success_policy(tmp_path, monkeypatch, context
     assert record["phase"] == "pending"
 
 
-@pytest.mark.parametrize("args,options", [("shell command", {}), (["bad\narg"], {}), ([], {"shell": True}), ([1], {})])
+@pytest.mark.parametrize("args,options", [("shell command", {}), (["bad\narg"], {}), ([], {"shell": True}), ([1], {}),
+                                         ([], {"timeout_seconds": 0}), ([], {"timeout_seconds": 3601}),
+                                         ([], {"stdin_base64": "invalid!"}),
+                                         (["{config_file}"], {}), ([], {"config_base64": "e30="}),
+                                         ([], {"capture_after": "bad\nmarker"})])
 def test_invalid_arguments_never_prompt(tmp_path, args, options):
     with pytest.raises(ValueError):
         tools.execute("demo", "a" * 64, "missing", args, str(tmp_path), options,
@@ -84,6 +90,92 @@ def test_silent_host_process_revocation_kills_child():
     assert processes[0].poll() is not None
 
 
+def test_process_stream_delivers_exact_bounded_binary_input():
+    payload = b"version\r\n\x00\xff"
+    iterator = process.stream([sys.executable, "-c", "import sys; print(sys.stdin.buffer.read().hex())"],
+                              stdin_data=payload, timeout=10)
+    assert next(iterator) == payload.hex()
+    with pytest.raises(StopIteration) as completed:
+        next(iterator)
+    assert completed.value.value == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_host_input_digest_is_part_of_consent(tmp_path, monkeypatch, context):
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"fixture")
+    scopes, inputs = [], []
+    require = context["authority"].require
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    def stream(*args, **kwargs):
+        inputs.append(kwargs["stdin_data"])
+        yield "done"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    for value in (b"first", b"second"):
+        tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path),
+                      {"stdin_base64": base64.b64encode(value).decode("ascii")}, **context)
+    assert inputs == [b"first", b"second"]
+    assert scopes[0]["stdin"] == {"size": 5, "sha256": hashlib.sha256(b"first").hexdigest()}
+    assert scopes[0] != scopes[1]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_host_temporary_configuration_and_capture_are_scoped(tmp_path, monkeypatch, context):
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"fixture")
+    scopes, paths, streamed = [], [], []
+    context["output"] = streamed.append
+    require = context["authority"].require
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    def stream(cmd, **kwargs):
+        from pathlib import Path
+        config = Path(cmd[1].split("=", 1)[1])
+        paths.append(config)
+        assert config.read_bytes() == b'{"safe":true}'
+        yield "log"
+        yield "Start options:"
+        yield '{"options":true}'
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    result = tools.execute("demo", "a" * 64, str(tool), ["config={config_file}"], str(tmp_path),
+        {"config_base64": base64.b64encode(b'{"safe":true}').decode(), "capture_after": "Start options:"}, **context)
+    assert result["captured_after"] == '{"options":true}'
+    assert streamed == ["log", "Start options:", '{"options":true}']
+    assert not paths[0].exists()
+    assert scopes[0]["configuration"] == {"size": 13, "sha256": hashlib.sha256(b'{"safe":true}').hexdigest()}
+    assert scopes[0]["capture_after"] == "Start options:"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_output_template_scope_is_reusable_but_actual_outputs_are_unique(tmp_path, monkeypatch, context):
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"fixture")
+    scopes = []
+    require = context["authority"].require
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    def stream(*args, **kwargs):
+        yield "done"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    first = tools.execute("demo", "a" * 64, str(tool), ["output={output_name}"], str(tmp_path),
+                          {"output_parent": str(tmp_path)}, **context)
+    second = tools.execute("demo", "a" * 64, str(tool), ["output={output_name}"], str(tmp_path),
+                           {"output_parent": str(tmp_path)}, **context)
+    assert first["output"]["directory"] != second["output"]["directory"]
+    assert scopes[0] == scopes[1]
+    assert scopes[0]["arguments"] == ["output={output_name}"]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
 def test_changed_arguments_have_distinct_grants(tmp_path, monkeypatch, context):
     tool = tmp_path / "tool.exe"
@@ -102,6 +194,77 @@ def test_changed_arguments_have_distinct_grants(tmp_path, monkeypatch, context):
         tools.execute("demo", "a" * 64, str(tool), [argument], str(tmp_path), {}, **context)
     assert scopes[0] != scopes[1]
     assert [json.loads(scope)["arguments"] for scope in scopes] == [["one"], ["two"]]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_capture_output_is_bounded_and_has_distinct_authorization(tmp_path, monkeypatch, context):
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"fixture")
+    scopes = []
+    require = context["authority"].require
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    def stream(*args, **kwargs):
+        yield "first"
+        yield "second"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    plain = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {}, **context)
+    captured = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {"capture_output": True}, **context)
+    assert "captured_output" not in plain
+    assert captured["captured_output"] == "first\nsecond"
+    assert "capture_output" not in scopes[0] and scopes[1]["capture_output"] is True
+
+    def oversized(*args, **kwargs):
+        yield "x" * 16385
+    monkeypatch.setattr(process, "stream", oversized)
+    with pytest.raises(RuntimeError, match="output limit"):
+        tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {"capture_output": True}, **context)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_tool_dependency_is_scoped_and_in_tool_path(tmp_path, monkeypatch, context):
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"fixture")
+    directory = tmp_path / "dependency"
+    directory.mkdir()
+    dependency = directory / "git.exe"
+    dependency.write_bytes(b"fixture git")
+    scopes, environments = [], []
+    require = context["authority"].require
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    def stream(*args, **kwargs):
+        environments.append(kwargs["env"])
+        yield "done"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path),
+                  {"tool_dependencies": [str(dependency)]}, **context)
+    assert str(directory) in environments[0]["PATH"].split(os.pathsep)
+    assert scopes[0]["tool_dependencies"][0]["executable"] == str(dependency)
+    assert scopes[0]["tool_dependencies"][0]["search_directory"] == str(directory)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_changed_tool_dependency_during_consent_never_launches(tmp_path, monkeypatch, context):
+    tool, dependency = tmp_path / "tool.exe", tmp_path / "git.exe"
+    tool.write_bytes(b"tool")
+    dependency.write_bytes(b"original")
+    require = context["authority"].require
+    def changed(request, **kwargs):
+        result = require(request, **kwargs)
+        dependency.write_bytes(b"replacement")
+        return result
+    monkeypatch.setattr(context["authority"], "require", changed)
+    monkeypatch.setattr(process, "stream", lambda *a, **k: pytest.fail("changed dependency launched"))
+    with pytest.raises(PermissionError, match="dependency changed"):
+        tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path),
+                      {"tool_dependencies": [str(dependency)]}, **context)
 
 
 def test_silent_process_timeout_and_cancel_reap_children():

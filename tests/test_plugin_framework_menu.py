@@ -71,10 +71,10 @@ def test_active_framework_has_no_business_implementation():
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
-def test_permission_prompt_uses_icons_and_keeps_deny_return(monkeypatch, language):
+def test_permission_prompt_uses_icons_and_back_cancels(monkeypatch, language):
     from core import plugin_capabilities as capabilities, prompt
     from core.cli import non_interactive
-    from core.native_sandbox import CapabilityRequest, GrantChoice
+    from core.native_sandbox import CapabilityRequest
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     theme.init()
     monkeypatch.setattr(capabilities, "_interactive_input", lambda: True)
@@ -82,11 +82,12 @@ def test_permission_prompt_uses_icons_and_keeps_deny_return(monkeypatch, languag
     monkeypatch.setattr(prompt, "select", lambda *args, **kwargs: captured.append((args, kwargs)))
     token = non_interactive.set(False)
     try:
-        result = capabilities.prompt_grant(CapabilityRequest("demo", "a" * 64, "directory.read", "E:/project"))
+        with pytest.raises(prompt.UserCancel):
+            capabilities.prompt_grant(CapabilityRequest("demo", "a" * 64, "directory.read", "E:/project"))
     finally:
         non_interactive.reset(token)
-    assert result is GrantChoice.DENY
     args, kwargs = captured[0]
+    assert [item["key"] for item in args[2]] == ["1", "2"]
     labels = [item["label"] for item in args[2]]
     assert kwargs["back_label"] == theme.get_icon("back") + " " + ("返回" if language == "zh" else "Back")
     for label in labels:

@@ -87,13 +87,15 @@ def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False, s
 
 
 def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=None, stdin=None,
-           checkpoint=None) -> Iterator[str]:
+           stdin_data=None, checkpoint=None) -> Iterator[str]:
     if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         raise ValueError("process timeout must be finite and positive")
+    if stdin_data is not None and (not isinstance(stdin_data, bytes) or len(stdin_data) > 16384 or stdin is not None):
+        raise ValueError("invalid process input")
     deadline = time.monotonic() + timeout if timeout is not None else None
     if checkpoint is not None:
         checkpoint()
-    process = start(cmd, cwd=cwd, env=env, stdin=stdin)
+    process = start(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if stdin_data is not None else stdin)
     if process_ref is not None:
         process_ref.append(process)
     output: queue.Queue = queue.Queue(maxsize=32)
@@ -119,9 +121,25 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
             put(None)
 
     thread = threading.Thread(target=reader, daemon=True)
+    def writer() -> None:
+        assert process.stdin is not None
+        try:
+            process.stdin.buffer.write(stdin_data)
+            process.stdin.buffer.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+    input_thread = threading.Thread(target=writer, daemon=True) if stdin_data is not None else None
     tree_stopped = False
     try:
         thread.start()
+        if input_thread is not None:
+            input_thread.start()
         while True:
             if checkpoint is not None:
                 checkpoint()
@@ -160,6 +178,8 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
         terminate_tree(process)
         if thread.ident is not None:
             thread.join(timeout=3)
+        if input_thread is not None and input_thread.ident is not None:
+            input_thread.join(timeout=3)
         if not thread.is_alive() and process.stdout is not None:
             process.stdout.close()
 

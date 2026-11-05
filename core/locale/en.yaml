@@ -944,8 +944,6 @@ plugin_native:
   request: "Permission request"
   once: "Allow this time"
   always: "Always allow"
-  deny: "Deny"
-  deny_return: "Back"
   permissions_help: "Inspect and revoke persistent plugin host permissions"
   list_help: "List saved persistent permissions"
   revoke_help: "Revoke a permission and invalidate active one-time grants"

@@ -290,7 +290,8 @@ def _app_callback(
         _main_menu(cfg)
     else:
         # Named commands need readable messages, without boot's config/update writes.
-        i18n_init()
+        i18n_init(language=lang or None)
+        theme_init(theme or None)
 
 
 def _boot() -> dict:

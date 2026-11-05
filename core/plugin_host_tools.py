@@ -1,11 +1,15 @@
 """Consent-bound, business-neutral host tools. Never import plugin code here."""
 import hashlib
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import time
 import uuid
+from contextlib import nullcontext
 
 from core.native_sandbox import CapabilityRequest
 from core.plugin_runtime_inventory import _read_file
@@ -35,7 +39,7 @@ def _identity(path):
     return info.st_dev, info.st_ino
 
 
-def _environment(tool):
+def _environment(tool, dependencies=()):
     """Minimal desktop-tool environment; no inherited PATH or credentials."""
     if os.name != "nt":
         raise ValueError("host tool backend not implemented for this platform")
@@ -52,7 +56,7 @@ def _environment(tool):
     system = Path(buffer.value)
     environment = {key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP",
                    "USERPROFILE", "LOCALAPPDATA", "APPDATA", "SystemDrive") if key in os.environ}
-    environment["PATH"] = str(tool.parent) + os.pathsep + str(system)
+    environment["PATH"] = os.pathsep.join(dict.fromkeys([str(tool.parent), *(str(item.parent) for item in dependencies), str(system)]))
     environment["ComSpec"] = str(system / "cmd.exe")
     return environment
 
@@ -79,19 +83,110 @@ def path_info(plugin, fingerprint, path, directory, *, authority, check_identity
     return {"path": str(target), "directory": directory}
 
 
+def file_version(plugin, fingerprint, path, *, authority, check_identity, checkpoint, **unused):
+    """Read Windows fixed executable version metadata under directory consent."""
+    if os.name != "nt":
+        raise ValueError("file version metadata backend unavailable")
+    import ctypes
+    from ctypes import wintypes
+    target = _ordinary(path)
+    before = target.stat()
+    if before.st_nlink != 1:
+        raise ValueError("linked executable forbidden")
+    scope = _grant(plugin, fingerprint, "directory.read", str(target.parent), authority, check_identity, checkpoint)
+    authority.check(scope, check_identity=check_identity)
+    checkpoint()
+    version = ctypes.WinDLL("version", use_last_error=True)
+    size_fn = version.GetFileVersionInfoSizeW
+    size_fn.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+    size_fn.restype = wintypes.DWORD
+    get_info = version.GetFileVersionInfoW
+    get_info.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID]
+    get_info.restype = wintypes.BOOL
+    query = version.VerQueryValueW
+    query.argtypes = [wintypes.LPCVOID, wintypes.LPCWSTR, ctypes.POINTER(wintypes.LPVOID),
+                      ctypes.POINTER(wintypes.UINT)]
+    query.restype = wintypes.BOOL
+    ignored = wintypes.DWORD()
+    size = size_fn(str(target), ctypes.byref(ignored))
+    if not 0 < size <= 16 * 1024 * 1024:
+        raise ValueError("executable version metadata unavailable")
+    buffer = ctypes.create_string_buffer(size)
+    if not get_info(str(target), 0, size, buffer):
+        raise OSError("executable version metadata read failed")
+    pointer, length = wintypes.LPVOID(), wintypes.UINT()
+    if not query(buffer, "\\", ctypes.byref(pointer), ctypes.byref(length)) or length.value < 52:
+        raise ValueError("invalid executable version metadata")
+    words = ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD * 13)).contents
+    if words[0] != 0xFEEF04BD:
+        raise ValueError("invalid executable version signature")
+    def components(high, low):
+        return [high >> 16, high & 0xffff, low >> 16, low & 0xffff]
+    result = {"file_version": components(words[2], words[3]),
+              "product_version": components(words[4], words[5])}
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    after = _ordinary(path).stat()
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_nlink) != (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_nlink):
+        raise ValueError("executable changed during metadata inspection")
+    return result
+
+
 def execute(plugin, fingerprint, executable, arguments, directory, options, *, authority,
-            check_identity, deadline, checkpoint, output):
+            check_identity, deadline, checkpoint, output, host_work_scope=None):
     """Return raw exit status and a pending output token; success is plugin policy."""
     from core import plugin_artifacts as artifacts
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent"}):
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds"}
+            or ("capture_output" in options and type(options["capture_output"]) is not bool)
+            or not isinstance(options.get("tool_dependencies", []), list)
+            or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    timeout = options.get("timeout_seconds", 300)
+    if type(timeout) is not int or not 1 <= timeout <= 3600:
+        raise ValueError("invalid host tool timeout")
+    stdin_data = None
+    if "stdin_base64" in options:
+        encoded = options["stdin_base64"]
+        if not isinstance(encoded, str) or len(encoded) > 21848:
+            raise ValueError("invalid host tool input")
+        try:
+            stdin_data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise ValueError("invalid host tool input") from error
+        if len(stdin_data) > 16384:
+            raise ValueError("host tool input exceeds limit")
+    config_data = None
+    if "config_base64" in options:
+        encoded = options["config_base64"]
+        if not isinstance(encoded, str) or len(encoded) > 21848:
+            raise ValueError("invalid host tool configuration")
+        try:
+            config_data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise ValueError("invalid host tool configuration") from error
+        if len(config_data) > 16384 or not config_data:
+            raise ValueError("host tool configuration exceeds limit")
+    if bool(config_data is not None) != any("{config_file}" in a for a in arguments):
+        raise ValueError("host tool configuration placeholder mismatch")
+    capture_after = options.get("capture_after")
+    if capture_after is not None and (not isinstance(capture_after, str) or not 1 <= len(capture_after) <= 128
+                                      or any(ord(c) < 32 for c in capture_after)):
+        raise ValueError("invalid host tool capture marker")
     tool = _ordinary(executable)
     if os.name != "nt" or tool.suffix.lower() != ".exe":
         raise ValueError("host executable backend unavailable")
     root = _ordinary(directory, directory=True)
+    dependencies = [_ordinary(path) for path in options.get("tool_dependencies", [])]
+    if any(path.suffix.lower() != ".exe" for path in dependencies):
+        raise ValueError("host tool dependencies must be executables")
+    dependency_ids = [_identity(path) for path in dependencies]
+    dependency_records = [{"executable": str(path), "search_directory": str(path.parent),
+                           "sha256": hashlib.sha256(_read_file(path, Path(path.anchor), 256 * 1024**2)).hexdigest()}
+                          for path in dependencies]
     base = options.get("output_parent")
     if base is not None:
         base = _ordinary(base, directory=True)
@@ -103,8 +198,18 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     argv = [a.replace("{output_directory}", str(destination) if destination else "")
              .replace("{output_name}", destination.name if destination else "") for a in arguments]
     digest = hashlib.sha256(_read_file(tool, Path(tool.anchor), 256 * 1024**2)).hexdigest()
-    resource = json.dumps({"executable": str(tool), "sha256": digest, "arguments": argv,
-                           "directory": str(root), "output_parent": str(base) if base else None},
+    # The random output name is confined to the approved parent. Authorize
+    # the literal template instead of an unusable, one-off expanded name.
+    resource = json.dumps({"executable": str(tool), "sha256": digest, "arguments": arguments,
+                           "directory": str(root), "output_parent": str(base) if base else None,
+                           **({"capture_output": True} if options.get("capture_output") else {}),
+                           **({"stdin": {"sha256": hashlib.sha256(stdin_data).hexdigest(), "size": len(stdin_data)}}
+                              if stdin_data is not None else {}),
+                           **({"configuration": {"sha256": hashlib.sha256(config_data).hexdigest(), "size": len(config_data)}}
+                              if config_data is not None else {}),
+                           **({"capture_after": capture_after} if capture_after is not None else {}),
+                           **({"timeout_seconds": timeout} if "timeout_seconds" in options else {}),
+                           **({"tool_dependencies": dependency_records} if dependencies else {})},
                           ensure_ascii=False, sort_keys=True)
     tool_id, root_id = _identity(tool), _identity(root)
     base_id = _identity(base) if base else None
@@ -112,14 +217,17 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     from core.native_task_control import task_checkpoint
     checkpoint = task_checkpoint(checkpoint, output=output)
     next_check = 0.0
+    def current_deadline():
+        return deadline() if callable(deadline) else deadline
     def live():
         nonlocal next_check
         checkpoint()
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= current_deadline():
             raise TimeoutError("host tool deadline exceeded")
         authority.check(scope, check_identity=check_identity)
         if (_identity(_ordinary(executable)) != tool_id
                 or _identity(_ordinary(directory, directory=True)) != root_id
+                or any(_identity(_ordinary(str(path))) != identity for path, identity in zip(dependencies, dependency_ids))
                 or (base and _identity(_ordinary(str(base), directory=True)) != base_id)):
             raise PermissionError("host resource changed")
         if time.monotonic() >= next_check:
@@ -131,25 +239,61 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         live()
         if hashlib.sha256(_read_file(tool, Path(tool.anchor), 256 * 1024**2)).hexdigest() != digest:
             raise PermissionError("executable changed")
+        for dependency, record in zip(dependencies, dependency_records):
+            if hashlib.sha256(_read_file(dependency, Path(dependency.anchor), 256 * 1024**2)).hexdigest() != record["sha256"]:
+                raise PermissionError("tool dependency changed")
         if destination:
             destination.mkdir()
             artifacts.pending(plugin, token, root, destination, live)
         from core.process import stream
-        iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool),
-                          stdin=subprocess.DEVNULL, timeout=max(.001, deadline - time.monotonic()), checkpoint=live)
+        input_args = {"stdin_data": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}
         total = 0
-        try:
-            while True:
+        captured = []
+        captures_after = []
+        marker_count = 0
+        capture_next = False
+        # Only the supervised external process gets a separate bounded budget.
+        # The worker is blocked on this broker call, while live() continues
+        # checking all authorizations and resource identities.
+        with tempfile.TemporaryDirectory(prefix="opskit-tool-") if config_data is not None else nullcontext(None) as scratch:
+            if scratch is not None:
+                config_file = Path(scratch) / "request.json"
+                config_file.write_bytes(config_data)
+                if ";" in str(config_file):
+                    raise ValueError("unsupported temporary configuration path")
+                argv = [a.replace("{config_file}", str(config_file).replace("\\", "/")) for a in argv]
+            with host_work_scope() if host_work_scope is not None else nullcontext():
+                iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
+                                  **input_args, timeout=timeout, checkpoint=live)
                 try:
-                    line = next(iterator)
-                except StopIteration as completed:
-                    code = completed.value
-                    break
-                total += len(line.encode("utf-8"))
-                if total > 16 * 1024**2:
-                    raise RuntimeError("host tool output limit exceeded")
-                output(line)
-        finally:
-            iterator.close()
+                    while True:
+                        try:
+                            line = next(iterator)
+                        except StopIteration as completed:
+                            code = completed.value
+                            break
+                        line_size = len(line.encode("utf-8"))
+                        total += line_size
+                        if total > 16 * 1024**2:
+                            raise RuntimeError("host tool output limit exceeded")
+                        if capture_next:
+                            captures_after.append(line if line_size <= 16384 else None)
+                            capture_next = False
+                        if capture_after is not None and capture_after in line:
+                            marker_count += 1
+                            capture_next = True
+                        if options.get("capture_output"):
+                            if total > 16384:
+                                raise RuntimeError("captured host tool output limit exceeded")
+                            captured.append(line)
+                        else:
+                            output(line)
+                finally:
+                    iterator.close()
         live()
-        return {"returncode": code, "output": {"id": token, "directory": str(destination)} if destination else None}
+        result = {"returncode": code, "output": {"id": token, "directory": str(destination)} if destination else None}
+        if options.get("capture_output"):
+            result["captured_output"] = "\n".join(captured)
+        if capture_after is not None:
+            result["captured_after"] = captures_after[0] if marker_count == 1 and len(captures_after) == 1 else None
+        return result

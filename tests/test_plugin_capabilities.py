@@ -52,6 +52,33 @@ def test_denied_or_invalid_choice_does_not_persist(tmp_path, choice):
     assert authority.list_grants() == []
 
 
+def test_back_cancels_without_persisting_and_next_request_prompts(tmp_path, monkeypatch):
+    from core import plugin_capabilities, prompt
+    from core.cli import non_interactive
+    monkeypatch.setattr(plugin_capabilities, "_interactive_input", lambda: True)
+    answers = iter([None, "1"])
+    seen = []
+    def select(*args, **kwargs):
+        seen.append(args[2])
+        return next(answers)
+    monkeypatch.setattr(prompt, "select", select)
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    token = non_interactive.set(False)
+    try:
+        with pytest.raises(prompt.UserCancel):
+            authority.require(request(), check_identity=live)
+        assert authority.list_grants() == []
+        with pytest.raises(CapabilityDenied):
+            authority.check(request(), check_identity=live)
+        authority.require(request(), check_identity=live)
+        authority.check(request(), check_identity=live)
+    finally:
+        non_interactive.reset(token)
+        authority.close()
+    assert len(seen) == 2
+    assert [[item["key"] for item in choices] for choices in seen] == [["1", "2"], ["1", "2"]]
+
+
 @pytest.mark.parametrize("choice", [GrantChoice.ONCE, GrantChoice.ALWAYS])
 def test_revoke_invalidates_in_flight_and_persistent_permissions(tmp_path, choice):
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")

@@ -16,6 +16,27 @@ from rich.text import Text
 console = Console()
 
 _input_guard = ContextVar("prompt_input_guard", default=None)
+_input_wait_scope = ContextVar("prompt_input_wait_scope", default=None)
+
+
+@contextmanager
+def input_wait_scope(factory) -> Iterator[None]:
+    """Install the supervisor's budget scope for actual terminal waits."""
+    token = _input_wait_scope.set(factory)
+    try:
+        yield
+    finally:
+        _input_wait_scope.reset(token)
+
+
+@contextmanager
+def _waiting_for_input() -> Iterator[None]:
+    factory = _input_wait_scope.get()
+    if factory is None or _input_guard.get() is None:
+        yield
+    else:
+        with factory():
+            yield
 
 
 @contextmanager
@@ -39,11 +60,12 @@ def _check_input() -> None:
 def _getwch() -> str:
     import msvcrt
     if _input_guard.get() is not None:
-        while True:
-            _check_input()
-            if msvcrt.kbhit():
-                break
-            time.sleep(0.05)
+        with _waiting_for_input():
+            while True:
+                _check_input()
+                if msvcrt.kbhit():
+                    break
+                time.sleep(0.05)
     value = msvcrt.getwch()
     if _input_guard.get() is not None and value in ("\x03", "\x04"):
         raise KeyboardInterrupt
@@ -53,10 +75,11 @@ def _getwch() -> str:
 def _read_fd(fd: int, count: int) -> bytes:
     if _input_guard.get() is not None:
         import select as _select
-        while True:
-            _check_input()
-            if _select.select([fd], [], [], 0.05)[0]:
-                break
+        with _waiting_for_input():
+            while True:
+                _check_input()
+                if _select.select([fd], [], [], 0.05)[0]:
+                    break
     value = os.read(fd, count)
     if _input_guard.get() is not None and value in (b"\x03", b"\x04"):
         raise KeyboardInterrupt
@@ -499,6 +522,21 @@ def select(
             return ch
 
 
+def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict[str, Any]],
+                 back_label: str = '', description: str = '', default: str = '') -> str:
+    """Display the standard numbered menu and accept a full line of input."""
+    from core.cli import require_interaction
+    require_interaction()
+    os.system('cls' if os.name == 'nt' else 'clear')
+    _render_header([*breadcrumb, subtitle] if subtitle else breadcrumb)
+    if description:
+        row = Text(f' {_TEE} ', style=_PIPE_COLOR)
+        row.append(description)
+        console.print(row)
+    _render_options([(c['key'], c['label']) for c in choices if c['key'] != '0'], back_label=back_label)
+    return _read_line() or default
+
+
 def paged_select(
     *,
     breadcrumb: list[str],
@@ -733,6 +771,7 @@ def confirm(
     prompt: str,
     theme_key: str = 'root',
     info_lines: list[str] | None = None,
+    require_explicit: bool = False,
 ) -> bool:
     """Powerline 风格确认（y/N 单键）。
 
@@ -740,9 +779,9 @@ def confirm(
     非交互模式（--yes）下直接返回 True。
     """
     from core.cli import require_interaction
-    if not _auto_yes:
+    if require_explicit or not _auto_yes:
         require_interaction()
-    if _auto_yes:
+    if _auto_yes and not require_explicit:
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])

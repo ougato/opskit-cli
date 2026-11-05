@@ -943,12 +943,10 @@ plugin_native:
   request: "授权请求"
   once: "本次授权"
   always: "永久授权"
-  deny: "拒绝授权"
   permissions_help: "查看和撤销插件的永久宿主权限"
   list_help: "列出已保存的永久权限"
   revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
   id_help: "permissions list 显示的完整权限 ID"
-  deny_return: "返回"
   description: "操作：{operation}\n资源：{resource}\n插件指纹：{fingerprint}\n宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离。权限可在插件权限管理中撤销。"
   operations:
     directory:

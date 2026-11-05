@@ -64,7 +64,7 @@ def _adapt_sdk(name: str):
     i18n.init(language=os.environ.get("OPSKIT_LANGUAGE"))
     theme.init()
     # paged_select evaluates plugin callbacks locally and calls adapted select.
-    for method in ("select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
+    for method in ("select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
         def call(*args, _method=method, **kwargs):
             return broker(_method, *args, **kwargs)
         setattr(sdk, method, call)
@@ -85,11 +85,25 @@ def _adapt_sdk(name: str):
             raise ValueError("invalid host file response")
         return base64.b64decode(reply["content"], validate=True)
     sdk.read_host_file = read_host_file
+    def compare_write_host_file(directory, relative, expected_sha256, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.compare_write", directory, relative, expected_sha256,
+                      base64.b64encode(content).decode("ascii"))
+    sdk.compare_write_host_file = compare_write_host_file
+    def create_host_file(directory, relative, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.create_file", directory, relative, base64.b64encode(content).decode("ascii"))
+    sdk.create_host_file = create_host_file
+    sdk.host_file_status = lambda directory, relative: broker("host.file_status", directory, relative)
+    sdk.host_archive_directories = lambda directory, relative, member: broker("host.archive_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
     sdk.host_path_info = lambda path, directory=False: broker("host.path_info", path, directory)
+    sdk.host_file_version = lambda path: broker("host.file_version", path)
     def https_request(url, method="GET", headers=None, body=b""):
         if not isinstance(body, bytes):
             raise TypeError("HTTPS body must be bytes")

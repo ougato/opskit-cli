@@ -41,3 +41,27 @@ def read_file(plugin, fingerprint, directory, relative, *, authority, check_iden
         raise ValueError("host directory changed during read")
     authority.check(scope, check_identity=check_identity)
     return {"encoding": "base64", "content": base64.b64encode(body).decode("ascii")}
+
+
+def file_status(plugin, fingerprint, directory, relative, *, authority, check_identity):
+    """Report a bounded regular file's existence and digest after directory consent."""
+    import hashlib
+    import os
+    from core.host_file_access import source_path
+    if not isinstance(relative, str) or "/" in relative or "\\" in relative:
+        raise ValueError("file status requires one filename")
+    root, target, identity = source_path(directory, relative)
+    scope = CapabilityRequest(plugin, fingerprint, "directory.read", str(root))
+    authority.require(scope, check_identity=check_identity)
+    authority.check(scope, check_identity=check_identity)
+    if source_path(directory, relative) != (root, target, identity):
+        raise ValueError("host directory changed during authorization")
+    if not os.path.lexists(target):
+        result = {"exists": False, "sha256": None}
+    else:
+        content = _read_file(target, root, 16 * 1024)
+        result = {"exists": True, "sha256": hashlib.sha256(content).hexdigest()}
+    if source_path(directory, relative) != (root, target, identity):
+        raise ValueError("host directory changed during inspection")
+    authority.check(scope, check_identity=check_identity)
+    return result
