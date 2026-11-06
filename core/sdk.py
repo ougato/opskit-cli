@@ -27,8 +27,9 @@ from core.theme import (
 
 # ─── 交互 ─────────────────────────────────────────────────────────────────────
 from core.prompt import (
-    select,
-    multi_select,
+    select as _select,
+    select_input as _select_input,
+    multi_select as _multi_select,
     paged_select,
     confirm,
     text_input,
@@ -39,17 +40,45 @@ from core.prompt import (
     console,
 )
 
+
+def select(breadcrumb: list[str], subtitle: str, choices: list[dict], theme_key: str = 'root',
+           show_shortcuts: list[tuple[str, str, str]] | None = None, back_label: str = '',
+           description: str = '') -> str | None:
+    """Select a key; return None when the user goes back or presses Escape."""
+    try:
+        return _select(breadcrumb, subtitle, choices, theme_key, show_shortcuts, back_label,
+                       description=description)
+    except UserCancel:
+        return None
+
+
+def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict], back_label: str = '',
+                 description: str = '', default: str = '') -> str | None:
+    """Read a menu value; 0 and Escape go back, while an empty line uses default."""
+    try:
+        value = _select_input(breadcrumb, subtitle, choices, back_label, description, default)
+    except UserCancel:
+        return None
+    return None if value == '0' else value
+
+
+def multi_select(breadcrumb: list[str], subtitle: str, options: list[str], theme_key: str = 'root',
+                 back_label: str = '', all_index: int | None = None) -> list[int] | None:
+    """Return selected indexes, or None when the user goes back or presses Escape."""
+    try:
+        return _multi_select(breadcrumb, subtitle, options, theme_key, back_label, all_index)
+    except UserCancel:
+        return None
+
 # ─── 插件间服务 ─────────────────────────────────────────────────────────────────
-def get_service(name: str) -> object | None:
-    """Resolve on the host; the worker binds this API to an authenticated RPC."""
-    from core.plugin_services import get_service as resolve
-    return resolve(name)
+def get_service(name: str) -> object:
+    """Return a service proxy in an isolated worker; access is checked on use."""
+    raise PermissionError("service API requires an isolated plugin worker")
 
 
-def open_service_menu(name: str, breadcrumb: list[str], context: dict[str, object] | None = None,
-                      source: str = "") -> bool:
-    from core.plugin_services import open_service_menu as open_menu
-    return open_menu(name, breadcrumb, context, source)
+def open_service_menu(name: str, breadcrumb: list[str], context: dict[str, object] | None = None) -> bool:
+    """Open an authorized provider's menu; never install a provider implicitly."""
+    raise PermissionError("service API requires an isolated plugin worker")
 
 # ─── 子进程执行 ───────────────────────────────────────────────────────────────
 from core.runner import run, run_lines, which, cmd_ok
@@ -64,29 +93,6 @@ from core.yamlio import load_yaml, save_yaml
 from core.logger import get_logger
 
 
-# ─── 软件安装（复用平台软件配方，插件不得自行实现安装器）───────────────
-def ensure_software(key: str) -> bool:
-    """检测并按需安装 OpsKit 自带软件配方（如 golang / docker / nodejs）。
-
-    已装 → 静默返回 True；未装 → 以平台统一安装流程（进度条 + 统一反馈）
-    安装推荐版本。只允许安装注册表内的配方（白名单），插件无法借此执行
-    任意安装逻辑。调用前应已渲染阶段标题（clear_screen + print_header）。
-    """
-    from software.actions import ensure_installed
-    return ensure_installed(key)
-
-
-def software_bin(key: str, cmd: str) -> str | None:
-    """返回已安装软件配方提供的可执行文件路径，未安装返回 None。
-
-    插件无需关心平台把软件装在哪（系统 PATH / 私有目录 / shim）：平台
-    会先激活该软件到当前进程 PATH，再解析 cmd，保证后续子进程可直接调用。
-    仅限注册表内配方（白名单）。
-    """
-    from software.actions import resolve_bin
-    return resolve_bin(key, cmd)
-
-
 def ensure_python_package(package: str, import_name: str = "") -> bool:
     """Only inspect dependencies baked into the plugin's immutable runtime.
 
@@ -99,8 +105,11 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 
 __all__ = [
     "read_host_file",
+    "compare_write_host_file",
+    "create_host_file",
+    "host_file_status",
     "artifact_info",
-    "host_execute", "host_artifacts", "host_path_info",
+    "host_execute", "host_artifacts", "host_path_info", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
     "SDK_API_VERSION",
@@ -108,15 +117,13 @@ __all__ = [
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "select", "select_input", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
     "get_service", "open_service_menu",
     "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",
     "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
     "load_yaml", "save_yaml",
     "get_logger",
-    "ensure_software",
-    "software_bin",
 ]
 
 
@@ -125,13 +132,33 @@ def read_host_file(directory: str, relative: str) -> bytes:
     raise PermissionError("host file API requires an isolated plugin worker")
 
 
+def compare_write_host_file(directory: str, relative: str, expected_sha256: str, content: bytes) -> dict:
+    """Replace an unchanged bounded host file after exact write authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def create_host_file(directory: str, relative: str, content: bytes) -> dict:
+    """Create a new bounded host file with exact authorization; never overwrite."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def host_file_status(directory: str, relative: str) -> dict:
+    """Read a bounded ordinary file's existence and digest after authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def host_asar_directories(directory: str, relative: str, member: str) -> list[str]:
+    """List bounded immediate ASAR directories after host directory authorization."""
+    raise PermissionError("host archive API requires an isolated plugin worker")
+
+
 def artifact_info(directory: str, relative: str) -> dict:
     """Return bytes/SHA256 for an authorized ordinary host file, up to 512MiB."""
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
-    """Execute an explicitly approved host tool; returns raw status and pending output."""
+    """Execute an approved host tool with bounded input, output and execution time."""
     raise PermissionError("host tool API requires an isolated plugin worker")
 
 
@@ -143,6 +170,11 @@ def host_artifacts(action: str, parameters: dict) -> dict | list:
 def host_path_info(path: str, directory: bool = False) -> dict:
     """Validate a consent-bound ordinary absolute host path without executing it."""
     raise PermissionError("host path API requires an isolated plugin worker")
+
+
+def host_file_version(path: str) -> dict:
+    """Inspect Windows fixed file/product versions after directory authorization."""
+    raise PermissionError("host version API requires an isolated plugin worker")
 
 
 def https_request(url: str, method: str = "GET", headers: dict | None = None,

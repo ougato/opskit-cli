@@ -12,7 +12,7 @@ backends are verified; ordinary host processes and Docker/WSL are not fallbacks.
 | `native_sandbox.py` | Backend/Process/Limits 契约及平台选择 / contracts and selection |
 | `native_process.py` | 受限 stdio、语言环境、IO 回收 / stdio, language, IO cleanup |
 | `native_invocation.py` | 私有快照、运行期限、RPC / snapshots, deadlines, RPC |
-| `plugin_capabilities.py` | 本次/永久/拒绝、指纹、撤权 / consent, fingerprint, revocation |
+| `plugin_capabilities.py` | 本次/永久/返回取消、指纹、撤权 / consent, fingerprint, revocation |
 | 宿主 broker / Host broker | 目录读取、摘要、上传、固定工具操作 / privileged operations |
 | 平台后端 / OS backend | 真正建立隔离、验证后启动、回收进程树 / enforce, verify, launch, reap |
 

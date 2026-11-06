@@ -5,8 +5,8 @@
     暴露模块级函数 ``provide_service(name: str) -> object | None``。
   - 服务对象约定携带 ``service_api_version: int`` 属性；带交互界面的服务
     暴露 ``open_menu(breadcrumb: list[str], context: dict) -> None``。
-  - 调用方在 plugin.yaml 声明 ``uses: [{service: storage, source: <git url>}]``，
-    通过 SDK 的 ``get_service`` / ``open_service_menu`` 使用，无需依赖提供方包名。
+  - 调用方在 plugin.yaml 声明提供方身份、服务版本及允许的方法，
+    通过 SDK 的 ``get_service`` / ``open_service_menu`` 使用。
 
 安全模型与插件加载一致：提供方必须已通过信任确认与完整性校验才会被加载。
 """
@@ -15,25 +15,7 @@ from __future__ import annotations
 import re
 import hmac
 from functools import wraps
-from typing import Protocol, runtime_checkable
-
-from core.constants import APP_NAME
-from core.logger import get_logger
 from core.plugin import PluginManifest
-
-_log = get_logger("opskit.services")
-
-
-@runtime_checkable
-class MenuService(Protocol):
-    """带交互界面的服务对象协议"""
-
-    def open_menu(self, breadcrumb: list[str], context: dict[str, object]) -> None: ...
-
-
-# 服务名 → 已解析的服务对象（进程内缓存）
-_cache: dict[str, object] = {}
-
 
 def _service_budget(function):
     @wraps(function)
@@ -91,25 +73,6 @@ def _find_provider(name: str) -> PluginManifest | None:
     """在已安装插件清单中查找声明 provides 包含 name 的提供方"""
     providers = _selected_manifests("service", name)
     return providers[0] if len(providers) == 1 else None
-
-
-class ServiceProxy:
-    """JSON RPC proxy; no provider code or Python object enters the platform."""
-
-    @property
-    def service_api_version(self):
-        return describe_service(self.name)["service_api_version"]
-
-    def __init__(self, name: str):
-        self.name = name
-
-    def open_menu(self, breadcrumb, context):
-        return call_service(self.name, "open_menu", [breadcrumb, context])
-
-    def __getattr__(self, method: str):
-        if method.startswith("_"):
-            raise AttributeError(method)
-        return lambda *args, **kwargs: call_service(self.name, method, list(args), kwargs)
 
 
 @_service_budget
@@ -176,91 +139,3 @@ def describe_service(name: str, *, caller="platform"):
         raise SandboxError("service provider unavailable")
     resolve_service_access(manifest, name, "", caller)
     return invoke(manifest, "service.describe", service=name, caller=caller)
-
-
-@_service_budget
-def get_service(name: str) -> object | None:
-    """获取插件间服务对象；提供方未安装 / 未信任 / 加载失败返回 None"""
-    manifest = _find_provider(name)
-    if manifest is None:
-        return None
-    from core.plugin_sandbox import SandboxError, check_authorization
-    try:
-        check_authorization(manifest)
-    except SandboxError:
-        _cache.pop(name, None)
-        return None
-    return _cache.setdefault(name, ServiceProxy(name))
-
-
-def invalidate_service_cache() -> None:
-    """清空服务缓存（插件安装 / 更新 / 卸载后调用）"""
-    _cache.clear()
-
-
-def _guided_install(name: str, source: str) -> object | None:
-    """提供方未安装时的引导安装：clone → 信任确认 → 返回服务对象"""
-    from core.i18n import t
-    from core.prompt import pause, print_header, clear_screen
-    from core.theme import print_error, print_info
-
-    if not source:
-        return None
-    from plugin import commands as plugin_commands
-    from plugin.menu import _display_name, _confirm_install, _install_with_progress
-
-    clear_screen()
-    print_header([APP_NAME, t("service.installing", service=name)])
-    manifest, err = _install_with_progress(source)
-    if manifest is None:
-        print_error(t("plugin.install_failed", error=err))
-        pause()
-        return None
-    try:
-        accepted = _confirm_install(manifest, source=source)
-    except (OSError, ValueError, RuntimeError) as exc:
-        print_error(t("plugin.install_failed", error=str(exc)))
-        pause()
-        return None
-    if not accepted:
-        print_error(t("plugin.trust_declined", name=_display_name(manifest)))
-        pause()
-        return None
-    svc = get_service(name)
-    if svc is None:
-        print_error(t("service.unavailable", service=name))
-        pause()
-    return svc
-
-
-def open_service_menu(
-    name: str,
-    breadcrumb: list[str],
-    context: dict[str, object] | None = None,
-    source: str = "",
-) -> bool:
-    """打开某服务的交互界面（供业务插件的菜单项一行接入）。
-
-    提供方未安装且给了 source 时自动安装（仅信任确认一次交互）。返回是否成功打开。
-    """
-    from core.i18n import t
-    from core.prompt import pause
-    from core.theme import print_error
-
-    svc = get_service(name)
-    if svc is None and source:
-        svc = _guided_install(name, source)
-        if svc is None:
-            # 引导安装内部已展示具体失败原因并等待返回，不再叠加提示
-            return False
-    if svc is None:
-        print_error(t("service.unavailable", service=name))
-        pause()
-        return False
-    if not isinstance(svc, MenuService):
-        _log.warning("service %s: no open_menu()", name)
-        print_error(t("service.unavailable", service=name))
-        pause()
-        return False
-    svc.open_menu(breadcrumb, dict(context or {}))
-    return True

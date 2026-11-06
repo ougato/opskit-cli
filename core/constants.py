@@ -28,7 +28,7 @@ FILE_PLUGIN_TRUST = "plugin_trust.yaml"
 FILE_PLUGIN_CHECKSUMS = "CHECKSUMS.yaml"
 
 # ─── 插件 SDK API 版本（不兼容变更才递增，见 core/sdk.py 与 docs/plugin-spec.md） ──
-PLUGIN_API_VERSION = 3
+PLUGIN_API_VERSION = 4
 
 # ─── 默认配置模板（首次运行时写入） ─────────────────────────────────────────
 DEFAULT_CONFIG: dict = {

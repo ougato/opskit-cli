@@ -32,6 +32,7 @@ plugin:
   update: "更新插件"
   remove: "卸载插件"
   empty: "暂无插件"
+  needs_upgrade: "需要升级"
   col_name: "名称"
   col_version: "版本"
   col_kind: "形态"
@@ -64,7 +65,7 @@ plugin:
   entry_failed: "插件 {name} 异常退出（{error}）"
   col_perms: "权限"
   perm_none: "未声明"
-  trust_confirm: "信任并启用 {name}？插件代码将以当前权限运行"
+  trust_confirm: "信任并启用 {name}？插件运行于沙盒，授权的宿主工具以当前用户权限运行。"
   trust_granted: "插件 {name} 已信任"
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
@@ -120,8 +121,8 @@ prompt:
   "yes": "确认"
   "no": "取消"
   pause: "按任意键继续..."
-  prev_page: "上一页"
-  next_page: "下一页"
+  prev_page: "上一页面"
+  next_page: "下一页面"
 
 error:
   permission: "权限不足，请以 root / 管理员身份运行"
@@ -776,6 +777,7 @@ monitor:
 
 cli:
   desc: "OpsKit — 跨平台运维工具箱"
+  interaction_required: "此操作需要交互输入，请提供所需参数。"
   yes_help: "非交互模式：跳过所有确认弹窗（类似 apt -y）"
   version_help: "显示版本号"
   theme_help: "指定主题（覆盖配置文件）"
@@ -863,6 +865,7 @@ network:
 
 plugin_native:
   back: "返回"
+  run_help: "运行插件自己的命令：plugin run 名称 -- 参数"
   maintenance: 插件维护
   disk:
     menu: 空间设置
@@ -943,12 +946,10 @@ plugin_native:
   request: "授权请求"
   once: "本次授权"
   always: "永久授权"
-  deny: "拒绝授权"
   permissions_help: "查看和撤销插件的永久宿主权限"
   list_help: "列出已保存的永久权限"
   revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
   id_help: "permissions list 显示的完整权限 ID"
-  deny_return: "返回"
   description: "操作：{operation}\n资源：{resource}\n插件指纹：{fingerprint}\n宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离。权限可在插件权限管理中撤销。"
   operations:
     directory:
@@ -957,7 +958,7 @@ plugin_native:
     tool:
       execute: "执行工具"
   errors:
-    sdk_required: "插件不存在、身份不唯一或 SDK 版本不兼容；当前要求 SDK 3，旧插件须升级清单和代码。"
+    sdk_required: "插件 SDK 版本不兼容；当前要求 SDK 4，旧插件须升级清单和代码。"
     fetch_prepare_invalid: "隔离 Python 运行目录无效，请提供可用的 Python 安装目录。"
     fetch_profile_invalid: "无法安全读取仓库凭据。请检查私有文件权限、格式及绑定的完整仓库地址。"
     fetch_ssh_connection_failed: "SSH 连接在服务器身份校验前中断，请检查仓库服务器的 SSH 服务、端口及代理/TUN 设置。"
@@ -1008,6 +1009,15 @@ plugin_native:
     worker_failed: "原生插件执行失败或未返回有效结果。"
     transport_cleanup_failed: "原生插件通信资源未能完成回收。"
   lifecycle:
+    list_help: "列出已安装插件及兼容状态"
+    show_help: "查看插件身份、权限、服务和信任状态"
+    install_help: "从仓库安装插件，安装前检查来源"
+    update_help: "从已记录的来源更新插件；更新后重新授权"
+    remove_help: "移除插件并保留状态数据"
+    enable_help: "启用已安装插件"
+    disable_help: "停用已安装插件"
+    trust_help: "按完整指纹信任当前插件内容"
+    revoke_help: "撤销插件执行信任"
     inspect_profiles_help: "只读检查 Windows 原生沙盒配置恢复记录"
     recover_profile_help: "核对完整记录 SHA256 后，删除一项已确认创建且未被使用的 Windows 沙盒配置"
     profile_recovery_failed: "原生沙盒配置恢复被拒绝或未能确认完成；活动、已变化或归属不确定的资源均保留。"

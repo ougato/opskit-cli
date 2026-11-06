@@ -400,7 +400,6 @@ def publish_candidate(response, workspace, reviewed, alias, *, timeout):
     power-loss durability, global maintenance, or hostile same-account safety.
     """
     from core.paths import plugins_dir
-    from core.plugin_services import invalidate_service_cache
     deadline = _allowance(timeout)
     if (not isinstance(workspace, Workspace) or not isinstance(reviewed, CandidateReview)
             or not isinstance(reviewed.candidate, PreparedCandidate)
@@ -411,7 +410,6 @@ def publish_candidate(response, workspace, reviewed, alias, *, timeout):
     transaction = uuid.uuid4().hex
     result = _run("publish", (_SpawnFile(response.fileno()), workspace, reviewed, alias, transaction),
                   transaction, deadline)
-    invalidate_service_cache()
     return PublishedCandidate(transaction, plugins_dir().absolute() / alias, result["parent"], reviewed)
 
 
@@ -431,12 +429,10 @@ def withdraw_publication(transaction, workspace, *, timeout):
     The workspace must be empty on first use. Keep it and the transaction token
     on uncertainty. No tree is deleted here; later cleanup is a separate action.
     """
-    from core.plugin_services import invalidate_service_cache
     deadline = _allowance(timeout)
     _token(transaction)
     journal_binding(workspace)
     result = _run("withdraw", (transaction, workspace), transaction, deadline)["status"]
-    invalidate_service_cache()
     return result
 
 

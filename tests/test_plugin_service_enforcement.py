@@ -27,9 +27,9 @@ def test_approved_method_reaches_provider_with_host_bound_caller(installed, monk
     assert calls[0]["caller"] == "caller"
 
 
-def test_platform_proxy_reports_actual_business_version(installed, monkeypatch):
+def test_service_description_reports_actual_business_version(installed, monkeypatch):
     monkeypatch.setattr(sandbox, "invoke", lambda manifest, action, **k: {"service_api_version": 7, "methods": ["read", "write"]})
-    assert services.get_service("storage").service_api_version == 7
+    assert services.describe_service("storage")["service_api_version"] == 7
 
 
 def test_service_resolution_shares_one_reader_and_does_not_read_host_trust(installed, monkeypatch):

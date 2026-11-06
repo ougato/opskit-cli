@@ -102,3 +102,4 @@ cache/*.pending
 /native-preparations/
 /native-profile-leases/
 /native-workspace-leases/
+/plugin-artifact-locks/

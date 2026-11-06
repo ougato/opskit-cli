@@ -8,7 +8,7 @@ from core.plugin import load_manifest
 def manifest(tmp_path, **fields):
     root = tmp_path / "owner"
     root.mkdir()
-    data = {"name": "owner", "version": "1.0.0", "api_version": 3,
+    data = {"name": "owner", "version": "1.0.0", "api_version": 4,
             "kind": "python", "entry": "owner_pkg", **fields}
     (root / "plugin.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     return load_manifest(root)
@@ -19,12 +19,11 @@ def test_provider_business_contract_is_independent_of_sdk_version(tmp_path):
     result = manifest(tmp_path, provides=["storage"], service_contracts=contract)
     assert result is not None
     assert result.service_contracts == contract
-    assert result.api_version == 3
+    assert result.api_version == 4
 
 
 def test_caller_restrictions_are_preserved_exactly(tmp_path):
-    requirement = {"service": "storage", "source": "https://example.invalid/storage.git",
-                   "provider": "storage_provider", "api_version": 7, "methods": ["read"]}
+    requirement = {"service": "storage", "provider": "storage_provider", "api_version": 7, "methods": ["read"]}
     result = manifest(tmp_path, uses=[requirement])
     assert result is not None
     assert result.uses == [requirement]
@@ -55,7 +54,6 @@ def test_unknown_contract_field_is_rejected(tmp_path):
         "storage": {"api_version": 7, "methods": ["read"], "allow_all": True}}) is None
 
 
-def test_legacy_manifest_remains_loadable_for_independent_entry(tmp_path):
+def test_legacy_service_declaration_is_rejected_in_current_sdk(tmp_path):
     result = manifest(tmp_path, provides=["storage"], uses=["notify"])
-    assert result is not None
-    assert result.uses == [{"service": "notify", "source": ""}]
+    assert result is None

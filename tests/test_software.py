@@ -638,7 +638,7 @@ def test_rustdesk_xui_tailscale_labels_and_icons() -> None:
     assert get_icon("clickhouse") != "•"
 
 
-# ─── ensure_installed（SDK ensure_software 后端）────────────────────────────
+# ─── ensure_installed ────────────────────────────────────────────────────────
 
 def _fake_recipe(*, detected: str | None, versions: list[str] | None = None,
                  platforms: list[str] | None = None):
@@ -725,7 +725,7 @@ def test_ensure_installed_versions_error_returns_false(monkeypatch) -> None:
     assert actions.ensure_installed("fake-soft") is False
 
 
-# ─── resolve_bin（SDK software_bin 后端）────────────────────────────────────────
+# ─── resolve_bin ─────────────────────────────────────────────────────────────
 
 def test_resolve_bin_unknown_key(monkeypatch) -> None:
     from software import actions

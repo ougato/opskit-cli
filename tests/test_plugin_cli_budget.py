@@ -45,7 +45,7 @@ def test_route_reuses_real_reader_and_does_not_read_config_in_main_process(monke
 
 def test_disabled_plugin_still_denied_by_execution_authorization(monkeypatch):
     config.save_config({'modules': {'demo': {'enabled': False}}})
-    manifest = SimpleNamespace(name='demo')
+    manifest = SimpleNamespace(name='demo', api_version=4)
     monkeypatch.setattr(cli, 'list_manifests', lambda: [manifest])
     monkeypatch.setattr(cli, 'invoke', lambda current, *args, **kwargs: sandbox.check_authorization(current))
     with pytest.raises(sandbox.SandboxError, match='disabled'):
@@ -54,7 +54,19 @@ def test_disabled_plugin_still_denied_by_execution_authorization(monkeypatch):
 
 @pytest.mark.parametrize('names', [[], ['demo', 'demo']])
 def test_missing_or_ambiguous_identity_never_reaches_execution(monkeypatch, names):
+    from core import i18n
+    i18n.init(language='en')
     monkeypatch.setattr(cli, 'list_manifests', lambda: [SimpleNamespace(name=name) for name in names])
     monkeypatch.setattr(cli, 'invoke', lambda *args, **kwargs: pytest.fail('ambiguous identity executed'))
-    with pytest.raises(sandbox.SandboxError, match='identity ambiguous'):
+    with pytest.raises(sandbox.SandboxError, match='plugin not found or name ambiguous'):
+        cli.run_plugin('demo', [])
+
+
+def test_legacy_plugin_reports_required_sdk(monkeypatch):
+    from core import i18n
+    i18n.init(language='en')
+    manifest = SimpleNamespace(name='demo', api_version=3)
+    monkeypatch.setattr(cli, 'list_manifests', lambda: [manifest])
+    monkeypatch.setattr(cli, 'invoke', lambda current, *args, **kwargs: sandbox.check_authorization(current))
+    with pytest.raises(sandbox.SandboxError, match='SDK 4 is required'):
         cli.run_plugin('demo', [])

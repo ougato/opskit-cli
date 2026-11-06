@@ -111,7 +111,7 @@ def main():
     plugin = plugins / "frozen_native_probe"
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text(
-        "name: frozen_native_probe\nversion: 1.0.0\napi_version: 3\nkind: python\n"
+        "name: frozen_native_probe\nversion: 1.0.0\napi_version: 4\nkind: python\n"
         "entry: frozen_native_probe\n", encoding="utf-8")
     (plugin / "frozen_native_probe.py").write_text(PROBE, encoding="utf-8")
     fingerprint = compute_fingerprint(plugin)

@@ -52,7 +52,7 @@ def test_platform_never_imports_plugin_on_discovery(tmp_path, monkeypatch):
     from core.plugin_trust import grant, compute_fingerprint
     plugin = tmp_path / "plugins" / "evil"
     (plugin / "evil_pkg").mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: evil\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: evil_pkg\n")
+    (plugin / "plugin.yaml").write_text("name: evil\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: evil_pkg\n")
     marker = tmp_path / "polluted"
     (plugin / "evil_pkg" / "__init__.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
     grant("evil", compute_fingerprint(plugin), "1.0.0")
@@ -71,18 +71,19 @@ def test_plugin_cli_parameters_are_opaque(monkeypatch):
 
 
 def test_service_proxy_rechecks_revocation(tmp_path, monkeypatch):
-    from core.plugin import load_manifest
     from core.plugin_trust import grant, revoke, compute_fingerprint
-    from core.plugin_services import get_service, invalidate_service_cache
+    from core.plugin_services import call_service
+    from core.plugin_sandbox import SandboxError
     plugin = tmp_path / "plugins" / "provider"
     plugin.mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: provider\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: provider_pkg\nprovides: [storage]\n")
+    (plugin / "plugin.yaml").write_text("name: provider\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: provider_pkg\nprovides: [storage]\nservice_contracts:\n  storage: {api_version: 1, methods: [read]}\n")
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(plugin.parent))
     grant("provider", compute_fingerprint(plugin), "1.0.0")
-    invalidate_service_cache()
-    assert get_service("storage") is not None
+    monkeypatch.setattr("core.plugin_sandbox.invoke", lambda *args, **kwargs: "ok")
+    assert call_service("storage", "read") == "ok"
     revoke("provider")
-    assert get_service("storage") is None
+    with pytest.raises(SandboxError):
+        call_service("storage", "read")
 
 
 def test_redaction_removes_secrets():

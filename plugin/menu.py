@@ -168,7 +168,7 @@ def _manage() -> None:
         choices = [
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
             {"key": "2", "label": f"{get_icon('update')} {t('plugin.update')}"},
-            {"key": "3", "label": f"{get_icon('trash')} {t('plugin.remove')}"},
+            {"key": "3", "label": f"{get_icon('delete')} {t('plugin.remove')}"},
             {"key": "4", "label": f"{get_icon('plugin_permissions')} {t('plugin_native.permissions')}"},
             {"key": "5", "label": f"{get_icon('diagnose')} {t('plugin_native.maintenance')}"},
         ]
@@ -238,7 +238,11 @@ def _summary_lines(manifest) -> list[str]:
 
 
 def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool:
-    """展示概要 + 用户确认信任，确认后记录指纹（插件服务引导安装亦复用）"""
+    """展示概要 + 用户确认信任，确认后记录指纹。"""
+    from core.constants import PLUGIN_API_VERSION
+    if manifest.api_version != PLUGIN_API_VERSION:
+        print_error(t("plugin_native.errors.sdk_required"))
+        return False
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
         prompt=t("plugin.trust_confirm", name=_display_name(manifest)),
@@ -369,8 +373,10 @@ def _manifest_group_display(members) -> tuple[str, str]:
 
 
 def _manifest_item(m) -> str:
+    from core.constants import PLUGIN_API_VERSION
     lang = current_lang()
-    return f"{m.icon or get_icon('plugin')} {m.display_label(lang) or m.name}"
+    status = f" ({t('plugin.needs_upgrade')})" if m.api_version != PLUGIN_API_VERSION else ""
+    return f"{m.icon or get_icon('plugin')} {m.display_label(lang) or m.name}{status}"
 
 
 def _display_name(m) -> str:
@@ -472,7 +478,8 @@ def _update_all() -> None:
     clear_screen()
     print_header(crumb)
     for manifest in commands.manifests():
-        if commands.trust_status(manifest) != commands.TRUST_OK:
+        from core.constants import PLUGIN_API_VERSION
+        if manifest.api_version == PLUGIN_API_VERSION and commands.trust_status(manifest) != commands.TRUST_OK:
             declined = not confirm_trust(manifest)
             clear_screen()
             print_header(crumb)
@@ -500,7 +507,6 @@ def _update_all() -> None:
             print_warning(t("plugin.update_all_downgrade", name=_display_name(refreshed)))
             continue
         if commands.trust_status(refreshed) == commands.TRUST_OK:
-            commands.reload(refreshed)
             print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
         else:
             print_warning(t("plugin.trust_needed", name=_display_name(refreshed)))
@@ -515,7 +521,8 @@ def _update() -> None:
         _update_all()
         return
     # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
-    if commands.trust_status(manifest) != commands.TRUST_OK:
+    from core.constants import PLUGIN_API_VERSION
+    if manifest.api_version == PLUGIN_API_VERSION and commands.trust_status(manifest) != commands.TRUST_OK:
         if not confirm_trust(manifest):
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
             pause()
@@ -563,7 +570,6 @@ def _update() -> None:
         clear_screen()
         print_header(crumb)
     if commands.trust_status(refreshed) == commands.TRUST_OK or confirm_trust(refreshed):
-        commands.reload(refreshed)
         print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
     else:
         print_error(t("plugin.trust_needed", name=_display_name(refreshed)))

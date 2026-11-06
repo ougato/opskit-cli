@@ -24,12 +24,14 @@ def _session_with_handoff(monkeypatch, *, stale=False):
     class Worker:
         ready_at = 0.0
 
-        def activate(self, *, deadline, checkpoint, dispatch, output, cancel_event):
+        def activate(self, *, deadline, checkpoint, dispatch, output, cancel_event, protocol_deadline):
             details["activation_thread"] = threading.get_ident()
             details["remaining"] = deadline - time.monotonic()
+            assert protocol_deadline() == _invocations.deadline
             checkpoint()
             activated.set()
             dispatch({"type": "call"})
+            details["protocol_deadline_after_input"] = protocol_deadline()
             return {"state": "result"}
 
     def target():
@@ -55,12 +57,16 @@ def _session_with_handoff(monkeypatch, *, stale=False):
                 raise PreloadStale()
         def dispatch(message):
             _invocations.network_authorizations = (("example", ("target",)),)
+            _invocations.deadline += 60
+            _invocations.input_wait_total = 60
         started.set()
         value = session.handoff(Worker(), checkpoint=checkpoint, dispatch=dispatch,
                                 output=lambda _: None, validate=validate,
                                 state=dict(_invocations.__dict__))
         details["returned"] = value
         details["owner_networks"] = _invocations.network_authorizations
+        details["owner_deadline"] = _invocations.deadline
+        details["owner_input_wait"] = _invocations.input_wait_total
 
     holder["session"] = EntryPreload(None, target=target)
     release.set()
@@ -86,6 +92,8 @@ def test_activation_runs_on_caller_and_returns_authorization_updates(monkeypatch
         assert details["resumed"]
         assert details["returned"] == {"state": "result"}
         assert details["owner_networks"] == (("example", ("target",)),)
+        assert details["protocol_deadline_after_input"] == details["owner_deadline"]
+        assert details["owner_input_wait"] == 60
         assert _invocations.test_previous_value == "preserved"
         with pytest.raises(RuntimeError, match="already consumed"):
             session.take()

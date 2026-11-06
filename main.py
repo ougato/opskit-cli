@@ -78,16 +78,34 @@ from core.prompt import select, console, UserCancel, set_auto_yes
 
 
 # ── 预启动 locale 加载器（typer 帮助文本在 import 时求值，早于 _boot）────────
-def _preboot_locale() -> dict[str, str]:
-    """轻量级加载 cli.* 本地化文案，不依赖 _boot()"""
+def _preboot_locale(arguments=()) -> dict[str, str]:
+    """Load help translations before Typer evaluates the root callback."""
     from core.config import load_config
-    from core.i18n import _load_lang
+    from core.i18n import _flatten, _load_lang
 
-    lang = "auto"
-    try:
-        lang = load_config().get("language", "auto")
-    except (OSError, ValueError):
-        pass
+    # Only inspect root options. A plugin's own --lang must not change host help.
+    lang = None
+    index = 0
+    while index < len(arguments):
+        flag = arguments[index].lower()
+        if not flag.startswith("-") or flag == "--":
+            break
+        if flag.startswith("--lang="):
+            lang = arguments[index].split("=", 1)[1]
+        elif flag in ("--lang", "-l"):
+            index += 1
+            if index < len(arguments):
+                lang = arguments[index]
+        elif flag.startswith("-l") and len(flag) > 2:
+            lang = arguments[index][2:]
+        elif flag in ("--theme", "-t", "--output"):
+            index += 1
+        index += 1
+    if lang not in ("zh", "en"):
+        try:
+            lang = load_config().get("language", "auto")
+        except (OSError, ValueError):
+            lang = "auto"
     if lang not in ("zh", "en"):
         from core.i18n import _detect_system_lang
         lang = _detect_system_lang()
@@ -96,11 +114,11 @@ def _preboot_locale() -> dict[str, str]:
     cli_section = data.get("cli", {})
     result = {k: str(v) for k, v in cli_section.items()}
     result.update({"plugin_native_" + key: value for key, value in
-                   data.get("plugin_native", {}).items() if isinstance(value, str)})
+                   _flatten(data.get("plugin_native", {})).items()})
     return result
 
 
-_CLI = _preboot_locale()
+_CLI = _preboot_locale(sys.argv[1:])
 
 
 def _ct(key: str) -> str:
@@ -293,7 +311,8 @@ def _app_callback(
         _main_menu(cfg)
     else:
         # Named commands need readable messages, without boot's config/update writes.
-        i18n_init()
+        i18n_init(language=lang or None)
+        theme_init(theme or None)
 
 
 def _boot() -> dict:
@@ -590,7 +609,7 @@ from plugin.capability_cli import register as register_plugin_capabilities
 register_plugin_capabilities(plugin_app, translate=lambda key: _ct("plugin_native_" + key))
 
 
-@plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help="Run a plugin's own CLI: plugin run NAME -- ARGS")
+@plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help=_ct("plugin_native_run_help"))
 def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     from plugin.cli import run_plugin
     from core.plugin import PluginInventoryError

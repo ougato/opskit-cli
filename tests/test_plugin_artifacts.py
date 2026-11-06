@@ -89,6 +89,34 @@ def test_pending_requires_fresh_nonempty_required_files(tmp_path, context):
         manage("commit",{"id":token,"required_files":["../outside"]},context)
 
 
+def test_generated_commit_uses_parent_grant_but_cleanup_uses_exact_output(tmp_path, context, monkeypatch):
+    scopes = []
+    require = context["authority"].require
+    def record(scope, **kwargs):
+        scopes.append(scope)
+        return require(scope, **kwargs)
+    monkeypatch.setattr(context["authority"], "require", record)
+    first, path = output(tmp_path, context)
+    output(tmp_path, context)
+    rows = manage("list", {"resource": str(tmp_path), "keep": 1}, context)
+    row = next(item for item in rows if item["id"] == first)
+    manage("clean", {"id": first, "record_sha256": row["record_sha256"], "keep": 1}, context)
+    write_scopes = [scope.resource for scope in scopes if scope.operation == "directory.write"]
+    assert write_scopes[:2] == [str(tmp_path), str(tmp_path)]
+    assert write_scopes[-1] == str(path)
+
+
+def test_commit_rejects_pending_directory_with_wrong_generated_name(tmp_path, context):
+    token = uuid.uuid4().hex
+    path = tmp_path / "other"
+    path.mkdir()
+    (path / "index.html").write_bytes(b"x")
+    artifacts.pending("demo", token, tmp_path, path, lambda: None)
+    with pytest.raises(ValueError, match="pending output"):
+        manage("commit", {"id": token, "required_files": ["index.html"]}, context)
+    assert path.exists()
+
+
 def test_active_cross_process_resource_lock_blocks_cleanup(tmp_path, context):
     old,path=output(tmp_path,context);output(tmp_path,context)
     row=next(r for r in manage("list",{"resource":str(tmp_path),"keep":1},context) if r["id"]==old)

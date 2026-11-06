@@ -32,6 +32,7 @@ plugin:
   update: "Update Plugin"
   remove: "Remove Plugin"
   empty: "No plugins"
+  needs_upgrade: "Upgrade required"
   col_name: "Name"
   col_version: "Version"
   col_kind: "Kind"
@@ -64,7 +65,7 @@ plugin:
   entry_failed: "Plugin {name} exited abnormally ({error})"
   col_perms: "Permissions"
   perm_none: "none declared"
-  trust_confirm: "Trust and enable {name}? Plugin code runs with current privileges"
+  trust_confirm: "Trust and enable {name}? Plugins run in a sandbox; approved host tools run with your user privileges."
   trust_granted: "Plugin {name} trusted"
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
@@ -777,6 +778,7 @@ monitor:
 
 cli:
   desc: "OpsKit — Cross-platform DevOps Toolkit"
+  interaction_required: "This operation requires interactive input; supply its business parameters."
   yes_help: "Non-interactive mode: skip all confirmation prompts (like apt -y)"
   version_help: "Show version"
   theme_help: "Override theme"
@@ -864,6 +866,7 @@ network:
 
 plugin_native:
   back: "Back"
+  run_help: "Run a plugin's own CLI: plugin run NAME -- ARGS"
   maintenance: Plugin maintenance
   disk:
     menu: Space settings
@@ -944,8 +947,6 @@ plugin_native:
   request: "Permission request"
   once: "Allow this time"
   always: "Always allow"
-  deny: "Deny"
-  deny_return: "Back"
   permissions_help: "Inspect and revoke persistent plugin host permissions"
   list_help: "List saved persistent permissions"
   revoke_help: "Revoke a permission and invalidate active one-time grants"
@@ -958,7 +959,7 @@ plugin_native:
     tool:
       execute: "Run a host tool"
   errors:
-    sdk_required: "Plugin is missing, ambiguous or incompatible; SDK 3 is required. Upgrade older plugin manifests and code."
+    sdk_required: "Plugin SDK is incompatible; SDK 4 is required. Upgrade older plugin manifests and code."
     fetch_prepare_invalid: "Invalid isolated Python runtime. Provide a usable Python installation directory."
     fetch_profile_invalid: "Cannot securely read repository credentials. Check private file permissions, format and exact repository binding."
     fetch_ssh_connection_failed: "SSH disconnected before server identity verification. Check the repository server, SSH port and proxy/TUN settings."
@@ -1009,6 +1010,15 @@ plugin_native:
     worker_failed: "The native plugin failed or returned no valid result."
     transport_cleanup_failed: "Native plugin transport cleanup did not finish."
   lifecycle:
+    list_help: "List installed plugins and their compatibility"
+    show_help: "Show plugin identity, permissions, services and trust"
+    install_help: "Install a plugin from a reviewed repository"
+    update_help: "Update from its recorded source; changed content needs renewed trust"
+    remove_help: "Remove a plugin while preserving its state"
+    enable_help: "Enable an installed plugin"
+    disable_help: "Disable an installed plugin"
+    trust_help: "Trust the current plugin content using its complete fingerprint"
+    revoke_help: "Revoke a plugin's execution trust"
     inspect_profiles_help: "Inspect Windows native sandbox profile recovery records without changing files"
     recover_profile_help: "Remove one confirmed inactive Windows profile after checking its exact record SHA256"
     profile_recovery_failed: "Native profile recovery was refused or could not be confirmed. Active, changed or uncertain resources are retained."

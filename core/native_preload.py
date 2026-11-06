@@ -245,7 +245,7 @@ class PreloadedWorker:
         self._readiness.put((line, completed_at))
         self._readiness_done.set()
 
-    def activate(self, *, deadline, dispatch, checkpoint, output, cancel_event=None):
+    def activate(self, *, deadline, dispatch, checkpoint, output, cancel_event=None, protocol_deadline=None):
         with self._lock:
             if self._state != "ready":
                 raise RuntimeError("native preload is no longer available")
@@ -294,7 +294,7 @@ class PreloadedWorker:
             if not _wait(completed, deadline=deadline, cancel_event=cancel_event, checkpoint=check):
                 raise NativeSandboxError("protocol_failed")
             check()
-            return exchange(self.child, deadline=deadline, dispatch=dispatch,
+            return exchange(self.child, deadline=protocol_deadline if protocol_deadline is not None else deadline, dispatch=dispatch,
                             checkpoint=check, output=output)
         finally:
             # On a stuck writer the owning context kills the child before join.

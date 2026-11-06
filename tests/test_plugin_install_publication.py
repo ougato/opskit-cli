@@ -18,7 +18,7 @@ def installation(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     origin.mkdir()
     (origin / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n")
+        "name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: demo\n")
     (origin / "demo.py").write_text("# inert plugin; never imported\n")
     from tests.native_tool_fixtures import populate_synthetic
     monkeypatch.setattr("core.native_acquisition.populate", populate_synthetic)
@@ -270,10 +270,9 @@ if __name__ == '__main__':
     assert not list(plugins.glob(".opskit-install-*"))
 
 
-@pytest.mark.parametrize("entry", ["menu", "service"])
-def test_declined_install_ui_reports_preserved_replacement(installation, monkeypatch, entry):
+def test_declined_install_ui_reports_preserved_replacement(installation, monkeypatch):
     from plugin import menu
-    from core import i18n, plugin_services, prompt, theme
+    from core import i18n
 
     plugins, origin = installation
     manifest, error = commands.install(str(origin), alias="demo")
@@ -293,21 +292,13 @@ def test_declined_install_ui_reports_preserved_replacement(installation, monkeyp
     monkeypatch.setattr(menu, "t", message)
     monkeypatch.setattr(i18n, "t", message)
     monkeypatch.setattr(menu, "confirm_trust", decline)
-    if entry == "menu":
-        monkeypatch.setattr(menu, "text_input", lambda **kwargs: "fixture")
-        monkeypatch.setattr(commands, "parse_install_input", lambda value: ("fixture", None, "demo"))
-        monkeypatch.setattr(commands, "is_trusted_source", lambda value: True)
-        monkeypatch.setattr(menu, "print_info", lambda *args: None)
-        monkeypatch.setattr(menu, "print_error", errors.append)
-        monkeypatch.setattr(menu, "pause", lambda: pauses.append(True))
-        menu._install()
-    else:
-        for name in ("print_header", "clear_screen"):
-            monkeypatch.setattr(prompt, name, lambda *a, **k: None)
-        monkeypatch.setattr(prompt, "pause", lambda: pauses.append(True))
-        monkeypatch.setattr(theme, "print_info", lambda *args: None)
-        monkeypatch.setattr(theme, "print_error", errors.append)
-        assert plugin_services._guided_install("fixture", "fixture") is None
+    monkeypatch.setattr(menu, "text_input", lambda **kwargs: "fixture")
+    monkeypatch.setattr(commands, "parse_install_input", lambda value: ("fixture", None, "demo"))
+    monkeypatch.setattr(commands, "is_trusted_source", lambda value: True)
+    monkeypatch.setattr(menu, "print_info", lambda *args: None)
+    monkeypatch.setattr(menu, "print_error", errors.append)
+    monkeypatch.setattr(menu, "pause", lambda: pauses.append(True))
+    menu._install()
     assert len(errors) == 1 and "identity changed" in errors[0]
     assert pauses == [True]
     assert (target / "keep").read_bytes() == b"other writer"

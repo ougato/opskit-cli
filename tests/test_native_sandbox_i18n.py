@@ -139,7 +139,7 @@ def test_authorization_prompt_and_errors_follow_language(monkeypatch, language, 
     from core.theme import get_icon
     assert captured[0][0][2][0]["label"] == f"{get_icon('success')} {once}"
     assert "plugin_native." not in captured[0][1]["description"]
-    assert captured[0][1]["back_label"] == f"{get_icon('back')} {i18n.t('plugin_native.deny_return')}"
+    assert captured[0][1]["back_label"] == f"{get_icon('back')} {i18n.t('plugin_native.back')}"
     assert captured[0][1]["back_label"]
     assert denied in str(CapabilityDenied("denied"))
     with pytest.raises(NativeSandboxError) as error:

@@ -59,14 +59,29 @@ class RemoteService:
 def _adapt_sdk(name: str):
     from core import sdk, prompt
     from core import paths
+    from functools import wraps
+    from inspect import signature
     import core.i18n as i18n
     import core.theme as theme
     i18n.init(language=os.environ.get("OPSKIT_LANGUAGE"))
     theme.init()
     # paged_select evaluates plugin callbacks locally and calls adapted select.
-    for method in ("select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
-        def call(*args, _method=method, **kwargs):
-            return broker(_method, *args, **kwargs)
+    def adapt_ui(method, original):
+        bound_signature = signature(original)
+        @wraps(original)
+        def call(*args, **kwargs):
+            bound = bound_signature.bind(*args, **kwargs)
+            try:
+                result = broker(method, **bound.arguments)
+            except prompt.UserCancel:
+                if method in {"select", "select_input", "multi_select"}:
+                    return None
+                raise
+            return None if method == "select_input" and result == "0" else result
+        return call
+
+    for method in ("select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
+        call = adapt_ui(method, getattr(sdk, method))
         setattr(sdk, method, call)
         setattr(prompt, method, call)
 
@@ -85,11 +100,25 @@ def _adapt_sdk(name: str):
             raise ValueError("invalid host file response")
         return base64.b64decode(reply["content"], validate=True)
     sdk.read_host_file = read_host_file
+    def compare_write_host_file(directory, relative, expected_sha256, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.compare_write", directory, relative, expected_sha256,
+                      base64.b64encode(content).decode("ascii"))
+    sdk.compare_write_host_file = compare_write_host_file
+    def create_host_file(directory, relative, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.create_file", directory, relative, base64.b64encode(content).decode("ascii"))
+    sdk.create_host_file = create_host_file
+    sdk.host_file_status = lambda directory, relative: broker("host.file_status", directory, relative)
+    sdk.host_asar_directories = lambda directory, relative, member: broker("host.asar_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
     sdk.host_path_info = lambda path, directory=False: broker("host.path_info", path, directory)
+    sdk.host_file_version = lambda path: broker("host.file_version", path)
     def https_request(url, method="GET", headers=None, body=b""):
         if not isinstance(body, bytes):
             raise TypeError("HTTPS body must be bytes")
@@ -98,14 +127,11 @@ def _adapt_sdk(name: str):
     sdk.https_request = https_request
     sdk.upload_file = lambda directory, relative, url, sha256, headers=None: broker(
         "host.upload_file", directory, relative, url, sha256, headers or {})
-    def open_menu(name, breadcrumb, context=None, source=""):
+    def open_menu(name, breadcrumb, context=None):
         # Installing a new provider requires the platform's explicit lifecycle.
         broker("service.call", name, "open_menu", [breadcrumb, context or {}], {})
         return True
     sdk.open_service_menu = open_menu
-    def denied(*args, **kwargs):
-        raise PermissionError("host software operations are not granted to plugins")
-    sdk.ensure_software = sdk.software_bin = denied
 
 
 def _pack_state() -> str:

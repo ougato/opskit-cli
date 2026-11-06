@@ -473,8 +473,8 @@ def _broker(manifest, request: dict):
         from core.plugin_http import request as https_request
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
-    if method in {"host.execute", "host.artifacts", "host.path_info"}:
-        expected = 4 if method == "host.execute" else 2
+    if method in {"host.execute", "host.artifacts", "host.path_info", "host.file_version"}:
+        expected = 4 if method == "host.execute" else (1 if method == "host.file_version" else 2)
         if kwargs or len(args) != expected:
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
@@ -486,17 +486,34 @@ def _broker(manifest, request: dict):
             _remaining()
             _check_live_authorizations()
         from core.prompt import console
-        context = dict(authority=authority, check_identity=identity, deadline=_invocations.deadline,
+        context = dict(authority=authority, check_identity=identity, deadline=lambda: _invocations.deadline,
                        checkpoint=checkpoint,
                        output=lambda line: console.print(line, markup=False, highlight=False))
         if method == "host.execute":
             from core.plugin_host_tools import execute
-            return execute(manifest.name, fingerprint, *args, **context)
+            return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget, **context)
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)
+        if method == "host.file_version":
+            from core.plugin_host_tools import file_version
+            return file_version(manifest.name, fingerprint, *args, **context)
         from core.plugin_artifacts import manage
         return manage(manifest.name, fingerprint, *args, **context)
+    if method == "host.asar_directories":
+        if kwargs or len(args) != 3:
+            raise SandboxError("invalid host archive arguments")
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        from core.plugin_host_archive import directories
+        return directories(manifest.name, fingerprint, *args, authority=authority,
+                           check_identity=identity, checkpoint=checkpoint)
     if method == "host.artifact_info":
         if kwargs or len(args) != 2:
             raise SandboxError("invalid artifact arguments")
@@ -510,12 +527,29 @@ def _broker(manifest, request: dict):
             _remaining()
             _check_live_authorizations()
         return artifact_info(manifest.name, fingerprint, *args, authority=authority,
-                             check_identity=identity, deadline=_invocations.deadline,
+                             check_identity=identity, deadline=lambda: _invocations.deadline,
                              checkpoint=checkpoint)
-    if method == "host.read_file":
+    if method in {"host.compare_write", "host.create_file"}:
+        if kwargs or len(args) != (4 if method == "host.compare_write" else 3):
+            raise SandboxError("invalid host file arguments")
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is None:
+            raise SandboxError("host capability scope unavailable")
+        def identity(name, expected):
+            return name == manifest.name and check_authorization(manifest) == expected
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        from core.plugin_host_write import compare_write, create_file
+        from core.prompt import guard_input
+        with guard_input(checkpoint):
+            operation = compare_write if method == "host.compare_write" else create_file
+            return operation(manifest.name, fingerprint, *args, authority=authority,
+                             check_identity=identity, checkpoint=checkpoint)
+    if method in {"host.read_file", "host.file_status"}:
         if kwargs or len(args) != 2:
             raise SandboxError("invalid host file arguments")
-        from core.plugin_host_files import read_file
+        from core.plugin_host_files import read_file, file_status
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
@@ -523,9 +557,10 @@ def _broker(manifest, request: dict):
             return name == manifest.name and check_authorization(manifest) == expected
         from core.prompt import guard_input
         with guard_input(lambda: (_remaining(), _check_live_authorizations())):
-            return read_file(manifest.name, fingerprint, *args,
+            operation = read_file if method == "host.read_file" else file_status
+            return operation(manifest.name, fingerprint, *args,
                              authority=authority, check_identity=identity)
-    ui = {"select", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
+    ui = {"select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
     if method in ui:
         from core import prompt
         next_check = 0
@@ -634,6 +669,7 @@ def _remaining(cap=None):
     preload = getattr(_invocations, "preload", None)
     if preload is not None:
         preload.check_cancelled()
+    _credit_input_wait()
     deadline = getattr(_invocations, "deadline", None)
     if deadline is None:
         return cap
@@ -643,12 +679,39 @@ def _remaining(cap=None):
     return min(remaining, cap) if cap is not None else remaining
 
 
+def _credit_input_wait():
+    started = getattr(_invocations, "input_wait_tick", None)
+    if started is not None:
+        now = time.monotonic()
+        elapsed = max(0.0, now - started)
+        if getattr(_invocations, "deadline", None) is not None:
+            _invocations.deadline += elapsed
+        _invocations.input_wait_total = getattr(_invocations, "input_wait_total", 0.0) + elapsed
+        _invocations.input_wait_tick = now
+
+
+@contextmanager
+def _input_wait_budget():
+    """Do not charge genuine terminal wait; retain continuous revocation checks."""
+    _remaining()
+    if getattr(_invocations, "input_wait_tick", None) is not None:
+        yield
+        return
+    _invocations.input_wait_tick = time.monotonic()
+    try:
+        yield
+    finally:
+        _credit_input_wait()
+        _invocations.input_wait_tick = None
+
+
 @contextmanager
 def _execution_budget():
     from core.config import get_config_path
     from core.plugin_inspection import ContentInspector
     started = time.monotonic()
     previous = getattr(_invocations, "deadline", None)
+    wait_total = getattr(_invocations, "input_wait_total", 0.0)
     previous_scope = getattr(_invocations, "inspection_scope", False)
     startup_deadline = started + CONFIG_READ_TIMEOUT
     _invocations.deadline = min(previous, startup_deadline) if previous is not None else startup_deadline
@@ -679,7 +742,8 @@ def _execution_budget():
                 if inspector is not None:
                     inspector.close()
         finally:
-            _invocations.deadline = previous
+            elapsed_wait = getattr(_invocations, "input_wait_total", 0.0) - wait_total
+            _invocations.deadline = previous + elapsed_wait if previous is not None else None
             _invocations.inspection_scope = previous_scope
 
 
@@ -909,11 +973,17 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
             _check_live_authorizations()
         def dispatch(message):
             from core.prompt import UserCancel
+            from core.prompt import input_wait_scope
+            from core.plugin_capabilities import CapabilityDenied
             from core.i18n import t
             try:
-                return {"value": _broker(manifest, message)}
+                with input_wait_scope(_input_wait_budget):
+                    return {"value": _broker(manifest, message)}
             except UserCancel:
                 return {"cancel": True}
+            except CapabilityDenied as error:
+                # CapabilityDenied contains only host-owned localized messages.
+                return {"error": str(error)}
             except Exception:
                 return {"error": t("plugin_native.errors.broker_denied")}
         from core.prompt import console
@@ -950,7 +1020,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
                            "preload_state": dict(_invocations.__dict__)} if preload is not None else {}
         result = invoke_native(runtime, runtime_record, base / "plugin", inventory(base / "plugin"),
                                seed, seed_files, payload, fingerprint=fingerprint,
-                               sdk_sha256=code_digest(), deadline=_invocations.deadline,
+                               sdk_sha256=code_digest(), deadline=lambda: _invocations.deadline,
                                checkpoint=checkpoint, dispatch=dispatch,
                                output=lambda line: console.print(line, markup=False, highlight=False),
                                staging_parent=base, prepared_runtime=prepared_runtime, **preload_options)

@@ -100,7 +100,7 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
     cases.extend([
         (["--output", "json", "--version"], 0, True),
         (["--output", "json", "software", "list"], 0, True),
-        (["--output", "json", "plugin", "inspect-locks"], 0, True),
+        (["--output", "json", "plugin", "inspect-native-cache", "runtime"], 0, True),
         (["--output", "json", "plugin", "inspect-workspaces"], 0, True),
         (["--output", "json", "plugin", "inspect-state", "acceptance_missing"], 0, True),
         (["--output", "json", "plugin", "inspect-state", "acceptance_missing", "--caller", "platform"], 0, True),

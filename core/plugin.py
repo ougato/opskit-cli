@@ -101,7 +101,7 @@ def _service_contract(value):
     return {"api_version": version, "methods": list(methods)}
 
 
-def _service_declarations(data, provides):
+def _service_declarations(data, provides, *, legacy=False):
     contracts_raw = data.get("service_contracts", {})
     if not isinstance(contracts_raw, dict) or len(contracts_raw) > 64:
         raise ValueError("invalid service contracts")
@@ -110,22 +110,29 @@ def _service_declarations(data, provides):
         if not isinstance(service, str) or not _NAME_PATTERN.fullmatch(service) or service not in provides:
             raise ValueError("contract service not provided")
         contracts[service] = _service_contract(contract)
+    if not legacy and set(contracts) != set(provides):
+        raise ValueError("each provided service requires a contract")
     uses_raw = data.get("uses") or []
     if not isinstance(uses_raw, list) or len(uses_raw) > 64:
         raise ValueError("invalid service requirements")
     uses, seen = [], set()
     for requirement in uses_raw:
-        if isinstance(requirement, str):
+        if legacy and isinstance(requirement, str):
             requirement = {"service": requirement}
-        if not isinstance(requirement, dict) or set(requirement) - {"service", "source", "provider", "api_version", "methods"}:
+        allowed = {"service", "provider", "api_version", "methods"} | ({"source"} if legacy else set())
+        if not isinstance(requirement, dict) or set(requirement) - allowed:
             raise ValueError("invalid service requirement fields")
+        if not legacy and set(requirement) != allowed:
+            raise ValueError("service requirement must specify provider and contract")
         service = requirement.get("service")
         source = requirement.get("source", "")
         if (not isinstance(service, str) or not _NAME_PATTERN.fullmatch(service)
                 or service in seen or not isinstance(source, str)):
             raise ValueError("invalid or duplicate service requirement")
         seen.add(service)
-        parsed = {"service": service, "source": source}
+        parsed = {"service": service}
+        if legacy:
+            parsed["source"] = source
         if set(requirement) & {"provider", "api_version", "methods"}:
             provider = requirement.get("provider")
             if not isinstance(provider, str) or not _NAME_PATTERN.fullmatch(provider) or provider == "platform":
@@ -136,7 +143,7 @@ def _service_declarations(data, provides):
     return contracts, uses
 
 
-def load_manifest(plugin_root: Path) -> PluginManifest | None:
+def load_manifest(plugin_root: Path, *, allow_legacy: bool = False) -> PluginManifest | None:
     """读取并校验单个插件清单，失败返回 None（写日志）"""
     if plugin_root.is_symlink() or (hasattr(plugin_root, "is_junction") and plugin_root.is_junction()):
         return None
@@ -147,10 +154,10 @@ def load_manifest(plugin_root: Path) -> PluginManifest | None:
         _log.warning("plugin %s: manifest read failed (%s)", plugin_root.name, type(e).__name__)
         return None
 
-    return _parse_manifest(data, plugin_root)
+    return _parse_manifest(data, plugin_root, allow_legacy=allow_legacy)
 
 
-def _parse_manifest(data, plugin_root: Path) -> PluginManifest | None:
+def _parse_manifest(data, plugin_root: Path, *, allow_legacy: bool = False) -> PluginManifest | None:
     """Normalize manifest data without filesystem access or executing plugin code."""
     if not isinstance(data, dict):
         _log.warning("plugin %s: manifest is not a mapping", plugin_root.name)
@@ -176,12 +183,11 @@ def _parse_manifest(data, plugin_root: Path) -> PluginManifest | None:
         _log.warning("plugin %s: invalid kind %r", name, kind)
         return None
 
-    try:
-        api_version = int(data["api_version"])
-    except (TypeError, ValueError):
+    api_version = data["api_version"]
+    if type(api_version) is not int:
         _log.warning("plugin %s: api_version is not an integer", name)
         return None
-    if api_version != PLUGIN_API_VERSION:
+    if api_version != PLUGIN_API_VERSION and not (allow_legacy and api_version == 3):
         _log.warning(
             "plugin %s: api_version %s incompatible with SDK %s, skipped",
             name, api_version, PLUGIN_API_VERSION,
@@ -220,10 +226,12 @@ def _parse_manifest(data, plugin_root: Path) -> PluginManifest | None:
         group_label = {}
 
     provides = data.get("provides") or []
-    if not isinstance(provides, list):
-        provides = []
+    if (not isinstance(provides, list) or any(not isinstance(p, str) or not _NAME_PATTERN.fullmatch(p)
+                                               for p in provides) or len(set(provides)) != len(provides)):
+        _log.warning("plugin %s: invalid provided services", name)
+        return None
     try:
-        service_contracts, uses = _service_declarations(data, provides)
+        service_contracts, uses = _service_declarations(data, provides, legacy=api_version == 3)
     except ValueError:
         _log.warning("plugin %s: invalid service declarations", name)
         return None
@@ -349,7 +357,9 @@ def _list_manifests(root: Path, *, select="all", value="") -> list[PluginManifes
         raise PluginInventoryError("plugin inventory scan failed") from error
     manifests: list[PluginManifest] = []
     for path in candidates:
-        manifest = load_manifest(path)
+        manifest = load_manifest(path, allow_legacy=True)
+        if manifest is not None and select == "service" and manifest.api_version != PLUGIN_API_VERSION:
+            continue
         if manifest is not None and (select == "all" or select == "name" and manifest.name == value
                                      or select == "service" and value in manifest.provides):
             manifests.append(manifest)
@@ -358,6 +368,8 @@ def _list_manifests(root: Path, *, select="all", value="") -> list[PluginManifes
 
 def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
     """加载单个已信任插件，未信任 / 完整性校验失败 / 加载失败返回 None（写日志）"""
+    if manifest.api_version != PLUGIN_API_VERSION:
+        return None
     if verify_checksums(manifest.root) == CHECK_MISMATCH:
         _log.error("plugin %s: integrity check failed, refused to load", manifest.name)
         return None
@@ -365,12 +377,6 @@ def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
         _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
         return None
     return _to_module_info(manifest)
-
-
-def unload_plugin(manifest: PluginManifest) -> None:
-    """No in-process plugin modules exist; revoke cached service proxies."""
-    from core.plugin_services import invalidate_service_cache
-    invalidate_service_cache()
 
 
 def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:

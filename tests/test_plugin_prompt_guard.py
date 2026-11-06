@@ -159,7 +159,7 @@ def test_removed_service_declaration_denied_before_runtime_lookup(tmp_path, monk
     root = tmp_path / "provider"
     root.mkdir()
     (root / "plugin.yaml").write_text(
-        "name: provider\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: provider_pkg\n")
+        "name: provider\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: provider_pkg\n")
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sandbox, "check_authorization", lambda manifest: "fingerprint")
     monkeypatch.setattr(config, "load_config", lambda: {})
@@ -175,7 +175,7 @@ def test_revocation_during_preparation_denies_launch_with_correct_reason(tmp_pat
     root = tmp_path / "provider"
     root.mkdir()
     (root / "plugin.yaml").write_text(
-        "name: provider\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: provider_pkg\n")
+        "name: provider\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: provider_pkg\n")
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(config, "load_config", lambda: {})
     grant("provider", sandbox.compute_fingerprint(root), "1.0.0")

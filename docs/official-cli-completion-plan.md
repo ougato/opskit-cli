@@ -1,5 +1,7 @@
 # 官方 CLI 参数补齐与验收计划
 
+> 历史计划及验收记录：其中的容器时代命令与接口可能已移除，当前插件接口请以 [插件开发指南](plugin-development.md) 和实际 `opskit plugin --help` 为准。
+
 2026-10-17：`plugin prepare-fetch --packages DIR` 与 `prepared_tool` 已实现。冻结642文件快照 `0fa8c0aa026f6a71be394122f5dc085190c5e5ac34246970855eb1d2ec15e6ec` 在Windows、Linux3.14、macOS、最低Python3.10各76项通过、零跳过；源码、同名XML用例及最低容器约束已独立核对。此批明确不运行未改动的旧宿主Git安装更新整链路测试。真实Linux CLI使用已有锁定离线包准备工具，新解释器通过固定本地端点选出同一内容寻址镜像，不创建配置或插件目录、不授信。证据 `cache/plugin-fetch-preparation-20261016-r1/audit.json`。 本批没有迁移install/update，旧宿主Git主流程仍待替换。
 
 2026-10-16验收范围：当前603文件快照21e9afd3的三端整仓4064项均已独立复核：Windows4010通过54跳过，macOS3930通过134跳过，Linux3934通过130跳过。三端实际安装各113CLI、20生命周期及1项真实阻塞子进程关闭异常检查通过，269运行文件/RECORD已核对；Linux真实Docker基础3×21、9生命周期及完整RPC已独立验收。匹配快照Linux冻结产物的20CLI、2钩子、3×21基础、4信号取消、2强制退出恢复及7根最终reconcile已独立验收，追加113项冻结CLI矩阵及340份原始证据复核通过；仅测试密钥变体，不是生产发布批准。原599 Windows取消worker后PID断言失败及595辅助PowerShell超时的根因仍开放，后续绿色结果不关闭原问题。历史r3三端已安装CLI各6项真实IPv4/IPv6回环端口与localhost DNS检查仅对应原快照。完整源码、跳过及证据见[验收台账](validation-status-20261015.md)。这些结果不关闭下列官方写事务、真实系统服务、外网/代理、更新恢复或发布签名门槛，也不把插件业务参数加入平台。

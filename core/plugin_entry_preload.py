@@ -225,7 +225,8 @@ class EntryPreload:
             _invocations.deadline = deadline
             validate()
             result = worker.activate(deadline=_invocations.deadline, dispatch=dispatch,
-                                     checkpoint=checkpoint, output=output, cancel_event=self.cancelled)
+                                     checkpoint=checkpoint, output=output, cancel_event=self.cancelled,
+                                     protocol_deadline=lambda: _invocations.deadline)
         except BaseException as exc:
             error = exc
         finally:
@@ -236,7 +237,7 @@ class EntryPreload:
                 except BaseException as exc:
                     if error is None:
                         error = exc
-            keys = ("deadline", "authorizations", "service_edges", "network_authorizations")
+            keys = ("deadline", "input_wait_total", "authorizations", "service_edges", "network_authorizations")
             updates = {key: getattr(_invocations, key) for key in keys if hasattr(_invocations, key)}
             _invocations.__dict__.clear()
             _invocations.__dict__.update(old)

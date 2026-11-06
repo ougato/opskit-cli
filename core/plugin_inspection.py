@@ -371,12 +371,12 @@ def _send_inventory(connection, view, requested, request):
             requested.clear()
 
 
-def _manifest_value(record, root):
+def _manifest_value(record, root, *, allow_legacy=False):
     from dataclasses import asdict, fields
     from core.plugin import PluginManifest, _parse_manifest
     if not isinstance(record, dict) or set(record) != {f.name for f in fields(PluginManifest)} - {"root"}:
         raise RuntimeError("invalid plugin manifest inspection result")
-    manifest = _parse_manifest(record, Path(root))
+    manifest = _parse_manifest(record, Path(root), allow_legacy=allow_legacy)
     if manifest is None:
         raise RuntimeError("invalid plugin manifest inspection result")
     normalized = asdict(manifest)
@@ -556,7 +556,10 @@ class ContentInspector:
                     or PureWindowsPath(directory).drive or directory in directories):
                 raise RuntimeError("invalid plugin inventory directory identity")
             directories.add(directory)
-            manifest = _manifest_value(record["manifest"], Path(request["root"]) / directory)
+            manifest = _manifest_value(record["manifest"], Path(request["root"]) / directory, allow_legacy=True)
+            from core.constants import PLUGIN_API_VERSION
+            if request["select"] == "service" and manifest.api_version != PLUGIN_API_VERSION:
+                raise RuntimeError("incompatible service provider in inventory")
             if (request["select"] == "name" and manifest.name != request["value"]
                     or request["select"] == "service" and request["value"] not in manifest.provides):
                 raise RuntimeError("invalid plugin inventory selection")

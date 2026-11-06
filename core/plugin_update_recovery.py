@@ -130,8 +130,6 @@ def _restored_authority(value):
         revoke(value["plugin"])
         grant(value["plugin"], "", original["version"], original["source"], original["branch"],
               installation_receipt=value["old_receipt"], source_commit=original["source_commit"])
-    from core.plugin_services import invalidate_service_cache
-    invalidate_service_cache()
 
 
 def recover(token, digest):

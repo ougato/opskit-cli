@@ -12,7 +12,7 @@ from core import plugin_json
 from core.native_process import open_worker
 from core.native_protocol import exchange
 from core.native_runtime import stage, verify, absolute_path
-from core.native_runtime_prepare import validate_record
+from core.native_runtime_prepare import stage_candidate, validate_record
 from core.native_sandbox import get_backend
 
 
@@ -112,7 +112,7 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
     with tempfile.TemporaryDirectory(prefix="native-call-", dir=absolute_path(staging_parent)) as temporary:
         base = absolute_path(temporary)
         if prepared_runtime is None:
-            stage(runtime, base / "runtime", record["files"])
+            stage_candidate(runtime, base / "runtime", record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
         else:
             source = absolute_path(prepared_runtime)
             if source != absolute_path(staging_parent) / "runtime-stage":
@@ -145,7 +145,8 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
         checkpoint()
         if preload is not None:
             from core.native_preload import open_preloaded_worker
-            with open_preloaded_worker(backend, base, deadline=deadline, cancel_event=preload.cancelled) as worker:
+            startup_deadline = deadline() if callable(deadline) else deadline
+            with open_preloaded_worker(backend, base, deadline=startup_deadline, cancel_event=preload.cancelled) as worker:
                 def validate():
                     if worker.child.poll() is not None:
                         # A worker can be stopped externally while its menu is
@@ -155,7 +156,7 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
                     # User-idle time is excluded from the invocation budget;
                     # take() has installed the selected deadline on this thread.
                     from core.plugin_sandbox import _invocations
-                    selected_deadline = getattr(_invocations, "deadline", None) or deadline
+                    selected_deadline = getattr(_invocations, "deadline", None) or startup_deadline
                     with verify_runtime_snapshot(base / "runtime", record["files"],
                                                  deadline=selected_deadline,
                                                  cancel_event=preload.cancelled) as wait:

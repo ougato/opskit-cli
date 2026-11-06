@@ -134,6 +134,22 @@ def test_activation_requires_checkpoint_and_is_one_shot(tmp_path, monkeypatch):
     assert child.closed
 
 
+def test_activation_passes_dynamic_deadline_to_exchange(tmp_path, monkeypatch):
+    _worker(monkeypatch)
+    deadline = [time.monotonic() + 5]
+    def exchange(child, *, deadline, **kwargs):
+        initial = deadline()
+        kwargs["dispatch"]({})
+        assert deadline() == initial + 60
+        return {"value": 7}
+    monkeypatch.setattr(native_preload, "exchange", exchange)
+    def dispatch(message):
+        deadline[0] += 60
+    with native_preload.open_preloaded_worker(None, tmp_path, deadline=deadline[0]) as worker:
+        assert worker.activate(deadline=deadline[0], dispatch=dispatch, checkpoint=lambda: None,
+                               output=None, protocol_deadline=lambda: deadline[0]) == {"value": 7}
+
+
 def test_revoked_before_activation_sends_no_signal(tmp_path, monkeypatch):
     child = _worker(monkeypatch)
     def denied():

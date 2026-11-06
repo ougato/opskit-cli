@@ -50,7 +50,7 @@ def artifact_info(plugin, fingerprint, directory, relative, *, authority,
         if ((current.st_dev, current.st_ino) != identity
                 or getattr(current, "st_file_attributes", 0) & 0x400 or root.is_symlink()):
             raise ValueError("artifact directory changed")
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= (deadline() if callable(deadline) else deadline):
             raise TimeoutError("artifact inspection deadline exceeded")
 
     from network.worker import owned_process

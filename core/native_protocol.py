@@ -19,7 +19,12 @@ def exchange(child, *, deadline, dispatch, checkpoint, output):
     Reads and writes run in bounded queues/threads so a malicious peer cannot
     block the host's authorization checks by refusing to read or finish a line.
     """
-    if not isinstance(deadline, (int, float)) or not time.monotonic() < deadline < float("inf"):
+    def current_deadline():
+        value = deadline() if callable(deadline) else deadline
+        if not isinstance(value, (int, float)) or not value < float("inf"):
+            raise ValueError("invalid native protocol deadline")
+        return value
+    if not time.monotonic() < current_deadline():
         raise ValueError("invalid native protocol deadline")
     incoming = queue.Queue(maxsize=4)
     outgoing = queue.Queue(maxsize=1)
@@ -74,7 +79,7 @@ def exchange(child, *, deadline, dispatch, checkpoint, output):
     try:
         while True:
             checkpoint()
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= current_deadline():
                 raise NativeSandboxError("execution_timeout")
             if not failures.empty():
                 raise NativeSandboxError("protocol_failed")
@@ -119,7 +124,7 @@ def exchange(child, *, deadline, dispatch, checkpoint, output):
         checkpoint()
         if result is None or result.get("error"):
             raise NativeSandboxError("worker_failed")
-        remaining = deadline - time.monotonic()
+        remaining = current_deadline() - time.monotonic()
         if remaining <= 0:
             raise NativeSandboxError("execution_timeout")
         if child.wait(remaining) != 0:

@@ -1,4 +1,4 @@
-# OpsKit 插件规范（SDK API3，原生沙盒）
+# OpsKit 插件规范（SDK 4，原生沙盒）
 
 ## 平台与边界
 
@@ -8,7 +8,7 @@ Windows 使用 AppContainer 与 Job Object。插件在隔离验证完成后才�
 
 当前迁移状态和未完成验收见 [原生沙盒迁移](plugin-native-sandbox-migration.md)。本文描述当前接口，不代表冻结包、崩溃恢复、硬资源预算、Creator 或 S3 发布链路已全部验收。
 
-旧插件迁移步骤和中英文 SDK 示例见 [原生升级指南](plugin-native-upgrade-guide.md)。
+开发规则、菜单示例和 SDK 完整导出目录见[插件开发指南](plugin-development.md)；旧插件迁移步骤见[原生升级指南](plugin-native-upgrade-guide.md)。
 For migration steps and bilingual SDK examples, see the native upgrade guide.
 
 ## 清单与入口
@@ -16,7 +16,7 @@ For migration steps and bilingual SDK examples, see the native upgrade guide.
 ```yaml
 name: hello
 version: 1.0.0
-api_version: 3
+api_version: 4
 kind: python
 entry: hello_pkg
 permissions: []
@@ -89,10 +89,15 @@ Both operations share the same scoped grant; once consent is reused within the i
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
 - `read_host_file(directory, relative)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。
+- `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。写入授权绑定文件路径及原、新内容摘要，独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
+- `create_host_file(directory, relative, content)`：经精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
+- `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
 - `host_path_info(path, directory=False)`：授权后验证绝对普通路径与目录身份。
+- `host_file_version(path)`：在 Windows 经所在目录读取授权后检查普通可执行文件的固定版本信息，返回四位文件版本和产品版本；接口不运行可执行文件。
+- `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
 - `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell，不解释业务成功码。返回原始 `returncode`。
-  options 只支持 `output_parent`；提供时创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。
-- `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
+  options 支持 `output_parent`、布尔值 `capture_output`、`capture_after`、`tool_dependencies`、`stdin_base64`、`config_base64`、`timeout_seconds`。`output_parent` 创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。执行授权记录原始参数模板和输出父目录，而不是每次生成的随机目录名；模板以外的参数变化仍需要重新授权。`capture_output=true` 将合并的标准输出和标准错误作为 `captured_output` 返回插件（最多 16KiB，超限失败），不再流式显示；该选项纳入执行授权范围。`capture_after` 是最多 128 字符的单行标记，正常流式显示仍保留，且仅当标记恰好出现一次并有下一行时，将下一行作为 `captured_after` 返回（最多 16KiB，否则为 null）；标记纳入执行授权范围。`stdin_base64` 可提供最多 16KiB 的标准输入，执行授权绑定输入内容的长度及 SHA-256，默认不开放输入。`config_base64` 可提供至多 16KiB 的临时工具配置；必须在参数中使用 `{config_file}`，宿主在本次执行期间建立临时文件，正常退出时清理，执行授权绑定内容长度和摘要，参数模板保持稳定。宿主被强制终止时临时文件可能残留，调用方不可将秘密写入此配置。`timeout_seconds` 是 1..3600 的整数，默认为 300，显式值纳入授权范围。外部进程在独立的有限期限内运行时不消耗插件计算期限，但仍持续检查插件授权、工具授权和资源身份；超时或撤权会回收进程树。`tool_dependencies` 是至多 8 个普通绝对 `.exe` 路径，其父目录加入工具的 PATH；授权包含可执行文件路径、摘要和搜索目录，并在启动前重验文件。目录内其他程序也可能通过 PATH 被调用，故授权展示完整搜索目录。默认仍流式显示，不向插件返回内容，也不额外添加搜索目录。
+- `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
 - `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
@@ -101,7 +106,7 @@ Both operations share the same scoped grant; once consent is reused within the i
 
 宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
 
-授权选项为本次、永久、拒绝；永久授权绑定内容身份与精确范围，可通过菜单或 `plugin permissions list` / `plugin permissions revoke ID` 查看和撤销。非交互模式没有授权时明确拒绝。
+授权菜单由框架统一提供，显示本次授权、永久授权和返回；返回或按 Esc 取消本次请求，不保存拒绝记录，下次申请可再次提示。插件只提交要执行的操作与目标，不能决定或写入授权选项。永久授权绑定内容身份与精确范围，可通过菜单或 `plugin permissions list` / `plugin permissions revoke ID` 查看和撤销。非交互模式没有授权时明确拒绝。
 
 中英文是必验项。菜单、授权、进度、结果、错误、帮助及平台未实现提示遵循程序当前语言；新增文案同时加入 zh/en，键和插值参数一致。插件使用 SDK 的 t/current_lang/register_locale 接入自身语言资源。机器错误码、命令、配置和协议字段不随语言改变。第三方工具原始日志可保留原文，但平台提供本地化结果摘要。
 
@@ -111,13 +116,13 @@ Both operations share the same scoped grant; once consent is reused within the i
 
 执行使用私有快照和工作区。成功返回不立即提交：先确认进程及工作区清理，再重新检查期限、内容指纹和授权链，最后提交状态。执行、清理、撤权或期限检查失败均不提交。状态上限 16MiB、4096 条目、64 层；扫描额度不等于硬磁盘配额。
 
-嵌套调用共享父期限，不能重新获得完整 timeout。并发状态事务冲突明确失败。`plugin inspect-workspaces` 仅观察，不根据目录名称推断所有权或授权删除。旧容器 reconcile/锁退休命令已经移除；原生崩溃恢复仍需实施，不能用删除任意遗留目录替代。
+嵌套调用共享父期限，不能重新获得完整 timeout。并发状态事务冲突明确失败。`plugin inspect-workspaces` 仅观察，不根据目录名称推断所有权或授权删除。旧容器 reconcile/锁退休命令已经移除；原生恢复只能处理可证明身份与归属的记录，不能用删除任意遗留目录替代。
 
 Windows 原生进程树默认 Job 预算为 256MiB 内存、16 个进程、整机 CPU 总容量的 25% 硬上限。宿主通过公共 `NativeLimits` 契约传入预算，插件不能修改；后续平台后端沿用此契约。所有限制必须在挂起进程恢复前成功设置，设置失败不执行插件。CPU 上限控制速率，整体执行期限另行限制持续时间；目录扫描仍不能代替磁盘硬配额。
 
 ## SDK 服务契约
 
-只依赖 `core.sdk` 稳定接口。SDK api_version=2、RPC 传输版本和业务服务版本相互独立。
+只依赖 `core.sdk` 稳定接口。SDK api_version=4、RPC 传输版本和业务服务版本相互独立。
 
 提供方声明 provides 及 service_contracts，每个契约包含严格整数 api_version（1..65535）及 1..64 个不重复公开 methods，并导出 provide_service(name)。调用方 uses 必须明确 service/provider/api_version/methods；拒绝通配、私有、重复方法和未知授权字段。旧 uses 不自动取得全部方法权限。
 
@@ -174,12 +179,12 @@ digest describes locally verified outgoing content. Multipart uploads, cross-fil
 URL signing and directory uploads are not included. Plugins invoke the bounded file API
 per object. Bilingual progress summaries display only the destination hostname.
 
-SDK 源码摘要已因新增接口改变，已有插件须重新 prepare；旧 SDK 1/2 插件必须升级到 3；不兼容时执行前拒绝，不保留旧业务接口。
+SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能执行。已安装的 SDK 3 插件仍可查看、更新和卸载。
 工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，
 仍不是文件系统磁盘硬配额。上传快照持有实际 worker 租约，清理与恢复使用同一身份记录。
 
 The SDK source digest changed; existing plugins must prepare their runtimes again. Existing
-SDK 1/2 plugins must migrate to SDK 3 and prepare their runtime again. Workspace logical reservation is now 512MiB per workspace,
+SDK 1/2/3 plugins must migrate to SDK 4 and prepare their runtime again. Installed SDK 3 plugins remain visible for management but cannot execute. Workspace logical reservation is now 512MiB per workspace,
 up to eight workspaces / 4GiB, including retained workspaces. This is not a filesystem hard
 quota. Upload snapshots hold a worker lease and share identity-bound cleanup/recovery.
 
@@ -200,6 +205,6 @@ Interrupted updates can be reviewed under **Plugin management → Recover interr
 
 Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、更新、取消/超时、状态回滚、宿主访问拒绝、真实构建与上传。Linux/macOS 后端未实现期间必须明确拒绝。源码测试、冻结包、实际 Creator 和 S3 是不同证据，不能互相替代。完整未完成清单见迁移文档。
 
-### SDK 3 迁移
+### SDK 4 迁移
 
-见 [业务分离与迁移](sdk3-business-separation.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。
+见[插件开发指南](plugin-development.md)和[原生升级指南](plugin-native-upgrade-guide.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。[SDK 3 业务分离记录](sdk3-business-separation.md)仅供历史迁移参考。

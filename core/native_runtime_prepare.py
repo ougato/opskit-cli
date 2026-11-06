@@ -87,3 +87,9 @@ def validate_candidate(root, record, *, fingerprint, sdk_sha256):
     """Reject stale plugin/SDK identities and mutated runtime bytes before launch."""
     validate_record(record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
     verify(root, record["files"])
+
+
+def stage_candidate(root, destination, record, *, fingerprint, sdk_sha256):
+    """Check identity and create a verified private snapshot without duplicate scans."""
+    validate_record(record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
+    stage(root, destination, record["files"])

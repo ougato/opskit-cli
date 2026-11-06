@@ -11,7 +11,7 @@ from plugin import commands
 def write_plugin(root, version):
     root.mkdir(parents=True)
     (root / "plugin.yaml").write_text(
-        f"name: demo\nversion: {version}\napi_version: 3\nkind: python\nentry: demo\n")
+        f"name: demo\nversion: {version}\napi_version: 4\nkind: python\nentry: demo\n")
     (root / "demo.py").write_text("raise RuntimeError('MUST_NOT_IMPORT')\n")
 
 
