@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -285,7 +286,18 @@ def _exec_reenter(venv_python: Path) -> None:
         if sys.platform == "win32":
             # Windows execv detaches the replacement from callers waiting on
             # the original process. Preserve CLI streams and exit status.
-            raise SystemExit(subprocess.call([python_str] + sys.argv))
+            # Console Ctrl+C also reaches the child. A no-op handler in this
+            # waiting parent lets the child handle it and finish its cleanup;
+            # subprocess.call would otherwise kill it on KeyboardInterrupt.
+            previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, lambda signum, frame: None)
+            try:
+                code = subprocess.call([python_str] + sys.argv)
+            except KeyboardInterrupt:
+                raise SystemExit(130) from None
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            raise SystemExit(code)
         os.execv(python_str, [python_str] + sys.argv)
     except Exception as e:
         print(f"[OpsKit ERROR] exec 重入失败：{e}")

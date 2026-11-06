@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable, Iterator
 
 from rich.console import Console
+from rich.cells import cell_len
 from rich.text import Text
 
 console = Console()
@@ -60,10 +61,11 @@ def _check_input() -> None:
 def _getwch() -> str:
     import msvcrt
     if _input_guard.get() is not None:
+        from core.windows_console_input import key_available
         with _waiting_for_input():
             while True:
                 _check_input()
-                if msvcrt.kbhit():
+                if msvcrt.kbhit() or key_available():
                     break
                 time.sleep(0.05)
     value = msvcrt.getwch()
@@ -858,6 +860,17 @@ def confirm(
             raise UserExit
 
 
+def _erase_input_character(buf: list[str], secret: bool) -> None:
+    """Erase the same number of terminal cells as the echoed character."""
+    if not buf:
+        return
+    character = buf.pop()
+    width = 1 if secret else cell_len(character)
+    if width:
+        sys.stdout.write('\x08' * width + ' ' * width + '\x08' * width)
+        sys.stdout.flush()
+
+
 def _read_line(secret: bool = False) -> str:
     """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
@@ -882,11 +895,8 @@ def _read_line(secret: bool = False) -> str:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserExit
-            if ch == '\x08':
-                if buf:
-                    buf.pop()
-                    sys.stdout.write('\x08 \x08')
-                    sys.stdout.flush()
+            if ch in ('\x08', '\x7f'):
+                _erase_input_character(buf, secret)
                 continue
             if ch == CANCEL_KEY:
                 sys.stdout.write('\n')
@@ -937,10 +947,7 @@ def _read_line(secret: bool = False) -> str:
                     sys.stdout.flush()
                     raise UserExit
                 if ch in ('\x7f', '\x08'):
-                    if buf:
-                        buf.pop()
-                        sys.stdout.write('\x08 \x08')
-                        sys.stdout.flush()
+                    _erase_input_character(buf, secret)
                     continue
                 if ch == CANCEL_KEY:
                     # 与 _read_key_seq 对齐：ESC 后 50ms 内跟随 '[' / 'O' 视为

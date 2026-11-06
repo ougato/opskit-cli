@@ -34,6 +34,36 @@ def test_windows_reentry_preserves_wait_and_exit_code(monkeypatch):
     assert seen == [[str(Path('env/python.exe')), 'main.py', 'plugin', 'list']]
 
 
+def test_windows_reentry_parent_handles_ctrl_c_without_stopping_child(monkeypatch):
+    import signal
+
+    monkeypatch.setattr(bootstrap.sys, 'platform', 'win32')
+    previous = signal.getsignal(signal.SIGINT)
+    def child(args):
+        assert callable(signal.getsignal(signal.SIGINT))
+        signal.raise_signal(signal.SIGINT)
+        return 7
+    monkeypatch.setattr(bootstrap.subprocess, 'call', child)
+    with pytest.raises(SystemExit) as error:
+        bootstrap._exec_reenter(Path('env/python.exe'))
+    assert error.value.code == 7
+    assert signal.getsignal(signal.SIGINT) == previous
+
+
+def test_windows_reentry_unexpected_interrupt_has_no_traceback(monkeypatch):
+    import signal
+
+    monkeypatch.setattr(bootstrap.sys, 'platform', 'win32')
+    previous = signal.getsignal(signal.SIGINT)
+    def interrupted(args):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(bootstrap.subprocess, 'call', interrupted)
+    with pytest.raises(SystemExit) as error:
+        bootstrap._exec_reenter(Path('env/python.exe'))
+    assert error.value.code == 130
+    assert signal.getsignal(signal.SIGINT) == previous
+
+
 def test_missing_transport_dependency_is_not_reported_as_network_failure(monkeypatch):
     import tempfile
     from types import SimpleNamespace

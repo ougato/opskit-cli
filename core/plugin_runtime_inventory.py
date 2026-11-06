@@ -15,7 +15,7 @@ RUNTIME_FILES = (
     "__init__.py", "bounded_yaml.py", "cli.py", "config.py", "constants.py", "i18n.py", "logger.py",
     "module.py", "paths.py", "plugin_json.py", "plugin_tree.py", "plugin_worker.py", "process.py",
     "prompt.py", "resource_lock.py", "runner.py", "sdk.py", "secrets.py", "theme.py", "yamlio.py",
-    "windows_job.py", "windows_job_lifecycle.py",
+    "windows_console_input.py", "windows_job.py", "windows_job_lifecycle.py",
     "locale/en.yaml", "locale/zh.yaml", "themes/catppuccin.yaml",
 )
 NATIVE_FETCH_FILES = ("__init__.py", "native_fetch_worker.py", "plugin_git_archive.py")
