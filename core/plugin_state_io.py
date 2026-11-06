@@ -208,3 +208,24 @@ def finish_supervised(root, *, plugin, caller, timeout, initialize=False):
             or result["outcome"] not in (None, "committed", "aborted")):
         raise RuntimeError("invalid state recovery result")
     return result["outcome"]
+
+
+def _check_preload_state(root, plugin, caller):
+    """Check transaction topology under the same guards used for recovery."""
+    from core.paths import data_dir
+    from core.plugin_metadata import path_present
+    from core.plugin_sandbox import _require_resolved_state
+    from core.plugin_state import _binding, record_path, transaction_guard
+    from core.plugin_state_budget import platform_state_guard
+    _binding(plugin, caller)
+    owner = data_dir().absolute() / "plugin-data" / plugin
+    allowed = {owner / "callers" / caller}
+    if caller == "platform":
+        allowed.add(owner / "self")
+    root = Path(root)
+    if root not in allowed or ".." in root.parts:
+        raise ValueError("unbound preload state")
+    with platform_state_guard(), transaction_guard(root):
+        if path_present(record_path(root)):
+            raise ValueError("state recovery requires an explicit invocation")
+        _require_resolved_state(root)

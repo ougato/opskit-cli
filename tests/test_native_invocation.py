@@ -48,6 +48,91 @@ def sdk_runtime(tmp_path_factory):
     return root, record
 
 
+@pytest.mark.parametrize("failure", ["runtime_changed", "worker_exited"])
+def test_preload_rechecks_worker_and_runtime_before_plugin_activation(tmp_path, monkeypatch, failure):
+    from contextlib import contextmanager
+    from threading import Event
+    from types import SimpleNamespace
+    from core import native_invocation, native_preload
+    from core.native_runtime import stage
+    from core.plugin_entry_preload import PreloadStale
+
+    runtime = tmp_path / "source"
+    (runtime / "python").mkdir(parents=True)
+    (runtime / "python" / "python.exe").write_bytes(b"trusted")
+    files = inventory(runtime)
+    fingerprint, sdk_sha256 = "a" * 64, "b" * 64
+    record = {"schema_version": 1, "backend": "native", "fingerprint": fingerprint,
+              "lock_sha256": "c" * 64, "sdk_sha256": sdk_sha256,
+              "wheels": {"sdk": "d" * 64}, "files": files}
+    prepared = tmp_path / "runtime-stage"
+    stage(runtime, prepared, files)
+    plugin, seed = tmp_path / "plugin", tmp_path / "seed"
+    plugin.mkdir()
+    seed.mkdir()
+    (plugin / "plugin.py").write_text("pass")
+    activated = []
+
+    @contextmanager
+    def open_preloaded_worker(backend, base, **kwargs):
+        # The platform identity check occurs before this point. Simulate a
+        # later change while the inactive worker waits for the user's choice.
+        if failure == "runtime_changed":
+            (base / "runtime" / "python" / "python.exe").write_bytes(b"changed")
+        child = SimpleNamespace(poll=lambda: 1 if failure == "worker_exited" else None)
+        yield SimpleNamespace(child=child)
+
+    class Preload:
+        cancelled = Event()
+
+        def handoff(self, worker, *, validate, **kwargs):
+            validate()
+            activated.append(True)
+
+    monkeypatch.setattr(native_invocation, "get_backend", lambda: object())
+    monkeypatch.setattr(native_preload, "open_preloaded_worker", open_preloaded_worker)
+    expected = ValueError if failure == "runtime_changed" else PreloadStale
+    with pytest.raises(expected):
+        native_invocation.invoke(
+            runtime, record, plugin, inventory(plugin), seed, {}, {"action": "entry"},
+            fingerprint=fingerprint, sdk_sha256=sdk_sha256, deadline=time.monotonic() + 10,
+            dispatch=None, checkpoint=lambda: None, output=None, staging_parent=tmp_path,
+            prepared_runtime=prepared, preload=Preload(), validate_preload=lambda: None,
+            preload_state={},
+        )
+    assert not activated
+
+
+def test_normal_invocation_rechecks_prepared_runtime_before_launch(tmp_path, monkeypatch):
+    from core import native_invocation
+    from core.native_runtime import stage
+
+    runtime = tmp_path / "source"
+    (runtime / "python").mkdir(parents=True)
+    (runtime / "python" / "python.exe").write_bytes(b"trusted")
+    files = inventory(runtime)
+    fingerprint, sdk_sha256 = "a" * 64, "b" * 64
+    record = {"schema_version": 1, "backend": "native", "fingerprint": fingerprint,
+              "lock_sha256": "c" * 64, "sdk_sha256": sdk_sha256,
+              "wheels": {"sdk": "d" * 64}, "files": files}
+    prepared = tmp_path / "runtime-stage"
+    stage(runtime, prepared, files)
+    (prepared / "python" / "python.exe").write_bytes(b"changed")
+    plugin, seed = tmp_path / "plugin", tmp_path / "seed"
+    plugin.mkdir()
+    seed.mkdir()
+    (plugin / "plugin.py").write_text("pass")
+    monkeypatch.setattr(native_invocation, "get_backend", lambda: object())
+    monkeypatch.setattr(native_invocation, "open_worker", lambda *a, **k: pytest.fail("worker launched"))
+    with pytest.raises(ValueError, match="content does not match"):
+        native_invocation.invoke(
+            runtime, record, plugin, inventory(plugin), seed, {}, {"action": "entry"},
+            fingerprint=fingerprint, sdk_sha256=sdk_sha256, deadline=time.monotonic() + 10,
+            dispatch=None, checkpoint=lambda: None, output=None, staging_parent=tmp_path,
+            prepared_runtime=prepared,
+        )
+
+
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
 def test_interpreter_probe_uses_actual_isolated_target(sdk_runtime, tmp_path):
     from core.native_interpreter import probe
@@ -85,6 +170,148 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     assert sandbox.invoke(load_manifest(plugin), "cli") == 23
     assert (tmp_path / "data/plugin-data/demo/self/state/committed.txt").read_text() == "native-state"
     assert "public_example" not in sys.modules
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_preloaded_sandbox_does_not_import_plugin_before_activation(sdk_runtime, tmp_path, monkeypatch):
+    """Plugin code waits for activation; archive verification is tested separately."""
+    import psutil
+    from core import plugin_json
+    from core.native_preload import open_preloaded_worker
+    from core import native_preload
+    from core.native_runtime import stage
+    from core.native_sandbox import get_backend
+
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "example.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "(Path(os.environ['OPSKIT_DATA_DIR']) / 'activated').write_text('yes')\n"
+        "def cli(argv): return 23\n")
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    request = {"action": "cli", "name": "demo", "kind": "python", "entry": "example",
+               "args": [], "kwargs": {}, "service": "", "method": "", "caller": "platform",
+               "service_contract": None}
+    runtime, record = sdk_runtime
+    base = tmp_path / "stage"
+    base.mkdir()
+    stage(runtime, base / "runtime", record["files"])
+    stage(plugin, base / "plugin", inventory(plugin))
+    stage(seed, base / "seed", {}, allow_empty=True)
+    (base / "data").mkdir()
+    (base / "inputs").mkdir()
+    (base / "inputs" / "request.json").write_text(plugin_json.dumps_message(request), encoding="utf-8")
+    marker = base / "data" / "activated"
+    backend = get_backend()
+    # This fixture uses the local test Python rather than the pinned archive.
+    monkeypatch.setattr(native_preload, "_verify_platform_runtime", lambda base: None)
+
+    # Cancellation without activation kills the child and never imports the plugin.
+    with open_preloaded_worker(backend, base, deadline=time.monotonic() + 30) as warmed:
+        pid = warmed.child.pid
+        time.sleep(.2)
+        assert warmed.child.poll() is None
+        assert not marker.exists()
+    assert not marker.exists()
+    assert not psutil.pid_exists(pid)
+
+    # An invalid activation signal exits before the plugin is imported.
+    with open_preloaded_worker(backend, base, deadline=time.monotonic() + 30) as warmed:
+        warmed.child.stdin.write(b"invalid activation\n")
+        warmed.child.stdin.flush()
+        assert warmed.child.wait(10) == 3
+        assert not marker.exists()
+
+    with open_preloaded_worker(backend, base, deadline=time.monotonic() + 30) as warmed:
+        assert not marker.exists()
+        result = warmed.activate(deadline=time.monotonic() + 30, dispatch=lambda _: None,
+                                 checkpoint=lambda: None, output=lambda _: None)
+        assert marker.read_text() == "yes"
+        with pytest.raises(RuntimeError, match="no longer available"):
+            warmed.activate(deadline=time.monotonic() + 30, dispatch=lambda _: None,
+                            checkpoint=lambda: None, output=lambda _: None)
+    assert result["value"] == 23
+    assert "example" not in sys.modules
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_preloaded_entry_rechecks_state_and_revocation(sdk_runtime, tmp_path, monkeypatch):
+    """A ready snapshot cannot execute after state changes or authorization is revoked."""
+    from core import native_preload, plugin_sandbox
+    from core.native_runtime_catalog import RuntimeCatalog
+    from core.plugin import load_manifest
+    from core.plugin_entry_preload import EntryPreload
+    from core.plugin_trust import compute_fingerprint, grant, revoke
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(data))
+    monkeypatch.setattr(native_preload, "_verify_platform_runtime", lambda base: None)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "plugin.yaml").write_text(
+        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: public_example\n")
+    (plugin / "public_example.py").write_text(
+        "from types import SimpleNamespace\n"
+        "from core.sdk import plugin_data_dir\n"
+        "def entry():\n"
+        "    (plugin_data_dir('demo') / 'activated.txt').write_text('executed')\n"
+        "def register():\n"
+        "    return SimpleNamespace(entry=entry)\n")
+    state = data / "plugin-data/demo/self/state"
+    state.mkdir(parents=True)
+    (state / "previous.txt").write_text("before")
+    fingerprint = compute_fingerprint(plugin)
+    grant("demo", fingerprint, "1.0.0")
+    source, original = sdk_runtime
+    record = {**original, "fingerprint": fingerprint}
+    catalog = RuntimeCatalog(data / "native-plugin-runtimes")
+    catalog.publish("demo", source, record, check_identity=lambda *args: True)
+    manifest = load_manifest(plugin)
+
+    def ready():
+        session = EntryPreload(manifest)
+        deadline = time.monotonic() + 90
+        while session._ready.empty() and not session.done and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert not session.done, repr(session._error)
+        assert not session._ready.empty()
+        return session
+
+    stale = ready()
+    try:
+        (state / "previous.txt").write_text("changed")
+        assert stale.take() is False
+        assert not (state / "activated.txt").exists()
+    finally:
+        stale.cancel(wait=True)
+
+    replaced = ready()
+    try:
+        catalog.publish("demo", source, record, check_identity=lambda *args: True)
+        assert replaced.take() is False
+        assert not (state / "activated.txt").exists()
+    finally:
+        replaced.cancel(wait=True)
+
+    revoked = ready()
+    try:
+        revoke("demo")
+        with pytest.raises(plugin_sandbox.SandboxError):
+            revoked.take()
+        assert not (state / "activated.txt").exists()
+    finally:
+        revoked.cancel(wait=True)
+
+    grant("demo", fingerprint, "1.0.0")
+    active = ready()
+    try:
+        assert active.take() is True
+        assert (state / "activated.txt").read_text() == "executed"
+        assert (state / "previous.txt").read_text() == "changed"
+    finally:
+        active.cancel(wait=True)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")

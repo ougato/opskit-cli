@@ -14,12 +14,13 @@ from core import config, plugin_inspection as inspection, plugin_sandbox as sand
 
 def _trusted_manifest(tmp_path):
     from types import SimpleNamespace
+    from core.constants import PLUGIN_API_VERSION
     root = tmp_path / "demo"
     root.mkdir()
     (root / "demo.py").write_text("raise RuntimeError('never execute plugin in host')\n")
     fingerprint = trust.compute_fingerprint(root)
     trust.grant("demo", fingerprint, "1")
-    return SimpleNamespace(name="demo", root=root, permissions=[]), fingerprint
+    return SimpleNamespace(name="demo", root=root, permissions=[], api_version=PLUGIN_API_VERSION), fingerprint
 
 
 def test_standalone_check_authorization_uses_owned_reader_and_reaps(tmp_path, monkeypatch):

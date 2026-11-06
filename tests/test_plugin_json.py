@@ -197,6 +197,7 @@ def wire_client(tmp_path, monkeypatch):
     monkeypatch.setattr(RuntimeCatalog, "load", lambda *a, **k: (tmp_path, {}))
     from contextlib import nullcontext
     monkeypatch.setattr(RuntimeCatalog, "acquire", lambda *a, **k: nullcontext((tmp_path, {})))
+    monkeypatch.setattr(native_invocation, "prepare_runtime", lambda *a, **k: nullcontext(lambda: None))
     clients = []
 
     def launch(program):

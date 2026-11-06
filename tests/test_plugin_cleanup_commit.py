@@ -24,6 +24,7 @@ def test_state_commit_waits_for_resource_cleanup(tmp_path, monkeypatch, failure,
     grant("demo", compute_fingerprint(root), "1.0.0")
     monkeypatch.setattr(RuntimeCatalog, "load", lambda *a, **k: (tmp_path / "runtime", {}))
     monkeypatch.setattr(RuntimeCatalog, "acquire", lambda *a, **k: nullcontext((tmp_path / "runtime", {})))
+    monkeypatch.setattr(native_invocation, "prepare_runtime", lambda *a, **k: nullcontext(lambda: None))
     events = []
     @contextmanager
     def workspace(**kwargs):

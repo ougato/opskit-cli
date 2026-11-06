@@ -74,6 +74,25 @@ class RuntimeCatalog:
             atomic_write(self.root / (name + ".json"), json.dumps(pointer, sort_keys=True))
             return identity
 
+    def is_current(self, name, runtime, record):
+        """Check that a leased runtime still matches the published pointer."""
+        _name(name)
+        runtime = Path(runtime).absolute()
+        identity = runtime.parent.name
+        if (re.fullmatch(r"[0-9a-f]{32}", identity) is None
+                or runtime != self.root / "objects" / identity / "runtime"):
+            raise ValueError("invalid leased native runtime")
+        content = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        expected = {"schema_version": 1, "object": identity,
+                    "manifest_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
+        with self.lock.hold():
+            try:
+                pointer = _read(self.root / (name + ".json"), 4096)
+            except FileNotFoundError:
+                return False
+        return (isinstance(pointer, dict) and type(pointer.get("schema_version")) is int
+                and pointer == expected)
+
     def load(self, name, *, fingerprint, sdk_sha256):
         _name(name)
         with self.lock.hold():

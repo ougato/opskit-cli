@@ -435,7 +435,8 @@ def _broker(manifest, request: dict):
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
-    _check_live_authorizations(extra=((manifest.name, fingerprint),))
+    # check_authorization already checks this identity together with every
+    # active caller, service edge and network grant in the invocation.
     if method == "host.upload_file":
         if "network" not in manifest.permissions or kwargs or len(args) != 5:
             raise SandboxError("network capability not granted")
@@ -630,6 +631,9 @@ def _read_live_authorizations(identities, edges, *, config_path=None, trust_path
 
 
 def _remaining(cap=None):
+    preload = getattr(_invocations, "preload", None)
+    if preload is not None:
+        preload.check_cancelled()
     deadline = getattr(_invocations, "deadline", None)
     if deadline is None:
         return cap
@@ -717,43 +721,88 @@ def _state_lock(name: str):
         owner.__exit__(None, None, None)
 
 
-def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=None, caller="platform"):
+@contextmanager
+def _invocation_locks(name, lock):
+    """Keep lock ownership on this thread, allowing speculative suspension."""
+    owner = None
+    locked = False
+
+    def acquire():
+        nonlocal owner, locked
+        if locked:
+            raise RuntimeError("plugin invocation lock already held")
+        if not lock.acquire(timeout=_remaining()):
+            raise SandboxError("plugin exceeded execution deadline waiting for state lock")
+        locked = True
+        try:
+            candidate = _state_lock(name)
+            candidate.__enter__()
+            owner = candidate
+        except BaseException:
+            locked = False
+            lock.release()
+            raise
+
+    def release():
+        nonlocal owner, locked
+        current, owner = owner, None
+        try:
+            if current is not None:
+                current.__exit__(None, None, None)
+        finally:
+            if locked:
+                locked = False
+                lock.release()
+
+    acquire()
+    try:
+        yield release, acquire
+    finally:
+        release()
+
+
+def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=None, caller="platform", _preload=None):
+    if _preload is not None and (action != "entry" or caller != "platform"):
+        raise ValueError("preload is only available for a platform menu entry")
     stack = getattr(_invocations, "stack", [])
     if manifest.name in stack or len(stack) >= 4:
         raise SandboxError("cyclic or excessive nested plugin service calls denied")
     with _locks_guard:
         lock = _locks.setdefault(manifest.name, threading.RLock())
     with _execution_budget():
-        if not lock.acquire(timeout=_remaining()):
-            raise SandboxError("plugin exceeded execution deadline waiting for state lock")
-        try:
-            with _state_lock(manifest.name):
-                _remaining()
-                _invocations.stack = [*stack, manifest.name]
-                authorizations = getattr(_invocations, "authorizations", ())
-                service_edges = getattr(_invocations, "service_edges", ())
-                network_authorizations = getattr(_invocations, "network_authorizations", ())
-                previous_authority = getattr(_invocations, "capability_authority", None)
-                from core.plugin_capabilities import CapabilityAuthority
-                authority = CapabilityAuthority()
-                _invocations.capability_authority = authority
-                try:
-                    return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
-                finally:
-                    authority.close()
-                    _invocations.capability_authority = previous_authority
-                    _invocations.stack = stack
-                    _invocations.authorizations = authorizations
-                    used_edges = getattr(_invocations, "service_edges", ())
-                    # A caller's later state still depends on services it used,
-                    # including a revoked edge whose exception it catches.
-                    _invocations.service_edges = tuple(dict.fromkeys((*service_edges, *used_edges))) if stack else service_edges
-                    used_networks = getattr(_invocations, "network_authorizations", ())
-                    _invocations.network_authorizations = (
-                        tuple(dict.fromkeys((*network_authorizations, *used_networks))) if stack
-                        else network_authorizations)
-        finally:
-            lock.release()
+        if _preload is not None:
+            _preload.check_cancelled()
+        with _invocation_locks(manifest.name, lock) as (suspend, resume):
+            if _preload is not None:
+                _preload.check_cancelled()
+                _preload.set_locks(suspend, resume)
+            _remaining()
+            _invocations.stack = [*stack, manifest.name]
+            authorizations = getattr(_invocations, "authorizations", ())
+            service_edges = getattr(_invocations, "service_edges", ())
+            network_authorizations = getattr(_invocations, "network_authorizations", ())
+            previous_authority = getattr(_invocations, "capability_authority", None)
+            previous_preload = getattr(_invocations, "preload", None)
+            _invocations.preload = _preload
+            from core.plugin_capabilities import CapabilityAuthority
+            authority = CapabilityAuthority()
+            _invocations.capability_authority = authority
+            try:
+                return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
+            finally:
+                authority.close()
+                _invocations.capability_authority = previous_authority
+                _invocations.preload = previous_preload
+                _invocations.stack = stack
+                _invocations.authorizations = authorizations
+                used_edges = getattr(_invocations, "service_edges", ())
+                # A caller's later state still depends on services it used,
+                # including a revoked edge whose exception it catches.
+                _invocations.service_edges = tuple(dict.fromkeys((*service_edges, *used_edges))) if stack else service_edges
+                used_networks = getattr(_invocations, "network_authorizations", ())
+                _invocations.network_authorizations = (
+                    tuple(dict.fromkeys((*network_authorizations, *used_networks))) if stack
+                    else network_authorizations)
 
 
 def _invoke(manifest, action, *, args, service, method, kwargs, caller):
@@ -795,6 +844,7 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
 def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, service_contract,
                      args, service, method, kwargs, caller):
     from core.native_invocation import invoke as invoke_native
+    from core.native_invocation import prepare_runtime
     from core.native_runtime import inventory
     from core.plugin_runtime_inventory import code_digest
     _remaining()
@@ -804,25 +854,56 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
     if action.startswith("service"):
         state_root = owner_root / "callers" / caller
     state_caller = caller if action.startswith("service") else "platform"
-    _recover_state(state_root, plugin=manifest.name, caller=state_caller, initialize=True)
-    _check_staging_quota(state_root)
-    payload = _encode({"action": action, "name": manifest.name, "entry": manifest.entry,
-                       "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
-                       "service": service, "method": method, "caller": caller,
-                       "service_contract": service_contract}, state_root)
+    preload = getattr(_invocations, "preload", None)
     from core.plugin_workspace import owned_workspace
-    with owned_workspace(timeout=_remaining(CONTROL_TIMEOUT), cleanup_timeout=CONTROL_TIMEOUT) as workspace:
+    with owned_workspace(timeout=_remaining(CONTROL_TIMEOUT), cleanup_timeout=CONTROL_TIMEOUT) as workspace, ExitStack() as tasks:
         base = workspace.root
-        _copy_supervised(manifest.root, base / "plugin", 128 * 1024**2)
+        if preload is not None:
+            preload.check_cancelled()
+        sdk_sha256 = code_digest()
+        wait_runtime = tasks.enter_context(prepare_runtime(
+            runtime, runtime_record, fingerprint=fingerprint, sdk_sha256=sdk_sha256,
+            deadline=_invocations.deadline, staging_parent=base,
+            cancel_event=preload.cancelled if preload is not None else None))
+        if preload is None:
+            _recover_state(state_root, plugin=manifest.name, caller=state_caller, initialize=True)
+        else:
+            # Reuse this invocation's supervised reader; the same guarded
+            # topology check is repeated after the user selects the plugin.
+            _invocations.inspector.preload_state(state_root, manifest.name, state_caller,
+                                                 timeout=_remaining(CONTROL_TIMEOUT))
+        _check_staging_quota(state_root)
+        if preload is not None:
+            preload.check_cancelled()
+        payload = _encode({"action": action, "name": manifest.name, "entry": manifest.entry,
+                           "kind": manifest.kind, "args": args or [], "kwargs": kwargs or {},
+                           "service": service, "method": method, "caller": caller,
+                           "service_contract": service_contract}, state_root)
+        from core.plugin_snapshot import copy_snapshot_pair
+        try:
+            copy_snapshot_pair(((manifest.root, base / "plugin", 128 * 1024**2, SKIP_DIRS),
+                                (state_root, base / "seed", STATE_LIMIT, frozenset())),
+                               timeout=_remaining(3600),
+                               cancel_event=preload.cancelled if preload is not None else None)
+        except InterruptedError:
+            raise
+        except TimeoutError as error:
+            raise SandboxError("plugin exceeded execution deadline during snapshot") from error
+        except (OSError, ValueError, RuntimeError) as error:
+            raise SandboxError("plugin snapshot worker failed") from error
+        _remaining()
+        if preload is not None:
+            preload.check_cancelled()
         if compute_fingerprint(base / "plugin") != fingerprint:
             raise SandboxError("plugin changed during snapshot creation")
         from dataclasses import replace
         snapshot_manifest = _read_manifest(base / "plugin")
         if snapshot_manifest is None or replace(snapshot_manifest, root=manifest.root) != manifest:
             raise SandboxError("plugin manifest changed during authorization")
-        _copy_supervised(state_root, base / "seed", STATE_LIMIT, skip_dirs=frozenset())
         seed = base / "seed"
         seed_files = inventory(seed, allow_empty=True)
+        if preload is not None:
+            preload.suspend_locks()
         def checkpoint():
             _remaining()
             _check_live_authorizations()
@@ -836,12 +917,43 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
             except Exception:
                 return {"error": t("plugin_native.errors.broker_denied")}
         from core.prompt import console
+        def validate_preload():
+            from core.plugin_entry_preload import PreloadStale
+            from core.plugin_inspection import ContentInspector
+            import os
+            try:
+                inspector = getattr(_invocations, "inspector", None)
+                if inspector is None:
+                    inspector = ContentInspector()
+                    _invocations.inspector = inspector
+                inspector.preload_state(state_root, manifest.name, state_caller, timeout=_remaining(CONTROL_TIMEOUT))
+                current_state = inventory(state_root, allow_empty=True) if os.path.lexists(state_root) else {}
+                if current_state != seed_files:
+                    raise ValueError("plugin state changed")
+                from core.native_runtime_catalog import RuntimeCatalog
+                catalog = RuntimeCatalog(data_dir() / "native-plugin-runtimes")
+                if not catalog.is_current(manifest.name, runtime, runtime_record):
+                    raise ValueError("plugin runtime changed")
+            except (OSError, ValueError, RuntimeError) as error:
+                raise PreloadStale() from error
+            _check_staging_quota(state_root)
+            current = _read_manifest(manifest.root)
+            if current != manifest or check_authorization(current) != fingerprint:
+                raise SandboxError("plugin changed during preparation")
+            if code_digest() != sdk_sha256:
+                raise SandboxError("plugin SDK changed during preparation")
+        try:
+            prepared_runtime = wait_runtime()
+        except TimeoutError as error:
+            raise SandboxError("plugin exceeded execution deadline during runtime snapshot") from error
+        preload_options = {"preload": preload, "validate_preload": validate_preload,
+                           "preload_state": dict(_invocations.__dict__)} if preload is not None else {}
         result = invoke_native(runtime, runtime_record, base / "plugin", inventory(base / "plugin"),
                                seed, seed_files, payload, fingerprint=fingerprint,
                                sdk_sha256=code_digest(), deadline=_invocations.deadline,
                                checkpoint=checkpoint, dispatch=dispatch,
                                output=lambda line: console.print(line, markup=False, highlight=False),
-                               staging_parent=base)
+                               staging_parent=base, prepared_runtime=prepared_runtime, **preload_options)
         if action == "service.describe":
             value = result.get("value")
             expected = {"service_api_version": service_contract["api_version"],

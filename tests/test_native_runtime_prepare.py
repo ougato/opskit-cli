@@ -1,6 +1,10 @@
 import hashlib
+import os
+from pathlib import Path
+import time
 import zipfile
 
+import psutil
 import pytest
 from packaging.markers import default_environment
 from packaging.tags import sys_tags
@@ -43,6 +47,118 @@ def test_modified_candidate_cannot_launch(tmp_path):
         validate_candidate(root, record, fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
 
 
+def test_invocation_rejects_mutated_runtime_before_worker_launch(tmp_path, monkeypatch):
+    from core import native_invocation
+
+    root, record = prepare(tmp_path)
+    (root / "site-packages/core/plugin_worker.py").write_bytes(b"injected")
+    monkeypatch.setattr(native_invocation, "get_backend", lambda: object())
+    def forbidden_launch(*args, **kwargs):
+        pytest.fail("worker must not launch with modified runtime")
+    monkeypatch.setattr(native_invocation, "open_worker", forbidden_launch)
+    with pytest.raises(ValueError, match="does not match"):
+        native_invocation.invoke(root, record, tmp_path / "plugin", {}, tmp_path / "seed", {}, {},
+                                 fingerprint=record["fingerprint"], sdk_sha256=record["sdk_sha256"],
+                                 deadline=0, dispatch=None, checkpoint=lambda: None, output=None,
+                                 staging_parent=tmp_path)
+
+
+def test_parallel_runtime_snapshot_is_checked_again_before_launch(tmp_path, monkeypatch):
+    from core import native_invocation
+
+    root, record = prepare(tmp_path)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    deadline = time.monotonic() + 30
+    with native_invocation.prepare_runtime(root, record, fingerprint=record["fingerprint"],
+                                          sdk_sha256=record["sdk_sha256"], deadline=deadline,
+                                          staging_parent=staging) as wait:
+        prepared = wait()
+        (prepared / "site-packages/core/plugin_worker.py").write_bytes(b"injected")
+        monkeypatch.setattr(native_invocation, "get_backend", lambda: object())
+        monkeypatch.setattr(native_invocation, "open_worker", lambda *a, **k: pytest.fail("worker launched"))
+        with pytest.raises(ValueError, match="does not match"):
+            native_invocation.invoke(root, record, tmp_path / "plugin", {}, tmp_path / "seed", {}, {},
+                                     fingerprint=record["fingerprint"], sdk_sha256=record["sdk_sha256"],
+                                     deadline=deadline, dispatch=None, checkpoint=lambda: None, output=None,
+                                     staging_parent=staging, prepared_runtime=prepared)
+
+
+def _blocked_runtime_stage(connection, source, destination, files):
+    from worker_test_markers import publish_marker
+    publish_marker(Path(os.environ["OPSKIT_TEST_RUNTIME_STAGE_MARKER"]), str(os.getpid()))
+    while True:
+        time.sleep(.1)
+
+
+def _blocked_runtime_verification(connection, runtime, files):
+    from worker_test_markers import publish_marker
+    publish_marker(Path(os.environ["OPSKIT_TEST_RUNTIME_VERIFY_MARKER"]), str(os.getpid()))
+    while True:
+        time.sleep(.1)
+
+
+def test_cancelled_runtime_verification_reaps_worker(tmp_path, monkeypatch):
+    import threading
+    from core import native_invocation
+
+    marker = tmp_path / "runtime-verify-pid"
+    monkeypatch.setenv("OPSKIT_TEST_RUNTIME_VERIFY_MARKER", str(marker))
+    monkeypatch.setattr(native_invocation, "_verify_runtime_worker", _blocked_runtime_verification)
+    cancelled = threading.Event()
+    deadline = time.monotonic() + 30
+    with native_invocation.verify_runtime_snapshot(tmp_path, {}, deadline=deadline,
+                                                  cancel_event=cancelled) as wait:
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert marker.exists(), "runtime verification worker did not start"
+        cancelled.set()
+        with pytest.raises(InterruptedError):
+            wait()
+    assert not psutil.pid_exists(int(marker.read_text()))
+
+
+def test_cancelled_parallel_runtime_snapshot_reaps_worker(tmp_path, monkeypatch):
+    from core import native_invocation
+
+    root, record = prepare(tmp_path)
+    marker = tmp_path / "runtime-worker-pid"
+    monkeypatch.setenv("OPSKIT_TEST_RUNTIME_STAGE_MARKER", str(marker))
+    monkeypatch.setattr(native_invocation, "_stage_runtime_worker", _blocked_runtime_stage)
+    deadline = time.monotonic() + 30
+    with pytest.raises(KeyboardInterrupt):
+        with native_invocation.prepare_runtime(root, record, fingerprint=record["fingerprint"],
+                                              sdk_sha256=record["sdk_sha256"], deadline=deadline,
+                                              staging_parent=tmp_path):
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+            assert marker.exists(), "runtime worker did not start"
+            raise KeyboardInterrupt
+    assert not psutil.pid_exists(int(marker.read_text()))
+
+
+def test_runtime_snapshot_wait_observes_cancel_event(tmp_path, monkeypatch):
+    import threading
+    from core import native_invocation
+
+    root, record = prepare(tmp_path)
+    marker = tmp_path / "runtime-worker-pid"
+    monkeypatch.setenv("OPSKIT_TEST_RUNTIME_STAGE_MARKER", str(marker))
+    monkeypatch.setattr(native_invocation, "_stage_runtime_worker", _blocked_runtime_stage)
+    cancelled = threading.Event()
+    deadline = time.monotonic() + 30
+    with native_invocation.prepare_runtime(root, record, fingerprint=record["fingerprint"],
+                                          sdk_sha256=record["sdk_sha256"], deadline=deadline,
+                                          staging_parent=tmp_path, cancel_event=cancelled) as wait:
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert marker.exists(), "runtime worker did not start"
+        cancelled.set()
+        with pytest.raises(InterruptedError):
+            wait()
+    assert not psutil.pid_exists(int(marker.read_text()))
+
+
 def test_dependency_cannot_replace_sdk(tmp_path):
     with pytest.raises(ValueError, match="conflicts"):
         prepare(tmp_path, package="core")
@@ -58,6 +174,24 @@ def test_catalog_publishes_and_rejects_stale_identity(tmp_path):
     assert actual == record
     with pytest.raises(ValueError):
         catalog.load("demo", fingerprint="b" * 64, sdk_sha256=record["sdk_sha256"])
+
+
+def test_catalog_detects_replacement_of_a_leased_runtime(tmp_path):
+    import json
+    from core.native_runtime_catalog import RuntimeCatalog
+    root, record = prepare(tmp_path)
+    catalog = RuntimeCatalog(tmp_path / "catalog")
+    catalog.publish("demo", root, record, check_identity=lambda *args: True)
+    runtime, loaded = catalog.load("demo", fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
+    assert catalog.is_current("demo", runtime, loaded)
+    catalog.publish("demo", root, record, check_identity=lambda *args: True)
+    assert not catalog.is_current("demo", runtime, loaded)
+    current, latest = catalog.load("demo", fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
+    pointer_path = catalog.root / "demo.json"
+    pointer = json.loads(pointer_path.read_text())
+    pointer["schema_version"] = True
+    pointer_path.write_text(json.dumps(pointer))
+    assert not catalog.is_current("demo", current, latest)
 
 
 def test_catalog_failed_publication_preserves_old_pointer(tmp_path):

@@ -100,3 +100,5 @@ cache/*.pending
 /native-plugin-runtimes/
 /native-fetch-staging/
 /native-preparations/
+/native-profile-leases/
+/native-workspace-leases/

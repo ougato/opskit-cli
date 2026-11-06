@@ -36,6 +36,18 @@ def _group_display(members) -> tuple[str, str]:
     return icon, label
 
 
+def _run_entry(pair, preload=None):
+    manifest, info = pair
+    if preload is None:
+        return info.entry()
+    from core.plugin import _guard_entry
+    def execute():
+        if not preload.take():
+            from core.plugin_sandbox import invoke
+            invoke(manifest, "entry")
+    return _guard_entry(manifest.name, execute)()
+
+
 def entry() -> None:
     try:
         _entry()
@@ -63,6 +75,15 @@ def _entry() -> None:
             else:
                 icon, label = _group_display(groups[payload])
             choices.append({"key": str(i + 2), "label": f"{icon} {label}"})
+        preload = None
+        candidate = items[0][1] if items and items[0][0] == "plugin" else None
+        def prepare():
+            nonlocal preload
+            if candidate is not None:
+                from core.plugin_entry_preload import start
+                preload = start(candidate[0])
+                if preload is not None:
+                    preload.prepare_caller_inspector()
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin")],
@@ -70,24 +91,42 @@ def _entry() -> None:
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('plugin_native.back')}",
+                on_ready=prepare,
             )
         except UserCancel:
+            if preload is not None:
+                preload.cancel()
             break
+        except BaseException:
+            if preload is not None:
+                preload.cancel()
+            raise
         if key is None:
+            if preload is not None:
+                preload.cancel()
             break
         try:
             if key == "1":
+                if preload is not None:
+                    preload.cancel()
                 _manage()
             else:
                 idx = int(key) - 2
                 if 0 <= idx < len(items):
                     kind, payload = items[idx]
                     if kind == "plugin":
-                        payload[1].entry()
+                        if preload is not None and payload is not candidate:
+                            preload.cancel()
+                        _run_entry(payload, preload if payload is candidate else None)
                     else:
+                        if preload is not None:
+                            preload.cancel()
                         _group_menu(payload)
         except (KeyboardInterrupt, UserCancel):
             pass
+        finally:
+            if preload is not None:
+                preload.cancel()
 
 
 def _group_menu(group_id: str) -> None:

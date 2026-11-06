@@ -190,6 +190,28 @@ def _state_quota_value(result):
     return result["count"], result["size"]
 
 
+def _valid_preload_state_request(request):
+    return (isinstance(request, dict) and set(request) == {"operation", "root", "plugin", "caller"}
+            and request["operation"] == "preload_state"
+            and all(isinstance(request[key], str) and 0 < len(request[key]) <= 65536
+                    and "\0" not in request[key] for key in ("root", "plugin", "caller"))
+            and Path(request["root"]).is_absolute())
+
+
+def _preload_state_result(request):
+    from core.plugin_state_io import _check_preload_state
+    try:
+        _check_preload_state(request["root"], request["plugin"], request["caller"])
+        return {"ok": True}
+    except (OSError, ValueError, RuntimeError):
+        return {"ok": False}
+
+
+def _preload_state_value(result):
+    if not isinstance(result, dict) or set(result) != {"ok"} or result["ok"] is not True:
+        raise ValueError("plugin state is not ready for speculative preparation")
+
+
 def _valid_timeout_request(request):
     return (isinstance(request, dict) and set(request) == {"operation", "config"}
             and request["operation"] == "timeout" and isinstance(request["config"], str)
@@ -385,6 +407,9 @@ def _inspection_session(connection, buffer, length, requested):
                 if _valid_state_quota_request(request):
                     send(connection, _state_quota_result(request))
                     continue
+                if _valid_preload_state_request(request):
+                    send(connection, _preload_state_result(request))
+                    continue
                 if _valid_inventory_request(request):
                     _send_inventory(connection, view, requested, request)
                     continue
@@ -439,6 +464,16 @@ class ContentInspector:
         self._receive, self._process = owner.__enter__()
         self._owner = owner
 
+    def start(self):
+        """Start the owned reader early; all content is still read on request."""
+        if self._closed or self._busy or threading.get_ident() != self._thread:
+            raise RuntimeError("plugin content inspector is closed or belongs to another thread")
+        try:
+            self._start()
+        except BaseException:
+            self.close()
+            raise
+
     def inspect(self, root, *, verify_checksums, timeout):
         if type(verify_checksums) is not bool:
             raise ValueError("invalid content inspection allowance")
@@ -461,6 +496,12 @@ class ContentInspector:
         if not _valid_state_quota_request(request):
             raise ValueError("invalid state quota inspection request")
         return self._exchange(request, timeout, _state_quota_value)
+
+    def preload_state(self, root, plugin, caller, *, timeout):
+        request = {"operation": "preload_state", "root": str(root), "plugin": plugin, "caller": caller}
+        if not _valid_preload_state_request(request):
+            raise ValueError("invalid preload state inspection request")
+        return self._exchange(request, timeout, _preload_state_value)
 
 
     def state_path(self, root, path, *, timeout):

@@ -63,6 +63,9 @@ if __name__ == "__main__" and sys.platform != "win32" and not _is_packed:
     from pathlib import Path as _Path
     from core.venv_bootstrap import ensure_venv as _ensure_venv
     _ensure_venv(_Path(__file__).parent.resolve())
+if __name__ == "__main__" and sys.platform == "win32" and not _is_packed:
+    from core.worker_bootstrap import configure_main_spawn as _configure_main_spawn
+    _configure_main_spawn()
 
 import typer
 import click
@@ -433,7 +436,12 @@ def _main_menu(cfg: dict) -> None:
             "label": f"{get_icon('preferences')} {t('menu.preferences')}",
         })
 
-        _on_ready = (lambda: _start_background_workers(cfg)) if _first_render else None
+        start_background = _first_render
+        def _on_ready():
+            if start_background:
+                _start_background_workers(cfg)
+            from core.plugin_entry_preload import start_discovery
+            start_discovery()
         _first_render = False
 
         try:
@@ -446,20 +454,29 @@ def _main_menu(cfg: dict) -> None:
                 on_ready=_on_ready,
             )
         except UserCancel:
+            from core.plugin_entry_preload import cancel_pending
+            cancel_pending(wait=True)
             _on_exit(cfg)
             break
 
         if key is None:
+            from core.plugin_entry_preload import cancel_pending
+            cancel_pending(wait=True)
             _on_exit(cfg)
             break
 
         if key == pref_key:
+            from core.plugin_entry_preload import cancel_pending
+            cancel_pending()
             _handle_preferences(cfg)
             modules = discover_modules(cfg)
             continue
 
         idx = int(key) - 1
         if 0 <= idx < len(modules):
+            if modules[idx].key != "plugin":
+                from core.plugin_entry_preload import cancel_pending
+                cancel_pending()
             try:
                 modules[idx].entry()
             except (KeyboardInterrupt, UserCancel):
