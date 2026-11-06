@@ -29,7 +29,6 @@ class InstallationProgress:
         if not console.is_terminal:
             return
         if self.status is None:
-            console.print()
             self.status = Status(message, console=console, spinner="dots",
                                  spinner_style=color)
             self.status.start()
