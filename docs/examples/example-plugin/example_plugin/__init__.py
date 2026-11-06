@@ -3,10 +3,10 @@ from core.sdk import ModuleInfo, get_icon, print_error, print_success, register_
 
 register_locale({
     "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务",
-                       "back": "返回", "done": "任务已完成", "usage": "用法：--hello",
+                       "back": "返回", "info": "操作：运行示例任务", "done": "任务已完成", "usage": "用法：--hello",
                        "invalid": "参数无效，请使用 --help 查看用法"}},
     "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task",
-                       "back": "Back", "done": "Task completed", "usage": "Usage: --hello",
+                       "back": "Back", "info": "Operation: Run the example task", "done": "Task completed", "usage": "Usage: --hello",
                        "invalid": "Invalid arguments; use --help for usage"}},
 })
 
@@ -19,7 +19,8 @@ def entry():
     while True:
         key = select(["OpsKit", t("example.title")], t("example.select"),
                      [{"key": "1", "label": f"{get_icon('devtools')} {t('example.run')}"}],
-                     back_label=f"{get_icon('back')} {t('example.back')}")
+                     back_label=f"{get_icon('back')} {t('example.back')}",
+                     info_lines=[t("example.info")])
         if key is None:
             return
         if key == "1":

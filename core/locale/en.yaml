@@ -941,7 +941,10 @@ plugin_native:
   list_help: "List saved persistent permissions"
   revoke_help: "Revoke a permission and invalidate active one-time grants"
   id_help: "Full permission ID shown by permissions list"
-  description: "Operation: {operation}\nResource: {resource}\nPlugin fingerprint: {fingerprint}\nHost tools and project scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory. Revoke permissions in plugin permission management."
+  operation_line: "Operation: {operation}"
+  resource_line: "Resource: {resource}"
+  fingerprint_line: "Plugin fingerprint: {fingerprint}"
+  tool_warning: "Host tools and their scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory."
   operations:
     directory:
       read: "Read directory"

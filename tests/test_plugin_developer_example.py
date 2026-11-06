@@ -34,6 +34,7 @@ def test_example_manifest_menu_and_cli(monkeypatch, capsys, language):
     module.register().entry()
     assert len(screens) == 2 and len(messages) == 1
     assert screens[0][1]["back_label"].endswith("返回" if language == "zh" else "Back")
+    assert screens[0][1]["info_lines"] == ["操作：运行示例任务" if language == "zh" else "Operation: Run the example task"]
     assert module.cli(["--hello"]) == 0 and len(messages) == 2
     assert module.cli(["--help"]) == 0 and "--hello" in capsys.readouterr().out
     assert module.cli(["--invalid"]) == 2

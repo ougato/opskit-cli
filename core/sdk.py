@@ -43,20 +43,20 @@ from core.prompt import (
 
 def select(breadcrumb: list[str], subtitle: str, choices: list[dict], theme_key: str = 'root',
            show_shortcuts: list[tuple[str, str, str]] | None = None, back_label: str = '',
-           description: str = '') -> str | None:
+           description: str = '', info_lines: list[str] | None = None) -> str | None:
     """Select a key; return None when the user goes back or presses Escape."""
     try:
         return _select(breadcrumb, subtitle, choices, theme_key, show_shortcuts, back_label,
-                       description=description)
+                       description=description, info_lines=info_lines)
     except UserCancel:
         return None
 
 
 def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict], back_label: str = '',
-                 description: str = '', default: str = '') -> str | None:
+                 description: str = '', default: str = '', info_lines: list[str] | None = None) -> str | None:
     """Read a menu value; 0 and Escape go back, while an empty line uses default."""
     try:
-        value = _select_input(breadcrumb, subtitle, choices, back_label, description, default)
+        value = _select_input(breadcrumb, subtitle, choices, back_label, description, default, info_lines)
     except UserCancel:
         return None
     return None if value == '0' else value

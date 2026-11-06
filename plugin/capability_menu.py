@@ -1,6 +1,6 @@
 """Trusted permission inspection and revocation in the existing plugin menu."""
 from core.i18n import t
-from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied, _key
+from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied, _key, capability_info_lines
 from core.prompt import select, confirm, pause, UserCancel
 from core.theme import print_info, print_error, print_success, get_icon
 from rich.markup import escape
@@ -25,9 +25,8 @@ def entry():
             if not key.isdecimal() or not 0 < int(key) <= len(grants):
                 continue
             request = grants[int(key) - 1]
-            details = [t("plugin_native.description", operation=t("plugin_native.operations." + request.operation),
-                         resource=escape(request.resource), fingerprint=request.fingerprint),
-                       "ID: " + _key(request)]
+            details = [escape(line) for line in capability_info_lines(request, include_fingerprint=True)]
+            details.append("ID: " + _key(request))
             if confirm(breadcrumb, t("plugin_native.revoke_confirm", plugin=escape(request.plugin)),
                        info_lines=details):
                 authority.revoke(request)

@@ -412,6 +412,17 @@ def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
     sys.stdout.flush()
 
 
+def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
+    """Render the common information rows used by interactive menus."""
+    for line in lines or []:
+        for part in line.splitlines() or ['']:
+            row = Text(f' {_TEE} ', style=_PIPE_COLOR)
+            row.append_text(Text.from_markup(part) if markup else Text(part))
+            # Let the terminal wrap long paths naturally without moving the
+            # whole resource onto a new line after the row prefix.
+            console.print(row, soft_wrap=True)
+
+
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
 def clear_screen() -> None:
@@ -456,12 +467,14 @@ def select(
     back_label: str = '',
     on_ready=None,
     description: str = '',
+    info_lines: list[str] | None = None,
 ) -> str | None:
     """
     Powerline 风格选择菜单（单键无回车）。
 
     choices 格式：[{"key": "1", "label": "📦 软件管理"}]
     show_shortcuts 格式：[("t", "🎨 切换主题", "theme"), ...]
+    info_lines：标题和选项之间逐行显示的信息。
     on_ready：菜单完全渲染、即将开始等待按键前回调一次（用于在首屏渲染
               完成后再启动联网/重型后台任务，保证"进菜单"接近瞬时）。
 
@@ -473,16 +486,11 @@ def select(
     numbered = [c for c in choices if c['key'] != '0']
     if len(numbered) > 9 and [c['key'] for c in numbered] == [str(i + 1) for i in range(len(numbered))]:
         return _select_numbered_pages(breadcrumb, subtitle, numbered, theme_key, show_shortcuts,
-                                      back_label, on_ready, description)
+                                      back_label, on_ready, description, info_lines)
     os.system('cls' if os.name == 'nt' else 'clear')
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
-    if description:
-        row = Text(f' {_TEE} ', style=_PIPE_COLOR)
-        row.append_text(_cap_text(_INPUT_SEG))
-        row.append_text(_seg_text(description, _INPUT_SEG))
-        row.append_text(_tail_text(_INPUT_SEG))
-        console.print(row)
+    _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
 
     numeric_items: list[tuple[str, str]] = [
         (c['key'], c['label']) for c in choices if c['key'] != '0'
@@ -530,7 +538,7 @@ def select(
 
 
 def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortcuts,
-                           back_label, on_ready, description):
+                           back_label, on_ready, description, info_lines):
     """Page standard numbered menus while preserving the caller's original keys."""
     from core.i18n import t
     from core.theme import get_icon
@@ -549,7 +557,7 @@ def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortc
         if page + 1 < total_pages:
             visible.append({'key': following, 'label': f"{get_icon('next_page')} {t('prompt.next_page')}"})
         key = select(breadcrumb, f'{subtitle} ({page + 1}/{total_pages})', visible, theme_key,
-                     show_shortcuts, back_label, on_ready, description)
+                     show_shortcuts, back_label, on_ready, description, info_lines)
         on_ready = None
         if key is None:
             return None
@@ -564,16 +572,14 @@ def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortc
 
 
 def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict[str, Any]],
-                 back_label: str = '', description: str = '', default: str = '') -> str:
+                 back_label: str = '', description: str = '', default: str = '',
+                 info_lines: list[str] | None = None) -> str:
     """Display the standard numbered menu and accept a full line of input."""
     from core.cli import require_interaction
     require_interaction()
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, subtitle] if subtitle else breadcrumb)
-    if description:
-        row = Text(f' {_TEE} ', style=_PIPE_COLOR)
-        row.append(description)
-        console.print(row)
+    _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
     _render_options([(c['key'], c['label']) for c in choices if c['key'] != '0'], back_label=back_label)
     return _read_line() or default
 
@@ -838,9 +844,7 @@ def confirm(
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
-    pipe = f'[{_PIPE_COLOR}]'
-    for line in info_lines or []:
-        console.print(f' {pipe}{_TEE}[/] {line}')
+    _render_info_lines(info_lines)
     from core.i18n import t as _t
     _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('menu.back'))
 
@@ -1018,13 +1022,7 @@ def text_input(
     row2.append_text(_tail_text(_INPUT_SEG))
     console.print(row2)
 
-    for line in info_lines or []:
-        row = Text()
-        tee = Text(f' {_TEE} ')
-        tee.stylize(_PIPE_COLOR)
-        row.append_text(tee)
-        row.append(f' {line}')
-        console.print(row)
+    _render_info_lines(info_lines, markup=False)
 
     _hint = hint or (_mask_secret(default) if secret else default)
     hint_str = f'  ({_hint})' if _hint else ''

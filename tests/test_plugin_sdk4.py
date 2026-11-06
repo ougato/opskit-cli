@@ -168,9 +168,12 @@ def test_worker_ui_preserves_sdk_signature_and_normalizes_cancellation(monkeypat
         return []
     monkeypatch.setattr(plugin_worker, "broker", broker)
     plugin_worker._adapt_sdk("demo")
-    assert sdk.select(["OpsKit"], "Select", [{"key": "1", "label": "One"}], "root", None, "Back", "Hint") == "1"
+    assert sdk.select(["OpsKit"], "Select", [{"key": "1", "label": "One"}], "root", None, "Back", "Hint",
+                      info_lines=["Name: example"]) == "1"
     assert calls[0][1] == () and calls[0][2]["description"] == "Hint"
-    assert sdk.select_input([], "", []) is None
+    assert calls[0][2]["info_lines"] == ["Name: example"]
+    assert sdk.select_input([], "", [], info_lines=["Path: example"]) is None
+    assert calls[1][2]["info_lines"] == ["Path: example"]
     assert sdk.multi_select([], "", ["x"]) is None
     with pytest.raises(TypeError):
         sdk.select([], "", [], on_ready=lambda: None)

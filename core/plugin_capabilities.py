@@ -46,11 +46,22 @@ def _key(request: CapabilityRequest) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bool = False) -> list[str]:
+    """Build the same localized resource rows for consent and permission details."""
+    from core.i18n import t
+    lines = [t("plugin_native.operation_line", operation=t("plugin_native.operations." + request.operation)),
+             t("plugin_native.resource_line", resource=request.resource)]
+    if include_fingerprint:
+        lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
+    if request.operation == "tool.execute":
+        lines.append(t("plugin_native.tool_warning"))
+    return lines
+
+
 def prompt_grant(request: CapabilityRequest) -> GrantChoice:
     """Security prompt is owned by the host, and cannot be approved with --yes."""
     from core.cli import non_interactive
     from core.prompt import UserCancel, select
-    from rich.markup import escape
     from core.i18n import t
     from core.theme import get_icon
     if non_interactive.get() or not _interactive_input():
@@ -59,8 +70,7 @@ def prompt_grant(request: CapabilityRequest) -> GrantChoice:
         [t("plugin_native.permissions"), request.plugin], t("plugin_native.request"),
         [{"key": "1", "label": f"{get_icon('success')} {t('plugin_native.once')}"},
          {"key": "2", "label": f"{get_icon('plugin_permissions')} {t('plugin_native.always')}"}],
-        description=t("plugin_native.description", operation=t("plugin_native.operations." + request.operation),
-                      resource=escape(request.resource), fingerprint=request.fingerprint),
+        info_lines=capability_info_lines(request),
         back_label=f"{get_icon('back')} {t('plugin_native.back')}",
     )
     if answer is None:

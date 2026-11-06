@@ -253,5 +253,8 @@ def test_permission_prompt_uses_icons_and_back_cancels(monkeypatch, language):
         assert cell_len(icon) == 2 and icon != "•"
         if language == "zh":
             assert len(text) == 4
-    assert i18n.t("plugin_native.description", operation=i18n.t("plugin_native.operations.directory.read"),
-                  resource="E:/project", fingerprint="a" * 64) == kwargs["description"]
+    assert kwargs["info_lines"] == [
+        i18n.t("plugin_native.operation_line", operation=i18n.t("plugin_native.operations.directory.read")),
+        i18n.t("plugin_native.resource_line", resource="E:/project"),
+    ]
+    assert "description" not in kwargs

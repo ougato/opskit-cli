@@ -66,6 +66,12 @@ def test_revoked_outer_caller_cannot_dispatch_from_still_trusted_provider(caller
     trust.grant("outer", "b" * 64, "1")
     trust.revoke("outer")
     monkeypatch.setattr(sandbox._invocations, "authorizations", (("outer", "b" * 64),), raising=False)
+    # The generic fixture stubs the whole authorization check; restore its
+    # live-chain check here so this test can actually exercise revocation.
+    def check_authorization(manifest):
+        sandbox._check_live_authorizations(extra=((manifest.name, "a" * 64),))
+        return "a" * 64
+    monkeypatch.setattr(sandbox, "check_authorization", check_authorization)
     monkeypatch.setattr(services, "describe_service", lambda *a, **k: pytest.fail("revoked chain dispatched"))
     with pytest.raises(sandbox.SandboxError, match="authorization revoked"):
         sandbox._broker(caller, {"rpc_version": 1, "method": "service.describe", "args": ["storage"]})

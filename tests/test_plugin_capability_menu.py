@@ -26,8 +26,9 @@ def test_permission_menu_inspects_and_revokes_exact_grant(tmp_path, monkeypatch,
     monkeypatch.setattr(menu, "confirm", confirm)
     monkeypatch.setattr(menu, "pause", lambda: None)
     menu.entry()
-    assert request.fingerprint in details[0]
-    assert request.resource in details[0]
+    assert any(request.fingerprint in line for line in details)
+    assert any(request.resource in line for line in details)
+    assert all("\n" not in line for line in details)
     assert authority.closed
     assert CapabilityAuthority(path=authority.path).list_grants() == ([] if confirmed else [request])
 

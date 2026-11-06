@@ -13,7 +13,7 @@ def entry():
             {"key": "1", "label": f"{get_icon('runtime_cache')} {t(prefix + 'runtime')}"},
             {"key": "2", "label": f"{get_icon('fetch_cache')} {t(prefix + 'fetch')}"},
             {"key": "3", "label": f"{get_icon('prepare_cache')} {t(prefix + 'prepare')}"},
-        ], description=t(prefix + "hint"), back_label=f"{get_icon('back')} {t('plugin_native.back')}")
+        ], info_lines=t(prefix + "hint").splitlines(), back_label=f"{get_icon('back')} {t('plugin_native.back')}")
         if kind not in {"1", "2", "3"}:
             return
         kind = {"1": "runtime", "2": "fetch", "3": "prepare"}[kind]

@@ -138,7 +138,8 @@ def test_authorization_prompt_and_errors_follow_language(monkeypatch, language, 
         non_interactive.reset(token)
     from core.theme import get_icon
     assert captured[0][0][2][0]["label"] == f"{get_icon('success')} {once}"
-    assert "plugin_native." not in captured[0][1]["description"]
+    assert all("plugin_native." not in line for line in captured[0][1]["info_lines"])
+    assert i18n.t("plugin_native.tool_warning") in captured[0][1]["info_lines"]
     assert captured[0][1]["back_label"] == f"{get_icon('back')} {i18n.t('plugin_native.back')}"
     assert captured[0][1]["back_label"]
     assert denied in str(CapabilityDenied("denied"))

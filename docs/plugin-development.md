@@ -37,15 +37,16 @@ label:
 from core.sdk import ModuleInfo, get_icon, register_locale, select, t
 
 register_locale({
-    "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务", "back": "返回"}},
-    "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task", "back": "Back"}},
+    "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务", "back": "返回", "info": "操作：运行示例任务"}},
+    "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task", "back": "Back", "info": "Operation: Run the example task"}},
 })
 
 def entry():
     while True:
         key = select(["OpsKit", t("example.title")], t("example.select"),
                      [{"key": "1", "label": get_icon("devtools") + " " + t("example.run")}],
-                     back_label=get_icon("back") + " " + t("example.back"))
+                     back_label=get_icon("back") + " " + t("example.back"),
+                     info_lines=[t("example.info")])
         if key is None:
             return
         if key == "1":
@@ -63,8 +64,8 @@ def register():
 
 ```text
 select(breadcrumb, subtitle, choices, theme_key='root', show_shortcuts=None,
-       back_label='', description='') -> str | None
-select_input(breadcrumb, subtitle, choices, back_label='', description='', default='') -> str | None
+       back_label='', description='', info_lines=None) -> str | None
+select_input(breadcrumb, subtitle, choices, back_label='', description='', default='', info_lines=None) -> str | None
 multi_select(breadcrumb, subtitle, options, theme_key='root', back_label='', all_index=None) -> list[int] | None
 paged_select(*, breadcrumb, items, choice_of, subtitle_of, back_label,
              nav_labels=None, theme_key='root', page_size=9, on_select=None) -> item | None
@@ -74,6 +75,12 @@ pause(msg=''); clear_screen(); print_header(breadcrumb)
 ```
 
 `select` 为单键选择，`choices` 是 `{'key': '1', 'label': '...'}` 列表；`select_input` 读取整行，空行使用 `default`。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
+
+选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
+
+信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录授权只显示操作和资源；执行宿主工具时还会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。
+
+扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。
 
 `select` 对超过 9 项且从 1 起连续编号的选项自动分页，返回的仍是原始编号。需要保留对象、使用自定义按键或翻页后继续浏览时使用 `paged_select`。分页 `page_size` 为 1..9；`choice_of(item, index_on_page)` 可省略 `key` 自动编号，也可提供不重复的单字符键，`0`、`p`、`n` 留给返回和翻页。`subtitle_of(page, total_pages)` 的页码从 0 开始。未设置 `on_select` 时返回所选对象；设置时调用 `on_select(item)` 并继续浏览。0/Esc 返回 `None`。
 

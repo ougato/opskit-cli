@@ -21,7 +21,7 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
         calls.append(title)
         if len(calls) == 1:
             assert title == i18n.t("plugin_native.cache_cleanup.catalog")
-            assert kwargs["description"] == i18n.t("plugin_native.cache_cleanup.hint")
+            assert kwargs["info_lines"] == i18n.t("plugin_native.cache_cleanup.hint").splitlines()
             for choice, name in zip(choices, ("runtime", "fetch", "prepare")):
                 icon, label = choice["label"].split(" ", 1)
                 assert icon == get_icon(name + "_cache") and cell_len(icon) == 2
