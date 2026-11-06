@@ -98,7 +98,11 @@ def emit_diagnostics(report: dict) -> None:
 
 def require_interaction() -> None:
     if non_interactive.get():
-        fail("This operation requires interactive input; supply its business parameters", 2)
+        from core.i18n import t
+        message = t("cli.interaction_required")
+        if message == "cli.interaction_required":
+            message = "This operation requires interactive input; supply its business parameters."
+        fail(message, 2)
 
 
 def guarded(function):

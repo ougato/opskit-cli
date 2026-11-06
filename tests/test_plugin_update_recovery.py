@@ -92,7 +92,7 @@ def test_real_update_process_exit_retains_recoverable_record(tmp_path, monkeypat
     origin.mkdir()
     root = parent / "demo"
     root.mkdir()
-    manifest = "name: demo\nversion: {version}\napi_version: 3\nkind: python\nentry: demo\n"
+    manifest = "name: demo\nversion: {version}\napi_version: 4\nkind: python\nentry: demo\n"
     for path, version in ((root, "1.0.0"), (origin, "2.0.0")):
         (path / "plugin.yaml").write_text(manifest.format(version=version))
         (path / "demo.py").write_text("# " + version)

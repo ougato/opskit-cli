@@ -21,8 +21,10 @@ def resolve(name):
 
 
 def describe(manifest):
+    from core.constants import PLUGIN_API_VERSION
     return {"name": manifest.name, "version": manifest.version,
             "kind": manifest.kind, "api_version": manifest.api_version,
+            "compatible": manifest.api_version == PLUGIN_API_VERSION,
             "permissions": manifest.permissions, "enabled": commands.is_enabled(manifest.name),
             "provides": manifest.provides, "service_contracts": manifest.service_contracts,
             "service_requirements": [{key: value for key, value in item.items() if key != "source"}
@@ -33,9 +35,9 @@ def describe(manifest):
 
 def register(app, translate=None):
     translate = translate or (lambda key: t("plugin_native." + key))
-    @app.command("disk-policy", help=t("plugin_native.disk.help"))
+    @app.command("disk-policy", help=translate("disk.help"))
     @guarded
-    def disk_policy(minimum_free_mib: int = typer.Option(None, "--minimum-free-mib", help=t("plugin_native.disk.minimum"))):
+    def disk_policy(minimum_free_mib: int = typer.Option(None, "--minimum-free-mib", help=translate("disk.minimum"))):
         from core.plugin_disk_policy import policy, configure
         try:
             value = policy() if minimum_free_mib is None else configure(minimum_free_mib)
@@ -74,7 +76,7 @@ def register(app, translate=None):
             fail(t("plugin_native.lifecycle.state_failed"), 1)
         emit(result)
 
-    @app.command("inspect-updates", help=t("plugin_native.lifecycle.inspect_updates_help"))
+    @app.command("inspect-updates", help=translate("lifecycle.inspect_updates_help"))
     @guarded
     def inspect_updates(limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.plugin_update_recovery import inspect
@@ -83,7 +85,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
 
-    @app.command("recover-update", help=t("plugin_native.lifecycle.recover_update_help"))
+    @app.command("recover-update", help=translate("lifecycle.recover_update_help"))
     @guarded
     def recover_update(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
         from core.plugin_update_recovery import recover
@@ -92,7 +94,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
 
-    @app.command("inspect-native-profiles", help=t("plugin_native.lifecycle.inspect_profiles_help"))
+    @app.command("inspect-native-profiles", help=translate("lifecycle.inspect_profiles_help"))
     @guarded
     def inspect_native_profiles(limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.windows_profile_recovery import inspect
@@ -104,7 +106,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.profile_recovery_failed"), 1)
 
-    @app.command("recover-native-profile", help=t("plugin_native.lifecycle.recover_profile_help"))
+    @app.command("recover-native-profile", help=translate("lifecycle.recover_profile_help"))
     @guarded
     def recover_native_profile(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
         from core.windows_profile_recovery import recover
@@ -116,7 +118,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.profile_recovery_failed"), 1)
 
-    @app.command("inspect-native-workspaces", help=t("plugin_native.lifecycle.inspect_native_workspaces_help"))
+    @app.command("inspect-native-workspaces", help=translate("lifecycle.inspect_native_workspaces_help"))
     @guarded
     def inspect_native_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.plugin_workspace_recovery import inspect
@@ -125,7 +127,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
 
-    @app.command("recover-native-workspace", help=t("plugin_native.lifecycle.recover_workspace_help"))
+    @app.command("recover-native-workspace", help=translate("lifecycle.recover_workspace_help"))
     @guarded
     def recover_native_workspace(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
         from core.plugin_workspace_recovery import recover
@@ -134,7 +136,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
 
-    @app.command("inspect-native-cache", help=t("plugin_native.lifecycle.inspect_cache_help"))
+    @app.command("inspect-native-cache", help=translate("lifecycle.inspect_cache_help"))
     @guarded
     def inspect_native_cache(catalog: str, limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.native_catalog_cleanup import inspect
@@ -143,7 +145,7 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
 
-    @app.command("clean-native-cache", help=t("plugin_native.lifecycle.clean_cache_help"))
+    @app.command("clean-native-cache", help=translate("lifecycle.clean_cache_help"))
     @guarded
     def clean_native_cache(catalog: str, object_id: str,
                            record_sha256: str = typer.Option(..., "--record-sha256")):
@@ -153,19 +155,19 @@ def register(app, translate=None):
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
 
-    @app.command("inspect-state", help=t("plugin_native.lifecycle.inspect_state_help"))
+    @app.command("inspect-state", help=translate("lifecycle.inspect_state_help"))
     @guarded
     def inspect_state(name: str, caller: str = typer.Option(None, "--caller")):
         state_command(name, caller)
 
-    @app.command("repair-state", help=t("plugin_native.lifecycle.repair_state_help"))
+    @app.command("repair-state", help=translate("lifecycle.repair_state_help"))
     @guarded
     def repair_state(name: str, record_sha256: str = typer.Option(..., "--record-sha256"),
                      caller: str = typer.Option(None, "--caller")):
         state_command(name, caller, record_sha256)
 
 
-    @app.command("inspect-workspaces", help=t("plugin_native.lifecycle.inspect_workspaces_help"))
+    @app.command("inspect-workspaces", help=translate("lifecycle.inspect_workspaces_help"))
     @guarded
     def inspect_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
         from core.plugin_workspace import inspect_workspaces as inspect
@@ -212,7 +214,7 @@ def register(app, translate=None):
             raise typer.Exit(130)
         emit({"runtime": identity, "backend": "native", "prepared": True, "authorized": False})
 
-    @app.command("fingerprint", help=t("plugin_native.lifecycle.fingerprint_help"))
+    @app.command("fingerprint", help=translate("lifecycle.fingerprint_help"))
     def fingerprint(path: str = typer.Argument("."), check: bool = typer.Option(False, "--check", "-c")):
         from core.plugin_integrity import CHECK_OK, verify_checksums, write_checksums
         root = Path(path)
@@ -235,17 +237,17 @@ def register(app, translate=None):
         except KeyboardInterrupt:
             raise typer.Exit(130)
 
-    @app.command("list")
+    @app.command("list", help=translate("lifecycle.list_help"))
     @guarded
     def list_plugins():
         emit([describe(item) for item in commands.manifests()])
 
-    @app.command("show")
+    @app.command("show", help=translate("lifecycle.show_help"))
     @guarded
     def show(name: str):
         emit(describe(resolve(name)))
 
-    @app.command("install")
+    @app.command("install", help=translate("lifecycle.install_help"))
     @guarded
     def install(url: str, branch: str = typer.Option("", "--branch", "-b"), alias: str = typer.Option("", "--as"),
                 fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
@@ -259,7 +261,7 @@ def register(app, translate=None):
             fail(acquisition_error(error, "acquisition_failed"))
         emit(describe(manifest))
 
-    @app.command("update")
+    @app.command("update", help=translate("lifecycle.update_help"))
     @guarded
     def update(name: str,
                fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
@@ -272,7 +274,7 @@ def register(app, translate=None):
             fail(t("plugin_native.lifecycle.update_rejected", status=status))
         emit({"name": name, "status": status, "authorization_required": status != "unchanged"})
 
-    @app.command("remove")
+    @app.command("remove", help=translate("lifecycle.remove_help"))
     @guarded
     def remove(name: str):
         manifest = resolve(name)
@@ -282,24 +284,27 @@ def register(app, translate=None):
         commands.remove(manifest)
         emit({"name": name, "removed": True, "state_preserved": True})
 
-    @app.command("enable")
+    @app.command("enable", help=translate("lifecycle.enable_help"))
     @guarded
     def enable(name: str):
         resolve(name)
         commands.set_enabled(name, True)
         emit({"name": name, "enabled": True})
 
-    @app.command("disable")
+    @app.command("disable", help=translate("lifecycle.disable_help"))
     @guarded
     def disable(name: str):
         resolve(name)
         commands.set_enabled(name, False)
         emit({"name": name, "enabled": False})
 
-    @app.command("trust")
+    @app.command("trust", help=translate("lifecycle.trust_help"))
     @guarded
     def trust(name: str, fingerprint: str = typer.Option(..., "--fingerprint")):
         manifest = resolve(name)
+        from core.constants import PLUGIN_API_VERSION
+        if manifest.api_version != PLUGIN_API_VERSION:
+            fail(t("plugin_native.errors.sdk_required"), 2)
         actual = compute_fingerprint(manifest.root)
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint) or not actual or not hmac.compare_digest(fingerprint, actual):
             fail(t("plugin_native.lifecycle.fingerprint_mismatch"), 2)
@@ -312,14 +317,14 @@ def register(app, translate=None):
             fail(t("plugin_native.lifecycle.changed"))
         emit(describe(manifest))
 
-    @app.command("revoke")
+    @app.command("revoke", help=translate("lifecycle.revoke_help"))
     @guarded
     def revoke_trust(name: str):
         resolve(name)
         invalidate(name)
         emit({"name": name, "authorized": False})
 
-    @app.command("authorize-service", help=t("plugin_native.lifecycle.authorize_service_help"))
+    @app.command("authorize-service", help=translate("lifecycle.authorize_service_help"))
     @guarded
     def authorize_service(caller: str, service: str,
                           caller_fingerprint: str = typer.Option(..., "--caller-fingerprint"),
@@ -327,7 +332,7 @@ def register(app, translate=None):
         from core.plugin_services import authorize_service as approve
         emit(approve(caller, service, caller_fingerprint, provider_fingerprint))
 
-    @app.command("revoke-service", help=t("plugin_native.lifecycle.revoke_service_help"))
+    @app.command("revoke-service", help=translate("lifecycle.revoke_service_help"))
     @guarded
     def revoke_service(caller: str, service: str):
         from core.plugin_trust import revoke_service as revoke_edge

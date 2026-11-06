@@ -499,7 +499,7 @@ def _broker(manifest, request: dict):
             return file_version(manifest.name, fingerprint, *args, **context)
         from core.plugin_artifacts import manage
         return manage(manifest.name, fingerprint, *args, **context)
-    if method == "host.archive_directories":
+    if method == "host.asar_directories":
         if kwargs or len(args) != 3:
             raise SandboxError("invalid host archive arguments")
         authority = getattr(_invocations, "capability_authority", None)

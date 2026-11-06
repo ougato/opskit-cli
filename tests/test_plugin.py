@@ -12,7 +12,7 @@ import pytest
 
 from core.loader import discover_modules
 from core.module import ModuleInfo
-from core.plugin import discover_plugins, list_manifests, load_manifest, load_plugin, unload_plugin
+from core.plugin import discover_plugins, list_manifests, load_manifest, load_plugin
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke
 
 
@@ -22,7 +22,7 @@ def _write_manifest(plugin_dir: Path, content: str) -> None:
     (plugin_dir / "plugin.yaml").write_text(textwrap.dedent(content), encoding="utf-8")
 
 
-def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 3) -> Path:
+def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 4) -> Path:
     plugin_dir = root / name
     _write_manifest(plugin_dir, f"""\
         name: {name}
@@ -58,7 +58,7 @@ def _make_exec_plugin(root: Path, name: str = "extool") -> Path:
     _write_manifest(plugin_dir, f"""\
         name: {name}
         version: 0.1.0
-        api_version: 3
+        api_version: 4
         kind: exec
         entry: bin/run.sh
         label:
@@ -128,7 +128,7 @@ def test_invalid_name_skipped(plugins_root) -> None:
     _write_manifest(plugins_root / "badname", """\
         name: Bad-Name
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: pkg
     """)
@@ -146,7 +146,7 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     _write_manifest(broken, """\
         name: broken
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: broken_pkg
     """)
@@ -165,7 +165,7 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     _write_manifest(exiting, """\
         name: exiting
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: exiting_pkg
     """)
@@ -242,7 +242,7 @@ def test_entry_shadowing_core_rejected(plugins_root) -> None:
     _write_manifest(shadow, """\
         name: shadow
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: core
     """)
@@ -281,7 +281,7 @@ def test_exec_entry_escape_rejected(plugins_root) -> None:
     _write_manifest(plugins_root / "escape", """\
         name: escape
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: exec
         entry: ../../outside.sh
     """)
@@ -316,19 +316,18 @@ def test_load_plugin_single(plugins_root) -> None:
     assert info is not None and info.key == "demo"
 
 
-def test_unload_plugin_purges_modules(plugins_root) -> None:
+def test_discovery_does_not_import_plugin_modules(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
     manifest = load_manifest(plugin_dir)
     assert load_plugin(manifest) is not None
     assert "demo_pkg" not in sys.modules
-    unload_plugin(manifest)
     assert "demo_pkg" not in sys.modules
     assert str(plugin_dir.resolve()) not in sys.path
 
 
 def test_hot_reload_after_update(plugins_root) -> None:
-    """更新后 unload + 重新加载，新代码当场生效"""
+    """更新后再次加载，新代码当场生效。"""
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
     manifest = load_manifest(plugin_dir)
@@ -339,7 +338,6 @@ def test_hot_reload_after_update(plugins_root) -> None:
     os.utime(pkg_init, (now + 10, now + 10))  # 确保 mtime 变化，避免命中旧 .pyc
     assert load_plugin(manifest) is None  # 内容变化后信任失效
     _trust(plugin_dir)
-    unload_plugin(manifest)
     info = load_plugin(manifest)
     assert info is not None
     assert "demo_pkg" not in sys.modules
@@ -643,7 +641,7 @@ def test_manifest_group_fields(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: grouped
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: grouped_pkg
         group: insight-flow
@@ -664,7 +662,7 @@ def test_manifest_invalid_group_ignored(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: badgroup
         version: 1.0.0
-        api_version: 3
+        api_version: 4
         kind: python
         entry: badgroup_pkg
         group: "Bad Group!"

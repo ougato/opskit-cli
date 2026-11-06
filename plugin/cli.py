@@ -13,7 +13,7 @@ def run_plugin(name: str, argv: list[str]) -> int:
         _remaining()
         if len(matches) != 1:
             from core.i18n import t
-            raise SandboxError(t("plugin_native.errors.sdk_required"))
+            raise SandboxError(t("plugin_native.lifecycle.not_found"))
         result = invoke(matches[0], "cli", args=argv)
     if result is None:
         return 0

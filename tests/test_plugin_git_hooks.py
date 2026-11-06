@@ -27,7 +27,7 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, native_life
                                '-c', 'user.email=test@example.invalid', *args],
                               check=True, capture_output=True, timeout=15)
     git('init', '-q', '-b', 'main')
-    (origin / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n')
+    (origin / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: demo\n')
     (origin / 'demo.py').write_text('# initial\n')
     git('add', '.')
     git('commit', '-qm', 'initial')

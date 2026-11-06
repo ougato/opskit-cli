@@ -9,7 +9,7 @@ from core import plugin_json
 from core.native_process import open_worker
 from core.native_protocol import exchange
 from core.native_runtime import stage, absolute_path
-from core.native_runtime_prepare import validate_candidate
+from core.native_runtime_prepare import stage_candidate
 from core.native_sandbox import get_backend
 
 
@@ -18,12 +18,11 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
            staging_parent):
     """Return bounded worker result; no trust or state decision is implicit."""
     checkpoint()
-    validate_candidate(runtime, record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
     envelope = plugin_json.dumps_message(request)
     backend = get_backend()
     with tempfile.TemporaryDirectory(prefix="native-call-", dir=absolute_path(staging_parent)) as temporary:
         base = absolute_path(temporary)
-        stage(runtime, base / "runtime", record["files"])
+        stage_candidate(runtime, base / "runtime", record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
         stage(plugin, base / "plugin", plugin_files)
         stage(seed, base / "seed", seed_files, allow_empty=True)
         (base / "data").mkdir()

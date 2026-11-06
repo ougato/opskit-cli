@@ -5,7 +5,7 @@ import pytest
 from packaging.markers import default_environment
 from packaging.tags import sys_tags
 
-from core.native_runtime_prepare import assemble, validate_candidate
+from core.native_runtime_prepare import assemble, stage_candidate, validate_candidate
 
 
 def prepare(tmp_path, package="example"):
@@ -41,6 +41,36 @@ def test_modified_candidate_cannot_launch(tmp_path):
     (root / "site-packages/core/plugin_worker.py").write_bytes(b"injected")
     with pytest.raises(ValueError):
         validate_candidate(root, record, fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
+
+
+def test_staged_candidate_rejects_stale_identity_and_mutated_source(tmp_path):
+    root, record = prepare(tmp_path)
+    destination = tmp_path / "snapshot"
+    with pytest.raises(ValueError, match="identity"):
+        stage_candidate(root, destination, record, fingerprint="b" * 64, sdk_sha256=record["sdk_sha256"])
+    assert not destination.exists()
+    (root / "site-packages/core/plugin_worker.py").write_bytes(b"injected")
+    with pytest.raises(ValueError, match="content"):
+        stage_candidate(root, destination, record, fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
+    assert not destination.exists()
+
+
+def test_staged_candidate_rejects_copy_corruption(tmp_path, monkeypatch):
+    import shutil
+
+    root, record = prepare(tmp_path)
+    copyfile = shutil.copyfile
+
+    def corrupt_copy(source, destination, **kwargs):
+        result = copyfile(source, destination, **kwargs)
+        if destination.name == "python.exe":
+            destination.write_bytes(b"corrupted after copy")
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", corrupt_copy)
+    with pytest.raises(ValueError, match="content"):
+        stage_candidate(root, tmp_path / "snapshot", record,
+                        fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"])
 
 
 def test_dependency_cannot_replace_sdk(tmp_path):

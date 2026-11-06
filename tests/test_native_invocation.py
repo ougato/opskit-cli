@@ -69,7 +69,7 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     plugin = tmp_path / "plugin"
     plugin.mkdir()
     (plugin / "plugin.yaml").write_text(
-        "name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: public_example\n")
+        "name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: public_example\n")
     (plugin / "public_example.py").write_text(
         "from core.sdk import plugin_data_dir\n"
         "def cli(argv):\n"
@@ -118,7 +118,7 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
         "    except PermissionError:\n"
         "        pass\n"
         "    register_locale({'zh': {'example': {'title': '你好'}}, 'en': {'example': {'title': 'Hello'}}})\n"
-        "    value = text_input(t('example.title'))\n"
+        "    value = text_input(['OpsKit'], t('example.title'))\n"
         "    (plugin_data_dir('demo') / 'result.txt').write_text(value, encoding='utf-8')\n"
         "    return {'language': current_lang(), 'title': t('example.title'), 'value': value}\n",
         encoding="utf-8")

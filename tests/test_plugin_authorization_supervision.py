@@ -19,7 +19,7 @@ def _trusted_manifest(tmp_path):
     (root / "demo.py").write_text("raise RuntimeError('never execute plugin in host')\n")
     fingerprint = trust.compute_fingerprint(root)
     trust.grant("demo", fingerprint, "1")
-    return SimpleNamespace(name="demo", root=root, permissions=[]), fingerprint
+    return SimpleNamespace(name="demo", root=root, permissions=[], api_version=4), fingerprint
 
 
 def test_standalone_check_authorization_uses_owned_reader_and_reaps(tmp_path, monkeypatch):

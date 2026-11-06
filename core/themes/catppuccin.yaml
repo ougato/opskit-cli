@@ -62,6 +62,7 @@ colors:
 icons:
   # 导航
   back: "\U0001F519"          # 🔙
+  next_page: "\U0001F51C"     # 🔜
   exit: "\u274C"              # ❌
 
   # 模块
@@ -145,7 +146,6 @@ icons:
   update_token: "\U0001F511"  # 🔑
   search: "\U0001F50D"        # 🔍
   save: "\U0001F4BE"          # 💾
-  trash: "\U0001F6AE"         # 🗮
   toggle_on: "\U0001F51B"     # 🔛
   toggle_off: "\U0001F515"    # 🔕
 

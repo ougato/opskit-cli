@@ -1,4 +1,4 @@
-> 当前版本已升级 SDK 3 并完成业务接口分离；当前接口和迁移步骤见 [SDK 3 迁移](sdk3-business-separation.md)。下文保留历史阶段记录，其中旧 SDK、菜单和业务命令不作为当前操作说明。
+> 本文保留原生沙盒迁移阶段记录；当前 SDK 4 接口和迁移步骤见[插件开发指南](plugin-development.md)及[原生升级指南](plugin-native-upgrade-guide.md)。文中的旧 SDK、菜单和业务命令不作为当前操作说明。
 
 # 插件原生沙盒迁移
 

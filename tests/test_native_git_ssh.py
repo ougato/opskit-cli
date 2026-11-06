@@ -174,7 +174,7 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     FetchCatalog().prepare(python)
     def version(value):
         (source / "plugin.yaml").write_text(
-            f"name: native_example\nversion: {value}\napi_version: 3\nkind: python\nentry: native_example\n")
+            f"name: native_example\nversion: {value}\napi_version: 4\nkind: python\nentry: native_example\n")
         (source / "native_example.py").write_text("raise RuntimeError('INSTALL_MUST_NOT_IMPORT')\n")
         for arguments in (["add", "plugin.yaml", "native_example.py"], ["commit", "-m", value]):
             subprocess.run([git, "-c", "user.name=Test", "-c", "user.email=native@test.invalid",

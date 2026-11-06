@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from core.config import load_config, set_config_value
+from core.constants import PLUGIN_API_VERSION
 from core.directory_publish import publish_new_directory
 from core.plugin_install_receipt import content_receipt
 from core.resource_lock import ResourceLock
@@ -24,9 +25,7 @@ from core.plugin import (
     list_manifests,
     load_manifest,
     load_plugin,
-    unload_plugin,
 )
-from core.plugin_services import invalidate_service_cache
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record, invalidate
 
 # 插件安装目录名：URL 路径分段转小写连字符，避免不同仓库同 basename 冲突
@@ -79,11 +78,6 @@ def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
         pairs.append((manifest, info))
     pairs.sort(key=lambda p: p[1].order)
     return pairs
-
-
-def reload(manifest: PluginManifest) -> None:
-    """清除插件入口与服务代理缓存，下次扫描重新核对元数据"""
-    unload_plugin(manifest)
 
 
 def is_enabled(key: str) -> bool:
@@ -187,6 +181,8 @@ def trust_status(manifest: PluginManifest) -> str:
 
 def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None) -> None:
     """记录用户对插件当前内容的信任（branch 为 None 时沿用已存分支）"""
+    if manifest.api_version != PLUGIN_API_VERSION:
+        raise ValueError(t("plugin_native.errors.sdk_required"))
     record = trusted_record(manifest.name)
     if not source and record is not None:
         source = str(record.get("source", ""))
@@ -297,7 +293,6 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
             if payload_content != acquired.receipt:
                 raise ValueError("installation candidate changed during trust invalidation")
             publish_new_directory(staging, dest)
-        invalidate_service_cache()
         values = {field.name: getattr(manifest, field.name) for field in fields(PluginManifest)}
         values["root"] = dest
         return _InstalledManifest(**values,
@@ -446,7 +441,6 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                         raise RuntimeError("changed update backup retained for recovery") from None
                     publish_new_directory(previous, root)
                 raise
-        invalidate_service_cache()
         _remove_tree(previous)
         old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
         return True, "downgrade" if old_key is not None and new_key is not None and new_key < old_key else "updated"
@@ -472,7 +466,5 @@ def _remove_locked(manifest: PluginManifest) -> None:
     root = Path(manifest.root)
     if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or root.resolve().parent != plugins_dir().resolve():
         raise ValueError("plugin removal must target a direct directory inside plugins")
-    unload_plugin(manifest)
     _remove_tree(manifest.root)
     revoke(manifest.name)
-    invalidate_service_cache()

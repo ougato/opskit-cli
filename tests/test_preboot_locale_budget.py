@@ -35,6 +35,35 @@ def test_valid_config_language_is_preserved(language, locale_reads):
     assert config.get_config_path().read_bytes() == before
 
 
+@pytest.mark.parametrize('arguments', [
+    ['--lang', 'en', 'plugin', '--help'],
+    ['-l', 'en', 'plugin', '--help'],
+    ['-len', 'plugin', '--help'],
+    ['--lang=en', 'plugin', '--help'],
+    ['--theme', 'default', '--output', 'text', '--lang', 'en', 'plugin', '--help'],
+])
+def test_root_language_option_controls_import_time_help(arguments, locale_reads):
+    config.save_config({'language': 'zh'})
+    assert main._preboot_locale(arguments) == {'help_text': 'en'}
+    assert locale_reads == ['en']
+
+
+def test_plugin_arguments_do_not_override_host_help_language(locale_reads):
+    config.save_config({'language': 'zh'})
+    assert main._preboot_locale(['plugin', 'run', 'example', '--', '--lang', 'en']) == {'help_text': 'zh'}
+    assert locale_reads == ['zh']
+
+
+def test_plugin_help_uses_explicit_root_language():
+    import subprocess
+    import sys
+    result = subprocess.run([sys.executable, str(main.__file__), '--lang', 'en', 'plugin', '--help'],
+                            capture_output=True, text=True, encoding='utf-8', timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert 'List installed plugins' in result.stdout
+    assert '列出已安装插件' not in result.stdout
+
+
 @pytest.mark.parametrize('body', [
     'language: en\n#' + 'x' * MAX_BYTES,
     'language: en\nanchor: &value [1]\ncopy: *value\n',

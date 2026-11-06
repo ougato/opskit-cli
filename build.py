@@ -263,7 +263,6 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--hidden-import=_registry",
         "--hidden-import=software",
         "--hidden-import=software.menu",
-        "--hidden-import=software.commands",
         "--hidden-import=software.base",
         "--hidden-import=software.registry",
         "--hidden-import=software.recipes",

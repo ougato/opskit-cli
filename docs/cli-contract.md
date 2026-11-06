@@ -10,7 +10,7 @@
 
 ## 已迁移命令
 
-`plugin prepare PATH --base-image IMAGE@sha256:DIGEST --lock-file FILE [--dependency PACKAGE==VERSION ...]`返回image/prepared/authorized=false，构建本身不授权。base-image/lock-file必填；完整锁包含SDK根和全部传递依赖的确切版本/wheel哈希，dependency只核对不追加。缺锁、标签、无效/不匹配参数退出2；构建/系统错误退出1，取消130；CLI错误不回显Docker/pip异常详情。stderr只显示固定进度，不输出Docker/pip原始日志。镜像查询每次30秒/4KiB，构建客户端600秒/4MiB输出上限；超时/取消/超量回收本地进程树，不写成功catalog。这里是客户端阶段预算，不是prepare完整总期限，也不证明daemon内部构建已取消。旧policy或代码摘要不匹配的运行时必须按当前policy4重建；执行时验证锁及来源digest的label绑定。
+`plugin prepare` 使用独立解释器快照、经过审核的离线 wheel 和哈希锁，不授予插件执行信任。已安装插件可由框架自动准备基础运行环境；旧 `--base-image` 和 Docker 插件镜像参数已移除。当前参数、SDK 摘要与授权边界见[插件规范](plugin-spec.md)，开发入口见[插件开发指南](plugin-development.md)。
 
 `plugin fingerprint [PATH] [--check|-c]`不boot。生成返回status=written及file=CHECKSUMS.yaml；校验只读，ok退出0，missing/mismatch保留status且ok=false、退出1。不存在/链接根目录退出2；操作错误不回显私有路径。生成只修改指定插件内清单，不授予信任。
 

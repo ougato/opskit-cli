@@ -68,8 +68,7 @@ def assemble(source: Path, destination: Path, *, wheels, lock_text: str,
     return record
 
 
-def validate_candidate(root, record, *, fingerprint, sdk_sha256):
-    """Reject stale plugin/SDK identities and mutated runtime bytes before launch."""
+def _validate_identity(record, *, fingerprint, sdk_sha256):
     if (not isinstance(record, dict) or set(record) != {
             "schema_version", "backend", "fingerprint", "lock_sha256", "sdk_sha256", "wheels", "files"}
             or type(record["schema_version"]) is not int or record["schema_version"] != 1
@@ -81,4 +80,15 @@ def validate_candidate(root, record, *, fingerprint, sdk_sha256):
             or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
                    for value in record["wheels"].values())):
         raise ValueError("native runtime identity is stale or invalid")
+
+
+def validate_candidate(root, record, *, fingerprint, sdk_sha256):
+    """Reject stale plugin/SDK identities and mutated runtime bytes before use."""
+    _validate_identity(record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
     verify(root, record["files"])
+
+
+def stage_candidate(root, destination, record, *, fingerprint, sdk_sha256):
+    """Check identity and create a verified private snapshot without duplicate scans."""
+    _validate_identity(record, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
+    stage(root, destination, record["files"])

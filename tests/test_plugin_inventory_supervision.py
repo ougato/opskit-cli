@@ -19,7 +19,10 @@ from core import plugin_services as services
 def make_plugin(root, directory="demo", name="demo", **changes):
     target = root / directory
     target.mkdir(parents=True, exist_ok=True)
-    record = {"name": name, "version": "1.0.0", "api_version": 3, "kind": "python", "entry": "demo_pkg", **changes}
+    if changes.get("provides") and "service_contracts" not in changes:
+        changes["service_contracts"] = {service: {"api_version": 1, "methods": ["read"]}
+                                         for service in changes["provides"]}
+    record = {"name": name, "version": "1.0.0", "api_version": 4, "kind": "python", "entry": "demo_pkg", **changes}
     (target / "plugin.yaml").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     (target / "demo_pkg").mkdir(exist_ok=True)
     (target / "demo_pkg" / "__init__.py").write_text("raise RuntimeError('inventory must never import plugin code')")
@@ -117,9 +120,9 @@ def test_service_selection_transports_only_matches_but_keeps_duplicate_identitie
     make_plugin(tmp_path, "unrelated", "other", label={"en": "x" * 100000})
     decoded = []
     original = inspection._manifest_value
-    def decode(record, root):
+    def decode(record, root, **kwargs):
         decoded.append(record["name"])
-        return original(record, root)
+        return original(record, root, **kwargs)
     monkeypatch.setattr(inspection, "_manifest_value", decode)
     with closing(inspection.ContentInspector()) as reader:
         assert reader.inventory(tmp_path, select="service", value="storage", timeout=30) == [one, two]

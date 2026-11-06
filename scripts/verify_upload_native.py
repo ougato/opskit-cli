@@ -104,7 +104,7 @@ def main():
     plugin = output / "plugin"
     plugin.mkdir()
     (plugin / "plugin.yaml").write_text(
-        "name: native_upload_probe\nversion: 1.0.0\napi_version: 3\nkind: python\n"
+        "name: native_upload_probe\nversion: 1.0.0\napi_version: 4\nkind: python\n"
         "entry: native_upload_probe\npermissions: [network]\n", encoding="utf-8")
     (plugin / "native_upload_probe.py").write_text(
         "from core.sdk import upload_file, artifact_info, current_lang, plugin_data_dir\n"

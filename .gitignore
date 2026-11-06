@@ -100,3 +100,4 @@ cache/*.pending
 /native-plugin-runtimes/
 /native-fetch-staging/
 /native-preparations/
+/plugin-artifact-locks/

@@ -39,7 +39,7 @@ def test_inventory_preserves_sorted_directory_order(tmp_path, monkeypatch):
     for name in ("z", "a", "b"):
         root = tmp_path / name
         root.mkdir()
-        (root / "plugin.yaml").write_text(f"name: {name}\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n")
+        (root / "plugin.yaml").write_text(f"name: {name}\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: demo\n")
     assert [manifest.name for manifest in plugin.list_manifests()] == ["a", "b", "z"]
 
 
@@ -88,7 +88,7 @@ def test_install_rolls_back_its_clone_on_incomplete_inventory(tmp_path, monkeypa
     def populate(source, destination, **kwargs):
         dest = Path(destination)
         dest.mkdir()
-        (dest / "plugin.yaml").write_text("name: demo\nversion: 1.0.0\napi_version: 3\nkind: python\nentry: demo\n")
+        (dest / "plugin.yaml").write_text("name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: demo\n")
         from core.native_acquisition import Acquisition
         from core.plugin_install_receipt import content_receipt
         from core.plugin_trust import compute_fingerprint

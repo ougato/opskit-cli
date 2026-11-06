@@ -463,10 +463,15 @@ def select(
     on_ready：菜单完全渲染、即将开始等待按键前回调一次（用于在首屏渲染
               完成后再启动联网/重型后台任务，保证"进菜单"接近瞬时）。
 
-    返回选中的 key 字符串；用户按 0 返回 None；Ctrl+C 抛 UserCancel。
+    连续数字选项超过 9 项时自动分页，并返回原始选项的 key。
+    返回选中的 key 字符串；用户按 0 返回 None；Esc 抛 UserCancel。
     """
     from core.cli import require_interaction
     require_interaction()
+    numbered = [c for c in choices if c['key'] != '0']
+    if len(numbered) > 9 and [c['key'] for c in numbered] == [str(i + 1) for i in range(len(numbered))]:
+        return _select_numbered_pages(breadcrumb, subtitle, numbered, theme_key, show_shortcuts,
+                                      back_label, on_ready, description)
     os.system('cls' if os.name == 'nt' else 'clear')
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
@@ -522,6 +527,40 @@ def select(
             return ch
 
 
+def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortcuts,
+                           back_label, on_ready, description):
+    """Page standard numbered menus while preserving the caller's original keys."""
+    from core.i18n import t
+    from core.theme import get_icon
+
+    shortcuts = {key for key, _, _ in show_shortcuts or []}
+    available = (key for key in dict.fromkeys('pn<>[]abcdefghijklmnopqrstuvwxyz') if key not in shortcuts)
+    previous, following = next(available), next(available)
+    total_pages = (len(choices) + 8) // 9
+    page = 0
+    while True:
+        start = page * 9
+        page_items = choices[start:start + 9]
+        visible = [{**item, 'key': str(i + 1)} for i, item in enumerate(page_items)]
+        if page:
+            visible.append({'key': previous, 'label': f"{get_icon('back')} {t('prompt.prev_page')}"})
+        if page + 1 < total_pages:
+            visible.append({'key': following, 'label': f"{get_icon('next_page')} {t('prompt.next_page')}"})
+        key = select(breadcrumb, f'{subtitle} ({page + 1}/{total_pages})', visible, theme_key,
+                     show_shortcuts, back_label, on_ready, description)
+        on_ready = None
+        if key is None:
+            return None
+        if key == previous and page:
+            page -= 1
+        elif key == following and page + 1 < total_pages:
+            page += 1
+        elif key.isdecimal() and 1 <= int(key) <= len(page_items):
+            return page_items[int(key) - 1]['key']
+        else:
+            return key
+
+
 def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict[str, Any]],
                  back_label: str = '', description: str = '', default: str = '') -> str:
     """Display the standard numbered menu and accept a full line of input."""
@@ -566,9 +605,13 @@ def paged_select(
     Returns:
         pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
     """
+    if type(page_size) is not int or not 1 <= page_size <= 9:
+        raise ValueError('page_size must be an integer between 1 and 9')
     if nav_labels is None:
         from core.i18n import t
-        nav_labels = (t('prompt.prev_page'), t('prompt.next_page'))
+        from core.theme import get_icon
+        nav_labels = (f"{get_icon('back')} {t('prompt.prev_page')}",
+                      f"{get_icon('next_page')} {t('prompt.next_page')}")
     prev_label, next_label = nav_labels
     total = len(items)
     total_pages = (total + page_size - 1) // page_size
@@ -579,9 +622,15 @@ def paged_select(
         page_items = items[start:min(start + page_size, total)]
 
         choices: list[dict[str, Any]] = []
+        items_by_key: dict[str, Any] = {}
         for i, item in enumerate(page_items):
-            ch = choice_of(item, i)
+            ch = dict(choice_of(item, i))
             ch.setdefault('key', str(i + 1))
+            key = ch['key']
+            if (not isinstance(key, str) or len(key) != 1 or key in {'0', 'p', 'n'}
+                    or key in items_by_key):
+                raise ValueError('page choice keys must be unique single characters other than 0, p, or n')
+            items_by_key[key] = item
             choices.append(ch)
         if page > 0:
             choices.append({'key': 'p', 'label': prev_label})
@@ -607,7 +656,9 @@ def paged_select(
             page -= 1
             continue
 
-        selected = page_items[int(key) - 1]
+        if key not in items_by_key:
+            continue
+        selected = items_by_key[key]
         if on_select is None:
             return selected
         on_select(selected)
@@ -680,10 +731,10 @@ def multi_select(
 
     返回勾选项的下标列表（可为空）；用户按 0 返回 None；ESC 抛 UserCancel。
     """
-    if _auto_yes:
-        return []
     if not options:
         return []
+    from core.cli import require_interaction
+    require_interaction()
     cursor = 0
     checked: set[int] = set()
 

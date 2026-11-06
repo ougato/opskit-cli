@@ -1,5 +1,7 @@
 # SDK 镜像策略 7 加固
 
+> 历史记录：此文描述已移除的 Docker 插件镜像及当时的验收，不适用于当前原生插件运行时。现行接口见[插件开发指南](plugin-development.md)和[插件规范](plugin-spec.md)。
+
 SDK 正式构建在哈希锁定的 wheel 安装完成后、切换非 root 用户前执行固定加固脚本。SDK 与出口网关共用 `core/plugin_image_hardening.py`，不复制规则，不执行插件提供的构建脚本。该模块只属于宿主构建端，不加入插件 SDK guest 源码清单。
 
 规则清除 `/usr/bin`、`/usr/sbin`、`/usr/local/bin` 中普通文件的 setuid/setgid 位，并移除 `/usr/bin/infocmp`；保留 Python 使用的共享库和 terminfo。此规则限定上述目录，不声称消除了任意基础镜像全部攻击面。运行时继续使用非 root、只读根、移除 capabilities、禁止新增权限和资源限制。
