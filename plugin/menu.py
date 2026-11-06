@@ -495,10 +495,12 @@ def _update_all() -> None:
     print_header(crumb)
     for manifest in commands.manifests():
         if commands.trust_status(manifest) != commands.TRUST_OK:
-            declined = not confirm_trust(manifest)
+            approved = _confirm_update_trust(manifest)
+            if approved is None:
+                continue
             clear_screen()
             print_header(crumb)
-            if declined:
+            if not approved:
                 print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
                 continue
         ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
@@ -528,6 +530,15 @@ def _update_all() -> None:
     pause()
 
 
+def _confirm_update_trust(manifest, **kwargs):
+    """Report trust failures separately from an ordinary user refusal."""
+    try:
+        return confirm_trust(manifest, **kwargs)
+    except (OSError, ValueError, RuntimeError) as error:
+        print_error(t("plugin.update_failed", error=str(error)))
+        return None
+
+
 def _update() -> None:
     manifest = _pick("plugin.update", all_label=f"{get_icon('update')} {t('plugin.update_all')}")
     if manifest is None:
@@ -537,7 +548,11 @@ def _update() -> None:
         return
     # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
     if commands.trust_status(manifest) != commands.TRUST_OK:
-        if not confirm_trust(manifest):
+        approved = _confirm_update_trust(manifest)
+        if approved is None:
+            pause()
+            return
+        if not approved:
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
             pause()
             return
@@ -568,17 +583,25 @@ def _update() -> None:
         return
     if msg == "downgrade":
         try:
-            agreed = confirm_trust(refreshed, prompt_override=t(
+            agreed = _confirm_update_trust(refreshed, prompt_override=t(
                 "plugin.downgrade_confirm", name=_display_name(refreshed), old=old_version, new=refreshed.version))
         except UserCancel:
             agreed = False
+        if agreed is None:
+            pause()
+            return
         if not agreed:
             print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
             pause()
             return
         clear_screen()
         print_header(crumb)
-    if commands.trust_status(refreshed) == commands.TRUST_OK or confirm_trust(refreshed):
+    approved = (True if commands.trust_status(refreshed) == commands.TRUST_OK
+                else _confirm_update_trust(refreshed))
+    if approved is None:
+        pause()
+        return
+    if approved:
         print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
     else:
         print_error(t("plugin.trust_needed", name=_display_name(refreshed)))

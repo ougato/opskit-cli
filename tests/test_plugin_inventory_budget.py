@@ -7,6 +7,27 @@ from typer.testing import CliRunner
 from core import plugin
 
 
+def test_menu_reads_one_fresh_enablement_snapshot_per_inventory(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from plugin import commands
+    items = [SimpleNamespace(name=name) for name in ("first", "second", "disabled")]
+    config = {"modules": {"disabled": {"enabled": False}}}
+    reads = []
+    monkeypatch.setattr(commands, "builtin_module_keys", lambda: set())
+    def load_config():
+        reads.append(True)
+        return deepcopy(config)
+    monkeypatch.setattr(commands, "load_config", load_config)
+    monkeypatch.setattr(commands, "load_plugin", lambda manifest: SimpleNamespace(order=50))
+    assert [manifest.name for manifest, _ in commands._loaded_plugins(items)] == ["first", "second"]
+    assert len(reads) == 1
+    config["modules"]["first"] = {"enabled": False}
+    config["modules"]["disabled"] = {"enabled": True}
+    assert [manifest.name for manifest, _ in commands._loaded_plugins(items)] == ["second", "disabled"]
+    assert len(reads) == 2
+
+
 def _limited_inventory_session(connection, buffer, length, requested):
     from core.plugin_inspection import _inspection_session
     plugin.MAX_INVENTORY_ENTRIES = 1
@@ -74,7 +95,6 @@ def test_cli_inventory_overflow_is_not_successful_empty_list(tmp_path, monkeypat
 
 
 def test_install_rolls_back_its_clone_on_incomplete_inventory(tmp_path, monkeypatch):
-    from types import SimpleNamespace
     from pathlib import Path
     from plugin import commands
     root = tmp_path / "plugins"

@@ -9,6 +9,111 @@ from core.plugin_entry_preload import EntryPreload, PreloadCancelled, PreloadSta
 from core.plugin_sandbox import _invocations
 
 
+def _blocked_discovery_worker(connection, buffer, length, requested):
+    import json
+    import os
+    from pathlib import Path
+    from worker_test_markers import publish_marker
+    requested.wait()
+    request = json.loads(bytes(memoryview(buffer).cast("B")[:length.value]))
+    read, write = os.pipe()
+    publish_marker(Path(request["root"]).parent / "discovery-pid", str(os.getpid()))
+    try:
+        os.read(read, 1)
+    finally:
+        os.close(read)
+        os.close(write)
+        connection.close()
+
+
+def test_background_discovery_cancel_reclaims_blocked_process(tmp_path, monkeypatch):
+    import psutil
+    from core import plugin_entry_preload, plugin_inspection
+    root = tmp_path / "plugins"
+    root.mkdir()
+    marker = tmp_path / "discovery-pid"
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setattr(plugin_entry_preload, "_active", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery_cancel", None)
+    monkeypatch.setattr(plugin_inspection, "_inspection_session", _blocked_discovery_worker)
+    plugin_entry_preload.start_discovery()
+    try:
+        deadline = time.monotonic() + 30
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert marker.exists(), "discovery worker did not start"
+        pid = int(marker.read_text())
+        assert psutil.pid_exists(pid)
+        plugin_entry_preload.cancel_pending(wait=True)
+        assert not plugin_entry_preload._discovery.is_alive()
+        assert not psutil.pid_exists(pid)
+        assert plugin_entry_preload._active is None
+    finally:
+        plugin_entry_preload.cancel_pending(wait=True)
+
+
+def test_background_discovery_prepares_trusted_candidate(tmp_path, monkeypatch):
+    from core import plugin_entry_preload, plugin_trust
+    root = tmp_path / "plugins"
+    plugin = root / "example"
+    package = plugin / "example_pkg"
+    package.mkdir(parents=True)
+    (plugin / "plugin.yaml").write_text(
+        "name: example\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: example_pkg\n")
+    (package / "__init__.py").write_text("raise RuntimeError('must not import plugin')")
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    plugin_trust.grant("example", plugin_trust.compute_fingerprint(plugin), "1.0.0")
+    monkeypatch.setattr(plugin_entry_preload, "_active", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery_cancel", None)
+    class StubPreload:
+        done = False
+        def __init__(self, manifest):
+            self.manifest = manifest
+        def cancel(self, **kwargs):
+            self.done = True
+    monkeypatch.setattr(plugin_entry_preload, "EntryPreload", StubPreload)
+    plugin_entry_preload.start_discovery()
+    try:
+        plugin_entry_preload._discovery.join(30)
+        assert not plugin_entry_preload._discovery.is_alive()
+        assert plugin_entry_preload._active.manifest.name == "example"
+        assert plugin_entry_preload._active.manifest.root == plugin
+    finally:
+        plugin_entry_preload.cancel_pending(wait=True)
+
+
+@pytest.mark.parametrize("state", ["untrusted", "disabled"])
+def test_background_discovery_does_not_prepare_unapproved_plugins(tmp_path, monkeypatch, state):
+    from core import config, plugin_entry_preload, plugin_trust
+    root = tmp_path / "plugins"
+    plugin = root / "example"
+    package = plugin / "example_pkg"
+    package.mkdir(parents=True)
+    (plugin / "plugin.yaml").write_text(
+        "name: example\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: example_pkg\n")
+    (package / "__init__.py").write_text("raise RuntimeError('must not import plugin')")
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    if state == "disabled":
+        plugin_trust.grant("example", plugin_trust.compute_fingerprint(plugin), "1.0.0")
+        config.save_config({"modules": {"example": {"enabled": False}}})
+    monkeypatch.setattr(plugin_entry_preload, "_active", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery", None)
+    monkeypatch.setattr(plugin_entry_preload, "_discovery_cancel", None)
+    attempts = []
+    monkeypatch.setattr(plugin_entry_preload, "EntryPreload", lambda manifest: attempts.append(manifest))
+    plugin_entry_preload.start_discovery()
+    try:
+        plugin_entry_preload._discovery.join(30)
+        assert not plugin_entry_preload._discovery.is_alive()
+        assert plugin_entry_preload._active is None and not attempts
+    finally:
+        plugin_entry_preload.cancel_pending(wait=True)
+
+
 def _session_with_handoff(monkeypatch, *, stale=False):
     from core import plugin_entry_preload
     class Inspector:

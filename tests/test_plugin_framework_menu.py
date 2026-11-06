@@ -9,6 +9,62 @@ from core import i18n, theme
 from plugin import menu
 
 
+@pytest.mark.parametrize("stage", ["before_update", "downgrade", "after_update"])
+def test_update_trust_failure_is_reported_without_escaping_menu(monkeypatch, stage):
+    from core.plugin import PluginManifest
+    original = PluginManifest(name="demo", version="2.0.0", api_version=4, kind="python", entry="demo")
+    refreshed = PluginManifest(name="demo", version="1.0.0", api_version=4, kind="python", entry="demo")
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "_pick", lambda *args, **kwargs: original)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu.commands, "manifests", lambda: [refreshed])
+    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
+                        menu.commands.TRUST_NONE if stage == "before_update" or manifest is refreshed
+                        else menu.commands.TRUST_OK)
+    updates, errors, pauses, successes = [], [], [], []
+    def update(*args, **kwargs):
+        updates.append(True)
+        return True, "downgrade" if stage == "downgrade" else "updated"
+    def fail_trust(*args, **kwargs):
+        raise ValueError("fingerprint changed")
+    monkeypatch.setattr(menu.commands, "update", update)
+    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
+    monkeypatch.setattr(menu, "print_error", errors.append)
+    monkeypatch.setattr(menu, "print_success", successes.append)
+    monkeypatch.setattr(menu, "pause", lambda: pauses.append(True))
+    menu._update()
+    assert len(errors) == 1 and "fingerprint changed" in errors[0]
+    assert len(pauses) == 1 and not successes
+    assert bool(updates) is (stage != "before_update")
+
+
+def test_update_all_continues_after_one_trust_failure(monkeypatch):
+    from core.plugin import PluginManifest
+    first = PluginManifest(name="first", version="1.0.0", api_version=4, kind="python", entry="first")
+    second = PluginManifest(name="second", version="1.0.0", api_version=4, kind="python", entry="second")
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu, "print_info", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
+    monkeypatch.setattr(menu.commands, "manifests", lambda: [first, second])
+    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
+                        menu.commands.TRUST_NONE if manifest is first else menu.commands.TRUST_OK)
+    def fail_trust(*args, **kwargs):
+        raise ValueError("fingerprint changed")
+    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
+    errors, updates = [], []
+    monkeypatch.setattr(menu, "print_error", errors.append)
+    monkeypatch.setattr(menu.commands, "update", lambda manifest, **kwargs:
+                        (updates.append(manifest.name) or True, "unchanged"))
+    menu._update_all()
+    assert len(errors) == 1 and "fingerprint changed" in errors[0]
+    assert updates == ["second"]
+
+
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_management_and_maintenance_structure(monkeypatch, language):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))

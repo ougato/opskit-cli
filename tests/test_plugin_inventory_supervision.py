@@ -42,6 +42,58 @@ def blocked_scan_session(connection, buffer, length, requested):
     inspection._inspection_session(connection, buffer, length, requested)
 
 
+def blocked_menu_session(connection, buffer, length, requested):
+    from network.worker import send
+    while True:
+        requested.wait()
+        requested.clear()
+        request = json.loads(bytes(memoryview(buffer).cast("B")[:length.value]))
+        if request.get("operation") == "timeout":
+            send(connection, inspection._timeout_result(request))
+            continue
+        marker = Path(request["root"]).parent / "menu-reader-pid"
+        read, write = os.pipe()
+        publish_process_marker(marker)
+        try:
+            os.read(read, 1)
+        finally:
+            os.close(read)
+            os.close(write)
+            connection.close()
+        return
+
+
+def test_menu_discovery_uses_owned_reader_for_config_and_plugin_content(tmp_path, monkeypatch):
+    from core import plugin_trust
+    from plugin import commands
+    root = tmp_path / "plugins"
+    manifest = make_plugin(root)
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    plugin_trust.grant("demo", plugin_trust.compute_fingerprint(manifest.root), "1.0.0")
+    monkeypatch.setattr(commands, "load_config", lambda: pytest.fail("host read config"))
+    monkeypatch.setattr(commands, "load_plugin", lambda manifest: pytest.fail("host read plugin"))
+    pairs = commands.loaded_plugins()
+    assert [item.name for item, _ in pairs] == ["demo"]
+    assert pairs[0][1].key == "demo"
+
+
+def test_blocked_menu_discovery_times_out_and_reclaims_reader(tmp_path, monkeypatch,
+                                                              expire_worker_after_marker):
+    from plugin import commands
+    root = tmp_path / "plugins"
+    root.mkdir()
+    marker = tmp_path / "menu-reader-pid"
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(inspection, "_inspection_session", blocked_menu_session)
+    _, observed = expire_worker_after_marker(marker)
+    with pytest.raises(plugin.PluginInventoryError, match="inventory inspection deadline"):
+        commands.loaded_plugins()
+    assert observed and not marked_process_exists(marker)
+    assert sandbox._invocations.inspector is None
+
+
 def fake_inventory_session(connection, buffer, length, requested):
     from network.worker import send
     requested.wait()

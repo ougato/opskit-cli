@@ -314,7 +314,6 @@ def _guard_entry(name: str, fn):
 
 def _to_module_info(manifest: PluginManifest) -> ModuleInfo | None:
     """Construct menu metadata without importing or executing third-party code."""
-    from core.i18n import current_lang
     if manifest.kind == KIND_PYTHON:
         entry = str(manifest.entry)
         if not _NAME_PATTERN.fullmatch(entry) or entry in {"core", "sys", "os", "yaml", "rich", "typer", "utils"}:
@@ -323,6 +322,12 @@ def _to_module_info(manifest: PluginManifest) -> ModuleInfo | None:
             return None
     elif _resolve_exec_path(manifest) is None:
         return None
+    return _module_info(manifest)
+
+
+def _module_info(manifest: PluginManifest) -> ModuleInfo:
+    """Construct an entry after its availability was checked by the reader."""
+    from core.i18n import current_lang
     def execute():
         from core.plugin_sandbox import invoke
         invoke(manifest, "entry")

@@ -27,6 +27,7 @@ from core.plugin import (
     list_manifests,
     load_manifest,
     load_plugin,
+    _module_info,
 )
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record, invalidate
 
@@ -83,11 +84,25 @@ def manifests() -> list[PluginManifest]:
 
 def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
     """实时扫描并加载全部已信任且启用的插件（热插拔：每次进插件工具菜单调用）"""
+    from core.plugin_sandbox import _read_inventory
+    return [(manifest, _module_info(manifest))
+            for manifest in _read_inventory(plugins_dir(), select="menu")]
+
+
+def _loaded_plugins(manifest_list) -> list[tuple[PluginManifest, ModuleInfo]]:
+    """Filter an already collected inventory without executing plugin code."""
     builtin = builtin_module_keys()
     pairs: list[tuple[PluginManifest, ModuleInfo]] = []
     seen: set[str] = set()
-    for manifest in manifests():
-        if manifest.name in builtin or manifest.name in seen or not is_enabled(manifest.name):
+    config = None
+    for manifest in manifest_list:
+        if manifest.name in builtin or manifest.name in seen:
+            continue
+        # One fresh snapshot per menu scan; invocation independently rechecks
+        # the live enablement and trust before executing any plugin code.
+        if config is None:
+            config = load_config()
+        if not _enabled_in_config(config, manifest.name):
             continue
         info = load_plugin(manifest)
         if info is None:
@@ -99,8 +114,11 @@ def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
 
 
 def is_enabled(key: str) -> bool:
-    cfg = load_config()
-    return bool(cfg.get("modules", {}).get(key, {}).get("enabled", True))
+    return _enabled_in_config(load_config(), key)
+
+
+def _enabled_in_config(config: dict, key: str) -> bool:
+    return bool(config.get("modules", {}).get(key, {}).get("enabled", True))
 
 
 def set_enabled(key: str, enabled: bool) -> None:

@@ -347,8 +347,8 @@ def _valid_inventory_request(request):
     return (isinstance(request, dict) and set(request) == {"operation", "root", "select", "value"}
             and request["operation"] == "inventory" and isinstance(request["root"], str)
             and 0 < len(request["root"]) <= 65536 and isinstance(request["select"], str)
-            and request["select"] in ("all", "name", "service") and isinstance(request["value"], str)
-            and (request["value"] == "" if request["select"] == "all"
+            and request["select"] in ("all", "name", "service", "menu") and isinstance(request["value"], str)
+            and (request["value"] == "" if request["select"] in ("all", "menu")
                  else 0 < len(request["value"]) <= 65536 and re.fullmatch(r"[a-z][a-z0-9_]*", request["value"]) is not None))
 
 
@@ -356,7 +356,12 @@ def _send_inventory(connection, view, requested, request):
     from core.plugin import _list_manifests
     from network.worker import send
     try:
-        manifests = _list_manifests(Path(request["root"]), select=request["select"], value=request["value"])
+        select = request["select"]
+        manifests = _list_manifests(Path(request["root"]), select="all" if select == "menu" else select,
+                                    value=request["value"])
+        if select == "menu":
+            from plugin.commands import _loaded_plugins
+            manifests = [manifest for manifest, _ in _loaded_plugins(manifests)]
     except (OSError, ValueError, TypeError, RuntimeError) as exc:
         reason = next((key for key, message in INVENTORY_ERRORS.items() if str(exc) == message), "scan")
         send(connection, {"ok": False, "reason": reason})
@@ -529,13 +534,14 @@ class ContentInspector:
             raise ValueError("invalid plugin manifest inspection request")
         return self._exchange(request, timeout, lambda record: _manifest_value(record, root), chunks=True)
 
-    def inventory(self, root, *, timeout, select="all", value=""):
+    def inventory(self, root, *, timeout, select="all", value="", cancel_event=None):
         request = {"operation": "inventory", "root": str(root), "select": select, "value": value}
         if not _valid_inventory_request(request):
             raise ValueError("invalid plugin inventory inspection request")
-        return self._exchange(request, timeout, lambda records: records, inventory=request)
+        return self._exchange(request, timeout, lambda records: records, inventory=request,
+                              cancel_event=cancel_event)
 
-    def _receive_inventory(self, result, deadline, request):
+    def _receive_inventory(self, result, deadline, request, cancel_event=None):
         from core.plugin import MAX_MANIFESTS, PluginInventoryError
         from network import worker
         if (isinstance(result, dict) and set(result) == {"ok", "reason"} and result["ok"] is False
@@ -544,10 +550,11 @@ class ContentInspector:
         if (not isinstance(result, dict) or set(result) != {"ok", "count"} or result["ok"] is not True
                 or type(result["count"]) is not int or not 0 <= result["count"] <= MAX_MANIFESTS):
             raise RuntimeError("invalid plugin inventory inspection result")
-        manifests, directories = [], set()
+        manifests, directories, identities = [], set(), set()
         for index in range(result["count"]):
-            header = worker.wait_result(self._receive, deadline=deadline, label="plugin inventory inspection")
-            record = self._receive_manifest(header, deadline)
+            header = worker.wait_result(self._receive, deadline=deadline, label="plugin inventory inspection",
+                                        cancel_event=cancel_event)
+            record = self._receive_manifest(header, deadline, cancel_event=cancel_event)
             if not isinstance(record, dict) or set(record) != {"directory", "manifest"}:
                 raise RuntimeError("invalid plugin inventory inspection item")
             directory = record["directory"]
@@ -558,21 +565,24 @@ class ContentInspector:
             directories.add(directory)
             manifest = _manifest_value(record["manifest"], Path(request["root"]) / directory)
             if (request["select"] == "name" and manifest.name != request["value"]
-                    or request["select"] == "service" and request["value"] not in manifest.provides):
+                    or request["select"] == "service" and request["value"] not in manifest.provides
+                    or request["select"] == "menu" and manifest.name in identities):
                 raise RuntimeError("invalid plugin inventory selection")
+            identities.add(manifest.name)
             manifests.append(manifest)
             if index + 1 < result["count"]:
                 self._requested.set()
         return manifests
 
-    def _receive_manifest(self, result, deadline):
+    def _receive_manifest(self, result, deadline, cancel_event=None):
         from network import worker
         if (not isinstance(result, dict) or set(result) != {"ok", "size"} or result["ok"] is not True
                 or type(result["size"]) is not int or not 0 < result["size"] <= MANIFEST_RESPONSE_LIMIT):
             raise RuntimeError("plugin manifest inspection failed")
         content = bytearray()
         while len(content) < result["size"]:
-            part = worker.wait_result(self._receive, deadline=deadline, label="plugin manifest inspection")
+            part = worker.wait_result(self._receive, deadline=deadline, label="plugin manifest inspection",
+                                      cancel_event=cancel_event)
             expected_size = min(REQUEST_LIMIT, result["size"] - len(content))
             if (not isinstance(part, dict) or set(part) != {"offset", "size"}
                     or type(part["offset"]) is not int or part["offset"] != len(content)
@@ -587,7 +597,7 @@ class ContentInspector:
                 self._requested.set()
         return json.loads(content)
 
-    def _exchange(self, request, timeout, decode, *, chunks=False, inventory=None):
+    def _exchange(self, request, timeout, decode, *, chunks=False, inventory=None, cancel_event=None):
         from network import worker
         if self._closed or self._busy or threading.get_ident() != self._thread:
             raise RuntimeError("plugin content inspector is closed or belongs to another thread")
@@ -599,6 +609,8 @@ class ContentInspector:
             raise ValueError("plugin inspection request exceeds limit")
         self._busy = True
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise InterruptedError("plugin inspection cancelled")
             self._start()
             if worker.time.monotonic() >= deadline:
                 raise TimeoutError("plugin content inspection deadline exceeded")
@@ -609,11 +621,12 @@ class ContentInspector:
                 view.release()
             self._length.value = len(encoded)
             self._requested.set()
-            result = worker.wait_result(self._receive, deadline=deadline, label="plugin content inspection")
+            result = worker.wait_result(self._receive, deadline=deadline, label="plugin content inspection",
+                                        cancel_event=cancel_event)
             if inventory is not None:
-                result = self._receive_inventory(result, deadline, inventory)
+                result = self._receive_inventory(result, deadline, inventory, cancel_event=cancel_event)
             elif chunks:
-                result = self._receive_manifest(result, deadline)
+                result = self._receive_manifest(result, deadline, cancel_event=cancel_event)
             value = decode(result)
             if worker.time.monotonic() >= deadline:
                 raise TimeoutError("plugin content inspection deadline exceeded")

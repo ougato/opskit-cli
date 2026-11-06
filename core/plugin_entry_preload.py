@@ -269,6 +269,7 @@ class EntryPreload:
 _active = None
 _active_lock = threading.Lock()
 _discovery = None
+_discovery_cancel = None
 _generation = 0
 
 
@@ -286,23 +287,28 @@ def start(manifest):
 
 def start_discovery():
     """Begin finding a candidate only after the host's main menu is visible."""
-    global _discovery, _generation
+    global _discovery, _discovery_cancel, _generation
     with _active_lock:
         if (_active is not None and not _active.done) or (_discovery is not None and _discovery.is_alive()):
             return
         _generation += 1
         generation = _generation
+        cancel = _discovery_cancel = threading.Event()
 
         def discover():
             global _active
             try:
-                from plugin.commands import loaded_plugins
-                pairs = loaded_plugins()
-                candidate = next((manifest for manifest, _ in pairs if not manifest.group), None)
+                from contextlib import closing
+                from core.paths import plugins_dir
+                from core.plugin_inspection import ContentInspector
+                with closing(ContentInspector()) as inspector:
+                    manifests = inspector.inventory(plugins_dir().absolute(), timeout=30,
+                                                    select="menu", cancel_event=cancel)
+                candidate = next((manifest for manifest in manifests if not manifest.group), None)
                 if candidate is None:
                     return
                 with _active_lock:
-                    if generation == _generation and (_active is None or _active.done):
+                    if not cancel.is_set() and generation == _generation and (_active is None or _active.done):
                         _active = EntryPreload(candidate)
             except Exception:
                 # Speculation is optional; normal menu discovery reports errors.
@@ -316,6 +322,8 @@ def cancel_pending(*, wait=False):
     with _active_lock:
         _generation += 1
         active, discovery = _active, _discovery
+        if _discovery_cancel is not None:
+            _discovery_cancel.set()
         if active is not None and not active.done:
             active.cancel()
     if wait:
