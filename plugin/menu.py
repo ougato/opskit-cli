@@ -166,6 +166,10 @@ def _group_menu(group_id: str) -> None:
 
 def _manage() -> None:
     """插件管理主循环：安装 / 更新 / 卸载"""
+    # Discovery may have started in the root menu, even if this menu did not
+    # receive a local preload handle. Retire it before changing plugin sources.
+    from core.plugin_entry_preload import cancel_pending
+    cancel_pending(wait=True)
     while True:
         choices = [
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
@@ -625,8 +629,8 @@ def _remove() -> None:
     from core.resource_lock import ResourceBusyError
     try:
         commands.remove(manifest)
-    except ResourceBusyError as exc:
-        print_error(str(exc))
+    except ResourceBusyError:
+        print_error(t("plugin_native.lifecycle.plugin_busy"))
         pause()
         return
     print_success(t("plugin.remove_success", name=_display_name(manifest)))

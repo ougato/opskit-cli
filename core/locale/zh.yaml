@@ -979,6 +979,7 @@ plugin_native:
     worker_failed: "原生插件执行失败或未返回有效结果。"
     transport_cleanup_failed: "原生插件通信资源未能完成回收。"
   lifecycle:
+    plugin_busy: "插件正在其他任务或进程中运行，请等待其结束后重试。"
     list_help: "列出已安装插件及兼容状态"
     show_help: "查看插件身份、权限、服务和信任状态"
     install_help: "从仓库安装插件，安装前检查来源"

@@ -2,6 +2,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -78,7 +79,84 @@ def test_remove_menu_reports_busy_without_success(monkeypatch):
         raise ResourceBusyError('plugin is busy; retry later')
     monkeypatch.setattr(commands, 'remove', busy)
     menu._remove()
-    assert errors == ['plugin is busy; retry later'] and pauses == [True]
+    assert errors == ['remove'] and pauses == [True]
+
+
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_remove_menu_localizes_real_contention(monkeypatch, language):
+    from types import SimpleNamespace
+    from core import i18n
+    from plugin import menu
+    monkeypatch.setattr(i18n, '_current', i18n._flatten(i18n._load_lang(language)))
+    monkeypatch.setattr(menu, '_pick', lambda *args: SimpleNamespace(name='demo'))
+    monkeypatch.setattr(menu, '_display_name', lambda *args: 'demo')
+    monkeypatch.setattr(menu, 'confirm', lambda **kwargs: True)
+    errors = []
+    monkeypatch.setattr(menu, 'print_error', errors.append)
+    monkeypatch.setattr(menu, 'pause', lambda: None)
+    def busy(manifest):
+        raise ResourceBusyError('plugin is busy; retry later')
+    monkeypatch.setattr(commands, 'remove', busy)
+    menu._remove()
+    assert errors == [i18n.t('plugin_native.lifecycle.plugin_busy')]
+    assert ('其他' if language == 'zh' else 'another') in errors[0]
+
+
+def test_management_waits_for_root_preload_to_release_real_lock(tmp_path, monkeypatch):
+    from core import plugin_entry_preload as preload
+    from core.plugin_invocation_lock import hold
+    from plugin import menu
+
+    root = tmp_path / 'plugins' / 'demo'
+    root.mkdir(parents=True)
+    (root / 'plugin.yaml').write_text('name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: demo\n')
+    (root / 'demo.py').write_text('# source')
+    monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(root.parent))
+    manifest = load_manifest(root)
+    acquired, cleanup, allow_cleanup, entered, created = (threading.Event() for _ in range(5))
+    session = None
+
+    def target():
+        with hold(plugin='demo', timeout=30):
+            acquired.set()
+            created.wait(30)
+            session.cancelled.wait(30)
+            cleanup.set()
+            allow_cleanup.wait(30)
+
+    session = preload.EntryPreload(manifest, target=target)
+    created.set()
+    monkeypatch.setattr(preload, '_active', session)
+    monkeypatch.setattr(preload, '_discovery', None)
+    monkeypatch.setattr(preload, '_discovery_cancel', None)
+    monkeypatch.setattr(menu, '_pick', lambda *args: manifest)
+    monkeypatch.setattr(menu, '_display_name', lambda *args: 'demo')
+    monkeypatch.setattr(menu, 'confirm', lambda **kwargs: True)
+    monkeypatch.setattr(menu, 'pause', lambda: None)
+    monkeypatch.setattr(menu, 'print_success', lambda *args: None)
+    failures = []
+    monkeypatch.setattr(menu, 'print_error', failures.append)
+    choices = iter(['3', None])
+    def select(**kwargs):
+        entered.set()
+        return next(choices)
+    monkeypatch.setattr(menu, 'select', select)
+    thread = threading.Thread(target=menu._manage)
+    try:
+        assert acquired.wait(30)
+        thread.start()
+        assert cleanup.wait(30)
+        assert not entered.wait(.2)
+        assert root.exists()
+        allow_cleanup.set()
+        thread.join(30)
+        assert not thread.is_alive()
+        assert entered.is_set() and not root.exists() and not failures
+    finally:
+        allow_cleanup.set()
+        session.cancel(wait=True)
+        if thread.ident is not None:
+            thread.join(30)
 
 
 @pytest.mark.parametrize('failure', ['nonzero', 'timeout', 'cancel'])

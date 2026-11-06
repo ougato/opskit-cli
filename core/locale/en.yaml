@@ -980,6 +980,7 @@ plugin_native:
     worker_failed: "The native plugin failed or returned no valid result."
     transport_cleanup_failed: "Native plugin transport cleanup did not finish."
   lifecycle:
+    plugin_busy: "The plugin is running in another task or process. Wait for it to finish and try again."
     list_help: "List installed plugins and their compatibility"
     show_help: "Show plugin identity, permissions, services and trust"
     install_help: "Install a plugin from a reviewed repository"
