@@ -416,7 +416,8 @@ def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
     """Render the common information rows used by interactive menus."""
     for line in lines or []:
         for part in line.splitlines() or ['']:
-            row = Text(f' {_TEE} ', style=_PIPE_COLOR)
+            row = Text()
+            row.append(f' {_TEE} ', style=_PIPE_COLOR)
             row.append_text(Text.from_markup(part) if markup else Text(part))
             # Let the terminal wrap long paths naturally without moving the
             # whole resource onto a new line after the row prefix.

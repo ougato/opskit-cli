@@ -82,3 +82,16 @@ def test_long_resource_does_not_split_off_its_row_prefix(monkeypatch):
     resource = r"E:\some-long-path\project\client\and\more\folders"
     prompt.select(["OpsKit"], "Choose", [], info_lines=["Resource: " + resource])
     assert " ├─ Resource: " + resource + "\n" in output.getvalue()
+
+
+@pytest.mark.parametrize("markup,line", [(False, "资源：[项目]"), (True, "资源：[bold]项目[/bold]")])
+def test_information_text_does_not_inherit_border_color(monkeypatch, markup, line):
+    captured = []
+    console = Console(file=StringIO(), force_terminal=True, color_system="truecolor")
+    monkeypatch.setattr(console, "print", lambda row, **kwargs: captured.append(row))
+    monkeypatch.setattr(prompt, "console", console)
+    prompt._render_info_lines([line], markup=markup)
+    row = captured[0]
+    assert row.get_style_at_offset(console, 1).color == console.get_style(prompt._PIPE_COLOR).color
+    style = row.get_style_at_offset(console, 4)
+    assert style.color is None and not style.dim
