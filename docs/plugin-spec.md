@@ -52,7 +52,7 @@ opskit plugin install https://git.example.com/team/hello.git --branch main
 
 自动准备优先复制本机可用的 CPython 3.10+ Windows x64 与 Git 工具，在 AppContainer 中探测后才发布采集 catalog；本机安装目录不会被修改，也不会直接执行宿主包装脚本。采集 Python 与插件执行运行时分开：插件运行时使用锁定的 CPython 3.14 Windows x64，以匹配 SDK wheel ABI。只对缺少、不兼容或自检失败的组件使用随发行包固定的 `core/plugin-bootstrap.json` 补齐，固定 Python、MinGit 和 SDK wheel 的来源、版本、大小与 SHA256；运行时不查询 GitHub releases API、不运行宿主 pip、安装脚本或仓库代码。下载缓存先校验。传输 pack 在隔离 Git 中校验与导出。首次下载失败可重新安装，已完成且校验通过的组件会复用；失败不会发布半成品插件。正常界面只报告检查环境、必要补齐、获取仓库和准备运行环境，不逐项打印压缩包或依赖文件名。
 
-SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。内网仅按本次来源确认或使用 `--allow-private`，不保存许可。
+SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。安装菜单中用户亲自输入的仓库地址允许本次连接该主机和端口的私网地址；更新已有来源时须明确确认，命令行须指定 `--allow-private`。许可均不持久保存。
 
 `opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml；它是内容校验，不是发布者签名。安装后核对来源、权限、指纹并授信。内容更新撤销旧信任与相关授权，不自动继承。更新必须保留用户本地修改，无法安全替换时拒绝；不能强行覆盖以完成更新。
 
@@ -179,12 +179,12 @@ digest describes locally verified outgoing content. Multipart uploads, cross-fil
 URL signing and directory uploads are not included. Plugins invoke the bounded file API
 per object. Bilingual progress summaries display only the destination hostname.
 
-SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能执行。已安装的 SDK 3 插件仍可查看、更新和卸载。
+SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能安装和执行。旧版插件不进入管理列表，旧目录和数据不会自动删除。
 工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，
 仍不是文件系统磁盘硬配额。上传快照持有实际 worker 租约，清理与恢复使用同一身份记录。
 
 The SDK source digest changed; existing plugins must prepare their runtimes again. Existing
-SDK 1/2/3 plugins must migrate to SDK 4 and prepare their runtime again. Installed SDK 3 plugins remain visible for management but cannot execute. Workspace logical reservation is now 512MiB per workspace,
+SDK 1/2/3 plugins must migrate to SDK 4, be reinstalled and prepare their runtime again. Older plugins are excluded from management; their directories and data are not automatically deleted. Workspace logical reservation is now 512MiB per workspace,
 up to eight workspaces / 4GiB, including retained workspaces. This is not a filesystem hard
 quota. Upload snapshots hold a worker lease and share identity-bound cleanup/recovery.
 

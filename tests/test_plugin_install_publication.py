@@ -53,10 +53,13 @@ def test_real_other_writer_survives_acquisition_or_publication_failure(installat
     assert not list(plugins.glob(".opskit-install-*"))
 
 
-def test_trust_write_failure_never_publishes(installation, monkeypatch):
-    plugins, origin = installation
+def test_trust_write_failure_never_publishes(installation, monkeypatch, caplog):
+    import logging
 
-    def deny(*args):
+    plugins, origin = installation
+    monkeypatch.setattr(logging.getLogger("opskit"), "propagate", True)
+
+    def deny(*args, **kwargs):
         raise OSError("injected trust store failure")
 
     monkeypatch.setattr(commands, "grant", deny)
@@ -64,6 +67,8 @@ def test_trust_write_failure_never_publishes(installation, monkeypatch):
     from core.i18n import t
     assert manifest is None and error == t("plugin_native.errors.acquisition_failed")
     assert "trust store failure" not in error
+    assert "phase=publication category=OSError location=plugin.commands:" in caplog.text
+    assert "trust store failure" not in caplog.text
     assert not (plugins / "demo").exists()
     assert not list(plugins.glob(".opskit-install-*"))
 

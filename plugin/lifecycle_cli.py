@@ -310,11 +310,7 @@ def register(app, translate=None):
             fail(t("plugin_native.lifecycle.fingerprint_mismatch"), 2)
         if verify_checksums(manifest.root) == CHECK_MISMATCH:
             fail(t("plugin_native.lifecycle.checksum_mismatch"))
-        commands.grant_trust(manifest)
-        # Recheck after the persisted grant to reject concurrent content changes.
-        if compute_fingerprint(manifest.root) != actual:
-            invalidate(name)
-            fail(t("plugin_native.lifecycle.changed"))
+        commands.grant_trust(manifest, expected_fingerprint=actual)
         emit(describe(manifest))
 
     @app.command("revoke", help=translate("lifecycle.revoke_help"))

@@ -1,5 +1,7 @@
 # 插件系统审查与验收记录（2026-11-06）
 
+> 以下是当时的验收记录；后续已移除 SDK 3 管理兼容，当前规则以[插件开发指南](plugin-development.md)为准。
+
 本次审查覆盖插件发现、SDK、服务契约、菜单交互、授权、隔离执行、安装更新、Cocos 构建以及发布包。开发者使用方式见[插件开发指南](plugin-development.md)，SDK 3 迁移见[升级指南](plugin-native-upgrade-guide.md)。
 
 ## 已处理的问题

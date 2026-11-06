@@ -173,6 +173,25 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_developer_example_cli_runs_in_native_sandbox(sdk_runtime, tmp_path, monkeypatch):
+    from core import plugin_sandbox as sandbox
+    from core.plugin import load_manifest
+    from core.plugin_trust import compute_fingerprint, grant
+    from core.native_runtime_catalog import RuntimeCatalog
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    example = Path(__file__).resolve().parents[1] / "docs" / "examples" / "example-plugin"
+    plugin = tmp_path / "plugin"
+    shutil.copytree(example, plugin, ignore=shutil.ignore_patterns("__pycache__"))
+    fingerprint = compute_fingerprint(plugin)
+    grant("example", fingerprint, "1.0.0")
+    source, original = sdk_runtime
+    RuntimeCatalog(tmp_path / "data/native-plugin-runtimes").publish(
+        "example", source, {**original, "fingerprint": fingerprint}, check_identity=lambda *args: True)
+    assert sandbox.invoke(load_manifest(plugin), "cli", args=["--hello"]) == 0
+    assert "example_plugin" not in sys.modules
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
 def test_preloaded_sandbox_does_not_import_plugin_before_activation(sdk_runtime, tmp_path, monkeypatch):
     """Plugin code waits for activation; archive verification is tested separately."""
     import psutil

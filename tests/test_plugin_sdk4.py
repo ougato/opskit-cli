@@ -1,15 +1,13 @@
-"""SDK 4 management compatibility and real worker/UI interface boundaries."""
+"""SDK 4 manifest, worker and UI interface boundaries."""
 from contextlib import closing
 import inspect
 import json
 from pathlib import Path
-import shutil
-from types import SimpleNamespace
 
 import pytest
 import typer
 
-from core import plugin, plugin_inspection, plugin_sandbox, plugin_worker, prompt, sdk
+from core import plugin, plugin_inspection, plugin_worker, prompt, sdk
 from core.constants import PLUGIN_API_VERSION
 
 
@@ -28,12 +26,36 @@ def write_plugin(root, directory, data):
 
 @pytest.mark.parametrize("version", [True, False, "4", 4.0, 4.9, None, [], {}])
 def test_sdk_version_requires_actual_integer(tmp_path, version):
-    assert plugin._parse_manifest(record(version), tmp_path, allow_legacy=True) is None
+    assert plugin._parse_manifest(record(version), tmp_path) is None
 
 
-def test_legacy_inventory_is_visible_but_not_executable_or_a_provider(tmp_path, monkeypatch):
+@pytest.mark.parametrize("permissions", [None, "network", {}, 0, ["network", "network"], [None], [[]]])
+def test_invalid_permissions_are_rejected(tmp_path, permissions):
+    assert plugin._parse_manifest(record(permissions=permissions), tmp_path) is None
+
+
+@pytest.mark.parametrize("field", ["uses", "provides"])
+@pytest.mark.parametrize("value", [None, "", False, 0, {}])
+def test_invalid_service_declaration_containers_are_rejected(tmp_path, field, value):
+    assert plugin._parse_manifest(record(**{field: value}), tmp_path) is None
+
+
+@pytest.mark.parametrize("field", ["label", "description", "group_label"])
+@pytest.mark.parametrize("value", [None, "", [], False])
+def test_invalid_localized_metadata_containers_are_rejected(tmp_path, field, value):
+    assert plugin._parse_manifest(record(**{field: value}), tmp_path) is None
+
+
+@pytest.mark.parametrize("extra", [
+    {"label": {"zh": "名称\n伪造提示"}}, {"group_label": {"en": "Name\x1b[31m"}},
+    {"icon": "\x1b[2J"}, {"group_icon": ["icon"]}, {"label": {"en": "x" * 257}},
+])
+def test_menu_metadata_rejects_terminal_controls_and_invalid_types(tmp_path, extra):
+    assert plugin._parse_manifest(record(**extra), tmp_path) is None
+
+
+def test_old_sdk_is_not_discovered_and_its_files_are_preserved(tmp_path, monkeypatch):
     from core import plugin_services
-    from plugin import commands
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path / "plugins"))
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     root = tmp_path / "plugins"
@@ -44,58 +66,10 @@ def test_legacy_inventory_is_visible_but_not_executable_or_a_provider(tmp_path, 
     with closing(plugin_inspection.ContentInspector()) as reader:
         all_items = reader.inventory(root, timeout=30)
         providers = reader.inventory(root, select="service", value="storage", timeout=30)
-    old = next(item for item in all_items if item.name == "demo")
-    assert old.api_version == 3 and old.uses == [{"service": "other", "source": ""}]
+    assert [item.name for item in all_items] == ["provider"]
     assert [item.name for item in providers] == ["provider"]
     assert plugin_services._find_provider("storage").root == current
-    assert plugin.load_plugin(old) is None
-    with pytest.raises(plugin_sandbox.SandboxError):
-        plugin_sandbox.check_authorization(old)
-    with pytest.raises(ValueError):
-        commands.grant_trust(old)
     assert legacy.is_dir()
-
-
-def test_legacy_plugin_can_update_from_its_exact_receipted_source(tmp_path, monkeypatch):
-    from core import native_acquisition, plugin_trust
-    from core.plugin_install_receipt import content_receipt
-    from plugin import commands
-    root = tmp_path / "plugins"
-    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
-    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
-    old = write_plugin(root, "old", record(3))
-    candidate = write_plugin(tmp_path, "candidate", record(4, version="1.1.0"))
-    source = "https://example.invalid/demo.git"
-    plugin_trust.grant("demo", plugin_trust.compute_fingerprint(old), "1.0.0", source, "main",
-                       installation_receipt=content_receipt(old), source_commit="a" * 40)
-
-    def acquire(actual_source, destination, **kwargs):
-        assert actual_source == source and kwargs["branch"] == "main"
-        shutil.copytree(candidate, destination)
-        return SimpleNamespace(receipt=content_receipt(destination), source=source, commit="b" * 40)
-
-    monkeypatch.setattr(native_acquisition, "populate", acquire)
-    legacy = next(item for item in commands.manifests() if item.name == "demo")
-    assert commands.update(legacy) == (True, "updated")
-    upgraded = plugin.load_manifest(old)
-    assert upgraded is not None and upgraded.api_version == 4 and upgraded.version == "1.1.0"
-    assert plugin_trust.trusted_record("demo")["fingerprint"] == ""
-    assert plugin_trust.trusted_record("demo")["source"] == source
-
-
-def test_removing_legacy_plugin_keeps_its_data(tmp_path, monkeypatch):
-    from plugin import commands
-    root, data = tmp_path / "plugins", tmp_path / "data"
-    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
-    monkeypatch.setenv("OPSKIT_DATA_DIR", str(data))
-    old = write_plugin(root, "old", record(3))
-    state = data / "plugin-data" / "demo" / "self"
-    state.mkdir(parents=True)
-    (state / "user.json").write_text("keep", encoding="utf-8")
-    legacy = next(item for item in commands.manifests() if item.name == "demo")
-    commands.remove(legacy)
-    assert not old.exists()
-    assert (state / "user.json").read_text(encoding="utf-8") == "keep"
 
 
 def test_select_and_pagination_map_custom_keys_to_items(monkeypatch):
@@ -206,6 +180,21 @@ def test_worker_ui_preserves_sdk_signature_and_normalizes_cancellation(monkeypat
     assert sdk.host_asar_directories("root", "file", "dir") == []
     assert calls[-1][0] == "host.asar_directories"
     assert PLUGIN_API_VERSION == sdk.SDK_API_VERSION == 4
+
+
+def test_worker_state_namespace_requires_exact_plugin_identity(monkeypatch, tmp_path):
+    from core import paths
+    for name in sdk.__all__:
+        monkeypatch.setattr(sdk, name, getattr(sdk, name))
+    for name in ("select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"):
+        monkeypatch.setattr(prompt, name, getattr(prompt, name))
+    for name in ("plugin_data_dir", "plugins_dir"):
+        monkeypatch.setattr(paths, name, getattr(paths, name))
+    monkeypatch.setattr(plugin_worker, "_data_root", lambda: tmp_path)
+    plugin_worker._adapt_sdk("my_plugin")
+    assert sdk.plugin_data_dir("my_plugin") == tmp_path / "state"
+    with pytest.raises(PermissionError):
+        sdk.plugin_data_dir("my-plugin")
 
 
 def test_developer_guide_covers_every_sdk_export():

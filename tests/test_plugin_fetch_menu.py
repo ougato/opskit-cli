@@ -14,6 +14,17 @@ def test_remote_does_not_show_access_menu(monkeypatch, source):
 
 def test_local_does_not_prompt(tmp_path):
     assert menu._fetch_options(str(tmp_path)) == {}
+    assert menu._fetch_options(str(tmp_path), user_entered=True) == {}
+
+
+@pytest.mark.parametrize("source", ["https://example.com/team/repo", "git@example.com:team/repo"])
+def test_user_entered_install_allows_only_this_acquisition(monkeypatch, source):
+    calls = []
+    monkeypatch.setattr(menu.commands, "install", lambda *args, **kwargs: calls.append((args, kwargs)))
+    menu._install_with_progress(source)
+    assert calls[0][0][0] == source
+    assert calls[0][1]["allow_private"] is True
+    assert menu._fetch_options(source) == {"fetch_interaction": menu._fetch_interaction}
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
@@ -23,6 +34,7 @@ def test_private_confirmation_is_scoped(monkeypatch, language, approved):
     def confirm(**kw):
         assert kw["info_lines"] == ["ssh://git@example.com:22/team/repo"]
         assert kw["prompt"] == i18n.t("plugin_native.fetch_private_confirm")
+        assert kw["require_explicit"] is True
         return approved
     monkeypatch.setattr(menu, "confirm", confirm)
     assert menu._fetch_interaction("ssh://git@example.com:22/team/repo", "fetch_private_denied") is approved

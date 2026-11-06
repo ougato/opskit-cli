@@ -102,15 +102,15 @@ def test_missing_inventory_then_added_and_changed_same_reader(tmp_path):
 
 
 def test_inventory_total_is_not_truncated_to_single_manifest_transport_limit(tmp_path):
-    label = "中" * 200000
-    assert len(label.encode("utf-8")) * 15 > inspection.MANIFEST_RESPONSE_LIMIT
+    description = "中" * 200000
+    assert len(description.encode("utf-8")) * 15 > inspection.MANIFEST_RESPONSE_LIMIT
     for index in range(15):
-        make_plugin(tmp_path, f"item_{index:02d}", f"item_{index:02d}", label={"zh": label})
+        make_plugin(tmp_path, f"item_{index:02d}", f"item_{index:02d}", description={"zh": description})
     with closing(inspection.ContentInspector()) as reader:
         manifests = reader.inventory(tmp_path, timeout=30)
         pid = reader.pid
     assert [m.name for m in manifests] == [f"item_{index:02d}" for index in range(15)]
-    assert all(m.label == {"zh": label} for m in manifests)
+    assert all(m.description == {"zh": description} for m in manifests)
     assert not psutil.pid_exists(pid)
 
 

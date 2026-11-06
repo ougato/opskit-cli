@@ -1,6 +1,8 @@
 """插件工具菜单 — 常驻主菜单：插件管理（安装 / 更新 / 卸载）+ 已安装插件入口（热插拔）"""
 from __future__ import annotations
 
+from rich.markup import escape
+
 from core.i18n import current_lang, t
 from core.prompt import select, text_input, confirm, pause, clear_screen, print_header, UserCancel, console
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
@@ -74,7 +76,7 @@ def _entry() -> None:
                 label = info.label or info.key
             else:
                 icon, label = _group_display(groups[payload])
-            choices.append({"key": str(i + 2), "label": f"{icon} {label}"})
+            choices.append({"key": str(i + 2), "label": f"{escape(icon)} {escape(label)}"})
         preload = None
         candidate = items[0][1] if items and items[0][0] == "plugin" else None
         def prepare():
@@ -141,7 +143,7 @@ def _group_menu(group_id: str) -> None:
         for i, (_manifest, info) in enumerate(members):
             icon = info.icon or get_icon("plugin")
             label = info.label or info.key
-            choices.append({"key": str(i + 1), "label": f"{icon} {label}"})
+            choices.append({"key": str(i + 1), "label": f"{escape(icon)} {escape(label)}"})
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin"), group_label],
@@ -230,27 +232,40 @@ def _summary_lines(manifest) -> list[str]:
     """信任确认界面展示的插件概要（名称 / 版本 / 形态 / 权限声明）"""
     perms = ", ".join(manifest.permissions) if manifest.permissions else t("plugin.perm_none")
     return [
-        f"{t('plugin.col_name')}: {_display_name(manifest)}",
-        f"{t('plugin.col_version')}: {manifest.version}",
-        f"{t('plugin.col_kind')}: {manifest.kind}",
-        f"{t('plugin.col_perms')}: {perms}",
+        f"{t('plugin.col_name')}: {escape(_display_name(manifest))}",
+        f"{t('plugin.col_version')}: {escape(manifest.version)}",
+        f"{t('plugin.col_kind')}: {escape(manifest.kind)}",
+        f"{t('plugin.col_perms')}: {escape(perms)}",
     ]
 
 
-def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool:
+def confirm_trust(manifest, source: str = "", branch: str | None = None, *, prompt_override: str = "") -> bool:
     """展示概要 + 用户确认信任，确认后记录指纹。"""
     from core.constants import PLUGIN_API_VERSION
     if manifest.api_version != PLUGIN_API_VERSION:
         print_error(t("plugin_native.errors.sdk_required"))
         return False
+    record = commands.trusted_record(manifest.name) or {}
+    shown_source = source or record.get("source", "")
+    shown_branch = branch if branch is not None else record.get("branch")
+    fingerprint = commands.compute_fingerprint(manifest.root)
+    if not fingerprint:
+        raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
+    lines = _summary_lines(manifest)
+    if shown_source:
+        lines.append(f"{t('plugin.col_source')}: {escape(shown_source)}")
+    if shown_branch:
+        lines.append(f"{t('plugin.col_branch')}: {escape(shown_branch)}")
+    lines.append(f"{t('plugin.col_fingerprint')}: {fingerprint}")
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-        prompt=t("plugin.trust_confirm", name=_display_name(manifest)),
+        prompt=prompt_override or t("plugin.trust_confirm", name=_display_name(manifest)),
         theme_key=_THEME_KEY,
-        info_lines=_summary_lines(manifest),
+        info_lines=lines,
+        require_explicit=True,
     ):
         return False
-    commands.grant_trust(manifest, source, branch)
+    commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
     return True
 
 
@@ -308,15 +323,16 @@ def _confirm_install(manifest, source, branch=None):
 
 
 def _install_with_progress(url, branch=None, alias=None):
+    """Install the source the user just submitted in the install menu."""
     from core.installation_progress import InstallationProgress
-    options = _fetch_options(url)
+    options = _fetch_options(url, user_entered=True)
     with InstallationProgress() as progress:
         if "fetch_interaction" in options:
             options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
         return commands.install(url, branch, alias, automatic=True, progress=progress, **options)
 
 
-def _fetch_options(source):
+def _fetch_options(source, *, user_entered=False):
     """Defer exceptional authentication/network prompts until transport needs them."""
     from core.native_acquisition import source_identity
     if not source:
@@ -328,15 +344,17 @@ def _fetch_options(source):
     except ValueError:
         print_error(t("plugin_native.lifecycle.repository_invalid"))
         raise UserCancel() from None
-    return {"fetch_interaction": _fetch_interaction}
+    options = {"fetch_interaction": _fetch_interaction}
+    if user_entered:
+        options["allow_private"] = True
+    return options
 
 
 def _fetch_interaction(source, code):
-    from rich.markup import escape
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
     if code == "fetch_private_denied":
         return confirm(breadcrumb=crumb, prompt=t("plugin_native.fetch_private_confirm"),
-                       info_lines=[escape(source)], theme_key=_THEME_KEY)
+                       info_lines=[escape(source)], theme_key=_THEME_KEY, require_explicit=True)
     profile = text_input(breadcrumb=crumb, prompt=t("plugin_native.fetch_profile_prompt"),
                          hint=t("plugin_native.fetch_credentials_hint"), theme_key=_THEME_KEY).strip()
     if not profile:
@@ -373,10 +391,8 @@ def _manifest_group_display(members) -> tuple[str, str]:
 
 
 def _manifest_item(m) -> str:
-    from core.constants import PLUGIN_API_VERSION
     lang = current_lang()
-    status = f" ({t('plugin.needs_upgrade')})" if m.api_version != PLUGIN_API_VERSION else ""
-    return f"{m.icon or get_icon('plugin')} {m.display_label(lang) or m.name}{status}"
+    return f"{escape(m.icon or get_icon('plugin'))} {escape(m.display_label(lang) or m.name)}"
 
 
 def _display_name(m) -> str:
@@ -444,7 +460,7 @@ def _pick(subtitle_key: str, all_label: str = ""):
                 label = _manifest_item(payload)
             else:
                 icon, name = _manifest_group_display(groups[payload])
-                label = f"{icon} {name}"
+                label = f"{escape(icon)} {escape(name)}"
             choices.append({"key": str(i + 1), "label": label})
         try:
             key = select(
@@ -478,8 +494,7 @@ def _update_all() -> None:
     clear_screen()
     print_header(crumb)
     for manifest in commands.manifests():
-        from core.constants import PLUGIN_API_VERSION
-        if manifest.api_version == PLUGIN_API_VERSION and commands.trust_status(manifest) != commands.TRUST_OK:
+        if commands.trust_status(manifest) != commands.TRUST_OK:
             declined = not confirm_trust(manifest)
             clear_screen()
             print_header(crumb)
@@ -521,8 +536,7 @@ def _update() -> None:
         _update_all()
         return
     # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
-    from core.constants import PLUGIN_API_VERSION
-    if manifest.api_version == PLUGIN_API_VERSION and commands.trust_status(manifest) != commands.TRUST_OK:
+    if commands.trust_status(manifest) != commands.TRUST_OK:
         if not confirm_trust(manifest):
             print_error(t("plugin.trust_declined", name=_display_name(manifest)))
             pause()
@@ -554,19 +568,14 @@ def _update() -> None:
         return
     if msg == "downgrade":
         try:
-            agreed = confirm(
-                breadcrumb=crumb,
-                prompt=t("plugin.downgrade_confirm", old=old_version, new=refreshed.version),
-                theme_key=_THEME_KEY,
-                info_lines=_summary_lines(refreshed),
-            )
+            agreed = confirm_trust(refreshed, prompt_override=t(
+                "plugin.downgrade_confirm", name=_display_name(refreshed), old=old_version, new=refreshed.version))
         except UserCancel:
             agreed = False
         if not agreed:
             print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
             pause()
             return
-        commands.grant_trust(refreshed)
         clear_screen()
         print_header(crumb)
     if commands.trust_status(refreshed) == commands.TRUST_OK or confirm_trust(refreshed):

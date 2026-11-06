@@ -86,8 +86,7 @@ def _adapt_sdk(name: str):
         setattr(prompt, method, call)
 
     def owned_data(namespace: str) -> Path:
-        # Legacy namespace is an alias only; it cannot select another owner.
-        if namespace not in {name, name.replace("_", "-")}:
+        if namespace != name:
             raise PermissionError("plugin namespace belongs to another identity")
         return _data_root() / "state"
 

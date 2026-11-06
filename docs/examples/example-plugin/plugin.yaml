@@ -1,0 +1,10 @@
+name: example
+version: 1.0.0
+api_version: 4
+kind: python
+entry: example_plugin
+platforms: [windows]
+permissions: []
+label:
+  zh: 示例工具
+  en: Example tool

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+import logging
+import hmac
 import shutil
 import stat
 import tempfile
@@ -33,6 +35,22 @@ _URL_NAME_PATTERN = re.compile(r"([^/\\]+?)(?:\.git)?[/\\]?$")
 _SCP_URL_PATTERN = re.compile(r"^[^@\s]+@[^:\s]+:(?P<path>.+)$")
 _INSTALL_DIR_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 _REMOTE_URL_SCHEMES = {"http", "https", "ssh", "git", "file"}
+
+
+def _log_install_failure(phase: str, exc: Exception) -> None:
+    """Record useful diagnostics without logging source URLs or exception data."""
+    category = next((kind.__name__ for kind in (PermissionError, FileNotFoundError,
+                    TimeoutError, OSError, ValueError, TypeError, RuntimeError)
+                     if isinstance(exc, kind)), "unexpected")
+    location = "unknown"
+    traceback = exc.__traceback__
+    while traceback is not None:
+        module = traceback.tb_frame.f_globals.get("__name__", "")
+        if module.startswith(("core.", "plugin.")):
+            location = f"{module}:{traceback.tb_lineno}"
+        traceback = traceback.tb_next
+    logging.getLogger("opskit.plugin.install").warning(
+        "Plugin installation failed: phase=%s category=%s location=%s", phase, category, location)
 
 _installation_lock = ResourceLock(lambda: plugins_dir() / ".installation.lock", label="plugin installation")
 
@@ -179,14 +197,22 @@ def trust_status(manifest: PluginManifest) -> str:
     return TRUST_NONE
 
 
-def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None) -> None:
+def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None, *,
+                expected_fingerprint: str | None = None) -> None:
     """记录用户对插件当前内容的信任（branch 为 None 时沿用已存分支）"""
     if manifest.api_version != PLUGIN_API_VERSION:
         raise ValueError(t("plugin_native.errors.sdk_required"))
     record = trusted_record(manifest.name)
     if not source and record is not None:
         source = str(record.get("source", ""))
-    grant(manifest.name, compute_fingerprint(manifest.root), manifest.version, source, branch)
+    fingerprint = compute_fingerprint(manifest.root)
+    if (not fingerprint or expected_fingerprint is not None
+            and not hmac.compare_digest(fingerprint, expected_fingerprint)):
+        raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
+    grant(manifest.name, fingerprint, manifest.version, source, branch)
+    if expected_fingerprint is not None and compute_fingerprint(manifest.root) != fingerprint:
+        invalidate(manifest.name)
+        raise ValueError(t("plugin_native.lifecycle.changed"))
 
 
 def is_trusted_source(url: str) -> bool:
@@ -244,6 +270,7 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
     work = Path(tempfile.mkdtemp(prefix=".opskit-install-", dir=dest.parent))
     owned = work.lstat()
     staging = work / "payload"
+    phase = "preparation"
     try:
         from core.native_acquisition import populate
         from core.native_sandbox import NativeSandboxError
@@ -257,7 +284,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
                 raise NativeSandboxError("fetch_setup_failed") from None
         if progress:
             progress("fetch", branch or "")
+        phase = "acquisition"
         acquired = populate(url, staging, branch=branch, fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
+        phase = "validation"
         manifest = load_manifest(staging)
         if manifest is None:
             return None, "no_manifest"
@@ -285,6 +314,7 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
                     raise NativeSandboxError("runtime_setup_failed") from None
             # Fail closed before making content discoverable, including stale trust
             # from an earlier installation of the same name. This grants nothing.
+            phase = "publication"
             grant(manifest.name, "", manifest.version, acquired.source, branch,
                   installation_receipt=acquired.receipt, source_commit=acquired.commit)
             payload_identity = staging.lstat()
@@ -306,7 +336,10 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
         if isinstance(exc, UserCancel):
             raise
         from core.native_sandbox import NativeSandboxError
-        return None, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.acquisition_failed")
+        if isinstance(exc, NativeSandboxError):
+            return None, str(exc)
+        _log_install_failure(phase, exc)
+        return None, t("plugin_native.errors.acquisition_failed")
     finally:
         # Never roll back dest: it may belong to a concurrent writer. The private
         # wrapper is our only cleanup target; replacement means retain and report.

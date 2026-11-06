@@ -91,7 +91,8 @@ def block_selected_manifest_session(connection, buffer, length, requested):
 
 
 def test_complete_large_manifest_and_small_requests_share_fresh_reader(tmp_path, monkeypatch):
-    cases = [{}, {"description": {"en": "x" * 100000}}, {"label": {"zh": "中" * 200000}},
+    cases = [{}, {"description": {"en": "x" * 100000}}, {"description": {"zh": "中" * 200000}},
+             {"label": {"zh": "示例"}},
              {"kind": "exec", "entry": {"linux": "bin/changed", "windows": "changed.exe"}},
              {"provides": ["storage"], "service_contracts": {"storage": {"api_version": 7, "methods": ["read"]}},
               "uses": [{"service": "other", "provider": "second", "api_version": 2, "methods": ["get"]}]}]
@@ -188,6 +189,7 @@ def test_next_chunk_blocked_uses_same_deadline_and_reaps(tmp_path, monkeypatch, 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_invocation_manifest_stages_reap_before_container_start(tmp_path, monkeypatch,
                                                              expire_worker_after_marker, stage, cancel):
+    from contextlib import nullcontext
     from network import worker
     from core.plugin_trust import compute_fingerprint, grant
     root = tmp_path / "plugin"
@@ -198,8 +200,10 @@ def test_invocation_manifest_stages_reap_before_container_start(tmp_path, monkey
     monkeypatch.setenv("OPSKIT_TEST_MANIFEST_BLOCK_STAGE", stage)
     monkeypatch.setenv("OPSKIT_TEST_MANIFEST_BLOCK_MARKER", str(marker))
     monkeypatch.setattr(inspection, "_inspection_session", block_selected_manifest_session)
-    from core.plugin_workspace import allocate
-    lease = SimpleNamespace(labels=[], allocate_workspace=allocate)
+    # Runtime preparation is independently supervised; this test stops at the
+    # manifest reader and must not require a prepared executable runtime.
+    monkeypatch.setattr("core.native_invocation.prepare_runtime",
+                        lambda *args, **kwargs: nullcontext(lambda: pytest.fail("runtime was consumed")))
     if cancel:
         def clock():
             if marker.exists():
