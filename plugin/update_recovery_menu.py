@@ -27,7 +27,7 @@ def entry():
         details = [t("plugin_native.update_recovery.details", plugin=escape(item["plugin"]),
                      directory=escape(item["directory"]), transaction=item["transaction"],
                      digest=item["record_sha256"])]
-        if confirm(breadcrumb, t("plugin_native.update_recovery.confirm"), info_lines=details):
+        if confirm(breadcrumb, t("confirm_ui.rollback"), info_lines=[*details, t("confirm_ui.rollback_detail")]):
             recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.update_recovery.completed"))
             pause()

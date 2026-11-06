@@ -355,7 +355,7 @@ def install_ohmyzsh(*, with_p10k: bool | None = None, switch_shell: bool = True)
     # 安装前询问是否安装 Powerlevel10k。
     if with_p10k is None:
         try:
-            with_p10k = confirm(breadcrumb=base, prompt=t("ohmyzsh.confirm_p10k"), theme_key="software")
+            with_p10k = confirm(breadcrumb=base, prompt=t("confirm_ui.theme"), info_lines=["Powerlevel10k"], theme_key="software")
         except UserCancel:
             return {"installed": False}
 
@@ -425,8 +425,8 @@ def uninstall_ohmyzsh() -> None:
         return
 
     try:
-        if not confirm(breadcrumb=base, prompt=t("uninstall.confirm", name=t("software.ohmyzsh")),
-                       theme_key="software"):
+        if not confirm(breadcrumb=base, prompt=t("confirm_ui.remove"),
+                       info_lines=[t("software.ohmyzsh"), t("confirm_ui.irreversible")], theme_key="software"):
             return
     except UserCancel:
         return

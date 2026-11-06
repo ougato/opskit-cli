@@ -27,9 +27,10 @@ def test_confirmed_profile_requires_explicit_confirmation(language, monkeypatch,
         return "1"
 
     def confirm(breadcrumb, title, **kwargs):
-        key = "confirm_removed" if phase == "removed" else "confirm"
-        assert title == i18n.t("plugin_native.profile_recovery." + key)
-        assert all(item[key] in kwargs["info_lines"][0]
+        key = "profile_record" if phase == "removed" else "profile"
+        assert title == i18n.t("confirm_ui." + key)
+        assert kwargs["info_lines"][0] == i18n.t("confirm_ui." + key + "_detail")
+        assert all(item[key] in kwargs["info_lines"][1]
                    for key in ("transaction", "profile", "record_sha256"))
         return approved
 

@@ -239,7 +239,7 @@ def _summary_lines(manifest) -> list[str]:
     ]
 
 
-def confirm_trust(manifest, source: str = "", branch: str | None = None, *, prompt_override: str = "") -> bool:
+def confirm_trust(manifest, source: str = "", branch: str | None = None, *, additional_detail: str = "") -> bool:
     """展示概要 + 用户确认信任，确认后记录指纹。"""
     from core.constants import PLUGIN_API_VERSION
     if manifest.api_version != PLUGIN_API_VERSION:
@@ -252,6 +252,9 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None, *, prom
     if not fingerprint:
         raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
     lines = _summary_lines(manifest)
+    if additional_detail:
+        lines.append(additional_detail)
+    lines.append(t("confirm_ui.trust_detail"))
     if shown_source:
         lines.append(f"{t('plugin.col_source')}: {escape(shown_source)}")
     if shown_branch:
@@ -259,7 +262,7 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None, *, prom
     lines.append(f"{t('plugin.col_fingerprint')}: {fingerprint}")
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-        prompt=prompt_override or t("plugin.trust_confirm", name=_display_name(manifest)),
+        prompt=t("confirm_ui.trust"),
         theme_key=_THEME_KEY,
         info_lines=lines,
         require_explicit=True,
@@ -353,8 +356,8 @@ def _fetch_options(source, *, user_entered=False):
 def _fetch_interaction(source, code):
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
     if code == "fetch_private_denied":
-        return confirm(breadcrumb=crumb, prompt=t("plugin_native.fetch_private_confirm"),
-                       info_lines=[escape(source)], theme_key=_THEME_KEY, require_explicit=True)
+        return confirm(breadcrumb=crumb, prompt=t("confirm_ui.private_connection"),
+                       info_lines=[escape(source), t("confirm_ui.private_detail")], theme_key=_THEME_KEY, require_explicit=True)
     profile = text_input(breadcrumb=crumb, prompt=t("plugin_native.fetch_profile_prompt"),
                          hint=t("plugin_native.fetch_credentials_hint"), theme_key=_THEME_KEY).strip()
     if not profile:
@@ -583,8 +586,8 @@ def _update() -> None:
         return
     if msg == "downgrade":
         try:
-            agreed = _confirm_update_trust(refreshed, prompt_override=t(
-                "plugin.downgrade_confirm", name=_display_name(refreshed), old=old_version, new=refreshed.version))
+            agreed = _confirm_update_trust(refreshed, additional_detail=t(
+                "confirm_ui.downgrade_detail", old=old_version, new=refreshed.version))
         except UserCancel:
             agreed = False
         if agreed is None:
@@ -614,8 +617,9 @@ def _remove() -> None:
         return
     if not confirm(
         breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-        prompt=t("plugin.remove_confirm", name=_display_name(manifest)),
+        prompt=t("confirm_ui.uninstall"),
         theme_key=_THEME_KEY,
+        info_lines=[escape(_display_name(manifest)), t("confirm_ui.plugin_delete")],
     ):
         return
     from core.resource_lock import ResourceBusyError

@@ -31,8 +31,8 @@ def entry():
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(candidates):
             return
         item = candidates[int(key) - 1]
-        if confirm(breadcrumb, t(prefix + "confirm"), info_lines=[
-                t(prefix + "details", catalog=t(prefix + kind), object=item["object"],
+        if confirm(breadcrumb, t("confirm_ui.cache"), info_lines=[
+                t("confirm_ui.cache_detail"), t(prefix + "details", catalog=t(prefix + kind), object=item["object"],
                   digest=item["record_sha256"])]):
             cleanup.collect(kind, item["object"], item["record_sha256"])
             print_success(t(prefix + "completed"))

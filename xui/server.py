@@ -243,8 +243,8 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
         return True
     print_warning(t("xui.output.no_systemd"))
     if not is_wsl():
-        return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
-    if confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.enable_confirm")):
+        return confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.continue"), info_lines=[t("confirm_ui.continue_detail")])
+    if confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.connect_wsl"), info_lines=[t("confirm_ui.connect_wsl_detail")]):
         _enable_wsl_systemd()
         if shutil.which(WSL_EXE_COMMAND):
             print_success(t("xui.wsl.restarting"))
@@ -253,7 +253,7 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
             print_success(t("xui.wsl.enabled"))
             pause()
         return False
-    return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
+    return confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.continue"), info_lines=[t("confirm_ui.continue_detail")])
 
 
 def install_server(options: dict | None = None) -> dict | None:
@@ -280,7 +280,7 @@ def install_server(options: dict | None = None) -> dict | None:
     if panel_port == vless_port:
         raise InstallError(t("xui.error.port_conflict"))
 
-    if options is None and not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
+    if options is None and not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.xui"), info_lines=[t("confirm_ui.xui_detail")]):
         return
 
     if options is None and not _precheck_systemd(breadcrumb):

@@ -55,17 +55,14 @@ plugin:
   update_latest: "{name} 已是最新版本"
   update_failed: "更新失败（{error}）"
   update_not_git: "{name} 非 git 仓库，无法更新"
-  remove_confirm: "卸载 {name}，删除其目录？"
   remove_success: "插件 {name} 已卸载"
   entry_failed: "插件 {name} 异常退出（{error}）"
   col_perms: "权限"
   perm_none: "未声明"
-  trust_confirm: "信任并启用 {name}？插件运行于沙盒，授权的宿主工具以当前用户权限运行。"
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
   source_warning: "来源不在可信来源白名单，代码未经审查"
   update_tampered: "插件 {name} 内容与发布清单 CHECKSUMS.yaml 不符，可能被篡改，已拒绝加载"
-  downgrade_confirm: "{name} 版本回退 {old} → {new}，确认信任并加载？插件运行于沙盒，授权的宿主工具以当前用户权限运行。"
 
 install:
   progress: "[{step}/{total}] {desc}..."
@@ -74,13 +71,9 @@ install:
   retry: "网络异常，第 {n}/{max} 次重试..."
   already: "{name} 已安装（{version}）"
   checking: "检测 {name}..."
-  confirm: "确认安装 {name} {version}？"
 
 uninstall:
   failed: "{name} 卸载失败：{error}"
-  confirm: "卸载 {name}，无法恢复？"
-  confirm_version: "卸载 {name} {version}，无法恢复？"
-  confirm_all: "卸载全部 {name}，无法恢复？"
   success: "{name} 卸载成功"
   not_found: "{name} 未安装"
 
@@ -162,7 +155,6 @@ software:
   select_version: "选择版本"
   recommended: "推荐"
   current: "当前"
-  reinstall_confirm: "已安装，是否重新安装？"
   switch: "切换"
   switch_success: "已切换到 {name} {version}"
   already_latest: "当前已是最新版本 {version}，无可升级版本"
@@ -334,7 +326,6 @@ deps:
   conflict_title: "版本冲突"
   conflict_desc: "{dep} 当前 {current}，需要 >={required}"
   conflict_hint: "升级可能影响系统中依赖此版本的其他程序，新版将通过 apt/pyenv 并行安装（不替换系统默认版本）"
-  confirm_upgrade: "是否继续安装 {dep} {required}（隔离安装）？"
   user_cancel: "用户取消：依赖 '{dep}' 版本不满足（需 >={required}，当前 {current}）"
   version_mismatch: "依赖 '{dep}' 版本不满足（需 >={required}，当前 {current}），安装已取消"
   installing: "安装依赖 {dep} {target}..."
@@ -374,13 +365,9 @@ xui:
     vless_port: "VLESS 端口（默认 {default}）"
     sni: "REALITY SNI（默认 {default}）"
     dest: "REALITY dest（默认 {default}）"
-  confirm:
-    install: "确认安装并创建 X-UI 节点？"
   wsl:
-    enable_confirm: "WSL 无 systemd，自动开启并重启？"
     restarting: "已开启 systemd，正在重启 WSL\n↳ 重启后重开终端重新安装即可"
     enabled: "已开启 systemd\n↳ 在 Windows 执行 wsl --shutdown 重启 WSL 后重新安装"
-    continue_confirm: "不开启服务无法启动，仍要继续？"
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"
@@ -458,7 +445,6 @@ xui:
     down: "↓"
 
 ohmyzsh:
-  confirm_p10k: "是否同时安装 Powerlevel10k 主题？"
   installed_mark: "已安装"
   step:
     check_env: "检查 zsh 环境..."
@@ -595,7 +581,6 @@ wireguard:
   check_port_fail: "无法连接 {ip}:{port}（TCP），请检查云厂商安全组是否已开放该端口"
   check_port_continue: "端口不可达，是否忽略警告继续安装？"
   port_443_other_occupied: "⚠️  严重警告：443 端口当前被 {proc} 占用！本程序必须独占 443 端口运行 nginx TLS，继续安装将强制终止该进程，可能造成服务中断或数据丢失"
-  port_443_other_confirm: "确认强制继续安装并释放 443 端口？此操作不可逆 [y/N]"
   port_443_other_abort: "已取消安装，请先手动释放 443 端口后重试"
   port_443_nginx_auto: "检测到 nginx 已运行并监听 443，将自动追加本程序配置，不修改你的任何现有站点"
   server_ip_required: "公网服务端 IP 不能为空"
@@ -860,7 +845,6 @@ plugin_native:
   disk:
     menu: 空间设置
     minimum: 最低剩余空间（MiB，256..1048576）
-    confirm: 保存空间阈值？这是剩余空间检查，不是磁盘硬配额。
     saved: 空间阈值已保存。
     failed: 空间设置被拒绝，请检查配置和剩余容量。
     details: 最低剩余：{minimum} MiB；不提供磁盘硬配额。
@@ -878,7 +862,6 @@ plugin_native:
     empty: "未发现有归属记录且未被当前版本引用的缓存对象。"
     select: "选择缓存"
     details: "缓存：{catalog}\n对象：{object}\n归属记录 SHA256：{digest}"
-    confirm: "删除这项闲置缓存？活动读取、当前版本引用或身份变化都会阻止删除。"
     completed: "已删除所选闲置缓存对象。"
   workspace_recovery:
     menu: 临时清理
@@ -886,7 +869,6 @@ plugin_native:
     uncertain: "无效的临时目录记录已保留，需人工检查。"
     select: "选择目录"
     details: "目录：{directory}\n事务：{transaction}\n记录 SHA256：{digest}"
-    confirm: "在无活动任务占用时删除此临时目录？记录的父目录和目录身份必须仍然匹配。"
     completed: "已删除记录中的原生沙盒临时目录及其恢复记录。"
   profile_recovery:
     menu: 沙盒清理
@@ -894,9 +876,7 @@ plugin_native:
     uncertain: "未确认或无效的配置记录已保留，需人工检查，不能作为删除依据。"
     select: "选择沙盒"
     details: "配置：{profile}\n事务：{transaction}\n记录 SHA256：{digest}"
-    confirm: "在无活动任务占用时删除这项配置？记录的身份和目录必须仍然匹配。"
     completed: "记录中的闲置原生沙盒配置已删除。"
-    confirm_removed: "这项配置已确认删除，是否仅清理残留记录？不会再次删除任何配置。"
     completed_removed: "已清理删除完成后的残留记录。"
   update_recovery:
     menu: 更新回滚
@@ -904,7 +884,6 @@ plugin_native:
     invalid: "部分更新目录的记录缺失或无效，已保留，需人工检查。"
     select: "选择更新"
     details: "插件：{plugin}\n目录：{directory}\n事务：{transaction}\n记录 SHA256：{digest}"
-    confirm: "恢复记录中的旧版本？将撤销信任，并保留全部恢复证据。"
     completed: "旧版本已恢复，信任仍为撤销状态，全部恢复证据已保留。"
   task:
     cancel_hint: "任务进行中，可按 Esc 或 Ctrl+C 取消；取消后不会提交插件状态。"
@@ -916,7 +895,6 @@ plugin_native:
     tools: "正在检查安装环境…"
     repair: "正在准备隔离 Python 环境…"
     runtime: "正在准备插件运行环境…"
-  fetch_private_confirm: "仓库地址指向内网或保留地址。确认允许本次连接？"
   fetch_credentials_hint: "本机认证不可用或服务器身份未验证。请提供绑定此仓库、包含已核实服务器密钥的凭据文件；留空取消。"
   fetch_profile_prompt: "仓库凭据文件路径"
   fetch_profile_help: "私有凭据文件：绑定完整仓库地址，不保存或复用"
@@ -929,7 +907,6 @@ plugin_native:
   lock_file_help: "已审核且包含 SHA256 哈希的完整依赖锁文件"
   no_grants: "尚未保存任何永久宿主权限。"
   select_grant: "选择权限"
-  revoke_confirm: "撤销 {plugin} 的这项权限？"
   revoked: "权限已撤销，正在使用的单次授权也已失效。"
   prepare_help: "使用私有 Python 目录和锁定的离线 wheel 准备原生沙盒运行时"
   permissions: "插件权限"
@@ -1042,4 +1019,45 @@ plugin_native:
     authorize_service_help: "批准调用方声明的指定服务契约"
     revoke_service_help: "撤销一项服务调用授权，保留插件自身的信任授权"
     update_rejected: "插件更新被拒绝：{status}"
-    remove_confirm: "移除插件 {name}？（保留状态数据）"
+
+confirm_ui:
+  uninstall: 卸载插件
+  plugin_delete: 插件目录将被删除，状态数据保留。
+  trust: 信任插件
+  trust_detail: 插件运行于沙盒，授权的宿主工具以当前用户权限运行。
+  private_connection: 允许连接
+  private_detail: 仓库地址指向内网或保留地址，仅允许本次连接。
+  revoke: 撤销权限
+  install: 确认安装
+  reinstall: 重新安装
+  remove: 确认卸载
+  remove_all: 卸载全部
+  irreversible: 此操作无法恢复。
+  upgrade: 确认升级
+  dependency: 安装依赖
+  save: 保存设置
+  disk_detail: 这是剩余空间检查，不是磁盘硬配额。
+  cache: 清理缓存
+  cache_detail: 活动读取、当前版本引用或身份变化都会阻止删除。
+  workspace: 清理目录
+  workspace_detail: 仅在无活动任务占用、记录的父目录和目录身份仍匹配时删除。
+  profile: 清理沙盒
+  profile_detail: 仅在无活动任务占用、记录的身份和目录仍匹配时删除。
+  profile_record: 清理记录
+  profile_record_detail: 配置已删除，仅清理残留记录，不会再次删除配置。
+  rollback: 更新回滚
+  rollback_detail: 恢复旧版本将撤销信任，并保留全部恢复证据。
+  connect_wsl: 开启服务
+  connect_wsl_detail: WSL 无 systemd，将自动开启并重启。
+  continue: 继续操作
+  continue_detail: 不开启 systemd，服务无法启动。
+  xui: 安装节点
+  xui_detail: 安装 X-UI 并创建节点。
+  release_port: 强制安装
+  release_port_detail: 将强制终止占用 443 端口的进程，可能造成服务中断或数据丢失；此操作不可逆。
+  theme: 安装主题
+  apply_update: 应用更新
+  tunnel: 删除隧道
+  peer: 删除节点
+  downgrade_detail: "版本回退：{old} → {new}。"
+  port_process: "占用进程：{process}"

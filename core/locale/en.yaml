@@ -55,16 +55,13 @@ plugin:
   update_latest: "{name} is already up to date"
   update_failed: "Update failed ({error})"
   update_not_git: "{name} is not a git repo"
-  remove_confirm: "Remove {name} and delete its directory?"
   remove_success: "Plugin {name} removed"
   entry_failed: "Plugin {name} exited abnormally ({error})"
   col_perms: "Permissions"
   perm_none: "none declared"
-  trust_confirm: "Trust and enable {name}? Plugins run in a sandbox; approved host tools run with your user privileges."
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
   update_tampered: "Plugin {name} content does not match CHECKSUMS.yaml, possible tampering, refused to load"
-  downgrade_confirm: "{name} is downgrading from {old} to {new}. Trust and load it? Plugins run in a sandbox; approved host tools run with your user privileges."
   source_warning: "Source not in trusted-source allowlist, code is unreviewed"
 
 install:
@@ -74,13 +71,9 @@ install:
   retry: "Network error, retry {n}/{max}..."
   already: "{name} already installed ({version})"
   checking: "Checking {name}..."
-  confirm: "Install {name} {version}?"
 
 uninstall:
   failed: "{name} uninstall failed: {error}"
-  confirm: "Remove {name}? Irreversible"
-  confirm_version: "Remove {name} {version}? Irreversible"
-  confirm_all: "Remove all {name}? Irreversible"
   success: "{name} uninstalled successfully"
   not_found: "{name} is not installed"
 
@@ -162,7 +155,6 @@ software:
   select_version: "Select version"
   recommended: "Recommended"
   current: "Current"
-  reinstall_confirm: "Already installed. Reinstall?"
   switch: "Switch"
   switch_success: "Switched to {name} {version}"
   already_latest: "Already on the latest version {version}, nothing to upgrade"
@@ -334,7 +326,6 @@ deps:
   conflict_title: "Version conflict"
   conflict_desc: "{dep} current {current}, requires >={required}"
   conflict_hint: "Upgrading may affect other programs depending on this version. New version will be installed in parallel via apt/pyenv (without replacing system default)"
-  confirm_upgrade: "Continue installing {dep} {required} (isolated install)?"
   user_cancel: "User cancelled: dependency '{dep}' version mismatch (need >={required}, got {current})"
   version_mismatch: "Dependency '{dep}' version mismatch (need >={required}, got {current}), install cancelled"
   installing: "Installing dependency {dep} {target}..."
@@ -375,13 +366,9 @@ xui:
     vless_port: "VLESS port (default {default})"
     sni: "REALITY SNI (default {default})"
     dest: "REALITY dest (default {default})"
-  confirm:
-    install: "Install and create X-UI nodes?"
   wsl:
-    enable_confirm: "WSL has no systemd; enable and restart?"
     restarting: "Enabled systemd; restarting WSL\n↳ Reopen the terminal and reinstall after restart"
     enabled: "Enabled systemd\n↳ Run wsl --shutdown on Windows, restart WSL, then reinstall"
-    continue_confirm: "Service can't start without it; continue anyway?"
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
@@ -459,7 +446,6 @@ xui:
     down: "↓"
 
 ohmyzsh:
-  confirm_p10k: "Also install the Powerlevel10k theme?"
   installed_mark: "Installed"
   step:
     check_env: "Checking zsh environment..."
@@ -596,7 +582,6 @@ wireguard:
   check_port_fail: "Cannot connect to {ip}:{port} (TCP), check cloud firewall / security group"
   check_port_continue: "Port unreachable, ignore warning and continue?"
   port_443_other_occupied: "⚠️  Critical: port 443 is occupied by {proc}! This program must exclusively own port 443 for nginx TLS. Continuing will force-terminate that process, which may cause service interruption or data loss"
-  port_443_other_confirm: "Confirm force-continue and release port 443? This is irreversible [y/N]"
   port_443_other_abort: "Installation cancelled. Please release port 443 manually and retry"
   port_443_nginx_auto: "Detected nginx already running on port 443. This program will append its config automatically without modifying any of your existing sites"
   server_ip_required: "Server IP is required"
@@ -861,7 +846,6 @@ plugin_native:
   disk:
     menu: Space settings
     minimum: Minimum free space (MiB, 256..1048576)
-    confirm: Save the free-space threshold? This is a check, not a disk quota.
     saved: Space threshold saved.
     failed: Space configuration refused; check configuration and available capacity.
     details: 'Minimum free: {minimum} MiB; no filesystem quota.'
@@ -879,7 +863,6 @@ plugin_native:
     empty: "No recorded unreferenced cache objects were found."
     select: "Select a cache object to review"
     details: "Cache: {catalog}\nObject: {object}\nOwnership SHA256: {digest}"
-    confirm: "Delete this unused cache object? Active readers, current references and changed identities will prevent deletion."
     completed: "The selected unused cache object was removed."
   workspace_recovery:
     menu: Workspace cleanup
@@ -887,7 +870,6 @@ plugin_native:
     uncertain: "Invalid workspace records are retained for manual inspection."
     select: "Select a workspace record to inspect"
     details: "Directory: {directory}\nTransaction: {transaction}\nRecord SHA256: {digest}"
-    confirm: "Remove this temporary workspace if inactive? The recorded parent and directory identities must still match."
     completed: "The recorded native workspace and its recovery record were removed."
   profile_recovery:
     menu: Sandbox cleanup
@@ -895,9 +877,7 @@ plugin_native:
     uncertain: "Unconfirmed or invalid profile records are retained for manual inspection; they cannot authorize removal."
     select: "Select a profile record to inspect"
     details: "Profile: {profile}\nTransaction: {transaction}\nRecord SHA256: {digest}"
-    confirm: "Remove this profile if no active task owns it? Its recorded identity and directory must still match."
     completed: "The recorded inactive native profile was removed."
-    confirm_removed: "Profile deletion was already confirmed. Retire only this residual record? No profile will be deleted again."
     completed_removed: "The completed profile deletion record was retired."
   update_recovery:
     menu: Update rollback
@@ -905,7 +885,6 @@ plugin_native:
     invalid: "Some update directories have invalid or missing records. They are retained for manual inspection."
     select: "Select an interrupted update to inspect"
     details: "Plugin: {plugin}\nDirectory: {directory}\nTransaction: {transaction}\nRecord SHA256: {digest}"
-    confirm: "Restore the recorded previous version? Trust will be revoked; all recovery evidence will be retained."
     completed: "The previous version is restored. Trust remains revoked and recovery evidence is retained."
   task:
     cancel_hint: "Task running: press Esc or Ctrl+C to cancel. Plugin state will not be committed."
@@ -917,7 +896,6 @@ plugin_native:
     tools: "Checking the installation environment…"
     repair: "Preparing the isolated Python environment…"
     runtime: "Preparing the plugin runtime…"
-  fetch_private_confirm: "The repository resolves to a private or reserved address. Allow this connection only?"
   fetch_credentials_hint: "Local authentication is unavailable or server identity is unverified. Provide a repository-bound credential file with verified server keys; leave blank to cancel."
   fetch_profile_prompt: "Repository credential file path"
   fetch_profile_help: "Private credential file bound to this exact repository; never saved or automatically reused"
@@ -930,7 +908,6 @@ plugin_native:
   lock_file_help: "Reviewed complete dependency lock with SHA256 hashes"
   no_grants: "No persistent host permissions are saved."
   select_grant: "Select a permission to inspect or revoke"
-  revoke_confirm: "Revoke this permission for {plugin}?"
   revoked: "Permission revoked. Active one-time grants are invalidated."
   prepare_help: "Prepare a native sandbox runtime from a private Python directory and locked offline wheels"
   permissions: "Plugin permissions"
@@ -1043,4 +1020,45 @@ plugin_native:
     authorize_service_help: "Approve the caller's exact declared service contract"
     revoke_service_help: "Revoke one service edge while preserving independent plugin trust"
     update_rejected: "Plugin update rejected: {status}"
-    remove_confirm: "Remove plugin {name}? (state is preserved)"
+
+confirm_ui:
+  uninstall: Uninstall plugin
+  plugin_delete: The plugin directory will be deleted; state data is preserved.
+  trust: Trust plugin
+  trust_detail: Plugins run in a sandbox; approved host tools run with your user privileges.
+  private_connection: Allow connection
+  private_detail: The repository resolves to a private or reserved address; this permits one connection only.
+  revoke: Revoke permission
+  install: Install software
+  reinstall: Reinstall software
+  remove: Uninstall software
+  remove_all: Uninstall all versions
+  irreversible: This action cannot be undone.
+  upgrade: Upgrade software
+  dependency: Install dependency
+  save: Save settings
+  disk_detail: This checks free space; it is not a disk quota.
+  cache: Clean cache
+  cache_detail: Active readers, current references or changed identity prevent deletion.
+  workspace: Clean directory
+  workspace_detail: Deleted only when idle and the recorded parent and directory identities still match.
+  profile: Clean sandbox
+  profile_detail: Deleted only when idle and the recorded identity and directory still match.
+  profile_record: Clean record
+  profile_record_detail: The profile is already deleted; only its remaining record will be removed.
+  rollback: Roll back update
+  rollback_detail: Restoring the old version revokes trust and preserves all recovery evidence.
+  connect_wsl: Enable service
+  connect_wsl_detail: WSL has no systemd; it will be enabled and restarted.
+  continue: Continue
+  continue_detail: The service cannot start without systemd.
+  xui: Install node
+  xui_detail: Install X-UI and create a node.
+  release_port: Force installation
+  release_port_detail: The process using port 443 will be terminated, potentially interrupting service or losing data; this cannot be undone.
+  theme: Install theme
+  apply_update: Apply update
+  tunnel: Remove tunnel
+  peer: Remove peer
+  downgrade_detail: "Version downgrade: {old} → {new}."
+  port_process: "Process using port 443: {process}"

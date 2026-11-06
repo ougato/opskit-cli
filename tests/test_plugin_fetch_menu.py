@@ -32,8 +32,8 @@ def test_user_entered_install_allows_only_this_acquisition(monkeypatch, source):
 def test_private_confirmation_is_scoped(monkeypatch, language, approved):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     def confirm(**kw):
-        assert kw["info_lines"] == ["ssh://git@example.com:22/team/repo"]
-        assert kw["prompt"] == i18n.t("plugin_native.fetch_private_confirm")
+        assert kw["info_lines"] == ["ssh://git@example.com:22/team/repo", i18n.t("confirm_ui.private_detail")]
+        assert kw["prompt"] == i18n.t("confirm_ui.private_connection")
         assert kw["require_explicit"] is True
         return approved
     monkeypatch.setattr(menu, "confirm", confirm)

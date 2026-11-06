@@ -22,8 +22,8 @@ def entry():
         if key is None or not key.isdecimal() or not 0 < int(key) <= len(confirmed):
             return
         item = confirmed[int(key) - 1]
-        if confirm(breadcrumb, t("plugin_native.workspace_recovery.confirm"), info_lines=[
-                t("plugin_native.workspace_recovery.details", directory=item["directory"],
+        if confirm(breadcrumb, t("confirm_ui.workspace"), info_lines=[
+                t("confirm_ui.workspace_detail"), t("plugin_native.workspace_recovery.details", directory=item["directory"],
                   transaction=item["transaction"], digest=item["record_sha256"])]):
             recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.workspace_recovery.completed"))

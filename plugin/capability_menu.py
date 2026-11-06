@@ -27,7 +27,7 @@ def entry():
             request = grants[int(key) - 1]
             details = [escape(line) for line in capability_info_lines(request, include_fingerprint=True)]
             details.append("ID: " + _key(request))
-            if confirm(breadcrumb, t("plugin_native.revoke_confirm", plugin=escape(request.plugin)),
+            if confirm(breadcrumb, t("confirm_ui.revoke"),
                        info_lines=details):
                 authority.revoke(request)
                 print_success(t("plugin_native.revoked"))

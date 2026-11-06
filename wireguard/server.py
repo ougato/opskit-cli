@@ -1,6 +1,8 @@
 """WireGuard 公网服务端安装 / 卸载 / 诊断 / 管理逻辑"""
 from __future__ import annotations
 
+from rich.markup import escape
+
 from software.base import InstallError
 from core.constants import PUBLIC_IP_APIS
 from core.privilege import run_as_root, write_root_file
@@ -315,7 +317,9 @@ def install_server(options: dict | None = None) -> dict | None:
         print_warning(t("wireguard.port_443_other_occupied").format(proc=_port_proc))
         from core.prompt import confirm as _confirm
         try:
-            if not _confirm(breadcrumb=breadcrumb, prompt=t("wireguard.port_443_other_confirm")):
+            if not _confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.release_port"),
+                            info_lines=[t("confirm_ui.port_process", process=escape(_port_proc)),
+                                        t("confirm_ui.release_port_detail")]):
                 from core.theme import print_error
                 print_error(t("wireguard.port_443_other_abort"))
                 pause()

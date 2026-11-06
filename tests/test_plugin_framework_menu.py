@@ -202,8 +202,8 @@ def test_downgrade_uses_same_explicit_trust_flow(monkeypatch):
     prompts = []
     monkeypatch.setattr(menu, "confirm_trust", lambda manifest, **kwargs: prompts.append(kwargs) or False)
     menu._update()
-    assert len(prompts) == 1 and "2.0.0" in prompts[0]["prompt_override"]
-    assert "1.0.0" in prompts[0]["prompt_override"]
+    assert len(prompts) == 1 and "2.0.0" in prompts[0]["additional_detail"]
+    assert "1.0.0" in prompts[0]["additional_detail"]
 
 
 def test_untrusted_plugin_menu_labels_are_plain_text():
@@ -258,3 +258,30 @@ def test_permission_prompt_uses_icons_and_back_cancels(monkeypatch, language):
         i18n.t("plugin_native.resource_line", resource="E:/project"),
     ]
     assert "description" not in kwargs
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_remove_confirmation_renders_name_and_consequence(monkeypatch, language, answer):
+    from io import StringIO
+    from rich.console import Console
+    from core import plugin, prompt
+
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    manifest = plugin.PluginManifest(name="cocos", version="1.0.0", api_version=4,
+                                     kind="python", entry="cocos", label={"zh": "Cocos 工具", "en": "Cocos tools"})
+    monkeypatch.setattr(menu, "_pick", lambda *_: manifest)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu, "print_success", lambda *_: None)
+    removed = []
+    monkeypatch.setattr(menu.commands, "remove", removed.append)
+    output = StringIO()
+    monkeypatch.setattr(prompt, "console", Console(file=output, width=240, force_terminal=False))
+    monkeypatch.setattr(prompt.os, "system", lambda _: 0)
+    monkeypatch.setattr(prompt, "_read_key", lambda: answer)
+    monkeypatch.setattr(prompt, "_auto_yes", False)
+    menu._remove()
+    rendered = output.getvalue()
+    assert i18n.t("confirm_ui.uninstall") in rendered
+    assert f" ├─ {menu._display_name(manifest)}\n" in rendered
+    assert f" ├─ {i18n.t('confirm_ui.plugin_delete')}\n" in rendered
+    assert removed == ([manifest] if answer == "y" else [])

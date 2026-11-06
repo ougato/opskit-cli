@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from core.cli import emit, fail, guarded
 from core.i18n import t
@@ -279,7 +280,7 @@ def register(app, translate=None):
     def remove(name: str):
         manifest = resolve(name)
         from core.prompt import confirm
-        if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("plugin_native.lifecycle.remove_confirm", name=name)):
+        if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("confirm_ui.uninstall"), info_lines=[escape(name), t("confirm_ui.plugin_delete")]):
             fail(t("plugin_native.lifecycle.remove_cancelled"))
         commands.remove(manifest)
         emit({"name": name, "removed": True, "state_preserved": True})

@@ -20,8 +20,9 @@ def test_menu_requires_review_and_confirmation(monkeypatch, language, approved):
         assert choices[0]["label"] == f"{get_icon('workspace_cleanup')} {item['directory']}"
         return "1"
     def confirm(breadcrumb, title, **kwargs):
-        assert title == i18n.t("plugin_native.workspace_recovery.confirm")
-        assert all(item[key] in kwargs["info_lines"][0]
+        assert title == i18n.t("confirm_ui.workspace")
+        assert kwargs["info_lines"][0] == i18n.t("confirm_ui.workspace_detail")
+        assert all(item[key] in kwargs["info_lines"][1]
                    for key in ("transaction", "directory", "record_sha256"))
         return approved
     monkeypatch.setattr(menu, "select", select)

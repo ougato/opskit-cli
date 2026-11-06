@@ -6,6 +6,7 @@ import stat
 import typer
 
 from core.cli import emit, guarded, fail
+from core.i18n import t
 
 
 def _status_worker(connection, cache_path, pending_path, supported, version):
@@ -215,7 +216,7 @@ def register(app, context_settings):
         from core.prompt import confirm
         if not updater._is_frozen():
             fail("binary updates require a packaged executable", 2)
-        if not confirm(breadcrumb=["OpsKit", "update"], prompt="Apply the verified pending update?"):
+        if not confirm(breadcrumb=["OpsKit", "update"], prompt=t("confirm_ui.apply_update")):
             fail("update application cancelled")
         emit(updater.apply_verified_pending())
 

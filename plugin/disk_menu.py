@@ -12,7 +12,7 @@ def entry():
         value = policy()
         print_info(t(prefix + "details", minimum=value["minimum_free_mib"]))
         minimum = int(text_input(breadcrumb, t(prefix + "minimum"), default=str(value["minimum_free_mib"])))
-        if confirm(breadcrumb, t(prefix + "confirm")):
+        if confirm(breadcrumb, t("confirm_ui.save"), info_lines=[t(prefix + "minimum"), str(minimum), t("confirm_ui.disk_detail")]):
             configure(minimum)
             print_success(t(prefix + "saved"))
             pause()

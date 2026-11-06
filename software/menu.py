@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from rich import box as rich_box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from core.i18n import t
@@ -318,7 +319,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     if existing:
         print_warning(t("install.already", name=_name, version=existing))
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("software.reinstall_confirm")):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.reinstall"), info_lines=[escape(_name)]):
                 return
         except UserCancel:
             return
@@ -375,7 +376,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
     if getattr(cls, "confirm_before_install", True):
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("install.confirm", name=_name, version=version)):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.install"), info_lines=[escape(f"{_name} {version}")]):
                 return
         except UserCancel:
             return
@@ -445,7 +446,7 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     # 已安装版本选中时弹确认
     if version in installed_set:
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("software.reinstall_confirm")):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.reinstall"), info_lines=[escape(_name)]):
                 return
         except UserCancel:
             return
@@ -504,13 +505,15 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         key_int = int(ver_key)
         if key_int == len(installed) + 1:
             version_to_remove = None  # 卸载全部
-            confirm_text = t("uninstall.confirm_all", name=_uname)
+            confirm_text = t("confirm_ui.remove_all")
+            confirm_details = [escape(_uname), t("confirm_ui.irreversible")]
         else:
             version_to_remove = installed[key_int - 1]
-            confirm_text = t("uninstall.confirm_version", name=_uname, version=version_to_remove)
+            confirm_text = t("confirm_ui.remove")
+            confirm_details = [escape(f"{_uname} {version_to_remove}"), t("confirm_ui.irreversible")]
 
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=confirm_text):
+            if not confirm(breadcrumb=breadcrumb, prompt=confirm_text, info_lines=confirm_details):
                 return
         except UserCancel:
             return
@@ -536,7 +539,7 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
 
     if not getattr(cls, "has_wizard", False) and getattr(cls, "confirm_before_uninstall", True):
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("uninstall.confirm", name=_uname)):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.remove"), info_lines=[escape(_uname), t("confirm_ui.irreversible")]):
                 return
         except UserCancel:
             return
@@ -831,7 +834,8 @@ def show_install() -> None:
         try:
             if not confirm(
                 breadcrumb=["OpsKit", t("menu.software"), t("software.install")],
-                prompt=t("software.reinstall_confirm"),
+                prompt=t("confirm_ui.reinstall"),
+                info_lines=[escape(_sname), escape(str(existing))],
             ):
                 return
         except UserCancel:
@@ -881,7 +885,8 @@ def show_install() -> None:
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.install")],
-            prompt=t("install.confirm", name=_sname, version=version),
+            prompt=t("confirm_ui.install"),
+            info_lines=[escape(f"{_sname} {version}")],
         ):
             return
     except UserCancel:
@@ -1035,7 +1040,8 @@ def show_uninstall() -> None:
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.uninstall")],
-            prompt=t("uninstall.confirm", name=_usname),
+            prompt=t("confirm_ui.remove"),
+            info_lines=[escape(_usname), t("confirm_ui.irreversible")],
         ):
             return
     except UserCancel:
@@ -1140,7 +1146,8 @@ def show_upgrade() -> None:
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.upgrade")],
-            prompt=t("upgrade.available", name=_upgname, version=new_version),
+            prompt=t("confirm_ui.upgrade"),
+            info_lines=[escape(f"{_upgname} {new_version}")],
         ):
             return
     except UserCancel:

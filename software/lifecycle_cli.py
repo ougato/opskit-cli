@@ -4,6 +4,7 @@ import re
 import sys
 
 import typer
+from rich.markup import escape
 
 from core.cli import emit, fail
 from core.i18n import t
@@ -108,7 +109,9 @@ def _uninstall_direct(cls, instance, version=None, all_versions=False):
             fail(t("software.not_installed_hint", name=name))
         target = None
     from core.prompt import confirm
-    if not confirm(breadcrumb=["OpsKit", "software"], prompt=f"Uninstall {cls.key}?"):
+    if not confirm(breadcrumb=["OpsKit", t("menu.software")],
+                   prompt=t("confirm_ui.remove_all" if all_versions else "confirm_ui.remove"),
+                   info_lines=[escape(f"{name} {version}" if version else name), t("confirm_ui.irreversible")]):
         fail("software uninstall cancelled")
     from software.actions import execute_uninstall
     _execute(cls, "uninstall", execute_uninstall, instance, target)

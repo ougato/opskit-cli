@@ -32,9 +32,10 @@ def test_cache_menu_excludes_references_and_requires_confirmation(monkeypatch, l
         assert choices == [{"key": "1", "label": f"{get_icon('cache_cleanup')} {item['object']}"}]
         return "1"
     def confirm(breadcrumb, title, **kwargs):
-        assert title == i18n.t("plugin_native.cache_cleanup.confirm")
-        assert item["object"] in kwargs["info_lines"][0]
-        assert item["record_sha256"] in kwargs["info_lines"][0]
+        assert title == i18n.t("confirm_ui.cache")
+        assert kwargs["info_lines"][0] == i18n.t("confirm_ui.cache_detail")
+        assert item["object"] in kwargs["info_lines"][1]
+        assert item["record_sha256"] in kwargs["info_lines"][1]
         return approved
     monkeypatch.setattr(menu, "select", select)
     monkeypatch.setattr(menu, "confirm", confirm)

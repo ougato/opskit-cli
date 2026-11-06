@@ -1,6 +1,8 @@
 """Official WireGuard server CLI; immutable public keys identify peers."""
 import typer
+from rich.markup import escape
 from core.cli import emit, fail, guarded
+from core.i18n import t
 from wireguard import server
 
 
@@ -85,7 +87,7 @@ def register(app, context_settings):
         from core.prompt import confirm
         from wireguard import client
         client_tunnels(tunnel_id)
-        if not confirm(breadcrumb=["OpsKit", "wireguard"], prompt="Remove tunnel?"):
+        if not confirm(breadcrumb=["OpsKit", "wireguard"], prompt=t("confirm_ui.tunnel"), info_lines=[escape(tunnel_id)]):
             fail("tunnel removal cancelled")
         client_operation(client.remove_tunnel, breadcrumb=["OpsKit", "wireguard"], tunnel_id=tunnel_id)
 
@@ -140,7 +142,7 @@ def register(app, context_settings):
     def remove(peer_id: str):
         supported()
         from core.prompt import confirm
-        if not confirm(breadcrumb=["OpsKit", "wireguard"], prompt="Remove peer?"):
+        if not confirm(breadcrumb=["OpsKit", "wireguard"], prompt=t("confirm_ui.peer"), info_lines=[escape(peer_id)]):
             fail("peer removal cancelled")
         emit(server.remove_peer(["OpsKit", "wireguard"], peer_id=peer_id))
 

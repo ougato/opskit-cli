@@ -23,9 +23,9 @@ def entry():
             return
         item = confirmed[int(key) - 1]
         completed = item["phase"] == "removed"
-        confirm_key = "confirm_removed" if completed else "confirm"
         result_key = "completed_removed" if completed else "completed"
-        if confirm(breadcrumb, t("plugin_native.profile_recovery." + confirm_key), info_lines=[
+        if confirm(breadcrumb, t("confirm_ui.profile_record" if completed else "confirm_ui.profile"), info_lines=[
+                t("confirm_ui.profile_record_detail" if completed else "confirm_ui.profile_detail"),
                 t("plugin_native.profile_recovery.details", profile=item["profile"],
                   transaction=item["transaction"], digest=item["record_sha256"])]):
             recovery.recover(item["transaction"], item["record_sha256"])

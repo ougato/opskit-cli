@@ -1,6 +1,8 @@
 """依赖解析器 — 安装前自动检测并静默解决依赖链"""
 from __future__ import annotations
 
+from rich.markup import escape
+
 from software.base import InstallError
 from software.registry import get as registry_get
 from core.prompt import confirm, UserCancel
@@ -130,7 +132,11 @@ def _upgrade_dep(
     )
 
     try:
-        ok = confirm(breadcrumb=breadcrumb, prompt=t("deps.confirm_upgrade", dep=key, required=required))
+        ok = confirm(
+            breadcrumb=breadcrumb, prompt=t("confirm_ui.dependency"),
+            info_lines=[t("deps.conflict_desc", dep=escape(key), current=escape(current),
+                          required=escape(required)), t("deps.conflict_hint")],
+        )
     except UserCancel:
         raise InstallError(t("deps.user_cancel", dep=key, required=required, current=current))
 
