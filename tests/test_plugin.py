@@ -12,7 +12,7 @@ import pytest
 
 from core.loader import discover_modules
 from core.module import ModuleInfo
-from core.plugin import discover_plugins, list_manifests, load_manifest, load_plugin
+from core.plugin import list_manifests, load_manifest, load_plugin
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke
 
 
@@ -72,6 +72,12 @@ def _make_exec_plugin(root: Path, name: str = "extool") -> Path:
     return plugin_dir
 
 
+def _menu_modules():
+    """Exercise the same supervised discovery used by the plugin menu."""
+    from plugin.commands import loaded_plugins
+    return [info for _, info in loaded_plugins()]
+
+
 def _trust(plugin_dir: Path) -> None:
     """测试辅助：模拟用户已确认信任插件当前内容"""
     grant(plugin_dir.name, compute_fingerprint(plugin_dir), "test")
@@ -92,7 +98,7 @@ def plugins_root(tmp_path, monkeypatch):
 
 def test_python_plugin_discovered(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root))
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     m = modules[0]
     assert isinstance(m, ModuleInfo)
@@ -104,7 +110,7 @@ def test_python_plugin_discovered(plugins_root) -> None:
 
 def test_exec_plugin_discovered(plugins_root) -> None:
     _trust(_make_exec_plugin(plugins_root))
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     assert modules[0].key == "extool"
     assert modules[0].label == "Exec Tool"
@@ -116,12 +122,12 @@ def test_invalid_manifest_skipped(plugins_root) -> None:
         name: bad
         kind: python
     """)  # 缺 version / api_version / entry
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_incompatible_api_version_skipped(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root, name="future", api_version=999))
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_invalid_name_skipped(plugins_root) -> None:
@@ -132,12 +138,12 @@ def test_invalid_name_skipped(plugins_root) -> None:
         kind: python
         entry: pkg
     """)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_builtin_key_conflict_skipped(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root, name="software"))
-    assert discover_plugins(builtin_keys={"software"}) == []
+    assert _menu_modules() == []
 
 
 def test_broken_plugin_does_not_break_others(plugins_root) -> None:
@@ -154,7 +160,7 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
     _trust(broken)
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert [m.key for m in modules] == ["broken", "good"]
     assert "broken_pkg" not in sys.modules
 
@@ -173,7 +179,7 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
     _trust(exiting)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
     assert "exiting_pkg" not in sys.modules
 
 
@@ -195,7 +201,7 @@ def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> Non
             )
     """), encoding="utf-8")
     _trust(plugin_dir)
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     monkeypatch.setattr("core.prompt.pause", lambda *a, **k: None)
     def fail(*args, **kwargs):
@@ -226,7 +232,7 @@ def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
             )
     """), encoding="utf-8")
     _trust(plugin_dir)
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     from core.prompt import UserExit
     def cancel(*args, **kwargs):
@@ -250,22 +256,22 @@ def test_entry_shadowing_core_rejected(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     _trust(shadow)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_untrusted_plugin_not_loaded(plugins_root) -> None:
     _make_python_plugin(plugins_root)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_changed_plugin_requires_retrust(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
     (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
-    assert discover_plugins() == []  # 内容变化后信任失效
+    assert _menu_modules() == []  # 内容变化后信任失效
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
 
 
 def test_trust_revoke(plugins_root) -> None:
@@ -277,6 +283,13 @@ def test_trust_revoke(plugins_root) -> None:
     assert not is_trusted("demo", fp)
 
 
+def test_revoked_plugin_disappears_from_next_menu_scan(plugins_root) -> None:
+    _trust(_make_python_plugin(plugins_root))
+    assert [module.key for module in _menu_modules()] == ["demo"]
+    revoke("demo")
+    assert _menu_modules() == []
+
+
 def test_exec_entry_escape_rejected(plugins_root) -> None:
     _write_manifest(plugins_root / "escape", """\
         name: escape
@@ -286,7 +299,7 @@ def test_exec_entry_escape_rejected(plugins_root) -> None:
         entry: ../../outside.sh
     """)
     _trust(plugins_root / "escape")
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_discover_modules_excludes_plugins(plugins_root) -> None:
@@ -417,10 +430,10 @@ def test_checksums_mismatch_blocks_load(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     write_checksums(plugin_dir)
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
     (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
     _trust(plugin_dir)  # 即便用户重新信任，清单不符仍拒绝
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_invalid_semver_version_rejected(plugins_root) -> None:

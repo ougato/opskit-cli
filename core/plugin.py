@@ -389,25 +389,3 @@ def load_plugin(manifest: PluginManifest) -> ModuleInfo | None:
         _log.warning("plugin %s: not trusted, skipped (confirm in plugin manager)", manifest.name)
         return None
     return _to_module_info(manifest)
-
-
-def discover_plugins(builtin_keys: set[str] | None = None) -> list[ModuleInfo]:
-    """
-    发现并加载全部外部插件，返回 ModuleInfo 列表。
-
-    builtin_keys：已注册的内置模块 key 集合，冲突的插件跳过。
-    任何插件失败只写日志跳过，绝不抛出。
-    """
-    builtin_keys = builtin_keys or set()
-    modules: list[ModuleInfo] = []
-    seen: set[str] = set()
-    for manifest in list_manifests():
-        if manifest.name in builtin_keys or manifest.name in seen:
-            _log.warning("plugin %s: key conflict, skipped", manifest.name)
-            continue
-        info = load_plugin(manifest)
-        if info is None:
-            continue
-        seen.add(manifest.name)
-        modules.append(info)
-    return modules

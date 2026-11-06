@@ -4,6 +4,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -76,6 +77,22 @@ def test_menu_discovery_uses_owned_reader_for_config_and_plugin_content(tmp_path
     pairs = commands.loaded_plugins()
     assert [item.name for item, _ in pairs] == ["demo"]
     assert pairs[0][1].key == "demo"
+
+
+def test_menu_discovery_streams_large_trusted_manifest(tmp_path, monkeypatch):
+    from core import plugin_trust
+    root = tmp_path / "plugins"
+    description = "中" * 100000
+    manifest = make_plugin(root, description={"zh": description})
+    monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(root))
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
+    plugin_trust.grant("demo", plugin_trust.compute_fingerprint(manifest.root), "1.0.0")
+    with closing(inspection.ContentInspector()) as reader:
+        found = reader.inventory(root, select="menu", timeout=30)
+        pid = reader.pid
+    assert [item.name for item in found] == ["demo"]
+    assert found[0].description == {"zh": description}
+    assert not psutil.pid_exists(pid)
 
 
 def test_blocked_menu_discovery_times_out_and_reclaims_reader(tmp_path, monkeypatch,
@@ -267,6 +284,37 @@ def test_incomplete_inventory_cannot_return_first_identity(tmp_path, monkeypatch
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(KeyboardInterrupt if cancel else TimeoutError):
             reader.inventory(tmp_path, timeout=30)
+    assert not psutil.pid_exists(int(marker.read_text()))
+
+
+def test_cancel_event_during_inventory_stream_reclaims_reader(tmp_path, monkeypatch):
+    marker = tmp_path / "reader-pid"
+    record = asdict(make_plugin(tmp_path))
+    record.pop("root")
+    spec = {"header": {"ok": True, "count": 2}, "records": [{"directory": "demo", "manifest": record}],
+            "block_after_first": True}
+    (tmp_path / "frames.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(inspection, "_inspection_session", fake_inventory_session)
+    cancel = threading.Event()
+    errors = []
+    def read():
+        try:
+            with closing(inspection.ContentInspector()) as reader:
+                reader.inventory(tmp_path, timeout=30, cancel_event=cancel)
+        except BaseException as error:
+            errors.append(error)
+    thread = threading.Thread(target=read)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 20
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert marker.exists(), "inventory reader did not reach the second item"
+    finally:
+        cancel.set()
+        thread.join(10)
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
     assert not psutil.pid_exists(int(marker.read_text()))
 
 

@@ -91,24 +91,27 @@ def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
 
 def _loaded_plugins(manifest_list) -> list[tuple[PluginManifest, ModuleInfo]]:
     """Filter an already collected inventory without executing plugin code."""
+    if not manifest_list:
+        return []
+    from core.plugin_trust import authorization_snapshot
     builtin = builtin_module_keys()
     pairs: list[tuple[PluginManifest, ModuleInfo]] = []
     seen: set[str] = set()
     config = None
-    for manifest in manifest_list:
-        if manifest.name in builtin or manifest.name in seen:
-            continue
-        # One fresh snapshot per menu scan; invocation independently rechecks
-        # the live enablement and trust before executing any plugin code.
-        if config is None:
-            config = load_config()
-        if not _enabled_in_config(config, manifest.name):
-            continue
-        info = load_plugin(manifest)
-        if info is None:
-            continue
-        seen.add(manifest.name)
-        pairs.append((manifest, info))
+    # These snapshots only control display; invocation rechecks live authority.
+    with authorization_snapshot():
+        for manifest in manifest_list:
+            if manifest.name in builtin or manifest.name in seen:
+                continue
+            if config is None:
+                config = load_config()
+            if not _enabled_in_config(config, manifest.name):
+                continue
+            info = load_plugin(manifest)
+            if info is None:
+                continue
+            seen.add(manifest.name)
+            pairs.append((manifest, info))
     pairs.sort(key=lambda p: p[1].order)
     return pairs
 

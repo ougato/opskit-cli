@@ -28,6 +28,31 @@ def test_menu_reads_one_fresh_enablement_snapshot_per_inventory(monkeypatch):
     assert len(reads) == 2
 
 
+def test_menu_reads_one_fresh_trust_snapshot_per_inventory(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from core import plugin_trust
+    from plugin import commands
+    items = [SimpleNamespace(name=name) for name in ("first", "second")]
+    records = {name: {"fingerprint": "approved"} for name in ("first", "second")}
+    reads = []
+    def load():
+        reads.append(True)
+        return deepcopy(records)
+    monkeypatch.setattr(plugin_trust, "_load", load)
+    monkeypatch.setattr(commands, "builtin_module_keys", lambda: set())
+    monkeypatch.setattr(commands, "load_config", lambda: {})
+    monkeypatch.setattr(commands, "load_plugin", lambda item:
+                        SimpleNamespace(order=50) if plugin_trust.is_trusted(item.name, "approved") else None)
+    assert [item.name for item, _ in commands._loaded_plugins(items)] == ["first", "second"]
+    assert len(reads) == 1
+    del records["first"]
+    assert [item.name for item, _ in commands._loaded_plugins(items)] == ["second"]
+    assert len(reads) == 2
+    assert not plugin_trust.is_trusted("first", "approved")
+    assert len(reads) == 3
+
+
 def _limited_inventory_session(connection, buffer, length, requested):
     from core.plugin_inspection import _inspection_session
     plugin.MAX_INVENTORY_ENTRIES = 1

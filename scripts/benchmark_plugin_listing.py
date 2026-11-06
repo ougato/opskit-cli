@@ -1,7 +1,8 @@
-"""Compare menu enablement reads with synthetic plugins and an isolated config.
+"""Compare menu configuration and trust reads in an isolated data directory.
 
-Inventory, plugin hashing, trust and rendering are stubbed. This measures the
-configuration-dependent filtering stage, not the complete menu startup.
+Inventory, plugin hashing and rendering are stubbed. Configuration filtering
+stubs plugin validation; trust-store lookups are measured separately. This
+does not measure complete menu startup.
 """
 import argparse
 import os
@@ -16,7 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.config import save_config
+from core import plugin_trust
 from plugin import commands
+import yaml
 
 
 def main():
@@ -35,23 +38,35 @@ def main():
             items = [SimpleNamespace(name=f"plugin_{index}") for index in range(args.plugins)]
             save_config({"modules": {item.name: {"enabled": True, "description": "example" * 8}
                                      for item in items}})
+            fingerprint = "a" * 64
+            records = {item.name: {"fingerprint": fingerprint, "version": "1.0.0"} for item in items}
+            Path(temp, "plugin_trust.yaml").write_text(yaml.safe_dump(records), encoding="utf-8")
             commands.builtin_module_keys = lambda: set()
             commands.load_plugin = lambda item: SimpleNamespace(order=50)
 
-            def reference():
+            def reference_config():
                 return [(item, commands.load_plugin(item)) for item in items if commands.is_enabled(item.name)]
 
-            operations = {"reference": reference, "current": lambda: commands._loaded_plugins(items)}
+            def reference_trust():
+                return [item.name for item in items if plugin_trust.is_trusted(item.name, fingerprint)]
+
+            def current_trust():
+                with plugin_trust.authorization_snapshot():
+                    return reference_trust()
+
+            operations = {"reference config": lambda: [item.name for item, _ in reference_config()],
+                          "current config": lambda: [item.name for item, _ in commands._loaded_plugins(items)],
+                          "reference trust": reference_trust, "current trust": current_trust}
             samples = {name: [] for name in operations}
             for index in range(args.runs):
-                order = ("reference", "current") if index % 2 == 0 else ("current", "reference")
+                order = list(operations) if index % 2 == 0 else list(reversed(operations))
                 for name in order:
                     start = time.perf_counter()
                     result = operations[name]()
                     samples[name].append(time.perf_counter() - start)
-                    if [item.name for item, _ in result] != [item.name for item in items]:
+                    if result != [item.name for item in items]:
                         raise RuntimeError("plugin listing differs")
-            print(f"plugins={args.plugins} runs={args.runs}; actual config, stubbed discovery and hashing")
+            print(f"plugins={args.plugins} runs={args.runs}; actual stores, stubbed discovery and hashing")
             for name, values in samples.items():
                 print(f"{name} seconds: {', '.join(f'{value:.4f}' for value in values)}")
                 print(f"{name} median: {statistics.median(values):.4f}s")
