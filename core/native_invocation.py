@@ -169,6 +169,7 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
         # -I ignores PYTHONIOENCODING. Explicit UTF-8 mode keeps Chinese plugin
         # output consistent with the UTF-8 pipe protocol on Windows.
         with open_worker(backend, str(executable), ["-I", "-X", "utf8", "-S", "-B", "-u", "-c", bootstrap],
+                         filter_python_startup=True,
                          readonly_trees=(base,),
                          writable_trees=(base / "data",), environment=environment,
                          cwd=str(base / "data")) as child:

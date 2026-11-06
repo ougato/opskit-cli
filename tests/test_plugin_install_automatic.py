@@ -204,10 +204,8 @@ def test_install_progress_does_not_print_package_names(monkeypatch, language):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     seen = []
     class Status:
-        def __init__(self, message, **kwargs):
-            assert kwargs["spinner"] == "dots"
-            assert kwargs["spinner_style"] == ui.get_color("success")
-            assert message.style == ui.get_color("success")
+        def __init__(self, message):
+            assert message.style == ""
             seen.append(str(message))
         def start(self):
             pass
@@ -215,7 +213,7 @@ def test_install_progress_does_not_print_package_names(monkeypatch, language):
             pass
         def update(self, message):
             seen.append(str(message))
-    monkeypatch.setattr(ui, "Status", Status)
+    monkeypatch.setattr(ui, "_InstallationStatus", Status)
     monkeypatch.setattr(ui, "console", SimpleNamespace(is_terminal=True, print=lambda: None))
     with ui.InstallationProgress() as progress:
         progress("download", "python-very-long-archive-name.zip")

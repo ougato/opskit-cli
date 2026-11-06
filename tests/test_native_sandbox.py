@@ -197,6 +197,31 @@ def test_native_protocol_roundtrip_inside_appcontainer(private_python_runtime):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="actual isolated RPC transport required")
+@pytest.mark.parametrize("preload", [False, True])
+def test_python_startup_diagnostic_does_not_reach_plugin_output(private_python_runtime, preload):
+    import time
+    from core.native_process import open_worker
+    from core.native_protocol import exchange
+
+    executable = str(private_python_runtime / "python.exe")
+    warning = "Failed to find real location of " + executable
+    terminal = 'OPSKIT_RPC:{"rpc_version":1,"type":"result","value":7,"state":""}'
+    code = (f"import sys; print({warning!r},file=sys.stderr,flush=True); "
+            + ("print('OPSKIT_READY:token',flush=True); input(); " if preload else "")
+            + f"print('plugin output',flush=True); print({terminal!r},flush=True)")
+    output = []
+    with open_worker(get_backend(), executable, ["-I", "-X", "utf8", "-S", "-u", "-c", code],
+                     readonly_trees=(private_python_runtime,), filter_python_startup=True) as child:
+        if preload:
+            assert child.stdout.readline(128) == b"OPSKIT_READY:token\r\n"
+            child.stdin.write(b"activate\n")
+        result = exchange(child, deadline=time.monotonic() + 5, dispatch=lambda _: None,
+                          checkpoint=lambda: None, output=output.append)
+    assert result["value"] == 7
+    assert output == ["plugin output"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="actual isolated RPC transport required")
 @pytest.mark.parametrize("code", [
     "print('OPSKIT_RPC:bad-json', flush=True)",
     "print('OPSKIT_RPC:{\"rpc_version\":1,\"type\":\"result\",\"value\":0,\"state\":\"\"}', flush=True); "

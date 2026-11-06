@@ -337,7 +337,8 @@ def open_preloaded_worker(backend, base, *, deadline, cancel_event=None):
     try:
         with open_worker(backend, str(base / "runtime" / "python" / "python.exe"), args,
                          readonly_trees=(base,), writable_trees=(base / "data",),
-                         environment=environment, cwd=str(base / "data")) as child:
+                         environment=environment, cwd=str(base / "data"),
+                         filter_python_startup=True) as child:
             if time.monotonic() >= deadline:
                 raise TimeoutError("native preload deadline exceeded")
             preloaded = PreloadedWorker(child, token, deadline)
