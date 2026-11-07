@@ -917,6 +917,7 @@ plugin_native:
   revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
   id_help: "permissions list 显示的完整权限 ID"
   operation_line: "操作：{operation}"
+  directory_manage_warning: "允许执行项目工具；工具可能访问项目外文件。"
   directory_read_scope: "包含所有子目录。"
   resource_line: "资源：{resource}"
   fingerprint_line: "插件指纹：{fingerprint}"
@@ -927,6 +928,7 @@ plugin_native:
       read: "读取目录"
       write: "读写目录"
       read_write: "读写目录"
+      manage: "读写目录并执行工具"
     tool:
       execute: "执行工具"
   errors:

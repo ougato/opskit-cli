@@ -492,7 +492,7 @@ def _broker(manifest, request: dict):
                              deadline=_invocations.deadline, checkpoint=checkpoint)
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version"}:
         expected = 4 if method == "host.execute" else (1 if method == "host.file_version" else 2)
-        if kwargs or (len(args) != expected and not (method == "host.path_info" and len(args) == 3)):
+        if kwargs or (len(args) != expected and not (method == "host.path_info" and len(args) in (3, 4))):
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -508,7 +508,18 @@ def _broker(manifest, request: dict):
                        output=lambda line: console.print(line, markup=False, highlight=False))
         if method == "host.execute":
             from core.plugin_host_tools import execute
-            return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget, **context)
+            def output_start(header):
+                from core.cli import non_interactive
+                from core.prompt import clear_screen, print_header
+                from contextlib import nullcontext
+                if non_interactive.get() or not console.is_terminal:
+                    return
+                display = getattr(_invocations, "wait_display", None)
+                with display.suspend() if display is not None else nullcontext():
+                    clear_screen()
+                    print_header(header)
+            return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
+                           output_start=output_start, **context)
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)

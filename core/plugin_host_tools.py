@@ -71,12 +71,13 @@ def _grant(plugin, fingerprint, operation, resource, authority, check_identity, 
     return scope
 
 
-def path_info(plugin, fingerprint, path, directory, write=False, *, authority, check_identity, checkpoint, **unused):
-    if type(directory) is not bool or type(write) is not bool or (write and not directory):
+def path_info(plugin, fingerprint, path, directory, write=False, execute=False, *, authority, check_identity, checkpoint, **unused):
+    if (type(directory) is not bool or type(write) is not bool or type(execute) is not bool
+            or (write and not directory) or (execute and (not directory or not write))):
         raise ValueError("invalid path kind")
     target = _ordinary(path, directory=directory)
     identity = _identity(target)
-    scope = _grant(plugin, fingerprint, "directory.read_write" if write else "directory.read",
+    scope = _grant(plugin, fingerprint, "directory.manage" if execute else "directory.read_write" if write else "directory.read",
                    str(target if directory else target.parent), authority, check_identity, checkpoint)
     authority.check(scope, check_identity=check_identity)
     if _ordinary(path, directory=directory) != target or _identity(target) != identity:
@@ -191,17 +192,22 @@ def file_version(plugin, fingerprint, path, *, authority, check_identity, checkp
 
 
 def execute(plugin, fingerprint, executable, arguments, directory, options, *, authority,
-            check_identity, deadline, checkpoint, output, host_work_scope=None):
+            check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None):
     """Return raw exit status and a pending output token; success is plugin policy."""
     from core import plugin_artifacts as artifacts
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope"}
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header"}
             or ("capture_output" in options and type(options["capture_output"]) is not bool)
             or not isinstance(options.get("tool_dependencies", []), list)
             or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    header = options.get("output_header")
+    if header is not None and (not isinstance(header, list) or not 1 <= len(header) <= 8
+            or any(not isinstance(part, str) or not 1 <= len(part) <= 200
+                   or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in part) for part in header)):
+        raise ValueError("invalid host output header")
     grant_scope = options.get("authorization_scope", "command")
     if grant_scope not in ("command", "tool") or (grant_scope == "tool" and
             (options.get("tool_dependencies") or options.get("output_parent") is not None or "config_base64" in options)):
@@ -276,7 +282,18 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     resource = json.dumps(resource_details, ensure_ascii=False, sort_keys=True)
     tool_id, root_id = _identity(tool), _identity(root)
     base_id = _identity(base) if base else None
-    scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)
+    # A separately approved project-management grant includes host execution
+    # from that directory. Older read/write grants never imply execution.
+    from core.plugin_capabilities import CapabilityDenied
+    project_scope = CapabilityRequest(plugin, fingerprint, "directory.manage", str(root))
+    checkpoint()
+    try:
+        authority.check(project_scope, check_identity=check_identity)
+        scope = project_scope
+    except CapabilityDenied as error:
+        if error.code != "missing_or_revoked":
+            raise
+        scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)
     from core.native_task_control import task_checkpoint
     checkpoint = task_checkpoint(checkpoint, output=output)
     next_check = 0.0
@@ -325,6 +342,8 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                 if ";" in str(config_file):
                     raise ValueError("unsupported temporary configuration path")
                 argv = [a.replace("{config_file}", str(config_file).replace("\\", "/")) for a in argv]
+            if header is not None and output_start is not None:
+                output_start(header)
             with host_work_scope() if host_work_scope is not None else nullcontext():
                 iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
                                   **input_args, timeout=timeout, checkpoint=live)

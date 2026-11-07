@@ -918,6 +918,7 @@ plugin_native:
   revoke_help: "Revoke a permission and invalidate active one-time grants"
   id_help: "Full permission ID shown by permissions list"
   operation_line: "Operation: {operation}"
+  directory_manage_warning: "Allows project tools to access files outside this directory."
   directory_read_scope: "Includes all subdirectories."
   resource_line: "Resource: {resource}"
   fingerprint_line: "Plugin fingerprint: {fingerprint}"
@@ -928,6 +929,7 @@ plugin_native:
       read: "Read directory"
       write: "Read and write directory"
       read_write: "Read and write directory"
+      manage: "Read, write and run tools"
     tool:
       execute: "Run a host tool"
   errors:

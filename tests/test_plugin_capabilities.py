@@ -235,3 +235,38 @@ def test_existing_file_write_grant_does_not_expand_to_directory(tmp_path):
     authority.require(old, check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
     with pytest.raises(CapabilityDenied):
         authority.check(request(operation="directory.write", resource=str(root / "other")), check_identity=live)
+
+
+@pytest.mark.parametrize("choice", [GrantChoice.ONCE, GrantChoice.ALWAYS])
+def test_project_management_grant_is_explicit_scoped_and_revocable(tmp_path, choice):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    root = tmp_path / "project"
+    read_write = request(operation="directory.read_write", resource=str(root))
+    project = request(operation="directory.manage", resource=str(root))
+    authority.require(read_write, check_identity=live, prompt=lambda _: choice)
+    with pytest.raises(CapabilityDenied):
+        authority.check(project, check_identity=live)
+    authority.require(project, check_identity=live, prompt=lambda _: choice)
+    if choice is GrantChoice.ALWAYS:
+        authority = CapabilityAuthority(path=authority.path)
+    for covered in [read_write, request(operation="directory.read", resource=str(root / "env")),
+                    request(operation="directory.write", resource=json.dumps({"file": str(root / "package.json")})),
+                    request(operation="directory.manage", resource=str(root / "nested"))]:
+        authority.check(covered, check_identity=live)
+    for outside in [request(operation="directory.manage", resource=str(tmp_path / "project-other")),
+                    request(operation="directory.manage", resource=str(root / ".." / "outside")),
+                    request(operation="directory.manage", resource=str(root), fingerprint="b" * 64)]:
+        with pytest.raises(CapabilityDenied):
+            authority.check(outside, check_identity=live)
+    authority.revoke(project)
+    with pytest.raises(CapabilityDenied):
+        authority.check(project, check_identity=live)
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_project_management_consent_mentions_outside_access(tmp_path, monkeypatch, language):
+    from core import i18n
+    from core.plugin_capabilities import capability_info_lines
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    lines = capability_info_lines(request(operation="directory.manage", resource=str(tmp_path)))
+    assert lines[-1] == i18n.t("plugin_native.directory_manage_warning")

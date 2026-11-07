@@ -88,3 +88,26 @@ def test_find_executable_dispatch_uses_host_identity(caller, monkeypatch):
     request["args"] = ["git.exe"]
     with pytest.raises(sandbox.SandboxError, match="invalid host capability arguments"):
         sandbox._broker(caller, request)
+
+
+@pytest.mark.parametrize("terminal,noninteractive,expected", [(True, False, True), (False, False, False), (True, True, False)])
+def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch, terminal, noninteractive, expected):
+    from core import plugin_host_tools
+    from core.cli import non_interactive
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
+    monkeypatch.setattr(prompt, "console", SimpleNamespace(is_terminal=terminal))
+    events = []
+    monkeypatch.setattr(prompt, "clear_screen", lambda: events.append("clear"))
+    monkeypatch.setattr(prompt, "print_header", lambda header: events.append(header))
+    def execute(*args, **kwargs):
+        kwargs["output_start"](["OpsKit", "Build"])
+        return "result"
+    monkeypatch.setattr(plugin_host_tools, "execute", execute)
+    token = non_interactive.set(noninteractive)
+    try:
+        result = sandbox._broker(caller, {"rpc_version": 1, "method": "host.execute",
+                                          "args": ["tool", [], "project", {}]})
+    finally:
+        non_interactive.reset(token)
+    assert result == "result"
+    assert events == (["clear", ["OpsKit", "Build"]] if expected else [])

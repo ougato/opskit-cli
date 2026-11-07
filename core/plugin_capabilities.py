@@ -55,7 +55,9 @@ def _covers(grant: CapabilityRequest, request: CapabilityRequest) -> bool:
         return True
     if not ((grant.operation == "directory.read" and request.operation == "directory.read")
             or (grant.operation == "directory.read_write"
-                and request.operation in {"directory.read", "directory.write", "directory.read_write"})):
+                and request.operation in {"directory.read", "directory.write", "directory.read_write"})
+            or (grant.operation == "directory.manage"
+                and request.operation in {"directory.read", "directory.write", "directory.read_write", "directory.manage"})):
         return False
     resource = request.resource
     if request.operation == "directory.write" and resource.startswith("{"):
@@ -95,8 +97,10 @@ def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bo
              t("plugin_native.resource_line", resource=resource)]
     if include_fingerprint:
         lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
-    if request.operation in {"directory.read", "directory.read_write"}:
+    if request.operation in {"directory.read", "directory.read_write", "directory.manage"}:
         lines.append(t("plugin_native.directory_read_scope"))
+    if request.operation == "directory.manage":
+        lines.append(t("plugin_native.directory_manage_warning"))
     if request.operation == "tool.execute":
         lines.append(t("plugin_native.tool_scope_warning" if tool_scope else "plugin_native.tool_warning"))
     return lines
@@ -174,7 +178,7 @@ class CapabilityAuthority:
         key = _key(request)
         if key in state["grants"] or self.once.get(key) == state["epoch"]:
             return True
-        if request.operation not in {"directory.read", "directory.write", "directory.read_write"}:
+        if request.operation not in {"directory.read", "directory.write", "directory.read_write", "directory.manage"}:
             return False
         return (any(_covers(CapabilityRequest(**item), request) for item in state["grants"].values())
                 or any(self.once.get(key) == state["epoch"] and _covers(item, request)

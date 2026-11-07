@@ -52,7 +52,7 @@ class CapabilityRequest:
             raise ValueError("invalid plugin identity")
         if not re.fullmatch(r"[0-9a-f]{64}", self.fingerprint):
             raise ValueError("invalid plugin fingerprint")
-        if self.operation not in {"directory.read", "directory.write", "directory.read_write", "tool.execute"}:
+        if self.operation not in {"directory.read", "directory.write", "directory.read_write", "directory.manage", "tool.execute"}:
             raise ValueError("unsupported host capability")
         if (not isinstance(self.resource, str) or not self.resource
                 or len(self.resource.encode("utf-8")) > 4096

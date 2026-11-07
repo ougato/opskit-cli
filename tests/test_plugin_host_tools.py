@@ -421,3 +421,34 @@ def test_find_executable_skips_hard_link_and_finds_sibling_bin(tmp_path, monkeyp
     monkeypatch.setenv("PATH", "")
     result = tools.find_executable("demo", "a" * 64, "git.exe", str(cmd / "git.exe"), **context)
     assert result == str(usable)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_project_grant_reuses_permission_and_starts_output_after_authorization(tmp_path, monkeypatch, context):
+    from core.native_sandbox import CapabilityRequest
+    root = tmp_path / "project"
+    root.mkdir()
+    tool = tmp_path / "creator.exe"
+    tool.write_bytes(b"creator")
+    authority = context["authority"]
+    project = CapabilityRequest("demo", "a" * 64, "directory.manage", str(root))
+    authority.require(project, check_identity=context["check_identity"])
+    monkeypatch.setattr(authority, "require", lambda *a, **kw: pytest.fail("unexpected execution prompt"))
+    events = []
+    context["output"] = lambda line: events.append(("output", line))
+    def stream(*args, **kwargs):
+        kwargs["checkpoint"]()
+        yield "Creator output"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    result = tools.execute("demo", "a" * 64, str(tool), [], str(root),
+                           {"output_header": ["OpsKit", "Build"]},
+                           output_start=lambda header: events.append(("header", header)), **context)
+    assert result["returncode"] == 0
+    assert events == [("header", ["OpsKit", "Build"]), ("output", "Creator output")]
+    authority.revoke(project)
+    def denied(*args, **kwargs):
+        raise PermissionError("execution grant required")
+    monkeypatch.setattr(authority, "require", denied)
+    with pytest.raises(PermissionError, match="execution grant required"):
+        tools.execute("demo", "a" * 64, str(tool), [], str(root), {}, **context)
