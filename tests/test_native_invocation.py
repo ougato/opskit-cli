@@ -173,6 +173,37 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_old_sdk_is_refreshed_before_real_native_invocation(sdk_runtime, tmp_path, monkeypatch):
+    from core import plugin_sandbox as sandbox
+    from core.native_runtime import stage, inventory
+    from core.native_runtime_catalog import RuntimeCatalog
+    from core.plugin import load_manifest
+    from core.plugin_trust import compute_fingerprint, grant
+
+    data = tmp_path / 'data'
+    monkeypatch.setenv('OPSKIT_DATA_DIR', str(data))
+    plugin = tmp_path / 'plugin'
+    plugin.mkdir()
+    (plugin / 'plugin.yaml').write_text(
+        'name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: public_example\n')
+    (plugin / 'public_example.py').write_text('def cli(argv):\n    return 23\n')
+    fingerprint = compute_fingerprint(plugin)
+    grant('demo', fingerprint, '1.0.0')
+    original, record = sdk_runtime
+    old = tmp_path / 'old-runtime'
+    stage(original, old, record['files'])
+    worker = old / 'site-packages/core/plugin_worker.py'
+    worker.write_bytes(worker.read_bytes() + b'\n# old sdk\n')
+    record = dict(record, fingerprint=fingerprint, sdk_sha256='0' * 64, files=inventory(old))
+    catalog = RuntimeCatalog(data / 'native-plugin-runtimes')
+    old_id = catalog.publish('demo', old, record, check_identity=lambda *args: True)
+    assert sandbox.invoke(load_manifest(plugin), 'cli') == 23
+    from core.plugin_runtime_inventory import code_digest
+    runtime, updated = catalog.load('demo', fingerprint=fingerprint, sdk_sha256=code_digest())
+    assert runtime.parent.name != old_id and updated['wheels'] == record['wheels']
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
 def test_developer_example_cli_runs_in_native_sandbox(sdk_runtime, tmp_path, monkeypatch):
     from core import plugin_sandbox as sandbox
     from core.plugin import load_manifest

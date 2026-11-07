@@ -887,19 +887,15 @@ def _invoke(manifest, action, *, args, service, method, kwargs, caller):
         service_contract = manifest.service_contracts[service]
     _invocations.authorizations = (*getattr(_invocations, "authorizations", ()), (manifest.name, fingerprint))
     _check_live_authorizations()
-    from core.native_runtime_catalog import RuntimeCatalog
-    from core.plugin_runtime_inventory import code_digest
-    from core.native_sandbox import NativeSandboxError, get_backend
+    from core.plugin_runtime_manager import acquire
+    from core.native_sandbox import get_backend
     get_backend()
-    with ExitStack() as lease:
-        try:
-            runtime, runtime_record = lease.enter_context(
-                RuntimeCatalog(data_dir() / "native-plugin-runtimes").acquire(
-                    manifest.name, fingerprint=fingerprint, sdk_sha256=code_digest()))
-        except FileNotFoundError:
-            raise NativeSandboxError("runtime_missing") from None
-        except ValueError:
-            raise NativeSandboxError("runtime_invalid") from None
+    def authorize():
+        _check_live_authorizations()
+        current = _read_manifest(manifest.root)
+        return current == manifest and check_authorization(current) == fingerprint
+    with acquire(manifest, fingerprint, checkpoint=_remaining, authorize=authorize,
+                 speculative=getattr(_invocations, "preload", None) is not None) as (runtime, runtime_record):
         return _invoke_prepared(manifest, action, runtime=runtime, runtime_record=runtime_record,
                                 fingerprint=fingerprint, service_contract=service_contract,
                                 args=args, service=service, method=method, kwargs=kwargs, caller=caller)
