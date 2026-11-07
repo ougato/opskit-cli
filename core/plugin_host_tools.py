@@ -197,11 +197,15 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds"}
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope"}
             or ("capture_output" in options and type(options["capture_output"]) is not bool)
             or not isinstance(options.get("tool_dependencies", []), list)
             or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    grant_scope = options.get("authorization_scope", "command")
+    if grant_scope not in ("command", "tool") or (grant_scope == "tool" and
+            (options.get("tool_dependencies") or options.get("output_parent") is not None or "config_base64" in options)):
+        raise ValueError("invalid host tool authorization scope")
     timeout = options.get("timeout_seconds", 300)
     if type(timeout) is not int or not 1 <= timeout <= 3600:
         raise ValueError("invalid host tool timeout")
@@ -257,7 +261,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     digest = hashlib.sha256(_read_file(tool, Path(tool.anchor), 256 * 1024**2)).hexdigest()
     # The random output name is confined to the approved parent. Authorize
     # the literal template instead of an unusable, one-off expanded name.
-    resource = json.dumps({"executable": str(tool), "sha256": digest, "arguments": arguments,
+    resource_details = {"executable": str(tool), "sha256": digest, "arguments": arguments,
                            "directory": str(root), "output_parent": str(base) if base else None,
                            **({"capture_output": True} if options.get("capture_output") else {}),
                            **({"stdin": {"sha256": hashlib.sha256(stdin_data).hexdigest(), "size": len(stdin_data)}}
@@ -266,8 +270,10 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                               if config_data is not None else {}),
                            **({"capture_after": capture_after} if capture_after is not None else {}),
                            **({"timeout_seconds": timeout} if "timeout_seconds" in options else {}),
-                           **({"tool_dependencies": dependency_records} if dependencies else {})},
-                          ensure_ascii=False, sort_keys=True)
+                           **({"tool_dependencies": dependency_records} if dependencies else {})}
+    if grant_scope == "tool":
+        resource_details = {"executable": str(tool), "sha256": digest, "authorization_scope": "tool"}
+    resource = json.dumps(resource_details, ensure_ascii=False, sort_keys=True)
     tool_id, root_id = _identity(tool), _identity(root)
     base_id = _identity(base) if base else None
     scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)

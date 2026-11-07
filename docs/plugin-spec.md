@@ -117,7 +117,9 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
 - `upload_file(directory, relative, url, sha256, headers=None)`：单文件 HTTPS PUT，最多 512MiB；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
-宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
+宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。默认命令授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
+
+插件可通过 `authorization_scope: "tool"` 请求更宽的工具授权：绑定插件指纹、工具路径和摘要，允许任意参数及工作目录，须经宿主明确展示并由用户授权；不支持 `output_parent`、`config_base64` 和 `tool_dependencies`。默认仍按具体命令授权，原有授权不会自动扩大。
 
 授权菜单由框架统一提供，显示本次授权、永久授权和返回；返回或按 Esc 取消本次请求，不保存拒绝记录，下次申请可再次提示。插件只提交要执行的操作与目标，不能决定或写入授权选项。永久授权绑定内容身份与精确范围，可通过菜单或 `plugin permissions list` / `plugin permissions revoke ID` 查看和撤销。非交互模式没有授权时明确拒绝。
 

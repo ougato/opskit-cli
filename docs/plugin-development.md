@@ -82,6 +82,8 @@ pause(msg=''); clear_screen(); print_header(breadcrumb)
 
 信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录授权只显示操作和资源；执行宿主工具时还会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。
 
+`host_execute` 默认按具体命令授权。确需反复调用同一工具时，可在 options 中设置 `authorization_scope: "tool"`，请求按插件指纹、工具路径和摘要授权，允许该插件在任意工作目录使用任意参数运行该工具；宿主会明确显示这一范围。工具范围不支持 `output_parent`、`config_base64` 或 `tool_dependencies`。插件或工具内容变化仍需重新授权，旧的命令授权不会自动扩大。
+
 扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。
 
 `select` 对超过 9 项且从 1 起连续编号的选项自动分页，返回的仍是原始编号。需要保留对象、使用自定义按键或翻页后继续浏览时使用 `paged_select`。分页 `page_size` 为 1..9；`choice_of(item, index_on_page)` 可省略 `key` 自动编号，也可提供不重复的单字符键，`0`、`p`、`n` 留给返回和翻页。`subtitle_of(page, total_pages)` 的页码从 0 开始。未设置 `on_select` 时返回所选对象；设置时调用 `on_select(item)` 并继续浏览。0/Esc 返回 `None`。

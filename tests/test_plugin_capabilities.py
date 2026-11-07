@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from core.native_sandbox import CapabilityRequest, GrantChoice
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
@@ -12,6 +13,18 @@ def request(**overrides):
 
 def live(*args):
     return True
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_tool_scope_consent_shows_path_and_broad_permission(monkeypatch, language):
+    from core import i18n
+    from core.plugin_capabilities import capability_info_lines
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    resource = json.dumps({"authorization_scope": "tool", "executable": r"D:\git.exe", "sha256": "a" * 64})
+    lines = capability_info_lines(request(resource=resource))
+    assert r"D:\git.exe" in lines[1]
+    assert "sha256" not in lines[1]
+    assert lines[2] == i18n.t("plugin_native.tool_scope_warning")
 
 
 def test_once_is_reused_only_by_same_invocation(tmp_path):

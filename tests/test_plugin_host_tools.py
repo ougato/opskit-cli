@@ -49,12 +49,55 @@ def test_raw_exit_code_no_business_success_policy(tmp_path, monkeypatch, context
                                          ([], {"timeout_seconds": 0}), ([], {"timeout_seconds": 3601}),
                                          ([], {"stdin_base64": "invalid!"}),
                                          (["{config_file}"], {}), ([], {"config_base64": "e30="}),
-                                         ([], {"capture_after": "bad\nmarker"})])
+                                         ([], {"capture_after": "bad\nmarker"}),
+                                         ([], {"authorization_scope": "invalid"}),
+                                         ([], {"authorization_scope": "tool", "tool_dependencies": ["x"]})])
 def test_invalid_arguments_never_prompt(tmp_path, args, options):
     with pytest.raises(ValueError):
         tools.execute("demo", "a" * 64, "missing", args, str(tmp_path), options,
                       authority=None, check_identity=None, deadline=time.monotonic()+2,
                       checkpoint=lambda: None, output=lambda _: None)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_tool_scope_reuses_permanent_grant_and_rechecks_identity(tmp_path, monkeypatch):
+    tool = tmp_path / "git.exe"
+    tool.write_bytes(b"git")
+    project = tmp_path / "project"
+    project.mkdir()
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    prompts = []
+    original_require = authority.require
+    monkeypatch.setattr(authority, "require", lambda request, **kw: original_require(
+        request, prompt=lambda value: prompts.append(value) or GrantChoice.ALWAYS, **kw))
+    def stream(*args, **kwargs):
+        yield "ok"
+        return 0
+    monkeypatch.setattr(process, "stream", stream)
+    context = dict(authority=authority, check_identity=lambda *a: True,
+                   deadline=time.monotonic() + 30, checkpoint=lambda: None, output=lambda _: None)
+    for args, directory in [(["status"], tmp_path), (["fetch", "origin"], project)]:
+        tools.execute("cocos", "a" * 64, str(tool), args, str(directory),
+                      {"authorization_scope": "tool", "capture_output": True}, **context)
+    assert len(prompts) == 1
+    assert json.loads(prompts[0].resource) == {"authorization_scope": "tool", "executable": str(tool),
+                                               "sha256": hashlib.sha256(b"git").hexdigest()}
+    other = CapabilityAuthority(path=authority.path)
+    other.require(prompts[0], check_identity=lambda *a: True,
+                  prompt=lambda _: pytest.fail("persistent grant was not reused"))
+    from core.native_sandbox import CapabilityRequest
+    for changed in [CapabilityRequest("cocos", "b" * 64, "tool.execute", prompts[0].resource),
+                    CapabilityRequest("other", "a" * 64, "tool.execute", prompts[0].resource)]:
+        with pytest.raises(PermissionError):
+            other.check(changed, check_identity=lambda *a: True)
+    tool.write_bytes(b"updated git")
+    tools.execute("cocos", "a" * 64, str(tool), ["status"], str(project),
+                  {"authorization_scope": "tool", "capture_output": True}, **context)
+    assert len(prompts) == 2
+    assert prompts[0].resource != prompts[1].resource
+    other.revoke(prompts[0])
+    with pytest.raises(PermissionError):
+        authority.check(prompts[0], check_identity=lambda *a: True)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")

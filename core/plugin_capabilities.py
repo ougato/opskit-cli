@@ -49,12 +49,22 @@ def _key(request: CapabilityRequest) -> str:
 def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bool = False) -> list[str]:
     """Build the same localized resource rows for consent and permission details."""
     from core.i18n import t
+    resource = request.resource
+    tool_scope = False
+    if request.operation == "tool.execute":
+        try:
+            details = json.loads(resource)
+            tool_scope = isinstance(details, dict) and details.get("authorization_scope") == "tool"
+            if tool_scope and not include_fingerprint:
+                resource = details["executable"]
+        except (ValueError, KeyError, TypeError):
+            pass
     lines = [t("plugin_native.operation_line", operation=t("plugin_native.operations." + request.operation)),
-             t("plugin_native.resource_line", resource=request.resource)]
+             t("plugin_native.resource_line", resource=resource)]
     if include_fingerprint:
         lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
     if request.operation == "tool.execute":
-        lines.append(t("plugin_native.tool_warning"))
+        lines.append(t("plugin_native.tool_scope_warning" if tool_scope else "plugin_native.tool_warning"))
     return lines
 
 

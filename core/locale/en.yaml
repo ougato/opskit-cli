@@ -922,6 +922,7 @@ plugin_native:
   resource_line: "Resource: {resource}"
   fingerprint_line: "Plugin fingerprint: {fingerprint}"
   tool_warning: "Host tools and their scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory."
+  tool_scope_warning: "Allows the plugin to run this tool with any arguments and access files available to your user."
   operations:
     directory:
       read: "Read directory"
