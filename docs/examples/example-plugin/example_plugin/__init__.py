@@ -1,5 +1,5 @@
 """Minimal SDK 4 plugin with the same action for menu and CLI."""
-from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, register_locale, select, t
+from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, register_locale, select, t, waiting
 
 register_locale({
     "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务",
@@ -13,6 +13,12 @@ register_locale({
 
 def _run():
     print_success(t("example.done"))
+
+
+def run_waiting(task):
+    """Run a local callable while the host displays its waiting indicator."""
+    with waiting():
+        return task()
 
 
 def choose_item(items, initial_page=0):

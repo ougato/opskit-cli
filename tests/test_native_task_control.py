@@ -24,7 +24,7 @@ def test_cancel_keys_abort_task_with_localized_feedback(monkeypatch, language, k
     finally:
         non_interactive.reset(token)
     assert checks == [True]
-    assert logs == [i18n.t("plugin_native.task.cancel_hint"), i18n.t("plugin_native.task.cancelled")]
+    assert logs == [i18n.t("plugin_native.task.cancelled")]
 
 
 @pytest.mark.parametrize("interactive", [False, True])
@@ -69,23 +69,19 @@ def test_extended_keys_and_input_flood_do_not_block_authorization_checks(monkeyp
         non_interactive.reset(token)
 
 
-def test_consecutive_tasks_share_one_hint_without_losing_cancellation(monkeypatch, tmp_path):
-    from core.plugin_capabilities import CapabilityAuthority
+def test_consecutive_tasks_remain_cancellable_without_waiting_text(monkeypatch):
     monkeypatch.setattr("core.plugin_capabilities._interactive_input", lambda: True)
     monkeypatch.setattr(sys, "platform", "win32")
     keys = iter(["\x1b"])
     monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(kbhit=lambda: True, getwch=lambda: next(keys)))
-    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
     logs = []
     token = non_interactive.set(False)
     try:
-        task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
-        check = task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
-        assert logs == [i18n.t("plugin_native.task.cancel_hint")]
+        task_checkpoint(lambda: None, output=logs.append)
+        check = task_checkpoint(lambda: None, output=logs.append)
+        assert logs == []
         with pytest.raises(KeyboardInterrupt):
             check()
-        authority.reset_task_hint()
-        task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
-        assert logs.count(i18n.t("plugin_native.task.cancel_hint")) == 2
+        assert logs == [i18n.t("plugin_native.task.cancelled")]
     finally:
         non_interactive.reset(token)

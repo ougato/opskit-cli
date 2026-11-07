@@ -156,9 +156,10 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     (plugin / "plugin.yaml").write_text(
         "name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: public_example\n")
     (plugin / "public_example.py").write_text(
-        "from core.sdk import plugin_data_dir\n"
+        "from core.sdk import plugin_data_dir, waiting\n"
         "def cli(argv):\n"
-        "    (plugin_data_dir('demo') / 'committed.txt').write_text('native-state')\n"
+        "    with waiting():\n"
+        "        (plugin_data_dir('demo') / 'committed.txt').write_text('native-state')\n"
         "    return 23\n")
     fingerprint = compute_fingerprint(plugin)
     grant("demo", fingerprint, "1.0.0")

@@ -887,7 +887,6 @@ plugin_native:
     details: "Plugin: {plugin}\nDirectory: {directory}\nTransaction: {transaction}\nRecord SHA256: {digest}"
     completed: "The previous version is restored. Trust remains revoked and recovery evidence is retained."
   task:
-    cancel_hint: "Task running: press Esc or Ctrl+C to cancel. Plugin state will not be committed."
     cancelled: "Cancelling and stopping processes. Existing host files or transmitted bytes are not rolled back."
   upload:
     starting: "Preparing and uploading file to {host}..."

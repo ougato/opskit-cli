@@ -28,16 +28,17 @@ class _ColorSpinner(Spinner):
 
 
 class _InstallationStatus:
-    def __init__(self, message):
+    def __init__(self, message, output_console=None):
         self.spinner = _ColorSpinner(message)
         self.live = None
+        self.output_console = output_console if output_console is not None else console
 
     def start(self):
         if self.live is not None:
             return
         # The separator belongs to the transient display: stopping it removes
         # both lines, so a subsequent warning or error adds only its own gap.
-        self.live = Live(Group(Text(""), self.spinner), console=console,
+        self.live = Live(Group(Text(""), self.spinner), console=self.output_console,
                          refresh_per_second=12.5, transient=True)
         self.live.start(refresh=True)
 
@@ -50,6 +51,59 @@ class _InstallationStatus:
         self.spinner.update(text=message)
         if self.live is not None:
             self.live.refresh()
+
+
+class WaitingDisplay:
+    """One host-owned, nestable transient wait indicator per invocation."""
+
+    def __init__(self, output_console=None):
+        self.console = output_console if output_console is not None else console
+        self.messages = []
+        self.status = None
+        self.suspended = 0
+
+    def start(self, message=""):
+        if (not isinstance(message, str) or len(message) > 200
+                or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in message)):
+            raise ValueError("invalid waiting message")
+        if len(self.messages) >= 8:
+            raise ValueError("too many nested waiting scopes")
+        self.messages.append(message)
+        self._refresh()
+
+    def stop(self):
+        if not self.messages:
+            raise ValueError("no active waiting scope")
+        self.messages.pop()
+        self._refresh()
+
+    def _refresh(self):
+        from core.cli import non_interactive
+        if not self.messages or self.suspended or non_interactive.get() or not self.console.is_terminal:
+            if self.status is not None:
+                self.status.stop()
+                self.status = None
+            return
+        message = Text(self.messages[-1], no_wrap=True, overflow="ellipsis")
+        if self.status is None:
+            self.status = _InstallationStatus(message, output_console=self.console)
+            self.status.start()
+        else:
+            self.status.update(message)
+
+    @contextmanager
+    def suspend(self):
+        self.suspended += 1
+        self._refresh()
+        try:
+            yield
+        finally:
+            self.suspended -= 1
+            self._refresh()
+
+    def close(self):
+        self.messages.clear()
+        self._refresh()
 
 
 class InstallationProgress:

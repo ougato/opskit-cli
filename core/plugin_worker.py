@@ -58,6 +58,7 @@ class RemoteService:
 
 def _adapt_sdk(name: str):
     from core import sdk, prompt
+    from contextlib import contextmanager
     from core import paths
     from functools import wraps
     from inspect import signature
@@ -84,6 +85,21 @@ def _adapt_sdk(name: str):
         call = adapt_ui(method, getattr(sdk, method))
         setattr(sdk, method, call)
         setattr(prompt, method, call)
+
+    @contextmanager
+    def waiting(message=""):
+        broker("ui.wait_start", message)
+        try:
+            yield
+        except BaseException:
+            try:
+                broker("ui.wait_stop")
+            except Exception:
+                pass
+            raise
+        else:
+            broker("ui.wait_stop")
+    sdk.waiting = waiting
 
     def owned_data(namespace: str) -> Path:
         if namespace != name:

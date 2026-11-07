@@ -72,6 +72,7 @@ paged_select(*, breadcrumb, items, choice_of, subtitle_of, back_label,
 confirm(breadcrumb, prompt, theme_key='root', info_lines=None, require_explicit=False) -> bool
 text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False) -> str
 pause(msg=''); clear_screen(); print_header(breadcrumb)
+waiting(message='') -> context manager
 ```
 
 `select` 为单键选择，按数字立即返回，无需回车；`choices` 是 `{'key': '1', 'label': '...'}` 列表。`select_input` 用于确需输入完整文本的菜单，输入后按回车，空行使用 `default`；普通选项菜单不要使用它。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
@@ -82,7 +83,17 @@ pause(msg=''); clear_screen(); print_header(breadcrumb)
 
 信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录读取授权显示操作、资源和子目录范围；执行宿主工具时还会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。
 
-目录读取授权包含该目录下的子目录；同一插件在已授权目录内读取时无需再次授权。授权按路径组件判断，同名前缀的兄弟目录不包含在内；写入和工具执行仍须分别授权，链接及越界检查仍然有效。连续宿主工具操作只显示一次取消提示，用户重新进入交互界面后可再次显示。
+目录读取授权包含该目录下的子目录；同一插件在已授权目录内读取时无需再次授权。授权按路径组件判断，同名前缀的兄弟目录不包含在内；写入和工具执行仍须分别授权，链接及越界检查仍然有效。
+
+需要等待时使用 `with waiting():`，框架在下一空行显示与插件克隆相同的彩色点阵，不重复打印等待或取消说明。可传入已本地化的纯文本作为简短状态；空文本只显示动画。授权或菜单出现时自动暂停，结束、异常或取消时自动清除；非交互和重定向输出不显示动画。此接口只负责显示，不能替代宿主任务的取消、期限和授权检查，也不能保证插件本地代码支持 Esc 取消。
+
+```python
+from core.sdk import waiting
+
+def synchronize(task):
+    with waiting():
+        return task()
+```
 
 例如，在插件的菜单或命令行入口中检查已有项目及其构建目录时，可直接调用 SDK，不需要插件维护授权缓存：
 
@@ -134,7 +145,7 @@ def edit_path(breadcrumb, current):
 | 版本和入口 | `SDK_API_VERSION`, `ModuleInfo` | 当前为 4；`ModuleInfo(key, description_key, order, entry, platforms=..., enabled=True, label=None, icon=None)`。入口显示元数据以清单为准。 |
 | 文案 | `t(key, **kwargs)`, `current_lang()`, `register_locale(catalog)` | 注册 `{语言: 嵌套字典}`，使用插件自己的命名空间；不覆盖平台文案。 |
 | 主题 | `get_color(token)`, `get_icon(token)`, `print_success(msg, elapsed=None)`, `print_error(msg)`, `print_warning(msg)`, `print_info(msg, *, show_icon=True)` | 复用平台主题和状态输出。 |
-| 菜单 | `select`, `select_input`, `multi_select`, `paged_select`, `confirm`, `text_input`, `pause`, `clear_screen`, `print_header`, `UserCancel`, `console` | 签名、取消及非交互语义见上节。 |
+| 菜单 | `select`, `select_input`, `multi_select`, `paged_select`, `confirm`, `text_input`, `pause`, `clear_screen`, `print_header`, `waiting`, `UserCancel`, `console` | 签名、取消及非交互语义见上节。 |
 | 跨插件服务 | `get_service(name)`, `open_service_menu(name, breadcrumb, context=None)` | 前者返回远程代理，实际调用时核验；后者调用已授权服务的 `open_menu`。缺少提供方、契约或授权时调用失败，不自动安装。 |
 | 状态和路径 | `plugin_data_dir(namespace)`, `data_dir()`, `cache_dir()`, `log_dir()`, `plugins_dir()` | 使用自身 `plugin_data_dir` 保存持久业务状态；名称必须与清单中的插件身份完全一致。其他路径是本次隔离工作区内路径或只读插件快照，不代表宿主路径或持久授权。 |
 | 状态格式 | `load_yaml(path)`, `save_yaml(path, data)`, `get_logger(name='opskit')` | 在自身可访问的隔离路径内读写；注意不要记录敏感信息。 |

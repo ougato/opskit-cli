@@ -886,7 +886,6 @@ plugin_native:
     details: "插件：{plugin}\n目录：{directory}\n事务：{transaction}\n记录 SHA256：{digest}"
     completed: "旧版本已恢复，信任仍为撤销状态，全部恢复证据已保留。"
   task:
-    cancel_hint: "任务进行中，可按 Esc 或 Ctrl+C 取消；取消后不会提交插件状态。"
     cancelled: "正在取消任务并回收进程；已产生的宿主文件或已发送的数据不会自动撤回。"
   upload:
     starting: "正在准备并上传文件到 {host}…"

@@ -132,17 +132,17 @@ including legacy staging directories, are never adopted. Cleanup limits are not 
 英文真实 SDK 取消回滚也已通过：`cache/native-task-cancel-20261103-en/verification.json`。
 这些自动化取消不证明物理键盘/人工界面验收完成；最新版 CLI/中文上传复验中。
 
-Creator、产物摘要和上传在真实交互控制台显示当前语言的 Esc/Ctrl+C 取消提示。
+Creator、产物摘要和上传保留取消监督；插件需要显示等待状态时使用 `waiting()` 彩色动画。
 Windows checkpoint 非阻塞读取按键，每轮最多处理 16 个事件，扩展方向键不会误当取消；
 非交互模式和 NUL 输入不读取按键、不显示无效操作提示。
 取消从宿主抛出 KeyboardInterrupt，直接退出调用并回收进程，不能作为可捕获的
 普通 RPC 错误交给插件继续提交状态。已产生的宿主构建文件和已传输字节不自动撤回，
-取消提示明确说明这一区别。
+调用者必须处理这一边界。
 控制按键、双语反馈、非交互、输入洪泛、Creator 回收/失败摘要、产物和语言专项 55 项通过。
 真实 SDK 取消后状态回滚验收运行中：`cache/native-task-cancel-20261103-zh`。
 该脚本注入宿主取消 checkpoint，不等于物理键盘或冻结界面人工操作已验收。
 
-Host tasks show localized cancellation hints on interactive consoles. Windows Esc and
+Plugins can display the shared `waiting()` animation for long-running tasks. Windows Esc and
 Ctrl+C abort the invocation and prevent plugin state commit; existing host output or
 transmitted bytes are not rolled back. Noninteractive input never polls the console.
 The real SDK cancellation verifier injects a checkpoint interruption, not physical keyboard input.

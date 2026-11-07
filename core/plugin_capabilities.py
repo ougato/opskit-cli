@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -123,7 +124,7 @@ class CapabilityAuthority:
                                  label="plugin capability authority")
         self.once: dict[str, int] = {}
         self.once_scopes: dict[str, CapabilityRequest] = {}
-        self.task_hint_shown = False
+        self.suspend_wait = nullcontext
         self.closed = False
 
     def _load(self):
@@ -168,15 +169,6 @@ class CapabilityAuthority:
                 or any(self.once.get(key) == state["epoch"] and _covers(item, request)
                        for key, item in self.once_scopes.items()))
 
-    def claim_task_hint(self):
-        if self.task_hint_shown:
-            return False
-        self.task_hint_shown = True
-        return True
-
-    def reset_task_hint(self):
-        self.task_hint_shown = False
-
     def require(self, request: CapabilityRequest, *, check_identity, prompt=prompt_grant):
         self._live(request, check_identity)
         key = _key(request)
@@ -187,8 +179,8 @@ class CapabilityAuthority:
                 self._live(request, check_identity)
                 return
         # Do not hold the store lock while waiting for human input.
-        self.reset_task_hint()
-        choice = prompt(request)
+        with self.suspend_wait():
+            choice = prompt(request)
         if not isinstance(choice, GrantChoice) or choice is GrantChoice.DENY:
             raise CapabilityDenied("denied")
         with self.lock.hold():

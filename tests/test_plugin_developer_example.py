@@ -50,3 +50,21 @@ def test_example_selects_from_requested_page(monkeypatch):
     monkeypatch.setattr(prompt, "select", lambda **kwargs: screens.append(kwargs) or "2")
     assert module.choose_item(list(range(12)), initial_page=1) == 10
     assert screens[0]["choices"][0]["label"] == "9"
+
+
+def test_example_waiting_scope_wraps_the_task(monkeypatch):
+    from contextlib import contextmanager
+    events = []
+    @contextmanager
+    def waiting():
+        events.append("start")
+        try:
+            yield
+        finally:
+            events.append("stop")
+    monkeypatch.setattr(sdk, "waiting", waiting)
+    spec = importlib.util.spec_from_file_location("example_waiting_test", EXAMPLE / "example_plugin" / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.run_waiting(lambda: events.append("task") or 42) == 42
+    assert events == ["start", "task", "stop"]

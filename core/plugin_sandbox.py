@@ -435,6 +435,15 @@ def _broker(manifest, request: dict):
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
+    if method in {"ui.wait_start", "ui.wait_stop"}:
+        display = getattr(_invocations, "wait_display", None)
+        if display is None or kwargs or len(args) != (1 if method == "ui.wait_start" else 0):
+            raise SandboxError("invalid waiting scope")
+        if method == "ui.wait_start":
+            display.start(args[0])
+        else:
+            display.stop()
+        return None
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.
     if method == "host.upload_file":
@@ -566,9 +575,7 @@ def _broker(manifest, request: dict):
     ui = {"select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
     if method in ui:
         from core import prompt
-        authority = getattr(_invocations, "capability_authority", None)
-        if authority is not None:
-            authority.reset_task_hint()
+        display = getattr(_invocations, "wait_display", None)
         next_check = 0
 
         def checkpoint():
@@ -578,7 +585,8 @@ def _broker(manifest, request: dict):
                 _check_live_authorizations(extra=((manifest.name, fingerprint),))
                 next_check = time.monotonic() + 1
 
-        with prompt.guard_input(checkpoint):
+        from contextlib import nullcontext
+        with (display.suspend() if display is not None else nullcontext()), prompt.guard_input(checkpoint):
             checkpoint()
             value = getattr(prompt, method)(*args, **kwargs)
             checkpoint()
@@ -853,26 +861,36 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             network_authorizations = getattr(_invocations, "network_authorizations", ())
             previous_authority = getattr(_invocations, "capability_authority", None)
             previous_preload = getattr(_invocations, "preload", None)
+            previous_wait = getattr(_invocations, "wait_display", None)
             _invocations.preload = _preload
             from core.plugin_capabilities import CapabilityAuthority
+            from core.installation_progress import WaitingDisplay
+            from core.prompt import console
             authority = CapabilityAuthority()
+            display = WaitingDisplay(output_console=console)
+            authority.suspend_wait = display.suspend
             _invocations.capability_authority = authority
+            _invocations.wait_display = display
             try:
                 return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
             finally:
-                authority.close()
-                _invocations.capability_authority = previous_authority
-                _invocations.preload = previous_preload
-                _invocations.stack = stack
-                _invocations.authorizations = authorizations
-                used_edges = getattr(_invocations, "service_edges", ())
-                # A caller's later state still depends on services it used,
-                # including a revoked edge whose exception it catches.
-                _invocations.service_edges = tuple(dict.fromkeys((*service_edges, *used_edges))) if stack else service_edges
-                used_networks = getattr(_invocations, "network_authorizations", ())
-                _invocations.network_authorizations = (
-                    tuple(dict.fromkeys((*network_authorizations, *used_networks))) if stack
-                    else network_authorizations)
+                try:
+                    display.close()
+                finally:
+                    authority.close()
+                    _invocations.capability_authority = previous_authority
+                    _invocations.wait_display = previous_wait
+                    _invocations.preload = previous_preload
+                    _invocations.stack = stack
+                    _invocations.authorizations = authorizations
+                    used_edges = getattr(_invocations, "service_edges", ())
+                    # A caller's later state still depends on services it used,
+                    # including a revoked edge whose exception it catches.
+                    _invocations.service_edges = tuple(dict.fromkeys((*service_edges, *used_edges))) if stack else service_edges
+                    used_networks = getattr(_invocations, "network_authorizations", ())
+                    _invocations.network_authorizations = (
+                        tuple(dict.fromkeys((*network_authorizations, *used_networks))) if stack
+                        else network_authorizations)
 
 
 def _invoke(manifest, action, *, args, service, method, kwargs, caller):
@@ -979,7 +997,10 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
             from core.plugin_capabilities import CapabilityDenied
             from core.i18n import t
             try:
-                with input_wait_scope(_input_wait_budget):
+                from contextlib import nullcontext
+                display = getattr(_invocations, "wait_display", None)
+                suspend = display.suspend() if display is not None and message.get("method") in {"service.call", "service.describe"} else nullcontext()
+                with suspend, input_wait_scope(_input_wait_budget):
                     return {"value": _broker(manifest, message)}
             except UserCancel:
                 return {"cancel": True}

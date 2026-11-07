@@ -5,6 +5,7 @@
 不兼容变更（删除导出 / 改签名语义）必须递增大版本，并同步 docs/plugin-spec.md。
 """
 from __future__ import annotations
+from contextlib import contextmanager
 
 # ─── API 版本（plugin.yaml 的 api_version 必须与此相等） ─────────────────────
 from core.constants import PLUGIN_API_VERSION as SDK_API_VERSION
@@ -39,6 +40,18 @@ from core.prompt import (
     UserCancel,
     console,
 )
+
+
+@contextmanager
+def waiting(message: str = ""):
+    """Show a transient wait indicator while the enclosed operation runs."""
+    from core.installation_progress import WaitingDisplay
+    display = WaitingDisplay()
+    display.start(message)
+    try:
+        yield
+    finally:
+        display.close()
 
 
 def select(breadcrumb: list[str], subtitle: str, choices: list[dict], theme_key: str = 'root',
@@ -117,7 +130,7 @@ __all__ = [
     "t", "current_lang", "register_locale",
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
-    "select", "select_input", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "UserCancel", "console",
+    "select", "select_input", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "waiting", "UserCancel", "console",
     "get_service", "open_service_menu",
     "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",
