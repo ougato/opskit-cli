@@ -39,3 +39,14 @@ def test_example_manifest_menu_and_cli(monkeypatch, capsys, language):
     assert module.cli(["--help"]) == 0 and "--hello" in capsys.readouterr().out
     assert module.cli(["--invalid"]) == 2
     assert all("example." not in message for message in messages)
+
+
+def test_example_selects_from_requested_page(monkeypatch):
+    from core import prompt
+    spec = importlib.util.spec_from_file_location("example_paging_test", EXAMPLE / "example_plugin" / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    screens = []
+    monkeypatch.setattr(prompt, "select", lambda **kwargs: screens.append(kwargs) or "2")
+    assert module.choose_item(list(range(12)), initial_page=1) == 10
+    assert screens[0]["choices"][0]["label"] == "9"

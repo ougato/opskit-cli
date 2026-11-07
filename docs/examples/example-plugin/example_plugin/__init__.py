@@ -1,5 +1,5 @@
 """Minimal SDK 4 plugin with the same action for menu and CLI."""
-from core.sdk import ModuleInfo, get_icon, print_error, print_success, register_locale, select, t
+from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, register_locale, select, t
 
 register_locale({
     "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务",
@@ -13,6 +13,15 @@ register_locale({
 
 def _run():
     print_success(t("example.done"))
+
+
+def choose_item(items, initial_page=0):
+    """Select an item by a single key, starting at the requested page."""
+    return paged_select(breadcrumb=["OpsKit", t("example.title")], items=items,
+                        choice_of=lambda item, _: {"label": str(item)},
+                        subtitle_of=lambda page, total: t("example.select"),
+                        back_label=f"{get_icon('back')} {t('example.back')}",
+                        initial_page=initial_page)
 
 
 def entry():

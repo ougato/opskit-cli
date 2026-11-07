@@ -108,7 +108,43 @@ def test_numbered_select_automatically_pages_and_preserves_original_key(monkeypa
         for key, label in page:
             if key in ("p", "n"):
                 icon, text = label.split(" ", 1)
-                assert cell_len(icon) == 2 and len(text) == 4
+                assert cell_len(icon) == 2 and text in {"上一页", "下一页"}
+
+
+def test_select_and_select_input_use_distinct_input_modes(monkeypatch):
+    monkeypatch.setattr(prompt.os, "system", lambda _: 0)
+    keys = []
+    monkeypatch.setattr(prompt, "_read_key_seq", lambda: keys.append("1") or "1")
+    monkeypatch.setattr(prompt, "_read_line", lambda: pytest.fail("single-key menu read a line"))
+    assert sdk.select(["OpsKit"], "Choose", [{"key": "1", "label": "First"}]) == "1"
+    assert keys == ["1"]
+    monkeypatch.setattr(prompt, "_read_key_seq", lambda: pytest.fail("line menu read a key"))
+    monkeypatch.setattr(prompt, "_read_line", lambda: "feature/name")
+    assert sdk.select_input(["OpsKit"], "Choose", []) == "feature/name"
+
+
+@pytest.mark.parametrize("language,previous,following", [("zh", "上一页", "下一页"),
+                                                        ("en", "Prev Page", "Next Page")])
+def test_paged_select_starts_at_requested_page_and_uses_framework_labels(monkeypatch, language, previous, following):
+    from core import i18n
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    screens = []
+    keys = iter(["p", "n", "2"])
+    monkeypatch.setattr(prompt, "select", lambda **kwargs: screens.append(kwargs) or next(keys))
+    result = prompt.paged_select(breadcrumb=[], items=list(range(12)),
+                                 choice_of=lambda item, _: {"label": str(item)},
+                                 subtitle_of=lambda page, total: str(page), back_label="Back", initial_page=1)
+    assert result == 10
+    assert [screen["subtitle"] for screen in screens] == ["1", "0", "1"]
+    assert screens[0]["choices"][-1]["label"].endswith(previous)
+    assert screens[1]["choices"][-1]["label"].endswith(following)
+
+
+@pytest.mark.parametrize("initial_page", [-1, 2, True, 1.0, "1"])
+def test_paged_select_rejects_invalid_initial_page(initial_page):
+    with pytest.raises(ValueError):
+        prompt.paged_select(breadcrumb=[], items=list(range(12)), choice_of=lambda item, _: {"label": str(item)},
+                            subtitle_of=lambda *_: "", back_label="Back", initial_page=initial_page)
 
 
 def test_plugin_manager_can_pick_a_plugin_after_the_first_page(monkeypatch):
@@ -175,6 +211,10 @@ def test_worker_ui_preserves_sdk_signature_and_normalizes_cancellation(monkeypat
     assert sdk.select_input([], "", [], info_lines=["Path: example"]) is None
     assert calls[1][2]["info_lines"] == ["Path: example"]
     assert sdk.multi_select([], "", ["x"]) is None
+    assert sdk.paged_select(breadcrumb=[], items=list(range(12)), initial_page=1,
+                            choice_of=lambda item, _: {"label": str(item)},
+                            subtitle_of=lambda page, total: str(page), back_label="Back") == 9
+    assert calls[-1][0] == "select" and calls[-1][2]["choices"][0]["label"] == "9"
     with pytest.raises(TypeError):
         sdk.select([], "", [], on_ready=lambda: None)
     with pytest.raises(TypeError):

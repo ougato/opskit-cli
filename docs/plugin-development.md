@@ -68,13 +68,13 @@ select(breadcrumb, subtitle, choices, theme_key='root', show_shortcuts=None,
 select_input(breadcrumb, subtitle, choices, back_label='', description='', default='', info_lines=None) -> str | None
 multi_select(breadcrumb, subtitle, options, theme_key='root', back_label='', all_index=None) -> list[int] | None
 paged_select(*, breadcrumb, items, choice_of, subtitle_of, back_label,
-             nav_labels=None, theme_key='root', page_size=9, on_select=None) -> item | None
+             nav_labels=None, theme_key='root', page_size=9, on_select=None, initial_page=0) -> item | None
 confirm(breadcrumb, prompt, theme_key='root', info_lines=None, require_explicit=False) -> bool
 text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False) -> str
 pause(msg=''); clear_screen(); print_header(breadcrumb)
 ```
 
-`select` 为单键选择，`choices` 是 `{'key': '1', 'label': '...'}` 列表；`select_input` 读取整行，空行使用 `default`。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
+`select` 为单键选择，按数字立即返回，无需回车；`choices` 是 `{'key': '1', 'label': '...'}` 列表。`select_input` 用于确需输入完整文本的菜单，输入后按回车，空行使用 `default`；普通选项菜单不要使用它。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
 
 为每个业务菜单、选择、输入和确认传入当前面包屑，保留实际入口、已选对象和当前功能；独立步骤可以继续追加步骤名称。例如游戏构建中输入 Git 路径使用“OpsKit → Cocos 工具 → 游戏名 → 项目构建”，字段名称交给 `text_input` 的 `prompt`。复用工具选择等流程时显式传递入口上下文，没有选中对象时不要虚构对象。宿主授权标题仍由框架管理。
 
@@ -100,7 +100,7 @@ def inspect_build_directory(project, build_directory):
 
 扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。
 
-`select` 对超过 9 项且从 1 起连续编号的选项自动分页，返回的仍是原始编号。需要保留对象、使用自定义按键或翻页后继续浏览时使用 `paged_select`。分页 `page_size` 为 1..9；`choice_of(item, index_on_page)` 可省略 `key` 自动编号，也可提供不重复的单字符键，`0`、`p`、`n` 留给返回和翻页。`subtitle_of(page, total_pages)` 的页码从 0 开始。未设置 `on_select` 时返回所选对象；设置时调用 `on_select(item)` 并继续浏览。0/Esc 返回 `None`。
+`select` 对超过 9 项且从 1 起连续编号的选项自动分页，返回的仍是原始编号。需要保留对象、使用自定义按键或翻页后继续浏览时使用 `paged_select`。默认按 `p` / `n` 单键翻页，使用框架“上一页”“下一页”文案；`select` 的快捷键占用翻页键时会自动选择其他按键。分页 `page_size` 为 1..9；`choice_of(item, index_on_page)` 可省略 `key` 自动编号，也可提供不重复的单字符键，`0`、`p`、`n` 留给返回和翻页。`subtitle_of(page, total_pages)` 和 `initial_page` 的页码从 0 开始；后者可定位上次选择所在页，不会自动确认。未设置 `on_select` 时返回所选对象；设置时调用 `on_select(item)` 并继续浏览。0/Esc 返回 `None`。
 
 `confirm` 的 0/Esc 返回 `False`；普通确认可受 `--yes` 影响，必须由用户明确选择时传 `require_explicit=True`。`text_input` 的 Esc 抛出 `UserCancel`，调用方在适当的菜单边界处理；`default` 是空行时返回的值，`hint` 只改变展示。需要保持已有值时应传入 `default`，重置应提供明确操作。Ctrl+C 退出交互；不能把取消当成确认。
 

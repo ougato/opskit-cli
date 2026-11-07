@@ -596,6 +596,7 @@ def paged_select(
     theme_key: str = 'root',
     page_size: int = 9,
     on_select: Callable[[Any], None] | None = None,
+    initial_page: int = 0,
 ) -> Any | None:
     """分页单选 — 统一「列表分页 + p/n 翻页 + 选中」交互。
 
@@ -610,21 +611,24 @@ def paged_select(
             ``prompt.next_page`` 通用文案。
         on_select: 为 None → 选中即返回该 item（pick 模式）；否则对选中 item
             调用此回调并继续停留在列表（browse 模式，翻页状态保持）。
+        initial_page: 初始页的零起始下标；只定位页面，不自动选择。
 
     Returns:
         pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
     """
     if type(page_size) is not int or not 1 <= page_size <= 9:
         raise ValueError('page_size must be an integer between 1 and 9')
+    total = len(items)
+    total_pages = (total + page_size - 1) // page_size
+    if type(initial_page) is not int or not 0 <= initial_page < max(total_pages, 1):
+        raise ValueError('initial_page must identify an existing page')
     if nav_labels is None:
         from core.i18n import t
         from core.theme import get_icon
         nav_labels = (f"{get_icon('back')} {t('prompt.prev_page')}",
                       f"{get_icon('next_page')} {t('prompt.next_page')}")
     prev_label, next_label = nav_labels
-    total = len(items)
-    total_pages = (total + page_size - 1) // page_size
-    page = 0
+    page = initial_page
 
     while True:
         start = page * page_size
