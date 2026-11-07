@@ -180,8 +180,8 @@ def host_artifacts(action: str, parameters: dict) -> dict | list:
     raise PermissionError("artifact receipt API requires an isolated plugin worker")
 
 
-def host_path_info(path: str, directory: bool = False) -> dict:
-    """Validate a consent-bound ordinary absolute host path without executing it."""
+def host_path_info(path: str, directory: bool = False, write: bool = False) -> dict:
+    """Validate a host path and request directory read/write access when write is True."""
     raise PermissionError("host path API requires an isolated plugin worker")
 
 

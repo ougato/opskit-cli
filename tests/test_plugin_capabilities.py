@@ -199,3 +199,39 @@ def test_windows_nul_is_not_interactive_even_when_isatty_reports_true(monkeypatc
             assert error.value.code == "interaction_required"
         finally:
             non_interactive.reset(token)
+
+
+@pytest.mark.parametrize("choice", [GrantChoice.ONCE, GrantChoice.ALWAYS])
+def test_explicit_directory_read_write_covers_scoped_operations(tmp_path, choice):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    root = tmp_path / "project"
+    grant = request(operation="directory.read_write", resource=str(root))
+    authority.require(grant, check_identity=live, prompt=lambda _: choice)
+    if choice is GrantChoice.ALWAYS:
+        authority = CapabilityAuthority(path=authority.path)
+    requests = [request(operation="directory.read", resource=str(root / "env")),
+                request(operation="directory.write", resource=str(root / "build")),
+                request(operation="directory.write", resource=json.dumps({
+                    "file": str(root / "package.json"), "before_sha256": "a" * 64,
+                    "after_sha256": "b" * 64}))]
+    for item in requests:
+        authority.check(item, check_identity=live)
+    for item in [request(operation="directory.write", resource=str(tmp_path / "project-other")),
+                 request(operation="directory.write", resource=json.dumps({"file": str(root / ".." / "outside")})),
+                 request(operation="directory.read", resource=str(root), fingerprint="b" * 64),
+                 request(operation="tool.execute", resource=str(root / "tool.exe"))]:
+        with pytest.raises(CapabilityDenied):
+            authority.check(item, check_identity=live)
+    authority.revoke(grant)
+    for item in requests:
+        with pytest.raises(CapabilityDenied):
+            authority.check(item, check_identity=live)
+
+
+def test_existing_file_write_grant_does_not_expand_to_directory(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    root = tmp_path / "project"
+    old = request(operation="directory.write", resource=str(root))
+    authority.require(old, check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
+    with pytest.raises(CapabilityDenied):
+        authority.check(request(operation="directory.write", resource=str(root / "other")), check_identity=live)

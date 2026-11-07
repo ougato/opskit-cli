@@ -49,13 +49,24 @@ def _key(request: CapabilityRequest) -> str:
 
 
 def _covers(grant: CapabilityRequest, request: CapabilityRequest) -> bool:
-    if (grant.plugin, grant.fingerprint, grant.operation) != (request.plugin, request.fingerprint, request.operation):
+    if (grant.plugin, grant.fingerprint) != (request.plugin, request.fingerprint):
         return False
     if grant == request:
         return True
-    if request.operation != "directory.read":
+    if not ((grant.operation == "directory.read" and request.operation == "directory.read")
+            or (grant.operation == "directory.read_write"
+                and request.operation in {"directory.read", "directory.write", "directory.read_write"})):
         return False
-    parent, child = Path(grant.resource), Path(request.resource)
+    resource = request.resource
+    if request.operation == "directory.write" and resource.startswith("{"):
+        try:
+            details = json.loads(resource)
+            if not isinstance(details, dict) or not isinstance(details.get("file"), str):
+                return False
+            resource = details["file"]
+        except (ValueError, TypeError):
+            return False
+    parent, child = Path(grant.resource), Path(resource)
     if (not parent.is_absolute() or not child.is_absolute() or ".." in parent.parts or ".." in child.parts
             or any(part.endswith((".", " ")) or ":" in part for part in (*parent.parts[1:], *child.parts[1:]))):
         return False
@@ -84,7 +95,7 @@ def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bo
              t("plugin_native.resource_line", resource=resource)]
     if include_fingerprint:
         lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
-    if request.operation == "directory.read":
+    if request.operation in {"directory.read", "directory.read_write"}:
         lines.append(t("plugin_native.directory_read_scope"))
     if request.operation == "tool.execute":
         lines.append(t("plugin_native.tool_scope_warning" if tool_scope else "plugin_native.tool_warning"))
@@ -163,7 +174,7 @@ class CapabilityAuthority:
         key = _key(request)
         if key in state["grants"] or self.once.get(key) == state["epoch"]:
             return True
-        if request.operation != "directory.read":
+        if request.operation not in {"directory.read", "directory.write", "directory.read_write"}:
             return False
         return (any(_covers(CapabilityRequest(**item), request) for item in state["grants"].values())
                 or any(self.once.get(key) == state["epoch"] and _covers(item, request)

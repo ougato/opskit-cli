@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import time
 
 from core.paths import data_dir
 from core.plugin_runtime_inventory import _read_file
@@ -144,3 +145,33 @@ def recover(token, digest, *, timeout=30):
         retire(workspace)
     _retire_locks(token)
     return {"transaction": token, "removed": True}
+
+
+def recover_one_idle(*, deadline, attempted):
+    """Reclaim one recorded, inactive workspace; never adopt unknown objects."""
+    try:
+        entries = inspect()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    for item in entries:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        if not item.get("valid"):
+            continue
+        token = item["transaction"]
+        if token in attempted:
+            continue
+        attempted.add(token)
+        try:
+            info = Path(item["directory"]).lstat()
+            if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                continue
+        except OSError:
+            continue
+        try:
+            recover(token, item["record_sha256"], timeout=min(30, remaining))
+            return True
+        except (OSError, ValueError, RuntimeError, TimeoutError):
+            continue
+    return False

@@ -8,6 +8,15 @@ import time
 import uuid
 
 MAX_INSPECTION_ENTRIES = 4096
+BUSY_RETRY_SECONDS = 5
+
+
+class WorkspaceAllocationFull(RuntimeError):
+    """Allocation was refused because the workspace capacity is exhausted."""
+
+
+class WorkspaceAllocationBusy(RuntimeError):
+    """Another process is briefly changing the workspace namespace."""
 
 @dataclass(frozen=True)
 class Workspace:
@@ -173,7 +182,8 @@ def _allocate_worker(connection, request, buffer=None, length=0):
     import stat
     from core.plugin_state import _directory
     from core.plugin_state_budget import platform_state_guard
-    from core.plugin_workspace_budget import reserve_workspace
+    from core.plugin_workspace_budget import reserve_workspace, WorkspaceCapacityExhausted
+    from core.resource_lock import ResourceBusyError
     from network.worker import send
     try:
         # One persistent namespace per platform, independent of TEMP/TMPDIR.
@@ -227,6 +237,10 @@ def _allocate_worker(connection, request, buffer=None, length=0):
             raise ValueError("temporary parent changed")
         result = {"ok": True, "request": request, "root": str(root),
                   "parent": parent_identity, "identity": identity}
+    except WorkspaceCapacityExhausted:
+        result = {"ok": False, "reason": "capacity"}
+    except ResourceBusyError:
+        result = {"ok": False, "reason": "busy"}
     except (OSError, ValueError, RuntimeError):
         result = {"ok": False}
     try:
@@ -261,6 +275,11 @@ def allocate(*, timeout, request_text=None):
         raise TimeoutError("plugin workspace allocation deadline exceeded")
     request = uuid.uuid4().hex
     result = run(_allocate_worker, (request, *arguments), timeout=remaining, label="plugin workspace allocation")
+    if isinstance(result, dict) and set(result) == {"ok", "reason"} and result["ok"] is False:
+        if result["reason"] == "capacity":
+            raise WorkspaceAllocationFull("plugin workspace allocation unconfirmed; workspace capacity exhausted")
+        if result["reason"] == "busy":
+            raise WorkspaceAllocationBusy("plugin workspace allocation unconfirmed; workspace is busy")
     if (not isinstance(result, dict)
             or set(result) != {"ok", "request", "root", "parent", "identity"}
             or result["ok"] is not True or result["request"] != request
@@ -335,8 +354,32 @@ def owned_workspace(*, timeout, cleanup_timeout, request_text=None):
     from core.plugin_workspace_budget import WORKSPACE_BYTES
     check_space(data_dir().absolute(), reserve_bytes=WORKSPACE_BYTES)
     from core.plugin_sandbox import WorkspaceError
+    deadline = time.monotonic() + timeout
     try:
-        workspace = allocate(timeout=timeout, request_text=request_text)
+        attempted = set()
+        busy_deadline = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("plugin workspace allocation deadline exceeded")
+            try:
+                workspace = allocate(timeout=remaining, request_text=request_text)
+                break
+            except WorkspaceAllocationFull:
+                from core.plugin_workspace_recovery import recover_one_idle
+                if not recover_one_idle(deadline=deadline, attempted=attempted):
+                    raise
+            except WorkspaceAllocationBusy:
+                now = time.monotonic()
+                if busy_deadline is None:
+                    busy_deadline = min(deadline, now + BUSY_RETRY_SECONDS)
+                if now >= busy_deadline:
+                    raise
+                time.sleep(min(.1, busy_deadline - now))
+    except WorkspaceAllocationFull as exc:
+        raise WorkspaceError("plugin workspace capacity exhausted", reason="capacity") from exc
+    except WorkspaceAllocationBusy as exc:
+        raise WorkspaceError("plugin workspace is busy", reason="busy") from exc
     except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
         raise WorkspaceError("plugin workspace allocation failed; evidence retained") from exc
     from core.plugin_workspace_recovery import track

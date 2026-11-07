@@ -132,7 +132,8 @@ def _adapt_sdk(name: str):
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
-    sdk.host_path_info = lambda path, directory=False: broker("host.path_info", path, directory)
+    sdk.host_path_info = lambda path, directory=False, write=False: broker(
+        "host.path_info", path, directory) if write is False else broker("host.path_info", path, directory, write)
     sdk.host_find_executable = lambda name, preferred="": broker("host.find_executable", name, preferred)
     sdk.host_file_version = lambda path: broker("host.file_version", path)
     def https_request(url, method="GET", headers=None, body=b""):

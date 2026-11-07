@@ -33,6 +33,10 @@ class SandboxError(RuntimeError):
 class WorkspaceError(SandboxError):
     """The host-owned isolated workspace could not be prepared or cleaned."""
 
+    def __init__(self, message, *, reason=None):
+        super().__init__(message)
+        self.reason = reason
+
 
 def _encode(value, state_root: Path):
     if isinstance(value, Path):
@@ -488,7 +492,7 @@ def _broker(manifest, request: dict):
                              deadline=_invocations.deadline, checkpoint=checkpoint)
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version"}:
         expected = 4 if method == "host.execute" else (1 if method == "host.file_version" else 2)
-        if kwargs or len(args) != expected:
+        if kwargs or (len(args) != expected and not (method == "host.path_info" and len(args) == 3)):
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:

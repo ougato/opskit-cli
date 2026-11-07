@@ -83,7 +83,7 @@ waiting(message='') -> context manager
 
 信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录读取授权显示操作、资源和子目录范围；执行宿主工具时还会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。
 
-目录读取授权包含该目录下的子目录；同一插件在已授权目录内读取时无需再次授权。授权按路径组件判断，同名前缀的兄弟目录不包含在内；写入和工具执行仍须分别授权，链接及越界检查仍然有效。
+目录读取授权包含该目录下的子目录；同一插件在已授权目录内读取时无需再次授权。授权按路径组件判断，同名前缀的兄弟目录不包含在内；读取授权不包含写入或工具执行。构建等需要写入项目的流程，可在入口调用 `host_path_info(project, True, write=True)` 显式申请该目录及子目录的读写授权；后续受控读写复用此授权，工具执行仍须独立授权，链接及越界检查仍然有效。
 
 需要等待时使用 `with waiting():`，框架在下一空行显示与插件克隆相同的彩色点阵，不重复打印等待或取消说明。可传入已本地化的纯文本作为简短状态；空文本只显示动画。授权或菜单出现时自动暂停，结束、异常或取消时自动清除；非交互和重定向输出不显示动画。此接口只负责显示，不能替代宿主任务的取消、期限和授权检查，也不能保证插件本地代码支持 Esc 取消。
 
@@ -152,7 +152,7 @@ def edit_path(breadcrumb, current):
 | 沙盒进程 | `run(cmd, *, cwd=None, env=None, timeout=None, capture=False, check=True, output_limit=1048576)`, `run_lines(cmd, *, cwd=None, env=None, timeout=None)`, `which(name)`, `cmd_ok(cmd, timeout=5)` | 只在沙盒权限及进程限制内工作；不代表能运行宿主 Git 或 Creator。 |
 | 依赖 | `ensure_python_package(package, import_name='')` | 仅检查已准备运行时中的依赖，不安装任何软件或 Python 包。 |
 | 宿主文件 | `read_host_file(directory, relative)`, `compare_write_host_file(directory, relative, expected_sha256, content)`, `create_host_file(directory, relative, content)`, `host_file_status(directory, relative)`, `artifact_info(directory, relative)` | 通过宿主授权及有界校验；写入须处理失败与中断。 |
-| 宿主工具 | `host_execute(executable, arguments, directory, options=None)`, `host_path_info(path, directory=False)`, `host_find_executable(name, preferred="")`, `host_file_version(path)`, `host_asar_directories(directory, relative, member)` | 按已获准的读取目录树、工具和执行范围访问。`host_asar_directories` 只列举 ASAR 目录。`host_find_executable` 查找普通绝对路径，返回前仍需目录读取授权；找不到时返回空字符串，不执行程序。 |
+| 宿主工具 | `host_execute(executable, arguments, directory, options=None)`, `host_path_info(path, directory=False, write=False)`, `host_find_executable(name, preferred="")`, `host_file_version(path)`, `host_asar_directories(directory, relative, member)` | 按已获准的读取目录树、工具和执行范围访问。`host_asar_directories` 只列举 ASAR 目录。`host_find_executable` 查找普通绝对路径，返回前仍需目录读取授权；找不到时返回空字符串，不执行程序。 |
 | 产物和网络 | `host_artifacts(action, parameters)`, `https_request(url, method='GET', headers=None, body=b'')`, `upload_file(directory, relative, url, sha256, headers=None)` | 使用框架的产物凭据、受限 HTTPS 和内容摘要绑定上传；详细约束见插件规范。 |
 
 插件自身状态按身份和服务调用方隔离，成功调用只有通过最终的期限、授权和状态检查后才提交。临时工作区并非永久存储；不得推断其他插件的状态目录。不要使用已删除的 `ensure_software`、`software_bin` 或旧 `host_archive_directories`。

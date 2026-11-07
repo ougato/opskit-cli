@@ -350,6 +350,8 @@ The related recovery, bilingual menu, isolation, CLI and architecture group pass
 正式调用和 Git 采集的工作目录在分配确认后保存父目录、目录文件身份及私有记录，
 整个使用期持有占用锁。清理 worker 另持互斥锁，防止宿主退出时与后续恢复交错删除。
 分配确认前或记录持久化前退出的目录不自动接管，按未知归属保留。
+工作区容量耗尽时，框架会尝试按既有记录逐个恢复已闲置的工作区并重试；
+身份不匹配、正在使用或归属未知的目录仍不会自动清理。
 
 Invocation and acquisition workspaces receive a private identity record after allocation
 acknowledgement, with a lifetime lease and a separate cleanup-worker lease. Directories left

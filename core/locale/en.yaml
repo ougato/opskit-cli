@@ -927,6 +927,7 @@ plugin_native:
     directory:
       read: "Read directory"
       write: "Read and write directory"
+      read_write: "Read and write directory"
     tool:
       execute: "Run a host tool"
   errors:
@@ -950,6 +951,8 @@ plugin_native:
     fetch_tools_invalid: "The prepared native acquisition runtime is stale or damaged. Run plugin prepare-fetch again."
     acquisition_failed: "Plugin installation failed. Check logs/opskit.log in the data directory."
     workspace_failed: "Plugin workspace preparation or cleanup failed. Check the data directory path, permissions, and free space."
+    workspace_full: "Temporary workspaces are full. Retry later or use workspace cleanup in plugin maintenance."
+    workspace_busy: "Temporary workspace is busy. Please retry shortly."
     update_failed: "The plugin update failed. Inspect the retained update workspace before retrying."
     update_modified: "Installed files changed or lack a native installation receipt. Back up your changes before reinstalling; no files were replaced."
     prepare_invalid: "Invalid plugin, private Python runtime, offline wheels or dependency lock."

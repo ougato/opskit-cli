@@ -74,16 +74,17 @@ def test_trust_write_failure_never_publishes(installation, monkeypatch, caplog):
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
-def test_workspace_failure_reports_safe_specific_diagnostic(installation, monkeypatch, language):
+@pytest.mark.parametrize("reason,key", [(None, "workspace_failed"), ("capacity", "workspace_full"), ("busy", "workspace_busy")])
+def test_workspace_failure_reports_safe_specific_diagnostic(installation, monkeypatch, language, reason, key):
     from core import i18n
     from core.plugin_sandbox import WorkspaceError
     plugins, origin = installation
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     def fail(*args, **kwargs):
-        raise WorkspaceError("private filesystem detail")
+        raise WorkspaceError("private filesystem detail", reason=reason)
     monkeypatch.setattr("core.native_acquisition.populate", fail)
     manifest, error = commands.install(str(origin), alias="demo")
-    assert manifest is None and error == i18n.t("plugin_native.errors.workspace_failed")
+    assert manifest is None and error == i18n.t("plugin_native.errors." + key)
     assert "private filesystem detail" not in error
     assert not (plugins / "demo").exists()
     assert not list(plugins.glob(".opskit-install-*"))

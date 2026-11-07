@@ -71,13 +71,13 @@ def _grant(plugin, fingerprint, operation, resource, authority, check_identity, 
     return scope
 
 
-def path_info(plugin, fingerprint, path, directory, *, authority, check_identity, checkpoint, **unused):
-    if type(directory) is not bool:
+def path_info(plugin, fingerprint, path, directory, write=False, *, authority, check_identity, checkpoint, **unused):
+    if type(directory) is not bool or type(write) is not bool or (write and not directory):
         raise ValueError("invalid path kind")
     target = _ordinary(path, directory=directory)
     identity = _identity(target)
-    scope = _grant(plugin, fingerprint, "directory.read", str(target if directory else target.parent),
-                   authority, check_identity, checkpoint)
+    scope = _grant(plugin, fingerprint, "directory.read_write" if write else "directory.read",
+                   str(target if directory else target.parent), authority, check_identity, checkpoint)
     authority.check(scope, check_identity=check_identity)
     if _ordinary(path, directory=directory) != target or _identity(target) != identity:
         raise ValueError("host resource changed")

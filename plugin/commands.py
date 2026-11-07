@@ -362,6 +362,10 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
         _log_install_failure(phase, exc)
         from core.plugin_sandbox import WorkspaceError
         if isinstance(exc, WorkspaceError):
+            if exc.reason == "capacity":
+                return None, t("plugin_native.errors.workspace_full")
+            if exc.reason == "busy":
+                return None, t("plugin_native.errors.workspace_busy")
             return None, t("plugin_native.errors.workspace_failed")
         return None, t("plugin_native.errors.acquisition_failed")
     finally:

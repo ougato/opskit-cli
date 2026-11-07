@@ -926,6 +926,7 @@ plugin_native:
     directory:
       read: "读取目录"
       write: "读写目录"
+      read_write: "读写目录"
     tool:
       execute: "执行工具"
   errors:
@@ -949,6 +950,8 @@ plugin_native:
     fetch_tools_invalid: "已准备的原生隔离采集工具已过期或损坏，请重新运行 plugin prepare-fetch。"
     acquisition_failed: "插件安装失败，请查看数据目录中的 logs/opskit.log。"
     workspace_failed: "插件隔离工作区处理失败，请检查数据目录路径、权限及可用空间。"
+    workspace_full: "临时工作区已满，请稍后重试或在插件维护中选择临时清理。"
+    workspace_busy: "临时工作区正忙，请稍后重试。"
     update_failed: "插件更新失败，请检查保留的更新工作目录后再重试。"
     update_modified: "安装内容已修改或缺少原生安装凭据。请先备份修改再重新安装，本次未替换任何文件。"
     prepare_invalid: "插件、私有 Python 运行时、离线 wheel 或依赖锁无效。"

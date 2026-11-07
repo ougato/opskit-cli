@@ -17,6 +17,10 @@ MAX_PARENT_ENTRIES = 16384
 MAX_DEPTH = 66
 
 
+class WorkspaceCapacityExhausted(ValueError):
+    """The bounded workspace namespace cannot accommodate another task."""
+
+
 @dataclass(frozen=True)
 class WorkspaceBudget:
     payload_bytes: int
@@ -57,7 +61,7 @@ def reserve_workspace(parent):
                 visited += 1
                 entries += 1
                 if visited + WORKSPACE_ENTRIES > MAX_WORKSPACE_ENTRIES:
-                    raise ValueError("workspace entry quota exhausted")
+                    raise WorkspaceCapacityExhausted("workspace entry quota exhausted")
                 path = directory / child.name
                 info = path.lstat()
                 if _plain(info, stat.S_ISDIR):
@@ -71,7 +75,7 @@ def reserve_workspace(parent):
                 else:
                     raise ValueError("unsafe retained workspace")
                 if payload + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
-                    raise ValueError("workspace byte quota exhausted")
+                    raise WorkspaceCapacityExhausted("workspace byte quota exhausted")
         if _version(before) != _version(directory.lstat()):
             raise ValueError("workspace directory changed")
         return payload, entries
@@ -88,7 +92,7 @@ def reserve_workspace(parent):
             if _plain(info, stat.S_ISDIR):
                 count += 1
                 if count >= MAX_WORKSPACES:
-                    raise ValueError("workspace slots exhausted; retained evidence preserved")
+                    raise WorkspaceCapacityExhausted("workspace slots exhausted; retained evidence preserved")
                 size, child_entries = scan(path, 0)
                 payload += size
                 charged += max(size, WORKSPACE_BYTES)
@@ -103,13 +107,13 @@ def reserve_workspace(parent):
             else:
                 raise ValueError("unsafe retained workspace")
             if charged + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
-                raise ValueError("workspace byte quota exhausted")
+                raise WorkspaceCapacityExhausted("workspace byte quota exhausted")
             if entries + WORKSPACE_ENTRIES > MAX_WORKSPACE_ENTRIES:
-                raise ValueError("workspace entry quota exhausted")
+                raise WorkspaceCapacityExhausted("workspace entry quota exhausted")
     if _version(before) != _version(parent.lstat()):
         raise ValueError("workspace parent changed")
     if charged + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
-        raise ValueError("workspace byte quota exhausted")
+        raise WorkspaceCapacityExhausted("workspace byte quota exhausted")
     if entries + WORKSPACE_ENTRIES > MAX_WORKSPACE_ENTRIES:
-        raise ValueError("workspace entry quota exhausted")
+        raise WorkspaceCapacityExhausted("workspace entry quota exhausted")
     return WorkspaceBudget(payload, charged, entries, count)
