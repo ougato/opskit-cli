@@ -30,6 +30,10 @@ class SandboxError(RuntimeError):
     pass
 
 
+class WorkspaceError(SandboxError):
+    """The host-owned isolated workspace could not be prepared or cleaned."""
+
+
 def _encode(value, state_root: Path):
     if isinstance(value, Path):
         if value.as_posix().startswith("/data/"):

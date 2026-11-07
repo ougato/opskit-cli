@@ -73,6 +73,22 @@ def test_trust_write_failure_never_publishes(installation, monkeypatch, caplog):
     assert not list(plugins.glob(".opskit-install-*"))
 
 
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_workspace_failure_reports_safe_specific_diagnostic(installation, monkeypatch, language):
+    from core import i18n
+    from core.plugin_sandbox import WorkspaceError
+    plugins, origin = installation
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    def fail(*args, **kwargs):
+        raise WorkspaceError("private filesystem detail")
+    monkeypatch.setattr("core.native_acquisition.populate", fail)
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert manifest is None and error == i18n.t("plugin_native.errors.workspace_failed")
+    assert "private filesystem detail" not in error
+    assert not (plugins / "demo").exists()
+    assert not list(plugins.glob(".opskit-install-*"))
+
+
 def test_cancel_cleans_private_candidate_and_preserves_target(installation, monkeypatch):
     plugins, origin = installation
     target = plugins / "demo"
@@ -295,6 +311,7 @@ def test_declined_install_ui_reports_preserved_replacement(installation, monkeyp
     def message(key, **kwargs):
         return key + ": " + kwargs.get("error", "")
     monkeypatch.setattr(menu, "t", message)
+    monkeypatch.setattr("core.installation_progress.t", message)
     monkeypatch.setattr(i18n, "t", message)
     monkeypatch.setattr(menu, "confirm_trust", decline)
     monkeypatch.setattr(menu, "text_input", lambda **kwargs: "fixture")

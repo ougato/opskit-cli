@@ -16,6 +16,23 @@ class Workspace:
     identity: list
 
 
+def _workspace_parent():
+    """Expand Windows short names only after rejecting linked ancestors."""
+    from core.paths import data_dir
+    from core.plugin_state import _directory
+    parent = data_dir().absolute() / "plugin-runtimes" / "workspaces"
+    if ".." in parent.parts:
+        raise ValueError("noncanonical workspace namespace")
+    # Resolve only after checking each existing component without following
+    # links. Path.resolve() also expands legitimate Windows 8.3 aliases.
+    for directory in reversed((parent, *parent.parents)):
+        try:
+            _directory(directory)
+        except FileNotFoundError:
+            break
+    return parent.resolve()
+
+
 def validate_binding(workspace):
     """Recheck a native workspace and its recorded parent without a journal."""
     from core.plugin_state import _directory, _valid_identity
@@ -35,14 +52,13 @@ def validate_binding(workspace):
 def recorded_workspace_intent(value):
     """Resolve an allocation attempt; it grants no directory ownership."""
     import re
-    from core.paths import data_dir
     from core.plugin_state import _valid_identity
     if (not isinstance(value, dict) or set(value) != {"name", "parent"}
             or not isinstance(value["name"], str)
             or re.fullmatch(r"opskit-sandbox-[0-9a-f]{32}", value["name"]) is None
             or not _valid_identity(value["parent"])):
         raise ValueError("invalid workspace allocation intent")
-    root = data_dir().absolute() / "plugin-runtimes" / "workspaces" / value["name"]
+    root = _workspace_parent() / value["name"]
     return root, value['parent']
 
 
@@ -70,14 +86,11 @@ def _inspect_workspaces_worker(connection, request, limit):
     import os
     import re
     import stat
-    from core.paths import data_dir
     from core.plugin_state import _directory, _plain
     from core.plugin_workspace_budget import _version
     from network.worker import send
     try:
-        parent = data_dir().absolute() / 'plugin-runtimes' / 'workspaces'
-        if '..' in parent.parts:
-            raise ValueError('noncanonical workspace namespace')
+        parent = _workspace_parent()
         entries, unknown = [], 0
         for ancestor in reversed((parent, *parent.parents)):
             try:
@@ -161,14 +174,11 @@ def _allocate_worker(connection, request, buffer=None, length=0):
     from core.plugin_state import _directory
     from core.plugin_state_budget import platform_state_guard
     from core.plugin_workspace_budget import reserve_workspace
-    from core.paths import data_dir
     from network.worker import send
     try:
         # One persistent namespace per platform, independent of TEMP/TMPDIR.
         # Validate ancestors before creation; never resolve through host links.
-        parent = data_dir().absolute() / "plugin-runtimes" / "workspaces"
-        if parent.resolve() != parent:
-            raise ValueError("workspace parent must be canonical")
+        parent = _workspace_parent()
         root = parent / ("opskit-sandbox-" + request)
         with platform_state_guard():
             for directory in (parent, *parent.parents):
@@ -324,11 +334,11 @@ def owned_workspace(*, timeout, cleanup_timeout, request_text=None):
     from core.plugin_disk_policy import check_space
     from core.plugin_workspace_budget import WORKSPACE_BYTES
     check_space(data_dir().absolute(), reserve_bytes=WORKSPACE_BYTES)
-    from core.plugin_sandbox import SandboxError
+    from core.plugin_sandbox import WorkspaceError
     try:
         workspace = allocate(timeout=timeout, request_text=request_text)
     except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
-        raise SandboxError("plugin workspace allocation failed; evidence retained") from exc
+        raise WorkspaceError("plugin workspace allocation failed; evidence retained") from exc
     from core.plugin_workspace_recovery import track
     with track(workspace):
         with _use_workspace(workspace, cleanup_timeout=cleanup_timeout):
@@ -337,7 +347,7 @@ def owned_workspace(*, timeout, cleanup_timeout, request_text=None):
 
 @contextmanager
 def _use_workspace(workspace, *, cleanup_timeout):
-    from core.plugin_sandbox import SandboxError
+    from core.plugin_sandbox import WorkspaceError
     from core.plugin_workspace_recovery import retire
     failure = None
     try:
@@ -352,7 +362,7 @@ def _use_workspace(workspace, *, cleanup_timeout):
         except BaseException as exc:
             if failure is None:
                 if isinstance(exc, Exception):
-                    raise SandboxError("plugin workspace cleanup incomplete; evidence retained") from exc
+                    raise WorkspaceError("plugin workspace cleanup incomplete; evidence retained") from exc
                 raise
             from core.cleanup import add_exception_note
             add_exception_note(failure, "plugin workspace cleanup incomplete; evidence retained")

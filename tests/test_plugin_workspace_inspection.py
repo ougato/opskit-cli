@@ -113,6 +113,31 @@ def test_linked_namespace_does_not_expose_target(tmp_path, monkeypatch):
     assert len(list(foreign.iterdir())) == 1
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows junctions')
+def test_junction_namespace_is_rejected_before_resolution(tmp_path, monkeypatch):
+    import subprocess
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    evidence = foreign / 'keep'
+    evidence.write_text('preserved')
+    platform = tmp_path / 'platform'
+    platform.mkdir()
+    junction = platform / 'plugin-runtimes'
+    result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(foreign)],
+                            capture_output=True, check=False)
+    if result.returncode:
+        pytest.skip('directory junctions unavailable')
+    monkeypatch.setenv('OPSKIT_DATA_DIR', str(platform))
+    try:
+        with pytest.raises(RuntimeError, match='changed'):
+            workspace.inspect_workspaces(timeout=30)
+        with pytest.raises(RuntimeError, match='allocation unconfirmed'):
+            workspace.allocate(timeout=30)
+        assert evidence.read_text() == 'preserved'
+    finally:
+        junction.rmdir()
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='POSIX FIFO')
 def test_fifo_is_observed_without_opening(tmp_path):
     parent = namespace(tmp_path)

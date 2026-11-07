@@ -360,6 +360,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
         if isinstance(exc, NativeSandboxError):
             return None, str(exc)
         _log_install_failure(phase, exc)
+        from core.plugin_sandbox import WorkspaceError
+        if isinstance(exc, WorkspaceError):
+            return None, t("plugin_native.errors.workspace_failed")
         return None, t("plugin_native.errors.acquisition_failed")
     finally:
         # Never roll back dest: it may belong to a concurrent writer. The private

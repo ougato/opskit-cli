@@ -88,6 +88,26 @@ def test_creation_and_removal_do_not_touch_parent_filesystem(tmp_path, monkeypat
     assert not lease.root.exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows short path aliases")
+def test_windows_short_data_path_preserves_workspace_binding(monkeypatch):
+    import ctypes
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="opskit-short-", dir=os.environ.get("TEMP")) as directory:
+        path = Path(directory).resolve()
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+        if not length or length >= len(buffer) or buffer.value.lower() == str(path).lower():
+            pytest.skip("Windows short path aliases unavailable")
+        monkeypatch.setenv("OPSKIT_DATA_DIR", buffer.value)
+        with workspace.owned_workspace(timeout=30, cleanup_timeout=30) as lease:
+            assert lease.root.parent == path / "plugin-runtimes" / "workspaces"
+            assert workspace.recorded_workspace(workspace.journal_binding(lease)) == lease
+            assert workspace.inspect_workspaces(timeout=30)["entries"] == [
+                {"token": lease.root.name.removeprefix("opskit-sandbox-"), "kind": "directory"}]
+            (lease.root / "value").write_text("owned")
+        assert not lease.root.exists()
+
+
 @pytest.mark.parametrize("operation", ["allocate", "cleanup"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_blocked_io_is_reaped(tmp_path, monkeypatch, expire_worker_after_marker, operation, cancel):
