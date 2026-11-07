@@ -57,6 +57,47 @@ def test_permanent_exact_scope_and_identity(tmp_path):
         other.check(request(), check_identity=lambda *args: False)
 
 
+@pytest.mark.parametrize("choice", [GrantChoice.ONCE, GrantChoice.ALWAYS])
+def test_directory_read_covers_descendants_but_not_other_permissions(tmp_path, choice):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    root = tmp_path / "project"
+    parent = request(operation="directory.read", resource=str(root))
+    child = request(operation="directory.read", resource=str(root / "build" / "output"))
+    prompts = []
+    authority.require(parent, check_identity=live, prompt=lambda value: prompts.append(value) or choice)
+    authority.require(child, check_identity=live, prompt=lambda _: pytest.fail("child prompted"))
+    authority.check(child, check_identity=live)
+    assert prompts == [parent]
+    for different in [request(operation="directory.read", resource=str(tmp_path / "project-other")),
+                      request(operation="directory.read", resource=str(root / ".." / "outside")),
+                      request(operation="directory.write", resource=str(root / "build")),
+                      request(operation="directory.read", resource=str(root / "build"), fingerprint="b" * 64),
+                      request(operation="directory.read", resource=str(root / "build"), plugin="other")]:
+        with pytest.raises(CapabilityDenied):
+            authority.check(different, check_identity=live)
+    if choice is GrantChoice.ALWAYS:
+        other = CapabilityAuthority(path=authority.path)
+        other.check(child, check_identity=live)
+        other.revoke(parent)
+    else:
+        authority.revoke(parent)
+    with pytest.raises(CapabilityDenied):
+        authority.check(child, check_identity=live)
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows paths")
+def test_windows_directory_scope_handles_case_drives_and_component_boundaries():
+    from core.plugin_capabilities import _covers
+    root = request(operation="directory.read", resource=r"F:\cocos\frame\3.x")
+    assert _covers(root, request(operation="directory.read", resource=r"f:\COCOS\frame\3.X\build"))
+    for path in [r"F:\cocos\frame\3.x2", r"E:\cocos\frame\3.x\build",
+                 r"F:\cocos\frame\3.x\..\outside", r"F:\cocos\frame\3.x\bad.\data"]:
+        assert not _covers(root, request(operation="directory.read", resource=path))
+    network = request(operation="directory.read", resource=r"\\server\share\project")
+    assert _covers(network, request(operation="directory.read", resource=r"\\SERVER\share\project\build"))
+    assert not _covers(network, request(operation="directory.read", resource=r"\\server\share-other\project\build"))
+
+
 @pytest.mark.parametrize("choice", [GrantChoice.DENY, None, "always"])
 def test_denied_or_invalid_choice_does_not_persist(tmp_path, choice):
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")

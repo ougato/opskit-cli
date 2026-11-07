@@ -2,7 +2,7 @@
 import sys
 
 
-def task_checkpoint(checkpoint, *, output=None):
+def task_checkpoint(checkpoint, *, output=None, claim_hint=None):
     """Poll Windows ESC without blocking, and preserve Ctrl+C rollback semantics."""
     from core.cli import non_interactive
     from core.plugin_capabilities import _interactive_input
@@ -12,7 +12,8 @@ def task_checkpoint(checkpoint, *, output=None):
     if output is None:
         from core.prompt import console
         output = lambda line: console.print(line, markup=False, highlight=False)
-    output(t("plugin_native.task.cancel_hint"))
+    if claim_hint is None or claim_hint():
+        output(t("plugin_native.task.cancel_hint"))
 
     def check():
         checkpoint()

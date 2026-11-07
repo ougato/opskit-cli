@@ -29,6 +29,27 @@ def test_host_read_requires_exact_authorized_scope(tmp_path, monkeypatch):
                   authority=authority, check_identity=lambda *a: True)
 
 
+def test_parent_grant_allows_child_reads_and_revocation_stops_them(tmp_path):
+    root = tmp_path / "project"
+    child = root / "build"
+    child.mkdir(parents=True)
+    (child / "config.json").write_bytes(b"child data")
+    from core.native_sandbox import CapabilityRequest
+    authority = CapabilityAuthority(path=tmp_path / "permissions.yaml")
+    parent = CapabilityRequest("demo", "a" * 64, "directory.read", str(root))
+    authority.require(parent, check_identity=lambda *a: True, prompt=lambda _: GrantChoice.ALWAYS)
+    reply = read_file("demo", "a" * 64, str(child), "config.json",
+                      authority=authority, check_identity=lambda *a: True)
+    assert base64.b64decode(reply["content"]) == b"child data"
+    from core.plugin_host_tools import path_info
+    result = path_info("demo", "a" * 64, str(child), True, authority=authority,
+                       check_identity=lambda *a: True, checkpoint=lambda: None)
+    assert result == {"path": str(child), "directory": True}
+    authority.revoke(parent)
+    with pytest.raises(CapabilityDenied):
+        authority.check(CapabilityRequest("demo", "a" * 64, "directory.read", str(child)), check_identity=lambda *a: True)
+
+
 @pytest.mark.parametrize("relative", ["../secret", "/secret", "C:/secret", "a:stream", "folder\\secret"])
 def test_host_read_rejects_escape_before_prompt(tmp_path, relative):
     class NoAuthority:

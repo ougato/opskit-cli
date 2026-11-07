@@ -278,7 +278,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
     base_id = _identity(base) if base else None
     scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)
     from core.native_task_control import task_checkpoint
-    checkpoint = task_checkpoint(checkpoint, output=output)
+    checkpoint = task_checkpoint(checkpoint, output=output, claim_hint=authority.claim_task_hint)
     next_check = 0.0
     def current_deadline():
         return deadline() if callable(deadline) else deadline

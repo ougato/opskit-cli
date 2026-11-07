@@ -67,3 +67,25 @@ def test_extended_keys_and_input_flood_do_not_block_authorization_checks(monkeyp
         assert len(consumed) == 33 and checks == [True, True]
     finally:
         non_interactive.reset(token)
+
+
+def test_consecutive_tasks_share_one_hint_without_losing_cancellation(monkeypatch, tmp_path):
+    from core.plugin_capabilities import CapabilityAuthority
+    monkeypatch.setattr("core.plugin_capabilities._interactive_input", lambda: True)
+    monkeypatch.setattr(sys, "platform", "win32")
+    keys = iter(["\x1b"])
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(kbhit=lambda: True, getwch=lambda: next(keys)))
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    logs = []
+    token = non_interactive.set(False)
+    try:
+        task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
+        check = task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
+        assert logs == [i18n.t("plugin_native.task.cancel_hint")]
+        with pytest.raises(KeyboardInterrupt):
+            check()
+        authority.reset_task_hint()
+        task_checkpoint(lambda: None, output=logs.append, claim_hint=authority.claim_task_hint)
+        assert logs.count(i18n.t("plugin_native.task.cancel_hint")) == 2
+    finally:
+        non_interactive.reset(token)

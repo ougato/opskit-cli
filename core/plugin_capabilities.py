@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -46,6 +47,25 @@ def _key(request: CapabilityRequest) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _covers(grant: CapabilityRequest, request: CapabilityRequest) -> bool:
+    if (grant.plugin, grant.fingerprint, grant.operation) != (request.plugin, request.fingerprint, request.operation):
+        return False
+    if grant == request:
+        return True
+    if request.operation != "directory.read":
+        return False
+    parent, child = Path(grant.resource), Path(request.resource)
+    if (not parent.is_absolute() or not child.is_absolute() or ".." in parent.parts or ".." in child.parts
+            or any(part.endswith((".", " ")) or ":" in part for part in (*parent.parts[1:], *child.parts[1:]))):
+        return False
+    try:
+        root = os.path.normcase(os.path.normpath(str(parent)))
+        target = os.path.normcase(os.path.normpath(str(child)))
+        return os.path.commonpath((root, target)) == root
+    except ValueError:
+        return False
+
+
 def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bool = False) -> list[str]:
     """Build the same localized resource rows for consent and permission details."""
     from core.i18n import t
@@ -63,6 +83,8 @@ def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bo
              t("plugin_native.resource_line", resource=resource)]
     if include_fingerprint:
         lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
+    if request.operation == "directory.read":
+        lines.append(t("plugin_native.directory_read_scope"))
     if request.operation == "tool.execute":
         lines.append(t("plugin_native.tool_scope_warning" if tool_scope else "plugin_native.tool_warning"))
     return lines
@@ -100,6 +122,8 @@ class CapabilityAuthority:
         self.lock = ResourceLock(lambda: self.path.with_suffix(".lock"),
                                  label="plugin capability authority")
         self.once: dict[str, int] = {}
+        self.once_scopes: dict[str, CapabilityRequest] = {}
+        self.task_hint_shown = False
         self.closed = False
 
     def _load(self):
@@ -134,16 +158,36 @@ class CapabilityAuthority:
         if self.closed or check_identity(request.plugin, request.fingerprint) is not True:
             raise CapabilityDenied("identity_revoked")
 
+    def _authorized(self, request, state):
+        key = _key(request)
+        if key in state["grants"] or self.once.get(key) == state["epoch"]:
+            return True
+        if request.operation != "directory.read":
+            return False
+        return (any(_covers(CapabilityRequest(**item), request) for item in state["grants"].values())
+                or any(self.once.get(key) == state["epoch"] and _covers(item, request)
+                       for key, item in self.once_scopes.items()))
+
+    def claim_task_hint(self):
+        if self.task_hint_shown:
+            return False
+        self.task_hint_shown = True
+        return True
+
+    def reset_task_hint(self):
+        self.task_hint_shown = False
+
     def require(self, request: CapabilityRequest, *, check_identity, prompt=prompt_grant):
         self._live(request, check_identity)
         key = _key(request)
         with self.lock.hold():
             state = self._load()
             epoch = state["epoch"]
-            if key in state["grants"] or self.once.get(key) == epoch:
+            if self._authorized(request, state):
                 self._live(request, check_identity)
                 return
         # Do not hold the store lock while waiting for human input.
+        self.reset_task_hint()
         choice = prompt(request)
         if not isinstance(choice, GrantChoice) or choice is GrantChoice.DENY:
             raise CapabilityDenied("denied")
@@ -161,14 +205,14 @@ class CapabilityAuthority:
                 if key not in self.once and len(self.once) >= MAX_GRANTS:
                     raise CapabilityDenied("grant_limit")
                 self.once[key] = epoch
+                self.once_scopes[key] = request
 
     def check(self, request: CapabilityRequest, *, check_identity) -> None:
         """Revalidate before/during privileged work; never opens a prompt."""
         self._live(request, check_identity)
         with self.lock.hold():
             state = self._load()
-            key = _key(request)
-            if key not in state["grants"] and self.once.get(key) != state["epoch"]:
+            if not self._authorized(request, state):
                 raise CapabilityDenied("missing_or_revoked")
 
     def list_grants(self) -> list[CapabilityRequest]:
@@ -182,7 +226,9 @@ class CapabilityAuthority:
             state["epoch"] += 1
             self._save(state)
         self.once.clear()
+        self.once_scopes.clear()
 
     def close(self):
         self.once.clear()
+        self.once_scopes.clear()
         self.closed = True

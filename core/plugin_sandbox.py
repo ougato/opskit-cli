@@ -566,6 +566,9 @@ def _broker(manifest, request: dict):
     ui = {"select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
     if method in ui:
         from core import prompt
+        authority = getattr(_invocations, "capability_authority", None)
+        if authority is not None:
+            authority.reset_task_hint()
         next_check = 0
 
         def checkpoint():

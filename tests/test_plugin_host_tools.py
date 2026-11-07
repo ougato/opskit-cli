@@ -101,6 +101,37 @@ def test_tool_scope_reuses_permanent_grant_and_rechecks_identity(tmp_path, monke
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_consecutive_host_commands_display_one_cancel_hint(tmp_path, monkeypatch, context):
+    from core import i18n
+    from core.cli import non_interactive
+    import msvcrt
+
+    tool = tmp_path / "git.exe"
+    tool.write_bytes(b"git")
+    logs = []
+    context["output"] = logs.append
+    monkeypatch.setattr("core.plugin_capabilities._interactive_input", lambda: True)
+    monkeypatch.setattr(msvcrt, "kbhit", lambda: False)
+    def stream(*args, **kwargs):
+        kwargs["checkpoint"]()
+        return 0
+        yield
+    monkeypatch.setattr(process, "stream", stream)
+    token = non_interactive.set(False)
+    try:
+        for command in ("status", "fetch", "reset"):
+            tools.execute("demo", "a" * 64, str(tool), [command], str(tmp_path),
+                          {"authorization_scope": "tool"}, **context)
+        assert logs == [i18n.t("plugin_native.task.cancel_hint")]
+        context["authority"].reset_task_hint()
+        tools.execute("demo", "a" * 64, str(tool), ["status"], str(tmp_path),
+                      {"authorization_scope": "tool"}, **context)
+        assert logs == [i18n.t("plugin_native.task.cancel_hint")] * 2
+    finally:
+        non_interactive.reset(token)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
 def test_changed_executable_during_consent_never_launches(tmp_path, monkeypatch, context):
     tool=tmp_path/"tool.exe"; tool.write_bytes(b"original")
     require=context["authority"].require
