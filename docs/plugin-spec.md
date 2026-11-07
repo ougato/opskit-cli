@@ -93,6 +93,19 @@ Both operations share the same scoped grant; once consent is reused within the i
 - `create_host_file(directory, relative, content)`：经精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
 - `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
 - `host_path_info(path, directory=False)`：授权后验证绝对普通路径与目录身份。
+- `host_find_executable(name, preferred="")`：Windows 上依次查找可选已配置路径、宿主 PATH、相邻的 `cmd`/`bin` 目录和常见安装目录中的同名 `.exe`；仅接受简单可执行文件名，跳过相对路径、链接、硬链接、超出执行大小限制及无效路径，不执行程序。返回绝对路径前请求目录读取授权并复核身份；找不到时返回空字符串，拒绝授权和取消不会自动继续搜索。执行仍需独立授权。
+
+```python
+from core.sdk import host_find_executable
+
+previous_git_path = ""  # Or a previously saved absolute path.
+git = host_find_executable("git.exe", previous_git_path)
+if not git:
+    # Ask the user for a path in an interactive workflow.
+    pass
+```
+
+The Windows host finds an ordinary executable in the preferred location, PATH or conventional install directories. Directory consent is required before returning a match; execution requires its own authorization. An empty string means no candidate was found.
 - `host_file_version(path)`：在 Windows 经所在目录读取授权后检查普通可执行文件的固定版本信息，返回四位文件版本和产品版本；接口不运行可执行文件。
 - `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
 - `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell，不解释业务成功码。返回原始 `returncode`。

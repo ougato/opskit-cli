@@ -284,3 +284,68 @@ def test_silent_process_timeout_and_cancel_reap_children():
 def test_ambiguous_host_paths_rejected_before_access(tmp_path, suffix):
     with pytest.raises(ValueError):
         tools._ordinary(str(tmp_path / suffix), directory=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows host discovery")
+def test_find_executable_prefers_config_then_path_and_default_directories(tmp_path, monkeypatch, context):
+    configured = tmp_path / "configured" / "git.exe"
+    from_path = tmp_path / "path" / "git.exe"
+    conventional = tmp_path / "programs" / "Git" / "cmd" / "git.exe"
+    for candidate in (configured, from_path, conventional):
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(b"fixture")
+    monkeypatch.setenv("PATH", os.pathsep.join(["relative", str(from_path.parent)]))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "programs"))
+    monkeypatch.setenv("ProgramFiles(x86)", "")
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    find = lambda preferred="": tools.find_executable("demo", "a" * 64, "git.exe", preferred, **context)
+    assert find(str(configured)) == str(configured)
+    configured.unlink()
+    assert find(str(configured)) == str(from_path)
+    from_path.unlink()
+    assert os.path.normcase(find(str(configured))) == os.path.normcase(str(conventional))
+    conventional.unlink()
+    assert find(str(configured)) == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows host discovery")
+def test_find_executable_rejection_does_not_try_another_candidate(tmp_path, monkeypatch, context):
+    preferred = tmp_path / "preferred" / "git.exe"
+    alternate = tmp_path / "alternate" / "git.exe"
+    for candidate in (preferred, alternate):
+        candidate.parent.mkdir()
+        candidate.write_bytes(b"fixture")
+    monkeypatch.setenv("PATH", str(alternate.parent))
+    scopes = []
+    def deny(scope, **kwargs):
+        scopes.append(scope)
+        raise PermissionError("denied")
+    monkeypatch.setattr(context["authority"], "require", deny)
+    with pytest.raises(PermissionError, match="denied"):
+        tools.find_executable("demo", "a" * 64, "git.exe", str(preferred), **context)
+    assert len(scopes) == 1 and scopes[0].resource == str(preferred.parent)
+
+
+@pytest.mark.parametrize("name,preferred", [("../git.exe", ""), ("git.cmd", ""), ("git.exe", "relative/git.exe"),
+                                             ("git.exe", r"C:\wrong.exe")])
+def test_find_executable_rejects_ambiguous_requests(name, preferred, context):
+    with pytest.raises(ValueError):
+        tools.find_executable("demo", "a" * 64, name, preferred, **context)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows host discovery")
+def test_find_executable_skips_hard_link_and_finds_sibling_bin(tmp_path, monkeypatch, context):
+    cmd, bin_dir = tmp_path / "Git" / "cmd", tmp_path / "Git" / "bin"
+    cmd.mkdir(parents=True)
+    bin_dir.mkdir()
+    source = tmp_path / "hardlink-source.exe"
+    source.write_bytes(b"fixture")
+    os.link(source, cmd / "git.exe")
+    usable = bin_dir / "git.exe"
+    usable.write_bytes(b"fixture")
+    monkeypatch.setenv("PATH", str(cmd))
+    result = tools.find_executable("demo", "a" * 64, "git.exe", "", **context)
+    assert result == str(usable)
+    monkeypatch.setenv("PATH", "")
+    result = tools.find_executable("demo", "a" * 64, "git.exe", str(cmd / "git.exe"), **context)
+    assert result == str(usable)

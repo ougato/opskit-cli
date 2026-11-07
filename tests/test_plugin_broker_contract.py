@@ -75,3 +75,16 @@ def test_revoked_outer_caller_cannot_dispatch_from_still_trusted_provider(caller
     monkeypatch.setattr(services, "describe_service", lambda *a, **k: pytest.fail("revoked chain dispatched"))
     with pytest.raises(sandbox.SandboxError, match="authorization revoked"):
         sandbox._broker(caller, {"rpc_version": 1, "method": "service.describe", "args": ["storage"]})
+
+
+def test_find_executable_dispatch_uses_host_identity(caller, monkeypatch):
+    from core import plugin_host_tools
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
+    calls = []
+    monkeypatch.setattr(plugin_host_tools, "find_executable", lambda *args, **kwargs: calls.append(args) or "found")
+    request = {"rpc_version": 1, "method": "host.find_executable", "args": ["git.exe", ""]}
+    assert sandbox._broker(caller, request) == "found"
+    assert calls == [("caller", "a" * 64, "git.exe", "")]
+    request["args"] = ["git.exe"]
+    with pytest.raises(sandbox.SandboxError, match="invalid host capability arguments"):
+        sandbox._broker(caller, request)

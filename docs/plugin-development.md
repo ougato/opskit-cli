@@ -125,7 +125,7 @@ def edit_path(breadcrumb, current):
 | 沙盒进程 | `run(cmd, *, cwd=None, env=None, timeout=None, capture=False, check=True, output_limit=1048576)`, `run_lines(cmd, *, cwd=None, env=None, timeout=None)`, `which(name)`, `cmd_ok(cmd, timeout=5)` | 只在沙盒权限及进程限制内工作；不代表能运行宿主 Git 或 Creator。 |
 | 依赖 | `ensure_python_package(package, import_name='')` | 仅检查已准备运行时中的依赖，不安装任何软件或 Python 包。 |
 | 宿主文件 | `read_host_file(directory, relative)`, `compare_write_host_file(directory, relative, expected_sha256, content)`, `create_host_file(directory, relative, content)`, `host_file_status(directory, relative)`, `artifact_info(directory, relative)` | 通过宿主授权及有界校验；写入须处理失败与中断。 |
-| 宿主工具 | `host_execute(executable, arguments, directory, options=None)`, `host_path_info(path, directory=False)`, `host_file_version(path)`, `host_asar_directories(directory, relative, member)` | 只访问精确获准的目录、工具及参数。`host_asar_directories` 只列举 ASAR 目录。 |
+| 宿主工具 | `host_execute(executable, arguments, directory, options=None)`, `host_path_info(path, directory=False)`, `host_find_executable(name, preferred="")`, `host_file_version(path)`, `host_asar_directories(directory, relative, member)` | 只访问精确获准的目录、工具及参数。`host_asar_directories` 只列举 ASAR 目录。`host_find_executable` 查找普通绝对路径，返回前仍需目录读取授权；找不到时返回空字符串，不执行程序。 |
 | 产物和网络 | `host_artifacts(action, parameters)`, `https_request(url, method='GET', headers=None, body=b'')`, `upload_file(directory, relative, url, sha256, headers=None)` | 使用框架的产物凭据、受限 HTTPS 和内容摘要绑定上传；详细约束见插件规范。 |
 
 插件自身状态按身份和服务调用方隔离，成功调用只有通过最终的期限、授权和状态检查后才提交。临时工作区并非永久存储；不得推断其他插件的状态目录。不要使用已删除的 `ensure_software`、`software_bin` 或旧 `host_archive_directories`。

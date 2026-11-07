@@ -109,7 +109,7 @@ __all__ = [
     "create_host_file",
     "host_file_status",
     "artifact_info",
-    "host_execute", "host_artifacts", "host_path_info", "host_file_version", "host_asar_directories",
+    "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
     "SDK_API_VERSION",
@@ -170,6 +170,11 @@ def host_artifacts(action: str, parameters: dict) -> dict | list:
 def host_path_info(path: str, directory: bool = False) -> dict:
     """Validate a consent-bound ordinary absolute host path without executing it."""
     raise PermissionError("host path API requires an isolated plugin worker")
+
+
+def host_find_executable(name: str, preferred: str = "") -> str:
+    """Find an ordinary host executable and authorize its directory, or return an empty string."""
+    raise PermissionError("host tool API requires an isolated plugin worker")
 
 
 def host_file_version(path: str) -> dict:

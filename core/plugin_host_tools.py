@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -81,6 +82,62 @@ def path_info(plugin, fingerprint, path, directory, *, authority, check_identity
     if _ordinary(path, directory=directory) != target or _identity(target) != identity:
         raise ValueError("host resource changed")
     return {"path": str(target), "directory": directory}
+
+
+def find_executable(plugin, fingerprint, name, preferred, *, authority, check_identity, checkpoint, **unused):
+    """Find a named executable without searching the working directory or running it."""
+    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}\.exe", name, re.IGNORECASE)
+            or not isinstance(preferred, str) or len(preferred) > 32767):
+        raise ValueError("invalid executable name or preferred path")
+    if os.name != "nt":
+        raise ValueError("host tool backend not implemented for this platform")
+    candidates = []
+    def add_candidate(path):
+        candidates.append(path)
+        directory = path.parent
+        if directory.name.casefold() in {"cmd", "bin"}:
+            sibling = "bin" if directory.name.casefold() == "cmd" else "cmd"
+            candidates.append(directory.parent / sibling / name)
+
+    if preferred:
+        if Path(preferred).name.casefold() != name.casefold() or not Path(preferred).is_absolute():
+            raise ValueError("invalid preferred executable path")
+        add_candidate(Path(preferred))
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if entry and Path(entry).is_absolute():
+            add_candidate(Path(entry) / name)
+    # Conventional per-machine and per-user installations, when PATH omits them.
+    stem = name[:-4]
+    for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.environ.get(variable, "")
+        if root and Path(root).is_absolute():
+            base = Path(root) / ("Programs" if variable == "LOCALAPPDATA" else "") / stem
+            candidates.extend((base / "cmd" / name, base / "bin" / name, base / name))
+    seen = set()
+    for candidate in candidates:
+        checkpoint()
+        key = str(candidate).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            target = _ordinary(str(candidate))
+            info = target.stat()
+            if info.st_nlink != 1 or info.st_size > 256 * 1024**2:
+                continue
+        except (OSError, ValueError):
+            continue
+        # A candidate is returned only after the existing directory consent and
+        # identity recheck. Rejection or cancellation must never trigger fallback.
+        result = path_info(plugin, fingerprint, str(target), False, authority=authority,
+                           check_identity=check_identity, checkpoint=checkpoint)["path"]
+        after = _ordinary(result).stat()
+        if (after.st_dev, after.st_ino, after.st_nlink, after.st_size) != (
+                info.st_dev, info.st_ino, info.st_nlink, info.st_size):
+            raise ValueError("host executable changed")
+        return result
+    return ""
 
 
 def file_version(plugin, fingerprint, path, *, authority, check_identity, checkpoint, **unused):

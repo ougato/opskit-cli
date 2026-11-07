@@ -473,7 +473,7 @@ def _broker(manifest, request: dict):
         from core.plugin_http import request as https_request
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
-    if method in {"host.execute", "host.artifacts", "host.path_info", "host.file_version"}:
+    if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version"}:
         expected = 4 if method == "host.execute" else (1 if method == "host.file_version" else 2)
         if kwargs or len(args) != expected:
             raise SandboxError("invalid host capability arguments")
@@ -495,6 +495,9 @@ def _broker(manifest, request: dict):
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)
+        if method == "host.find_executable":
+            from core.plugin_host_tools import find_executable
+            return find_executable(manifest.name, fingerprint, *args, **context)
         if method == "host.file_version":
             from core.plugin_host_tools import file_version
             return file_version(manifest.name, fingerprint, *args, **context)

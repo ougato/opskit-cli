@@ -180,6 +180,8 @@ def test_worker_ui_preserves_sdk_signature_and_normalizes_cancellation(monkeypat
     with pytest.raises(TypeError):
         sdk.open_service_menu("storage", [], source="ignored")
     assert "on_ready" not in inspect.signature(sdk.select).parameters
+    assert sdk.host_find_executable("git.exe") == []
+    assert calls[-1] == ("host.find_executable", ("git.exe", ""), {})
     assert sdk.host_asar_directories("root", "file", "dir") == []
     assert calls[-1][0] == "host.asar_directories"
     assert PLUGIN_API_VERSION == sdk.SDK_API_VERSION == 4
