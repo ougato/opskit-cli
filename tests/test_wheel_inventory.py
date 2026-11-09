@@ -15,8 +15,11 @@ def make_wheel(tmp_path, change=None):
     (source / "core" / "locale").mkdir(parents=True)
     (source / "main.py").write_bytes(b"app = None\n")
     (source / "core" / "locale" / "zh.yaml").write_bytes(b"hello: world\n")
+    (source / "core" / "plugin-bootstrap.json").write_bytes(b"{}")
+    (source / "core" / "locale" / "bootstrap.json").write_bytes(b"{}")
     folder = "opskit-1.0.0.dist-info/"
     members = {"main.py": b"app = None\n", "core/locale/zh.yaml": b"hello: world\n",
+               "core/plugin-bootstrap.json": b"{}", "core/locale/bootstrap.json": b"{}",
                folder + "METADATA": b"Name: opskit\nVersion: 1.0.0\n",
                folder + "WHEEL": b"Wheel-Version: 1.0\n",
                folder + "entry_points.txt": b"[console_scripts]\nopskit = main:app\n"}
@@ -38,7 +41,7 @@ def make_wheel(tmp_path, change=None):
 
 def test_current_runtime_inventory_and_resource_pass(tmp_path):
     wheel, source = make_wheel(tmp_path)
-    assert verify(wheel, source)["runtime_files"] == 2
+    assert verify(wheel, source)["runtime_files"] == 4
 
 
 @pytest.mark.parametrize("name", ["plugins/private/main.py", "cache/token.txt", "core_local/private.py",
@@ -51,6 +54,7 @@ def test_extra_files_rejected_even_with_valid_record(tmp_path, name):
 
 @pytest.mark.parametrize("change,error", [
     (lambda members: members.pop("core/locale/zh.yaml"), "missing runtime"),
+    (lambda members: members.pop("core/locale/bootstrap.json"), "missing runtime"),
     (lambda members: members.update({"main.py": b"stale"}), "differs from current source"),
     (lambda members: members.update({"opskit-1.0.0.dist-info/entry_points.txt": b"[console_scripts]\nopskit = other:app\n"}), "entry points"),
 ])

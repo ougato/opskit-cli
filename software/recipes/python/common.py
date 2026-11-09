@@ -130,8 +130,12 @@ def shim_dir() -> Path:
     return Path.home() / UV_SHIM_SUBDIR
 
 
-def uv_installation_directories(base: Path) -> tuple[Path, ...]:
-    """Preflight the installation root and named entries without following links."""
+def uv_installation_directories(base: Path, *, only_installed_versions: bool = False) -> tuple[Path, ...]:
+    """Preflight the installation root and named entries without following links.
+
+    Read-only inventory may ignore aliases that cannot be reported as versions;
+    operations that use or remove installations retain the full preflight.
+    """
     base = Path(base).absolute()
     for node in (base, *base.parents):
         try:
@@ -145,6 +149,9 @@ def uv_installation_directories(base: Path) -> tuple[Path, ...]:
     entries = []
     for entry in base.iterdir():
         if not entry.name.startswith("cpython-"):
+            continue
+        version = entry.name.split("-")[1]
+        if only_installed_versions and (version.count(".") < 2 or not is_stable_pyver(version)):
             continue
         info = entry.lstat()
         if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):

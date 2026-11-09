@@ -24,7 +24,7 @@ SDK 提供目录读取、文件摘要、受限 HTTPS、上传、通用工具执�
 
 特定编辑器配置、参数、成功码、平台产物规则、构建历史交互和保留策略属于独立业务插件。Cocos 源码位于独立 `plugin/cocos` 项目，内部仅使用公开 SDK。框架不加载该插件业务代码，也不自动安装或授信。
 
-接口细节见 [插件规范](plugin-spec.md)，升级及旧数据保护见 [业务分离与迁移](sdk3-business-separation.md)。
+完整入口和功能流程见[项目架构与功能流程](项目架构与功能流程.md)，接口细节见[插件规范](plugin-spec.md)，当前升级要求见[原生升级指南](plugin-native-upgrade-guide.md)；[SDK 3 业务分离与迁移](sdk3-business-separation.md)为历史记录。
 
 
 ## 插件仓库认证

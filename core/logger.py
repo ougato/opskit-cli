@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import threading
 from pathlib import Path
 
 from core.constants import (
@@ -15,6 +16,7 @@ from core.constants import (
 
 _logger: logging.Logger | None = None
 _initialized: bool = False
+_init_lock = threading.RLock()
 
 
 class _DeferredRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -23,6 +25,31 @@ class _DeferredRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def _open(self):
         Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
         return super()._open()
+
+
+class _ConsoleHandler(logging.StreamHandler):
+    """Identify the console handler owned by this module."""
+
+
+def _configure_console(logger: logging.Logger, level: str, formatter: logging.Formatter) -> None:
+    from core.secrets import RedactionFilter
+
+    parsed_level = logging.getLevelName(level.upper())
+    console_level = parsed_level if isinstance(parsed_level, int) else logging.WARNING
+    handlers = [handler for handler in logger.handlers if isinstance(handler, _ConsoleHandler)]
+    if console_level > logging.INFO:
+        for handler in handlers:
+            logger.removeHandler(handler)
+            handler.close()
+        return
+    if handlers:
+        handlers[0].setLevel(console_level)
+        return
+    handler = _ConsoleHandler()
+    handler.addFilter(RedactionFilter())
+    handler.setLevel(console_level)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 def _get_log_path() -> Path:
@@ -42,50 +69,34 @@ def init(level: str = "WARNING") -> None:
     - 格式：[{timestamp}] [{level}] [{module}] {message}
     """
     global _logger, _initialized
-    if _initialized:
-        return
+    with _init_lock:
+        fmt = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT, style="{")
+        if not _initialized:
+            file_handler = _DeferredRotatingFileHandler(
+                _get_log_path(),
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+                encoding="utf-8",
+                delay=True,
+            )
+            from core.secrets import RedactionFilter
+            file_handler.addFilter(RedactionFilter())
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(fmt)
 
-    log_path = _get_log_path()
-
-    fmt = logging.Formatter(
-        LOG_FORMAT,
-        datefmt=LOG_DATE_FORMAT,
-        style="{",
-    )
-
-    file_handler = _DeferredRotatingFileHandler(
-        log_path,
-        maxBytes=LOG_MAX_BYTES,
-        backupCount=LOG_BACKUP_COUNT,
-        encoding="utf-8",
-        delay=True,
-    )
-    from core.secrets import RedactionFilter
-    file_handler.addFilter(RedactionFilter())
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(fmt)
-
-    _logger = logging.getLogger("opskit")
-    _logger.setLevel(logging.DEBUG)
-    _logger.addHandler(file_handler)
-
-    console_level = getattr(logging, level.upper(), logging.WARNING)
-    if console_level <= logging.INFO:
-        console_handler = logging.StreamHandler()
-        console_handler.addFilter(RedactionFilter())
-        console_handler.setLevel(console_level)
-        console_handler.setFormatter(fmt)
-        _logger.addHandler(console_handler)
-
-    _logger.propagate = False
-
-    _initialized = True
+            _logger = logging.getLogger("opskit")
+            _logger.setLevel(logging.DEBUG)
+            _logger.addHandler(file_handler)
+            _logger.propagate = False
+            _initialized = True
+        _configure_console(_logger, level, fmt)
 
 
 def get_logger(name: str = "opskit") -> logging.Logger:
     """获取命名 logger（子 logger 自动继承 opskit 配置）"""
-    if not _initialized:
-        init()
+    with _init_lock:
+        if not _initialized:
+            init()
     return logging.getLogger(name)
 
 

@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/ougato/opskit-cli)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![License](https://img.shields.io/badge/license-MIT-green)
 [![Download](https://img.shields.io/badge/download-GitHub%20Releases-blue)](https://github.com/ougato/opskit-cli/releases/latest)
 
 **OpsKit** is a lightweight, single-file server operations panel with a beautiful TUI (Terminal UI).
@@ -397,6 +397,8 @@ opskit plugin fingerprint ./my-plugin --check
 
 > 安装目录与插件身份是两回事：`--as` 只决定本机目录，用来避免同名仓库目录冲突；`plugin.yaml` 中的 `name` 才是全局插件身份，必须与内置模块及其他插件保持唯一。开发规则、交互菜单和完整 SDK 目录见[插件开发指南](docs/plugin-development.md)，安全细节见[插件规范](docs/plugin-spec.md)。
 
+项目启动、菜单和功能调用关系见[项目架构与功能流程](docs/项目架构与功能流程.md)；[启动至首屏审查与待办](docs/启动至首屏审查与待办.md)列出启动文件及待办；其他清理项与框架能力候选见[框架规划与清理清单](docs/框架规划与清理清单.md)。
+
 ### 查看帮助
 
 ```bash
@@ -683,7 +685,7 @@ opskit-cli/
 
 ## 📄 许可证 / License
 
-MIT License — 详见 [LICENSE](LICENSE)
+项目元数据声明使用 MIT License；本仓库当前没有独立的 LICENSE 文件。
 
 ---
 

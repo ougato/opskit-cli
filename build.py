@@ -249,7 +249,6 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
-        "--clean",
         f"--name={output_name.replace('.exe', '')}",
         f"--distpath={DIST_DIR}",
         f"--workpath={BUILD_DIR}",

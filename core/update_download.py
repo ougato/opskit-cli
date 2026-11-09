@@ -107,7 +107,8 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
                 os.fsync(handle.fileno())
         updater._write_update_record(staging / "candidate.json", {
             "schema_version": 1, "candidate_id": identity, "build": build,
-            "sha256": actual_digest, "state": "verified"})
+            "sha256": actual_digest, "signature_sha256": updater._sha256_file(sidecar),
+            "state": "verified"})
         _remaining(deadline)
         phase = "publication"
         # Last write is the publication point. Interruption before it leaves

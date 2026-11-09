@@ -46,7 +46,12 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".opskit-", dir=path.parent)
     try:
-        restrict_permissions(Path(temporary))
+        if os.name == "nt":
+            restrict_permissions(Path(temporary))
+        else:
+            # Bind permission changes to the created file, not a name that a
+            # concurrent process can replace with a link to an unrelated file.
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as output:
             output.write(content.encode("utf-8") if isinstance(content, str) else content)
             output.flush()

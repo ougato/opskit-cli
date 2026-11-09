@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -34,6 +35,14 @@ class Recipe(ABC):
     has_switch: bool = False       # 是否支持版本切换（多版本共存，切换激活版本）
     hidden: bool = False           # 是否在分类/搜索列表中隐藏（仅通过父 recipe submenu 访问）
     requires_root: bool = False    # install/uninstall/upgrade 是否需要 root（系统级软件置 True，用户态软件保持 False）
+
+    def disk_check_path(self) -> Path | None:
+        """Return a known primary install target, or None when it is not known."""
+        return None
+
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        """Return required filesystems; None denotes an unknown target."""
+        return (self.disk_check_path(),)
 
     @abstractmethod
     def detect(self) -> str | None:

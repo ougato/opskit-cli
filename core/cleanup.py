@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import signal
 import sys
 import threading
@@ -12,8 +13,17 @@ from typing import Any
 from core.constants import TIMEOUT_CLEANUP
 
 _callbacks: list[Callable[[], Any]] = []
-_lock = threading.Lock()
+_lock = threading.RLock()
+_init_lock = threading.RLock()
 _registered = False
+_atexit_registered = False
+_registered_signals: set[int] = set()
+_running = False
+_windows_ctrl_handler = None
+_console_input_lock = threading.Lock()
+_console_input_active = False
+_console_input_interrupted = False
+_log = logging.getLogger(__name__)
 
 
 def add_exception_note(error: BaseException, message: str) -> None:
@@ -36,18 +46,30 @@ def register_cleanup(fn: Callable[[], Any]) -> None:
 
 
 def _run_callbacks() -> None:
-    """执行所有清理回调，总超时 TIMEOUT_CLEANUP 秒"""
+    """逆序执行一次；期限只限制是否开始下一项，不能中断同步回调。"""
+    global _running
     with _lock:
+        if _running:
+            return
+        _running = True
         cbs = list(reversed(_callbacks))
+        _callbacks.clear()
 
     deadline = time.monotonic() + TIMEOUT_CLEANUP
-    for cb in cbs:
-        if time.monotonic() > deadline:
-            break
-        try:
-            cb()
-        except Exception:
-            pass
+    index = 0
+    try:
+        while index < len(cbs) and time.monotonic() <= deadline:
+            cb = cbs[index]
+            index += 1
+            try:
+                cb()
+            except Exception as exc:
+                _log.warning("cleanup callback failed (%s)", type(exc).__name__)
+    finally:
+        with _lock:
+            # 未开始的回调仍可在下一次退出清理时执行；新注册项保持逆序优先。
+            _callbacks[0:0] = reversed(cbs[index:])
+            _running = False
 
 
 def _signal_handler(signum: int, frame: Any) -> None:
@@ -55,6 +77,31 @@ def _signal_handler(signum: int, frame: Any) -> None:
         raise KeyboardInterrupt
     _run_callbacks()
     sys.exit(0)
+
+
+def _begin_console_input() -> bool:
+    """Mark a main-thread console read so Ctrl+C can wake its polling loop."""
+    global _console_input_active, _console_input_interrupted
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    with _console_input_lock:
+        _console_input_active = True
+        _console_input_interrupted = False
+    return True
+
+
+def _console_interrupt_pending() -> bool:
+    with _console_input_lock:
+        return _console_input_interrupted
+
+
+def _end_console_input() -> bool:
+    global _console_input_active, _console_input_interrupted
+    with _console_input_lock:
+        interrupted = _console_input_interrupted
+        _console_input_active = False
+        _console_input_interrupted = False
+        return interrupted
 
 
 def init() -> None:
@@ -65,36 +112,45 @@ def init() -> None:
     - Windows：SIGINT + SIGBREAK + SetConsoleCtrlHandler（Ctrl+C / 关闭窗口）
     - atexit：保证普通 sys.exit() 时也执行清理
     """
-    global _registered
-    if _registered:
-        return
-    _registered = True
+    global _atexit_registered, _registered
+    with _init_lock:
+        if not _atexit_registered:
+            atexit.register(_run_callbacks)
+            _atexit_registered = True
 
-    atexit.register(_run_callbacks)
+        # Python only allows signal handlers to be installed on the main
+        # thread. A worker's early init must not prevent a later main-thread
+        # call from completing registration.
+        if threading.current_thread() is not threading.main_thread():
+            return
 
-    try:
-        signal.signal(signal.SIGINT, signal.default_int_handler)
-        signal.signal(signal.SIGTERM, _signal_handler)
-    except (OSError, ValueError):
-        pass
+        handlers = [(signal.SIGINT, signal.default_int_handler),
+                    (signal.SIGTERM, _signal_handler)]
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
+            handlers.append((signal.SIGHUP, _signal_handler))
+        elif sys.platform == "win32":
+            handlers.append((signal.SIGBREAK, _signal_handler))
 
-    if sys.platform.startswith("linux") or sys.platform == "darwin":
-        try:
-            signal.signal(signal.SIGHUP, _signal_handler)
-        except (OSError, AttributeError):
-            pass
+        for signum, handler in handlers:
+            if signum in _registered_signals:
+                continue
+            try:
+                signal.signal(signum, handler)
+            except (OSError, ValueError):
+                continue
+            _registered_signals.add(signum)
+        _registered = all(signum in _registered_signals for signum, _ in handlers)
 
-    if sys.platform == "win32":
-        _init_windows()
+        # 如果首次注册失败，允许后续 init 重试；成功后不得重复注册。
+        if sys.platform == "win32" and _windows_ctrl_handler is None:
+            _init_windows()
 
 
 def _init_windows() -> None:
-    """Windows 额外注册 SIGBREAK + SetConsoleCtrlHandler"""
-    try:
-        signal.signal(signal.SIGBREAK, _signal_handler)  # type: ignore[attr-defined]
-    except (OSError, AttributeError):
-        pass
-
+    """Windows 额外注册 SetConsoleCtrlHandler。"""
+    global _windows_ctrl_handler
+    if _windows_ctrl_handler is not None:
+        return
     try:
         import ctypes
         import ctypes.wintypes
@@ -105,57 +161,25 @@ def _init_windows() -> None:
 
         @HandlerRoutine
         def _ctrl_handler(ctrl_type: int) -> bool:
+            global _console_input_interrupted
             if ctrl_type == 0:
-                # Ctrl+C：返回 True 防止 CRT 默认的 ExitProcess 导致
-                # ACCESS_VIOLATION 崩溃。同时注入 \x03 到 stdin 缓冲区，
-                # 让 msvcrt.getwch() / _read_line() 立即收到并触发 UserCancel。
-                try:
-                    _inject_ctrl_c()
-                except Exception:
-                    pass
-                return True
+                # Only consume Ctrl+C while the main thread is reading a key.
+                # Otherwise let Python's normal SIGINT handler interrupt work.
+                with _console_input_lock:
+                    if _console_input_active:
+                        _console_input_interrupted = True
+                        return True
+                return False
             # 1=Ctrl+Break  2=Close  5=Logoff  6=Shutdown → 执行清理后退出
             if ctrl_type in (1, 2, 5, 6):
                 _run_callbacks()
                 return False
             return False
 
-        def _inject_ctrl_c() -> None:
-            """向 stdin 注入 Ctrl+C 字符，唤醒 msvcrt.getwch()"""
-            import ctypes.wintypes
-            KEY_EVENT = 0x0001
-            STD_INPUT_HANDLE = ctypes.wintypes.DWORD(-10 & 0xFFFFFFFF)
-
-            class KEY_EVENT_RECORD(ctypes.Structure):
-                _fields_ = [
-                    ("bKeyDown", ctypes.wintypes.BOOL),
-                    ("wRepeatCount", ctypes.wintypes.WORD),
-                    ("wVirtualKeyCode", ctypes.wintypes.WORD),
-                    ("wVirtualScanCode", ctypes.wintypes.WORD),
-                    ("uChar", ctypes.c_wchar),
-                    ("dwControlKeyState", ctypes.wintypes.DWORD),
-                ]
-
-            class INPUT_RECORD(ctypes.Structure):
-                _fields_ = [
-                    ("EventType", ctypes.wintypes.WORD),
-                    ("Event", KEY_EVENT_RECORD),
-                ]
-
-            handle = ctypes.windll.kernel32.GetStdHandle(STD_INPUT_HANDLE)
-            rec = INPUT_RECORD()
-            rec.EventType = KEY_EVENT
-            rec.Event.bKeyDown = True
-            rec.Event.wRepeatCount = 1
-            rec.Event.wVirtualKeyCode = 0x43  # 'C'
-            rec.Event.wVirtualScanCode = 0
-            rec.Event.uChar = '\x03'
-            rec.Event.dwControlKeyState = 0x0008  # LEFT_CTRL_PRESSED
-            written = ctypes.wintypes.DWORD(0)
-            ctypes.windll.kernel32.WriteConsoleInputW(
-                handle, ctypes.byref(rec), 1, ctypes.byref(written)
-            )
-
-        ctypes.windll.kernel32.SetConsoleCtrlHandler(_ctrl_handler, True)
-    except Exception:
-        pass
+        if ctypes.windll.kernel32.SetConsoleCtrlHandler(_ctrl_handler, True):
+            # Windows 保存原生函数指针，不持有 Python 回调对象。
+            _windows_ctrl_handler = _ctrl_handler
+        else:
+            _log.warning("Windows console handler registration failed")
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        _log.warning("Windows console handler registration failed (%s)", type(exc).__name__)

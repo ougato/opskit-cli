@@ -71,6 +71,35 @@ def test_real_helper_health_is_job_bound_and_confirmation_retains_identity(job, 
     assert confirmed["job_id"] == job_id and confirmed["confirmed"] is True
 
 
+def test_real_schema2_job_and_helper_can_confirm_matching_update(job, monkeypatch):
+    from types import SimpleNamespace
+    from core import update_target_state
+    from core.update_windows import schedule
+
+    folder, target, artifact, old, new = job
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(folder))
+    transaction = update_target_state.prepare(
+        target, operation="upgrade", from_build=12344, to_build=12345,
+        from_digest=hashlib.sha256(old).hexdigest(), to_digest=hashlib.sha256(new).hexdigest(),
+    )
+    backup_id = "opskit.v12344.123." + "b" * 32 + ".bak"
+    recovery = {"backup_id": backup_id, "sha256": transaction["from_sha256"],
+                "replacement_sha256": transaction["to_sha256"], "transaction": transaction}
+    # Schedule writes the real schema 2 records and snapshot. Suppress only
+    # its async launcher: the test starts the same helper with parent_pid=0.
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(pid=1234))
+        job_id = schedule(artifact, target, 12345, recovery)
+    code, result, health = run_job(job, recovery={**recovery, "job_id": job_id})
+    assert code == 0 and result["state"] == "applied"
+    monkeypatch.setattr(updater, "APP_VERSION", 12345)
+    monkeypatch.setattr(updater, "_is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "_self_path", lambda: target)
+    monkeypatch.setattr(updater, "_get_health_path", lambda: health)
+    assert updater.confirm_health() is True
+    assert json.loads(health.read_text("utf-8"))["confirmed"] is True
+
+
 def test_real_waiting_helper_is_identified_and_termination_is_observed(job, monkeypatch):
     from core.update_cli import status
     from core.update_jobs import _creation_ticks
@@ -133,7 +162,8 @@ def test_real_helper_refuses_changed_snapshot(job):
     assert code == 1 and result["state"] == "failed"
     assert result["phase"] == "artifact_validation"
     assert target.read_bytes() == old and not health.exists()
-    assert not list(folder.glob(".opskit-replace-*"))
+    staged, = folder.glob(".opskit-replace-*")
+    assert staged.read_bytes() == b"changed after signature gate"
 
 
 def test_real_helper_refuses_changed_target(job):
@@ -164,7 +194,58 @@ def test_real_helper_atomic_commit_failure_preserves_current(job):
     assert code == 1 and result["state"] == "failed"
     assert result["phase"] == "commit"
     assert target.read_bytes() == old and not health.exists()
-    assert not list(folder.glob(".opskit-replace-*"))
+    staged, = folder.glob(".opskit-replace-*")
+    assert staged.read_bytes() == new
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["replacement-stage", "record-temp"])
+def test_failed_helper_preserves_file_replaced_at_temporary_path(job, record):
+    """An uncooperative process can replace a name even while the helper holds locks."""
+    from core.update_windows import _literal
+
+    folder, target, artifact, old, new = job
+    result, health = folder / "result.json", folder / "health.json"
+    ready, release = folder / "ready", folder / "release"
+    helper = folder / "race.ps1"
+    if record:
+        health.mkdir()
+    else:
+        artifact.write_bytes(b"invalid snapshot")
+    body = script(target=target, artifact=artifact, result=result, health=health,
+                  lock=folder / "update.lock", old_digest=hashlib.sha256(old).hexdigest(),
+                  new_digest=hashlib.sha256(new).hexdigest(), version=12345, parent_pid=0,
+                  recovery={"backup_id": "recorded-backup"}, timeout=20)
+    if record:
+        marker = "if (-not [OpsKitReplace]::MoveFileEx($tmp, $path, 9))"
+        gate = (f"if ($path -eq $health) {{ [IO.File]::WriteAllText({_literal(ready)}, $tmp); "
+                f"while (-not [IO.File]::Exists({_literal(release)})) {{ Start-Sleep -Milliseconds 10 }} }}\n        ")
+    else:
+        marker = "# Preserve stage paths after failure: the name could have been replaced."
+        gate = (f"[IO.File]::WriteAllText({_literal(ready)}, $stage)\n    "
+                f"while (-not [IO.File]::Exists({_literal(release)})) {{ Start-Sleep -Milliseconds 10 }}\n    ")
+    assert body.count(marker) == 1
+    helper.write_bytes(body.replace(marker, gate + marker).encode("utf-8-sig"))
+    process = subprocess.Popen([str(POWERSHELL), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                                "-File", str(helper)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        deadline = time.monotonic() + 15
+        while not ready.exists():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError("helper did not reach the isolated cleanup gate")
+            time.sleep(.02)
+        temporary = Path(ready.read_text(encoding="utf-8"))
+        assert temporary.parent == folder and temporary.is_file()
+        temporary.replace(folder / "original-temporary")
+        temporary.write_bytes(b"unrelated user file")
+        release.write_text("release", encoding="utf-8")
+        process.communicate(timeout=30)
+        assert process.returncode == 1
+        assert temporary.read_bytes() == b"unrelated user file"
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=10)
 
 
 def test_real_helper_wait_deadline_does_not_replace_live_parent(job):
@@ -230,11 +311,27 @@ def test_python_atomic_replacement_preserves_private_windows_dacl(job):
 def test_permission_copy_failure_aborts_before_replacement(job, monkeypatch):
     from core import windows_permissions
     folder, target, artifact, old, new = job
-    monkeypatch.setattr(windows_permissions, "copy_dacl",
+    monkeypatch.setattr(windows_permissions, "copy_dacl_to_verified_file",
                         lambda *a: (_ for _ in ()).throw(PermissionError("ACL copy denied")))
     with pytest.raises(PermissionError):
         updater._atomic_copy(artifact, target)
-    assert target.read_bytes() == old and not list(folder.glob(".opskit-replace-*"))
+    staged, = folder.glob(".opskit-replace-*")
+    assert target.read_bytes() == old and staged.read_bytes() == new
+
+
+def test_permission_copy_rejects_substituted_file_without_changing_acl(job):
+    from core.secrets import restrict_permissions
+    from core.windows_permissions import _descriptor, copy_dacl_to_verified_file
+    folder, target, artifact, old, new = job
+    restrict_permissions(target)
+    other = folder / "other"
+    other.write_bytes(b"other data")
+    before, protection = _descriptor(other)
+    with pytest.raises(RuntimeError, match="staging identity changed"):
+        copy_dacl_to_verified_file(target, other, artifact.stat())
+    after, after_protection = _descriptor(other)
+    assert after.raw == before.raw and after_protection == protection
+    assert other.read_bytes() == b"other data"
 
 
 def test_real_helper_respects_shared_executable_lock(job):

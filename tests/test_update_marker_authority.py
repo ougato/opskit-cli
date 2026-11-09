@@ -115,7 +115,7 @@ def test_committed_marker_retains_evidence_when_health_write_fails_and_retries(b
     assert target.read_bytes() == expected and pending.exists() and marker.exists()
     assert update_target_state.read(target)["transaction_id"] == transaction["transaction_id"]
     assert updater._apply_update_pending_path() is True
-    assert not marker.exists() and not pending.exists()
+    assert not marker.exists() and pending.read_bytes() == expected
     health = updater._read_health_record(updater._get_health_path())
     assert health["backup_id"] == backup.name and health["build"] == transaction["to_build"]
     assert health["confirmed"] is False
@@ -148,13 +148,13 @@ def test_post_update_retains_committed_evidence_until_health_publication(bound_m
         assert updater._apply_update_pending_path() is True
         monkeypatch.setattr(updater, "APP_VERSION", transaction["to_build"])
         monkeypatch.setattr(sys, "argv", ["opskit", "--post-update"])
-        assert updater.check_and_apply_pending() is False
+        assert updater.check_and_apply_pending(post_update=True) is False
         assert target.read_bytes() == expected
         assert marker.exists() and pending.exists() and backup.exists()
         assert update_target_state.read(target)["transaction_id"] == transaction["transaction_id"]
         assert not updater._get_health_path().exists()
-    assert updater.check_and_apply_pending() is False
-    assert not marker.exists() and not pending.exists()
+    assert updater.check_and_apply_pending(post_update=True) is False
+    assert not marker.exists() and pending.read_bytes() == expected
     health = updater._read_health_record(updater._get_health_path())
     assert health["build"] == transaction["to_build"]
     assert health["confirmed"] is False and health["fails"] == 0

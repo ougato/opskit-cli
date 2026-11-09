@@ -38,6 +38,30 @@ def test_double_init_is_safe(tmp_path: Path) -> None:
     assert len(lg._logger.handlers) == count
 
 
+def test_explicit_level_reconfigures_early_logger_without_duplicate_handlers(capsys):
+    logger = lg.get_logger("opskit.startup")
+    lg.init("INFO")
+    logger.debug("debug hidden")
+    logger.info("info visible")
+    assert "info visible" in capsys.readouterr().err
+    lg.init("DEBUG")
+    lg.init("DEBUG")
+    logger.debug("debug visible once")
+    assert capsys.readouterr().err.count("debug visible once") == 1
+    lg.init("WARNING")
+    logger.warning("menu stays clean")
+    assert capsys.readouterr().err == ""
+    assert sum(isinstance(handler, lg._DeferredRotatingFileHandler) for handler in lg._logger.handlers) == 1
+    assert not any(isinstance(handler, lg._ConsoleHandler) for handler in lg._logger.handlers)
+    assert "menu stays clean" in lg._get_log_path().read_text(encoding="utf-8")
+
+
+def test_invalid_level_uses_warning_without_crashing(capsys):
+    lg.init("BASIC_FORMAT")
+    lg.warning("written only to file")
+    assert capsys.readouterr().err == ""
+
+
 def test_get_logger_returns_logger(tmp_path: Path) -> None:
     logger = lg.get_logger("test")
     assert logger is not None

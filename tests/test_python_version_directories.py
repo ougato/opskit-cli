@@ -24,6 +24,48 @@ def test_lookup_requires_exact_directory_version_and_regular_binary(tmp_path, mo
     assert common.find_uv_python("3.12.1") == str(exact / "python.exe")
 
 
+@pytest.mark.parametrize("name,ignored", [
+    ("cpython-3.14-windows-x86_64-none", True),
+    ("cpython-3.14.7-windows-x86_64-none", False),
+])
+def test_readonly_inventory_ignores_minor_alias_but_rejects_version_link(tmp_path, monkeypatch, name, ignored):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "data"
+    marker.write_bytes(b"preserve")
+    base = tmp_path / "managed"
+    base.mkdir()
+    regular = base / "cpython-3.14.8-windows-x86_64-none"
+    regular.mkdir()
+    link = base / name
+    if os.name == "nt":
+        from software._shared import windows_junction
+        link.mkdir()
+        with windows_junction._open(link) as handle:
+            windows_junction._control(handle, windows_junction._SET, windows_junction._body(outside))
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(recipe, "uv_python_dir", lambda: base)
+    try:
+        with pytest.raises(InstallError, match="must not be a link"):
+            common.uv_installation_directories(base)
+        if ignored:
+            assert recipe.PythonRecipe().installed_versions() == ["3.14.8"]
+            from software import query
+            monkeypatch.setattr(query, "all_recipes", lambda: [recipe.PythonRecipe])
+            monkeypatch.setattr(recipe.PythonRecipe, "detect", lambda self: "3.14.8")
+            row = query.inventory()[0]
+            assert row["version"] == "3.14.8"
+            assert row["installed_versions"] == ["3.14.8"]
+            assert row["detection_error"] is None
+        else:
+            with pytest.raises(InstallError, match="must not be a link"):
+                recipe.PythonRecipe().installed_versions()
+        assert marker.read_bytes() == b"preserve"
+    finally:
+        link.rmdir() if os.name == "nt" else link.unlink()
+
+
 def test_uninstall_preserves_longer_patch_version_directory(tmp_path, monkeypatch):
     exact = tmp_path / "cpython-3.12.1-windows-x86_64-none"
     other = tmp_path / "cpython-3.12.13-windows-x86_64-none"

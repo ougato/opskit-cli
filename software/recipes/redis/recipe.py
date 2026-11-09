@@ -23,6 +23,11 @@ class RedisRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        from software.disk import known_path_or_none
+        return (known_path_or_none(common.redis_versions_dir),
+                known_path_or_none(lambda: Path(tempfile.gettempdir())))
+
     # ─── detect / versions ────────────────────────────────────────────────────
 
     def detect(self) -> str | None:

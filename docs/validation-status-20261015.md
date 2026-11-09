@@ -1,5 +1,7 @@
 # OpsKit 当前验收状态
 
+> 历史记录：本文保留 2026 年 10 月各源码快照的验收与未完成事项，标题和正文中的“当前”均指当时状态；不代表后续版本已完成相同验收。现有功能与平台边界见[项目架构与功能流程](项目架构与功能流程.md)，后续验收须绑定实际版本和环境。
+
 2026-10-17：`plugin prepare-fetch --packages DIR` 与 `prepared_tool` 已实现。冻结642文件快照 `0fa8c0aa026f6a71be394122f5dc085190c5e5ac34246970855eb1d2ec15e6ec` 在Windows、Linux3.14、macOS、最低Python3.10各76项通过、零跳过；源码、同名XML用例及最低容器约束已独立核对。此批明确不运行未改动的旧宿主Git安装更新整链路测试。真实Linux CLI使用已有锁定离线包准备工具，新解释器通过固定本地端点选出同一内容寻址镜像，不创建配置或插件目录、不授信。证据 `cache/plugin-fetch-preparation-20261016-r1/audit.json`。 安装/更新主入口仍使用宿主Git；不能以工具准备通过关闭第3类。
 
 最新终态更正（2026-10-16）：642 的最低 Python 3.10 回归已结束，60 通过、1 项 setup error，耗时 1125.28 秒；`test_withdraw_cleanup_retire_and_idempotent_absence` 在 `workspace.allocate(timeout=30)` 超时。失败根因尚未定位，642 四环境验收未通过。原始报告：`cache/plugin-install-abort-20261016-r1` 对应 Linux 根目录 `/var/tmp/opskit-plugin-install-abort-linux310-20261016-r1/related/stdout` 与 `result.xml`。下文“仍在执行/待终态”描述为此前观察。

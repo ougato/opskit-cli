@@ -25,6 +25,7 @@ def info(path):
 
 def unlink_owned(path, previous):
     current = info(path)
-    if (current.st_dev, current.st_ino, current.st_size) != (previous.st_dev, previous.st_ino, previous.st_size):
+    if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns) != (
+            previous.st_dev, previous.st_ino, previous.st_size, previous.st_mtime_ns, previous.st_ctime_ns):
         raise ValueError("update cache file changed during cleanup")
     path.unlink()

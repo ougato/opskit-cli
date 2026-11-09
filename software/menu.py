@@ -296,10 +296,23 @@ def show_actions(breadcrumb: list[str], cls: type) -> None:
             _do_manage(sub_breadcrumb, cls, instance)
 
 
+def _install_disk_check(instance) -> bool:
+    from core.constants import MIN_DISK_FREE_BYTES
+    from software.disk import check_recipe_disk_space
+    result = check_recipe_disk_space(instance, MIN_DISK_FREE_BYTES)
+    if result is False:
+        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
+        pause()
+        return False
+    if result is None:
+        print_warning(t("platform.install_disk_unknown"))
+        # Keep the warning visible before the next confirmation or clear.
+        pause()
+    return True
+
+
 def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     """执行安装流程"""
-    from core.platform import check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
     from software.resolver import resolve_deps
 
     _name = recipe_display_name(cls)
@@ -369,9 +382,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     else:
         version = "latest"
 
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     if getattr(cls, "confirm_before_install", True):
@@ -397,8 +408,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> None:
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
-    from core.platform import check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
     from core.progress import spinner
 
     _name = recipe_display_name(cls)
@@ -451,9 +460,7 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         except UserCancel:
             return
 
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     clear_screen()
@@ -705,6 +712,9 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     if new_version is None:
         return
 
+    if new_version not in upg_installed_set and not _install_disk_check(instance):
+        return
+
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
     already = new_version in upg_installed_set
@@ -796,8 +806,7 @@ def show_list() -> None:
 def show_install() -> None:
     """选择软件 → 选择版本 → 确认 → 安装"""
     from software.registry import all_recipes
-    from core.platform import get_platform, check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
+    from core.platform import get_platform
     from software.base import InstallError
 
     info = get_platform()
@@ -874,11 +883,7 @@ def show_install() -> None:
     version = versions[int(ver_key) - 1]
 
     # 磁盘空间检查
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space",
-                      required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB",
-                      free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     # 确认安装

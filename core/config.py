@@ -1,6 +1,7 @@
-"""配置读写 + 配置迁移 + 路径双模式（开发 / 打包）"""
+"""配置读写与路径双模式（开发 / 打包）。"""
 from __future__ import annotations
 
+import os
 import sys
 from functools import wraps
 from pathlib import Path
@@ -86,12 +87,51 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+class StartupConfigError(ValueError):
+    """Identify a malformed startup field without exposing its value."""
+
+    def __init__(self, field: str, expected: str) -> None:
+        self.field = field
+        self.expected = expected
+        super().__init__(f"configuration field {field} requires {expected}")
+
+
+class StartupConfigPublicationError(ValueError):
+    """The first configuration cannot be published safely in this directory."""
+
+
+def validate_startup_config(config: dict[str, Any]) -> None:
+    """Validate fields consumed during startup without rewriting user data."""
+    def require(mapping: dict, key: str, expected: type, field: str, label: str) -> None:
+        if key in mapping and type(mapping[key]) is not expected:
+            raise StartupConfigError(field, label)
+
+    for field in ("language", "theme"):
+        require(config, field, str, field, "string")
+    for field in ("log", "modules", "update", "mirror", "telemetry"):
+        require(config, field, dict, field, "mapping")
+    for section, fields in {
+        "log": {"level": (str, "string")},
+        "update": {"enabled": (bool, "boolean"), "repo": (str, "string"),
+                   "github_token": (str, "string"), "signing_public_key": (str, "string")},
+        "mirror": {"region": (str, "string")},
+        "telemetry": {"enabled": (bool, "boolean"), "dsn": (str, "string")},
+    }.items():
+        section_config = config.get(section, {})
+        for key, (kind, label) in fields.items():
+            require(section_config, key, kind, f"{section}.{key}", label)
+    for item in config.get("modules", {}).values():
+        if type(item) is not dict:
+            raise StartupConfigError("modules", "module_mapping")
+        require(item, "enabled", bool, "modules.*.enabled", "boolean")
+
+
 def load_config(*, max_bytes=None) -> dict[str, Any]:
     """加载配置文件，不存在时返回默认配置（不写入磁盘）"""
     return _load_config_path(get_config_path(), max_bytes=max_bytes)
 
 
-def _load_config_path(path: Path, *, max_bytes=None) -> dict[str, Any]:
+def _load_config_path(path: Path, *, max_bytes=None, missing_is_error=False) -> dict[str, Any]:
     """Same bounded reader for explicit supervisor-selected paths."""
     limit = MAX_BYTES if max_bytes is None else max_bytes
     if type(limit) is not int or not 0 < limit <= MAX_BYTES:
@@ -99,6 +139,8 @@ def _load_config_path(path: Path, *, max_bytes=None) -> dict[str, Any]:
     try:
         path.lstat()
     except FileNotFoundError:
+        if missing_is_error:
+            raise ValueError("configuration disappeared during publication") from None
         import copy
         return copy.deepcopy(DEFAULT_CONFIG)
     except OSError:
@@ -135,22 +177,35 @@ def ensure_config() -> dict[str, Any]:
 
     1. 检查 get_config_path() 是否存在
     2. 不存在 → 从 DEFAULT_CONFIG 生成，写入磁盘
-    3. 已存在 → 加载并与默认值合并（只增不删），如版本不一致自动迁移
+    3. 已存在 → 在内存中合并默认值，保留磁盘上的原始配置
     """
     path = get_config_path()
     try:
         path.lstat()
     except FileNotFoundError:
         path.parent.mkdir(parents=True, exist_ok=True)
-        save_config(DEFAULT_CONFIG)
+        if os.name == "nt":
+            # The Windows private publisher commits by handle without replacing
+            # an existing target; a non-cooperating writer may have created it
+            # since the check above. The POSIX publisher has different cleanup
+            # semantics and cannot safely be used for this purpose yet.
+            from core.private_export import publish_private_file
+            raw = yaml.safe_dump(DEFAULT_CONFIG, allow_unicode=True, sort_keys=False).encode("utf-8")
+            parse_bounded_yaml(raw)
+            try:
+                publish_private_file(path, raw)
+            except FileExistsError:
+                # Do not misinterpret a temporary-name collision as a config
+                # created by another process.
+                path.lstat()
+                return _load_config_path(path, missing_is_error=True)
+            except ValueError:
+                raise StartupConfigPublicationError from None
+        else:
+            save_config(DEFAULT_CONFIG)
         import copy
         return copy.deepcopy(DEFAULT_CONFIG)
-    cfg = load_config()
-    # 如果磁盘配置缺少新字段，补充默认值并写回
-    merged = _deep_merge(DEFAULT_CONFIG, cfg)
-    if merged != cfg:
-        save_config(merged)
-    return merged
+    return load_config()
 
 
 @_serialized_configuration
@@ -170,39 +225,4 @@ def set_config_value(config: dict[str, Any], key_path: str, value: Any) -> dict[
     save_config(current)
     config.clear()
     config.update(current)
-    return config
-
-
-# ─── 配置迁移 ─────────────────────────────────────────────────────────────────
-
-def migrate_config(config: dict[str, Any], from_version: int, to_version: int) -> dict[str, Any]:
-    """
-    配置迁移策略：
-
-    1. 每个版本定义一个 migration 函数（_migrate_v{n}）
-    2. 按版本链逐步迁移：1 → 2 → 3
-    3. 迁移前自动备份原配置
-    4. 迁移失败 → 使用默认配置 + 保留原配置为 .bak
-    5. 只增不删：新版本只添加新字段默认值，不删除旧字段
-    """
-    _MIGRATIONS: dict[int, Any] = {
-        # 示例：1: _migrate_v1_to_v2,
-    }
-
-    current = from_version
-    while current < to_version:
-        fn = _MIGRATIONS.get(current)
-        if fn is None:
-            break
-        try:
-            config = fn(config)
-        except Exception:
-            path = get_config_path()
-            bak = path.with_suffix(".bak")
-            if path.exists():
-                import shutil
-                shutil.copy2(path, bak)
-            import copy
-        return copy.deepcopy(DEFAULT_CONFIG)
-        current += 1
     return config

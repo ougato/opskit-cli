@@ -60,15 +60,42 @@ def _check_input() -> None:
 
 def _getwch() -> str:
     import msvcrt
-    if _input_guard.get() is not None:
-        from core.windows_console_input import key_available
-        with _waiting_for_input():
-            while True:
-                _check_input()
-                if msvcrt.kbhit() or key_available():
-                    break
-                time.sleep(0.05)
-    value = msvcrt.getwch()
+    from core.cleanup import (_begin_console_input, _console_interrupt_pending,
+                              _end_console_input)
+
+    active = _begin_console_input()
+    interrupted = False
+    try:
+        if active:
+            # Poll instead of injecting a synthetic key, which could remain in
+            # the console queue if a real key wins the race with Ctrl+C.
+            with _waiting_for_input():
+                while not _console_interrupt_pending():
+                    if _input_guard.get() is not None:
+                        from core.windows_console_input import key_available
+                        _check_input()
+                        if msvcrt.kbhit() or key_available():
+                            break
+                    elif msvcrt.kbhit():
+                        break
+                    time.sleep(0.05)
+            value = "\x03" if _console_interrupt_pending() else msvcrt.getwch()
+        elif _input_guard.get() is not None:
+            from core.windows_console_input import key_available
+            with _waiting_for_input():
+                while True:
+                    _check_input()
+                    if msvcrt.kbhit() or key_available():
+                        break
+                    time.sleep(0.05)
+            value = msvcrt.getwch()
+        else:
+            value = msvcrt.getwch()
+    finally:
+        if active:
+            interrupted = _end_console_input()
+    if interrupted:
+        value = "\x03"
     if _input_guard.get() is not None and value in ("\x03", "\x04"):
         raise KeyboardInterrupt
     return value
@@ -207,37 +234,6 @@ _CATPPUCCIN_MOCHA = {
     'pipe': '#6c7086',
 }
 
-_TOKYO_NIGHT = {
-    'name': 'Tokyo Night',
-    'header': [
-        Seg('bold #1a1b26', '#ff9e64'),
-        Seg('bold #1a1b26', '#9ece6a'),
-        Seg('bold #1a1b26', '#7aa2f7'),
-        Seg('bold #1a1b26', '#bb9af7'),
-    ],
-    'input': Seg('bold #1a1b26', '#e0af68'),
-    'pipe': '#565f89',
-}
-
-_DRACULA = {
-    'name': 'Dracula',
-    'header': [
-        Seg('bold #282a36', '#ffb86c'),
-        Seg('bold #282a36', '#50fa7b'),
-        Seg('bold #282a36', '#8be9fd'),
-        Seg('bold #282a36', '#ff79c6'),
-    ],
-    'input': Seg('bold #282a36', '#bd93f9'),
-    'pipe': '#6272a4',
-}
-
-_SCHEME_MAP = {
-    'catppuccin': _CATPPUCCIN_MOCHA,
-    'catppuccin_mocha': _CATPPUCCIN_MOCHA,
-    'tokyo_night': _TOKYO_NIGHT,
-    'dracula': _DRACULA,
-}
-
 _ACTIVE_SCHEME = _CATPPUCCIN_MOCHA
 _PALETTE: list[Seg] = _ACTIVE_SCHEME['header']
 _INPUT_SEG: Seg = _ACTIVE_SCHEME['input']
@@ -250,17 +246,6 @@ def _rebuild_ansi() -> str:
 
 
 _PIPE_COLOR_ANSI: str = _rebuild_ansi()
-
-
-def switch_scheme(name: str) -> None:
-    """按名称切换 Powerline 配色方案（供 theme 切换时调用）"""
-    global _ACTIVE_SCHEME, _PALETTE, _INPUT_SEG, _PIPE_COLOR, _PIPE_COLOR_ANSI
-    scheme = _SCHEME_MAP.get(name.lower().replace(' ', '_'), _CATPPUCCIN_MOCHA)
-    _ACTIVE_SCHEME = scheme
-    _PALETTE = scheme['header']
-    _INPUT_SEG = scheme['input']
-    _PIPE_COLOR = scheme['pipe']
-    _PIPE_COLOR_ANSI = _rebuild_ansi()
 
 
 # ─── 按键读取 ─────────────────────────────────────────────────────────────────
@@ -438,27 +423,6 @@ def print_header(breadcrumb: list[str]) -> None:
     _render_header(breadcrumb)
 
 
-def render_banner(title: str, subtitle: str) -> None:
-    """渲染 Powerline 风格渐变色 Banner（仅在主菜单调用一次）"""
-    from core.theme import get_banner_config
-    cfg = get_banner_config()
-    gradient: list[str] = cfg.get('gradient', [])
-
-    if gradient and title:
-        colored = Text()
-        for i, ch in enumerate(title):
-            color = gradient[i % len(gradient)]
-            colored.append(ch, style=f'bold {color}')
-        title_text = colored
-    else:
-        title_text = Text(title, style='bold bright_white')
-
-    sub_text = Text(f'  {subtitle}  ', style='dim white', justify='center')
-    console.print()
-    console.print(title_text, justify='left')
-    console.print(sub_text, justify='left')
-
-
 def select(
     breadcrumb: list[str],
     subtitle: str,
@@ -512,8 +476,16 @@ def select(
     if on_ready is not None:
         try:
             on_ready()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Callback errors may contain secrets; keep the menu usable and
+            # log only the exception type, even if the log destination fails.
+            try:
+                import logging
+                logging.getLogger("opskit.startup").warning(
+                    "menu ready callback failed: error=%s", type(exc).__name__
+                )
+            except Exception:
+                pass
 
     while True:
         ch = _read_key_seq()

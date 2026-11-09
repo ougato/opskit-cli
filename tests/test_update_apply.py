@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sys
 import os
+import shutil
+import stat
 import subprocess
 import time
 
@@ -25,16 +27,20 @@ def signed_pending(tmp_path, monkeypatch):
     current = tmp_path / "current.exe"
     current.write_bytes(b"old-program")
     monkeypatch.setattr(updater, "_self_path", lambda: current)
+    identity = "a" * 32
+    build = updater.APP_VERSION + 1
+    updater._write_update_record(updater._get_cache_path(), {"candidate_id": identity, "pending_version": build})
     pending = updater._get_pending_path()
-    pending.parent.mkdir()
+    pending.parent.mkdir(parents=True)
     magic = b"MZ" if sys.platform == "win32" else b"\xcf\xfa\xed\xfe" if sys.platform == "darwin" else b"\x7fELF"
     pending.write_bytes(magic + b"\0" * (1024 * 100))
-    build = updater.APP_VERSION + 1
-    updater._get_cache_path().write_text(json.dumps({"pending_version": build}))
     key = Ed25519PrivateKey.generate()
     public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
     monkeypatch.setattr(config, "load_config", lambda **kwargs: {"update": {"signing_public_key": public}})
     digest = file_digest(pending)
+    updater._write_update_record(pending.parent / "candidate.json", {
+        "schema_version": 1, "candidate_id": identity, "build": build,
+        "sha256": digest, "state": "verified"})
     filename = updater._asset_filename()
     envelope = {"build": build, "filename": filename, "sha256": digest,
                 "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
@@ -72,13 +78,98 @@ def test_changed_signed_artifact_is_not_applied(signed_pending, monkeypatch):
 def test_backup_failure_reaches_real_backup_then_preserves_current(signed_pending, monkeypatch):
     current, pending, _ = signed_pending
     calls = []
-    def fail(source, destination):
+    def fail(source, destination, **kwargs):
         calls.append((source, destination))
         raise OSError("synthetic backup failure")
-    monkeypatch.setattr(updater.shutil, "copy2", fail)
+    monkeypatch.setattr(updater, "_create_update_backup", fail)
     with pytest.raises(RuntimeError):
         updater.apply_verified_pending()
     assert len(calls) == 1 and calls[0][0] == current
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+def test_backup_failure_log_does_not_include_exception_details(signed_pending, monkeypatch):
+    current, pending, build = signed_pending
+    messages = []
+    def fail(*args, **kwargs):
+        raise OSError("private backup path / secret")
+    monkeypatch.setattr(updater, "_create_update_backup", fail)
+    monkeypatch.setattr(updater._log, "error", lambda message, *args: messages.append(message % args))
+    assert not updater._do_apply(pending, build)
+    assert messages == ["_do_apply: backup failed (OSError)"]
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+@pytest.mark.parametrize("collision", ["backup", "receipt"])
+def test_existing_backup_or_receipt_is_never_overwritten(signed_pending, monkeypatch, collision):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    backup = current.parent / "backups" / ("opskit.v7.123." + "b" * 32 + ".bak")
+    backup.parent.mkdir()
+    receipt = backup.with_name(backup.name + ".json")
+    existing = backup if collision == "backup" else receipt
+    existing.write_bytes(b"unrelated user file")
+    monkeypatch.setattr(updater, "_get_backup_path", lambda: backup)
+    monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("colliding backup applied"))
+    monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("colliding backup applied"))
+    assert not updater._do_apply(pending, build)
+    assert existing.read_bytes() == b"unrelated user file"
+    assert current.read_bytes() == b"old-program" and pending.exists()
+    assert update_target_state.read(current) is None
+
+
+def test_backup_retains_modification_time_and_restorable_permissions(tmp_path):
+    source, backup, target = (tmp_path / name for name in ("original", "backup", "restored"))
+    source.write_bytes(b"original executable")
+    source.chmod(0o751)
+    if hasattr(os, "setxattr"):
+        try:
+            os.setxattr(source, "user.opskit-test", b"metadata")
+        except OSError as exc:
+            if exc.errno not in (errno.ENOTSUP, errno.EPERM, errno.EACCES):
+                raise
+    timestamp = 1_600_000_000_000_000_000
+    os.utime(source, ns=(timestamp, timestamp))
+    digest = file_digest(source)
+    source_info = source.stat()
+    updater._create_update_backup(source, backup, old_digest=digest,
+                                  new_digest="a" * 64, new_version=updater.APP_VERSION + 1)
+    backup_info = backup.stat()
+    assert backup_info.st_mtime_ns == source_info.st_mtime_ns == timestamp
+    assert backup_info.st_atime_ns == source_info.st_atime_ns
+    if hasattr(os, "getxattr"):
+        try:
+            source_attribute = os.getxattr(source, "user.opskit-test")
+        except OSError as exc:
+            if exc.errno not in (errno.ENOTSUP, errno.ENODATA, errno.EPERM, errno.EACCES):
+                raise
+        else:
+            assert os.getxattr(backup, "user.opskit-test") == source_attribute
+    assert backup.read_bytes() == source.read_bytes()
+    updater._atomic_copy(backup, target)
+    assert target.read_bytes() == source.read_bytes()
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(source.stat().st_mode) == 0o751
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows denies renaming the open backup")
+def test_replaced_backup_path_and_owned_bytes_are_both_retained(signed_pending, monkeypatch):
+    current, pending, build = signed_pending
+    backup = current.parent / "backups" / ("opskit.v7.123." + "b" * 32 + ".bak")
+    displaced = current.parent / "displaced-owned-backup"
+    monkeypatch.setattr(updater, "_get_backup_path", lambda: backup)
+    copy = shutil.copyfileobj
+
+    def replace_during_copy(source, output, length):
+        copy(source, output, length)
+        os.replace(backup, displaced)
+        backup.write_bytes(b"unrelated replacement")
+
+    monkeypatch.setattr(shutil, "copyfileobj", replace_during_copy)
+    assert not updater._do_apply(pending, build)
+    assert backup.read_bytes() == b"unrelated replacement"
+    assert displaced.read_bytes() == b"old-program"
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
@@ -97,6 +188,167 @@ def test_apply_result_distinguishes_scheduling_from_committed_copy(signed_pendin
     assert len(calls) == 1
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows helper scheduling")
+def test_menu_exit_does_not_replace_a_scheduled_startup_job(signed_pending, monkeypatch):
+    from core import update_windows
+
+    current, pending, build = signed_pending
+    monkeypatch.setattr(updater, "_reconcile_indexed_job_on_boot", lambda: (False, False))
+    launches = []
+
+    class FakeHelper:
+        pid = 12345
+
+    def launch(*args, **kwargs):
+        launches.append((args, kwargs))
+        return FakeHelper()
+
+    monkeypatch.setattr(update_windows.subprocess, "Popen", launch)
+    assert updater.check_and_apply_pending() is False
+    first_cache = updater._read_update_record(updater._get_cache_path())
+    first_job = first_cache["apply_job"]
+    first_state = (current.parent / ".opskit-update-locks")
+    assert first_state.exists()
+    updater.apply_pending_update()
+
+    assert len(launches) == 1
+    assert updater._read_update_record(updater._get_cache_path())["apply_job"] == first_job
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows helper scheduling")
+def test_menu_entry_and_exit_keep_one_scheduled_job(signed_pending, monkeypatch):
+    from core import update_windows
+
+    current, pending, build = signed_pending
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(main, "ensure_config", lambda: {"log": {}, "update": {}})
+    monkeypatch.setattr(main, "theme_init", lambda *_: None)
+    monkeypatch.setattr(main, "i18n_init", lambda **_: None)
+    monkeypatch.setattr(main, "print_info", lambda *_: None)
+    monkeypatch.setattr(main, "t", lambda key, **kwargs: key)
+    monkeypatch.setattr("core.logger.init", lambda *_: None)
+    monkeypatch.setattr("core.cleanup.init", lambda: None)
+    monkeypatch.setattr("core.platform.preflight_check", lambda: [])
+    monkeypatch.setattr("core.cli.require_interaction", lambda: None)
+    monkeypatch.setattr(updater, "_reconcile_indexed_job_on_boot", lambda: (False, False))
+    jobs, launches = [], []
+
+    class FakeHelper:
+        pid = 12345
+
+    def launch(*args, **kwargs):
+        launches.append((args, kwargs))
+        return FakeHelper()
+
+    def menu(cfg):
+        jobs.append(updater._read_update_record(updater._get_cache_path())["apply_job"])
+        main._on_exit(cfg)
+        jobs.append(updater._read_update_record(updater._get_cache_path())["apply_job"])
+
+    monkeypatch.setattr(update_windows.subprocess, "Popen", launch)
+    monkeypatch.setattr(main, "_main_menu_loop", menu)
+    result = CliRunner().invoke(main.app, [])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert len(launches) == 1
+    assert len(jobs) == 2 and jobs[0] == jobs[1]
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+@pytest.mark.parametrize("operation", ["upgrade", "rollback"])
+def test_prepared_target_transaction_cannot_be_superseded(signed_pending, monkeypatch, operation):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    other = build if operation == "upgrade" else updater.APP_VERSION - 1
+    transaction = update_target_state.prepare(
+        current, operation=operation, from_build=updater.APP_VERSION, to_build=other,
+        from_digest=file_digest(current), to_digest=file_digest(pending),
+    )
+    monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("unresolved transaction superseded"))
+    monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("unresolved transaction superseded"))
+    assert not updater._do_apply(pending, build)
+    assert update_target_state.read(current) == transaction
+    assert not (current.parent / "backups").exists()
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+def test_other_data_directory_cannot_supersede_prepared_target(signed_pending, monkeypatch):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    transaction = update_target_state.prepare(
+        current, operation="upgrade", from_build=updater.APP_VERSION, to_build=build,
+        from_digest=file_digest(current), to_digest=file_digest(pending),
+    )
+    other_data = current.parent / "other-data"
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(other_data))
+    updater._write_update_record(updater._get_cache_path(), {
+        "candidate_id": "a" * 32, "pending_version": build,
+    })
+    other_pending = updater._get_pending_path()
+    other_pending.parent.mkdir(parents=True)
+    for source in pending.parent.iterdir():
+        shutil.copyfile(source, other_pending.parent / source.name)
+    cache_before = updater._get_cache_path().read_bytes()
+    monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("other directory scheduled update"))
+    monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("other directory applied update"))
+    assert not updater._apply_owned_pending(other_pending, build)
+    assert updater._get_cache_path().read_bytes() == cache_before
+    assert update_target_state.read(current) == transaction
+    assert not (other_data / "backups").exists()
+    assert current.read_bytes() == b"old-program" and pending.exists() and other_pending.exists()
+
+
+def test_invalid_target_transaction_refuses_apply_without_modifying_data(signed_pending):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    state = update_target_state.path(current)
+    updater._write_update_record(state, {"invalid": "unknown user data"})
+    before = state.read_bytes(), updater._get_cache_path().read_bytes()
+    assert not updater._do_apply(pending, build)
+    assert (state.read_bytes(), updater._get_cache_path().read_bytes()) == before
+    assert not (current.parent / "backups").exists()
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
+def test_completed_transaction_allows_new_update(signed_pending, monkeypatch):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    previous = current.parent / "previous"
+    previous.write_bytes(b"previous build")
+    historical = update_target_state.prepare(
+        current, operation="upgrade", from_build=updater.APP_VERSION - 1,
+        to_build=updater.APP_VERSION, from_digest=file_digest(previous), to_digest=file_digest(current),
+    )
+    update_target_state.completed(current, historical)
+    calls = []
+    monkeypatch.setattr(updater, "_apply_windows", lambda *args: calls.append(args))
+
+    def apply_unix(source, target, version):
+        calls.append((source, target, version))
+        updater._atomic_copy(source, target)
+
+    monkeypatch.setattr(updater, "_apply_unix", apply_unix)
+    assert updater._apply_owned_pending(pending, build)
+    assert len(calls) == 1
+    assert update_target_state.read(current)["transaction_id"] != historical["transaction_id"]
+
+
+@pytest.mark.parametrize("job", ["a" * 32, "invalid-unowned-job"])
+def test_unreconciled_job_index_cannot_be_replaced(signed_pending, monkeypatch, job):
+    current, pending, build = signed_pending
+    cache = updater._read_update_record(updater._get_cache_path())
+    updater._write_update_record(updater._get_cache_path(), {**cache, "apply_job": job})
+    before = updater._get_cache_path().read_bytes()
+    monkeypatch.setattr(updater, "_do_apply", lambda *a: pytest.fail("existing job index ignored"))
+    assert not updater._apply_owned_pending(pending, build)
+    assert updater._get_cache_path().read_bytes() == before
+    assert current.read_bytes() == b"old-program" and pending.exists()
+
+
 def test_atomic_copy_failure_never_truncates_current(tmp_path, monkeypatch):
     source, target = tmp_path / "source", tmp_path / "current"
     source.write_bytes(b"new-program")
@@ -108,7 +360,8 @@ def test_atomic_copy_failure_never_truncates_current(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         updater._atomic_copy(source, target)
     assert target.read_bytes() == b"old-program"
-    assert not list(tmp_path.glob(".opskit-replace-*"))
+    staged, = tmp_path.glob(".opskit-replace-*")
+    assert staged.read_bytes() == b"partial"
 
 
 def test_atomic_copy_commit_failure_preserves_current(tmp_path, monkeypatch):
@@ -119,12 +372,13 @@ def test_atomic_copy_commit_failure_preserves_current(tmp_path, monkeypatch):
     with pytest.raises(PermissionError):
         updater._atomic_copy(source, target)
     assert target.read_bytes() == b"old-program"
-    assert not list(tmp_path.glob(".opskit-replace-*"))
+    staged, = tmp_path.glob(".opskit-replace-*")
+    assert staged.read_bytes() == b"new-program"
 
 
 def test_marker_commit_failure_preserves_current_and_pending(signed_pending, monkeypatch):
     current, pending, build = signed_pending
-    marker = pending.parent / "update_pending_path.json"
+    marker = updater._get_cache_path().parent / "update_pending_path.json"
     marker.write_text(json.dumps({"pending": str(pending), "target": str(current), "version": build}))
     real_replace = updater.os.replace
     def fail_replace(source, target):
@@ -139,7 +393,7 @@ def test_marker_commit_failure_preserves_current_and_pending(signed_pending, mon
 
 def test_source_mode_marker_does_not_replace_or_clear_data(signed_pending, monkeypatch):
     current, pending, build = signed_pending
-    marker = pending.parent / "update_pending_path.json"
+    marker = updater._get_cache_path().parent / "update_pending_path.json"
     marker.write_text(json.dumps({"pending": str(pending), "target": str(current), "version": build}))
     monkeypatch.setattr(updater, "_is_frozen", lambda: False)
     assert not updater._apply_update_pending_path()
@@ -176,12 +430,15 @@ def test_cross_device_copy_failure_preserves_both_files(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         updater._apply_unix(pending, current, updater.APP_VERSION + 1)
     assert current.read_bytes() == b"old-program" and pending.read_bytes() == b"new-program"
-    assert not list(tmp_path.glob(".opskit-replace-*"))
+    staged, = tmp_path.glob(".opskit-replace-*")
+    assert staged.read_bytes() == b"partial"
 
 
 @pytest.mark.parametrize("failure", [OSError("permission finalization failed"), KeyboardInterrupt()],
                          ids=["finalization-error", "cancel"])
 def test_unix_post_commit_failure_restores_verified_backup(signed_pending, monkeypatch, failure):
+    from core import update_target_state
+
     current, pending, build = signed_pending
     new_bytes = pending.read_bytes()
     # Exercise actual replacement/compensation on temporary files, never the
@@ -200,6 +457,21 @@ def test_unix_post_commit_failure_restores_verified_backup(signed_pending, monke
     assert current.read_bytes() == b"old-program"
     assert pending.read_bytes() == new_bytes
     assert updater._verify_pending_signature(pending, build)
+    assert update_target_state.read(current)["phase"] == "aborted"
+
+
+def test_unix_failed_update_can_retry_after_verified_restoration(signed_pending, monkeypatch):
+    from core import update_target_state
+
+    current, pending, build = signed_pending
+    monkeypatch.setattr(updater.sys, "platform", "linux")
+    monkeypatch.setattr(updater, "_apply_unix", lambda *a: (_ for _ in ()).throw(OSError("failed")))
+    assert not updater._do_apply(pending, build)
+    assert current.read_bytes() == b"old-program" and pending.exists()
+    assert update_target_state.read(current)["phase"] == "aborted"
+    monkeypatch.setattr(updater, "_apply_unix", lambda source, target, version: updater._atomic_copy(source, target))
+    assert updater._do_apply(pending, build)
+    assert update_target_state.read(current)["phase"] == "applied"
     assert not list(current.parent.glob(".opskit-replace-*"))
 
 
@@ -267,7 +539,7 @@ def test_signed_rolled_back_version_cannot_be_reapplied(committed_update, monkey
         updater.apply_verified_pending()
     assert current.read_bytes() == b"old-program" and set(backup.parent.iterdir()) == backups
     assert update_target_state.path(current).read_bytes() == before
-    marker = pending.parent / "update_pending_path.json"
+    marker = updater._get_cache_path().parent / "update_pending_path.json"
     updater._write_update_record(marker, {"pending": str(pending), "target": str(current), "version": build})
     assert updater._apply_update_pending_path() is False
     assert current.read_bytes() == b"old-program" and marker.exists()
@@ -324,7 +596,8 @@ def test_rollback_commit_failure_keeps_new_binary_and_recovery_record(committed_
     assert not updater.rollback()
     assert current.read_bytes() == new_bytes
     assert backup.exists() and updater._get_health_path().exists()
-    assert not list(current.parent.glob(".opskit-replace-*"))
+    staged, = current.parent.glob(".opskit-replace-*")
+    assert staged.read_bytes() == backup.read_bytes()
 
 
 def test_failed_health_rollback_retains_record_for_next_boot(tmp_path, monkeypatch):
@@ -332,12 +605,28 @@ def test_failed_health_rollback_retains_record_for_next_boot(tmp_path, monkeypat
     path = updater._get_health_path()
     updater._write_update_record(path, {"build": updater.APP_VERSION, "confirmed": False,
                                        "fails": updater.MAX_HEALTH_FAILS - 1})
-    before = path.read_bytes()
     calls = []
     monkeypatch.setattr(updater, "rollback", lambda: calls.append(1) or False)
     assert not updater._check_health()
     assert not updater._check_health()
-    assert calls == [1, 1] and path.read_bytes() == before
+    record = updater._read_health_record(path)
+    assert calls == [1, 1]
+    assert record["build"] == updater.APP_VERSION
+    assert record["confirmed"] is False
+    assert record["fails"] == updater.MAX_HEALTH_FAILS
+
+
+def test_health_retry_preserves_existing_count_above_threshold(tmp_path, monkeypatch):
+    path = updater._get_health_path()
+    original = {"build": updater.APP_VERSION, "confirmed": False,
+                "fails": updater.MAX_HEALTH_FAILS + 5}
+    updater._write_update_record(path, original)
+    before = path.read_bytes()
+    monkeypatch.setattr(updater, "rollback", lambda: False)
+    for _ in range(3):
+        assert not updater._check_health()
+    assert path.read_bytes() == before
+    assert updater._read_health_record(path) == original
 
 
 def test_health_record_atomic_write_failure_preserves_previous(tmp_path, monkeypatch):
@@ -386,7 +675,7 @@ def test_marker_cleanup_failure_still_reports_committed_replacement(signed_pendi
 @pytest.mark.parametrize("version", [None, True, "123", updater.APP_VERSION], ids=["missing", "bool", "string", "old"])
 def test_marker_requires_explicit_new_integer_build(signed_pending, version):
     current, pending, build = signed_pending
-    marker = pending.parent / "update_pending_path.json"
+    marker = updater._get_cache_path().parent / "update_pending_path.json"
     updater._write_update_record(marker, {"pending": str(pending), "target": str(current), "version": version})
     assert not updater._apply_update_pending_path()
     assert current.read_bytes() == b"old-program" and pending.exists() and marker.exists()
@@ -470,7 +759,7 @@ def test_backup_directory_link_is_rejected_before_any_copy(signed_pending, monke
         (current.parent / "backups").symlink_to(external, target_is_directory=True)
     except OSError:
         pytest.skip("directory symlink creation requires OS permission")
-    monkeypatch.setattr(updater.shutil, "copy2", lambda *a: pytest.fail("copy through linked backup directory"))
+    monkeypatch.setattr(updater, "_create_update_backup", lambda *a, **kw: pytest.fail("copy through linked backup directory"))
     assert not updater._do_apply(pending, build)
     assert current.read_bytes() == b"old-program" and pending.exists()
     assert not list(external.iterdir())
@@ -498,12 +787,16 @@ with updater._update_resource.hold(), updater._update_target_resource.hold():
             time.sleep(.01)
         assert marker.exists(), "target lock holder did not start"
         monkeypatch.setenv("OPSKIT_DATA_DIR", str(second_data))
+        identity = "b" * 32
+        updater._write_update_record(updater._get_cache_path(), {"candidate_id": identity, "pending_version": build})
         pending = updater._get_pending_path()
         pending.parent.mkdir(parents=True)
         pending.write_bytes(original_pending.read_bytes())
         pending.with_name(pending.name + ".sig.json").write_bytes(
             original_pending.with_name(original_pending.name + ".sig.json").read_bytes())
-        updater._write_update_record(updater._get_cache_path(), {"pending_version": build})
+        updater._write_update_record(pending.parent / "candidate.json", {
+            "schema_version": 1, "candidate_id": identity, "build": build,
+            "sha256": file_digest(pending), "state": "verified"})
         assert updater._update_lock_path() != first_data / "cache" / "locks" / "update.lock"
         with pytest.raises(RuntimeError, match="update executable is busy"):
             updater.apply_verified_pending()

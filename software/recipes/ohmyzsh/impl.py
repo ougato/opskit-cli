@@ -72,11 +72,12 @@ from software.recipes.ohmyzsh.p10k_preset import p10k_preset
 
 console = Console()
 
-_BREADCRUMB_BASE = ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh")]
+def _breadcrumb_base() -> list[str]:
+    return ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh")]
 
 
 def _breadcrumb(action_key: str) -> list[str]:
-    return ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh"), t(action_key)]
+    return [*_breadcrumb_base(), t(action_key)]
 
 
 def command_exists(command: str) -> bool:
@@ -351,7 +352,7 @@ def _switch_default_shell() -> bool:
 def install_ohmyzsh(*, with_p10k: bool | None = None, switch_shell: bool = True) -> dict:
     _ensure_supported()
 
-    base = _BREADCRUMB_BASE
+    base = _breadcrumb_base()
     # 安装前询问是否安装 Powerlevel10k。
     if with_p10k is None:
         try:
@@ -416,7 +417,7 @@ def install_ohmyzsh(*, with_p10k: bool | None = None, switch_shell: bool = True)
 
 
 def uninstall_ohmyzsh() -> None:
-    base = _BREADCRUMB_BASE
+    base = _breadcrumb_base()
     if not omz_dir().exists():
         clear_screen()
         print_action_title(base, trailing_blank=False)

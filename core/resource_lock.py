@@ -6,9 +6,15 @@ from pathlib import Path
 import stat
 import threading
 
+from core.file_identity import same_file_identity
+
 
 class ResourceBusyError(RuntimeError):
     """Transient contention, distinct from unsafe paths or invalid lock files."""
+
+
+class ResourceIdentityError(RuntimeError):
+    """The file system cannot prove the identity of a lock file."""
 
 
 class ResourceLock:
@@ -70,9 +76,10 @@ class ResourceLock:
                     opened = os.fstat(handle.fileno())
                     if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or opened.st_nlink != 1
                             or getattr(current, "st_file_attributes", 0) & 0x400
-                            or (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
-                            or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
-                        raise self.error_type(self.label + " lock identity changed during acquisition")
+                            or not same_file_identity(current, info)
+                            or not same_file_identity(opened, info)):
+                        error_type = ResourceIdentityError if self.error_type is RuntimeError else self.error_type
+                        raise error_type(self.label + " lock identity changed during acquisition")
                     yield
                 finally:
                     self._active.identity = None

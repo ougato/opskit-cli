@@ -96,10 +96,12 @@ def test_gate_accepts_complete_success_and_failure_envelopes(tmp_path, monkeypat
 
     monkeypatch.setattr(gate.subprocess, "run", run)
     output = tmp_path / "acceptance"
-    assert gate.verify(binary, 7, output)["checks"] == 32
+    assert gate.verify(binary, 7, output)["checks"] == 30
     assert (output / "verification.json").is_file()
     checks = json.loads((output / "verification.json").read_text())["checks"]
     assert not any("inspect-locks" in check["args"] for check in checks)
+    assert not any("configure-creator" in check["args"] for check in checks)
+    assert not any("creator-tools" in check["args"] for check in checks)
     assert any(check["args"] == ["plugin", "prepare", "--help"] for check in checks)
     assert any(check["args"] == ["plugin", "permissions", "--help"] for check in checks)
     assert any("inspect-updates" in check["args"] for check in checks)

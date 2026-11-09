@@ -30,11 +30,14 @@ def _resolve_deps_or_exit(instance, breadcrumb):
         fail(f"dependency resolution failed: {type(exc).__name__}")
 
 
-def _check_disk_or_exit():
-    from core.platform import check_disk_space
+def _check_disk_or_exit(instance):
+    from software.disk import check_recipe_disk_space
     from core.constants import MIN_DISK_FREE_BYTES
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
+    result = check_recipe_disk_space(instance, MIN_DISK_FREE_BYTES)
+    if result is False:
         fail(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
+    if result is None:
+        print(t("platform.install_disk_unknown"), file=sys.stderr)
 
 
 def _execute(cls, action, operation, *args, **kwargs):
@@ -65,7 +68,7 @@ def _install_direct(breadcrumb, cls, instance, version=None, token=None):
             decode_client_token(token)
         except ValueError:
             fail("invalid WireGuard token", 2)
-        _check_disk_or_exit()
+        _check_disk_or_exit(instance)
         _resolve_deps_or_exit(instance, breadcrumb)
         from wireguard.client import install_client
         with redirect_stdout(sys.stderr):
@@ -82,7 +85,7 @@ def _install_direct(breadcrumb, cls, instance, version=None, token=None):
         if getattr(cls, "has_install_version_selection", True):
             fail(t("cli.error.version_required", name=name), 2)
         version = "latest"
-    _check_disk_or_exit()
+    _check_disk_or_exit(instance)
     _resolve_deps_or_exit(instance, breadcrumb)
     from software.actions import execute_install
     _execute(cls, "install", execute_install, instance, version)
@@ -126,7 +129,7 @@ def _upgrade_direct(breadcrumb, cls, instance, version=None):
         fail(t("cli.error.version_required", name=name), 2)
     if not instance.detect():
         fail(t("software.not_installed_hint", name=name))
-    _check_disk_or_exit()
+    _check_disk_or_exit(instance)
     _resolve_deps_or_exit(instance, breadcrumb)
     from software.actions import execute_upgrade
     already = _is_multi_version(cls, instance) and version in instance.installed_versions()

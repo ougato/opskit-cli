@@ -31,16 +31,20 @@ def signed_installer(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "_apply_unix", commit)
     def install(data, build, body=b"N"):
         monkeypatch.setenv("OPSKIT_DATA_DIR", str(data))
+        identity = "b" * 32
+        updater._write_update_record(updater._get_cache_path(), {"candidate_id": identity, "pending_version": build})
         pending = updater._get_pending_path()
         pending.parent.mkdir(parents=True, exist_ok=True)
         magic = b"MZ" if sys.platform == "win32" else b"\xcf\xfa\xed\xfe" if sys.platform == "darwin" else b"\x7fELF"
         pending.write_bytes(magic + body * (100 * 1024))
         digest = file_digest(pending)
+        updater._write_update_record(pending.parent / "candidate.json", {
+            "schema_version": 1, "candidate_id": identity, "build": build,
+            "sha256": digest, "state": "verified"})
         filename = updater._asset_filename()
         envelope = {"build": build, "filename": filename, "sha256": digest,
                     "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
         pending.with_name(pending.name + ".sig.json").write_text(json.dumps(envelope))
-        updater._write_update_record(updater._get_cache_path(), {"pending_version": build})
         return updater.apply_verified_pending()
     return target, install
 

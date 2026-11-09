@@ -284,15 +284,16 @@ class TestVersionCache:
             result = vc.get_cached_versions("nginx")
         assert result == ["1.27", "1.26"]
 
-    def test_not_session_refreshed_returns_none(self, tmp_path):
+    @pytest.mark.parametrize("age,expected", [(0, ["1.27"]), (100000, None)])
+    def test_non_session_cache_respects_ttl(self, tmp_path, age, expected):
         from core import version_cache as vc
         self._reset()
         with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
             vc._ensure_loaded()
-            # 有缓存且刚写入，但本会话未刷新 → 返回 None，触发一次前台联网
-            vc._cache["nginx"] = {"versions": ["1.27"], "timestamp": time.time()}
+            # 本会话未刷新时，只复用 TTL 内的磁盘缓存。
+            vc._cache["nginx"] = {"versions": ["1.27"], "timestamp": time.time() - age}
             result = vc.get_cached_versions("nginx")
-        assert result is None
+        assert result == expected
 
     def test_cache_stale_fallback(self, tmp_path):
         from core import version_cache as vc
@@ -487,7 +488,7 @@ class TestUpdaterImprovements:
                 mock_path.return_value = MagicMock()
                 mock_path.return_value.exists.return_value = False
                 mock_path.return_value.unlink = MagicMock()
-                result = check_and_apply_pending()
+                result = check_and_apply_pending(post_update=True)
             assert result is False
         finally:
             sys.argv = original_argv

@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from core.file_identity import same_file_identity
 from core.constants import (
     APP_VERSION,
     BOOTSTRAP_TIMEOUT,
@@ -327,17 +328,6 @@ def _verify_binary(path: Path) -> bool:
         return False
 
 
-def _cleanup_old_exe(self_path: Path) -> None:
-    """Only clean the exact residual name created for this executable."""
-    try:
-        old = self_path.parent / (self_path.stem + ".old.exe")
-        if old.is_file() and not old.is_symlink():
-            old.unlink(missing_ok=True)
-            _log.info("startup: cleaned up residual %s", old.name)
-    except Exception as e:
-        _log.warning("startup: failed to clean .old.exe: %s", e)
-
-
 def _get_health_path() -> Path:
     from core.config import get_data_dir
     return get_data_dir() / "cache" / FILE_UPDATE_HEALTH
@@ -359,7 +349,7 @@ def _read_update_record(path: Path) -> dict:
     with os.fdopen(descriptor, "rb") as source:
         opened = os.fstat(source.fileno())
         if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
-                or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)):
+                or not same_file_identity(before, opened)):
             raise ValueError("update record changed during open")
         raw = source.read(65537)
     if len(raw) > 65536:
@@ -437,8 +427,66 @@ def _confirm_health_locked():
         return
     if data["confirmed"] or data["build"] != APP_VERSION:
         return
-    data["confirmed"] = True
-    _write_update_record(path, data)
+    # A persisted rollback decision must survive both a failed restore and a
+    # later confirmation attempt. It is not a successful health observation.
+    if data["fails"] >= MAX_HEALTH_FAILS:
+        raise ValueError("health confirmation blocked by rollback decision")
+    if _is_frozen():
+        # Keep the target lock through publication: a rollback decision in a
+        # different data directory uses this same executable-scoped lock.
+        with _update_target_resource.hold():
+            from core import update_target_state
+            target = _self_path()
+            transaction = update_target_state.read(target)
+            if transaction is None and data.get("job_id") is not None:
+                # A job-based update needs its target transaction to prove
+                # which executable and transition this health record covers.
+                raise ValueError("health confirmation transaction is missing")
+            if (transaction is not None and transaction["operation"] == "rollback"
+                    and transaction["phase"] in {"prepared", "applied"}
+                    and transaction["from_build"] == data["build"]):
+                raise ValueError("health confirmation blocked by rollback")
+            if transaction is not None:
+                # An older process must not confirm a version after its target
+                # has been replaced or its recorded transition was aborted.
+                digest = _sha256_file(target)
+                if (transaction["operation"] == "upgrade"
+                        and (transaction["phase"] == "aborted"
+                             or transaction["to_build"] != data["build"]
+                             or transaction["to_sha256"] != digest)):
+                    raise ValueError("health confirmation target does not match update")
+                if (transaction["operation"] == "rollback"
+                        and (transaction["phase"] != "aborted"
+                             or transaction["from_build"] != data["build"]
+                             or transaction["from_sha256"] != digest)):
+                    raise ValueError("health confirmation target does not match rollback")
+                if transaction["operation"] == "upgrade" and data.get("job_id") is not None:
+                    # The job in this data directory must identify the same
+                    # transaction and backup. A copied health record alone is
+                    # not proof that this directory owns the update.
+                    job_id = data["job_id"]
+                    metadata = _read_update_record(
+                        _get_cache_path().parent / "update-jobs" / job_id / "job.json"
+                    )
+                    if (type(metadata.get("schema_version")) is not int
+                            or metadata["schema_version"] != 2
+                            or metadata.get("job_id") != job_id
+                            or metadata.get("state") not in {"launching", "scheduled"}
+                            or metadata.get("transaction_id") != transaction["transaction_id"]
+                            or type(metadata.get("version")) is not int
+                            or metadata["version"] != data["build"]
+                            or metadata.get("target") != str(target.resolve())
+                            or not isinstance(data.get("backup_id"), str)
+                            or not re.fullmatch(r"opskit\.v[0-9]+\.[0-9]+\.[a-f0-9]{32}\.bak", data["backup_id"])
+                            or metadata.get("backup_id") != data.get("backup_id")
+                            or metadata.get("old_sha256") != transaction["from_sha256"]
+                            or metadata.get("new_sha256") != transaction["to_sha256"]):
+                        raise ValueError("health confirmation job does not match update")
+            data["confirmed"] = True
+            _write_update_record(path, data)
+    else:
+        data["confirmed"] = True
+        _write_update_record(path, data)
     try:
         _cleanup_old_backups()
     except Exception:
@@ -506,7 +554,16 @@ def _check_health_locked():
     if data["build"] != APP_VERSION:
         return False
 
-    fails = int(data.get("fails", 0)) + 1
+    # Persist the decision before attempting replacement. In particular, a
+    # failed restore must not leave the old count eligible for confirmation.
+    # If persistence fails, preserve the existing record and do not restore.
+    # Saturate new counts at the decision threshold. Keep larger counts from
+    # older records unchanged so repeated retries cannot grow the record.
+    fails = data["fails"]
+    if fails < MAX_HEALTH_FAILS:
+        fails += 1
+        data["fails"] = fails
+        _write_update_record(path, data)
     if fails >= MAX_HEALTH_FAILS:
         _log.warning("_check_health: build %d unconfirmed after %d boots — rolling back", APP_VERSION, fails)
         ok = rollback()
@@ -517,11 +574,6 @@ def _check_health_locked():
         else:
             _report("update_rollback_failed", level="error", build=str(APP_VERSION), fails=str(fails))
         return ok
-    try:
-        data["fails"] = fails
-        _write_update_record(path, data)
-    except Exception:
-        _log.warning("update health failure count could not be persisted")
     return False
 
 
@@ -603,11 +655,13 @@ def _apply_marker_locked(marker) -> bool:
         return committed and version != APP_VERSION
     # The target has committed. Cleanup errors must not hide that fact from
     # startup, which must restart into the replacement rather than continue.
-    for path in (pending, marker):
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as e:
-            _log.warning("update_pending_path: cleanup deferred for %s: %s", path.name, e)
+    # The marker establishes the completed transaction. It does not prove that
+    # the pending pathname still refers to the same file after the copy; leave
+    # that file for the owned candidate cache to reclaim instead.
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError as e:
+        _log.warning("update_pending_path: cleanup deferred for %s: %s", marker.name, e)
     try:
         _save_check_cache({"latest": version})
     except Exception as e:
@@ -650,16 +704,15 @@ def _reconcile_indexed_job_on_boot() -> tuple[bool, bool]:
         return True, False
 
 
-def check_and_apply_pending() -> bool:
+def check_and_apply_pending(*, post_update: bool = False) -> bool:
     """启动时检测 pending 文件，如果存在则替换并返回 True（调用方应 exec 重启）。
 
     完整流程：
     1. --post-update 防循环检测
-    2. .old.exe 残留清理
-    3. 健康探针崩溃回滚检测
-    4. update_pending_path.json 兜底标记处理
-    5. pending/cache 同步（pending 被手动删除时清理 cache）
-    6. 常规 pending 检测与应用
+    2. 健康探针崩溃回滚检测
+    3. update_pending_path.json 兜底标记处理
+    4. pending/cache 状态检查，缺失或无效时保留证据
+    5. 常规 pending 检测与应用
     """
     global _pending_version
     defer, restored = _reconcile_indexed_job_on_boot()
@@ -668,7 +721,7 @@ def check_and_apply_pending() -> bool:
         return True
     if defer:
         return False  # Do not launch another helper or erase recovery artifacts.
-    if "--post-update" in sys.argv:
+    if post_update:
         marker = _get_cache_path().parent / "update_pending_path.json"
         _update_record_path(marker)
         if marker.exists():
@@ -676,15 +729,10 @@ def check_and_apply_pending() -> bool:
             if restarted:
                 _pending_version = _load_check_cache().get("latest")
             return restarted  # Do not erase evidence after incomplete health publication.
-        _get_pending_path().unlink(missing_ok=True)
-        _get_pending_tmp_path().unlink(missing_ok=True)
-        _log.info("post-update boot, cleared pending files")
+        # No transaction proves either fixed name belongs to this update.
+        # Keep both files and their cache evidence; skip apply to avoid a loop.
+        _log.info("post-update boot, preserving unproven pending files")
         return False
-
-    self_path = _self_path()
-
-    # 清理 .old.exe 残留
-    _cleanup_old_exe(self_path)
 
     # 崩溃回滚检测：新版本反复启动失败则回滚到旧版本并重启
     if _check_health():
@@ -704,35 +752,31 @@ def check_and_apply_pending() -> bool:
     pending = _get_pending_path()
     cache = _load_check_cache()
 
-    # pending/cache 同步：pending 被手动删除时清理 cache 中的 pending_version
+    # A missing candidate can be a failed transaction or an unsafe link. The
+    # index alone does not prove that removing its fields is safe.
     if not pending.exists() and cache.get("pending_version"):
-        _log.info("startup: pending file missing but cache has pending_version, clearing")
-        _save_check_cache({"pending_version": None})
+        _log.warning("startup: pending file missing; preserving update cache evidence")
         return False
 
     if not pending.exists():
         return False
 
     if not _verify_binary(pending):
-        _log.warning("startup: pending binary failed verification, removing")
+        _log.warning("startup: pending binary failed verification, preserving")
         _report("startup_pending_verify_failed", level="error",
                 pending=str(pending),
                 file_size=str(pending.stat().st_size) if pending.exists() else "0")
-        pending.unlink(missing_ok=True)
-        _save_check_cache({"pending_version": None})
         return False
 
     remote_ver = cache.get("pending_version") or (APP_VERSION + 1)
 
-    # 源码 / 开发模式：不把 pending 二进制替换到 main.py 源文件上，清理后返回
+    # 源码 / 开发模式：不把 pending 二进制替换到 main.py，保留证据。
     if not _is_frozen():
-        _log.info("dev mode: skip applying pending v%s, removing", remote_ver)
-        pending.unlink(missing_ok=True)
-        _save_check_cache({"pending_version": None})
+        _log.info("dev mode: skip applying pending v%s, preserving", remote_ver)
         return False
 
     _log.info("startup: found pending v%s, applying", remote_ver)
-    ok = _do_apply(pending, remote_ver)
+    ok = _apply_owned_pending(pending, remote_ver)
     if ok:
         _pending_version = remote_ver
     # A Windows helper has only been scheduled; restarting now would launch
@@ -743,39 +787,34 @@ def check_and_apply_pending() -> bool:
 # ─── 版本检测 ─────────────────────────────────────────────────────────────────
 
 def _load_check_cache() -> dict[str, Any]:
-    """读取更新缓存。schema: {pending_version, latest, etag, download_version, backoff_until}"""
+    """Read a bounded private update record; treat invalid cache as unavailable."""
     path = _get_cache_path()
-    if not path.exists():
-        return {}
     try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+        return _read_update_record(path)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, UnicodeDecodeError):
+        _log.warning("update cache is invalid or unsafe; preserving it")
         return {}
 
 
 def _save_check_cache(data: dict[str, Any]) -> None:
-    """Merge 写入 cache（线程安全 + 原子落盘），永不丢失已有字段。
-
-    后台检测线程与主线程/退出钩子可能并发写同一缓存，用进程内锁串行化；
-    先写临时文件再 os.replace，避免写入中途被打断导致 JSON 损坏。
-    """
+    """Merge under the update lock, retaining invalid or unsafe records."""
     if _query_readonly.get():
         return
     path = _get_cache_path()
-    with _cache_lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        existing = _load_check_cache()
-        existing.update(data)
-        if "pending_version" in data and data["pending_version"] is None:
-            existing["candidate_id"] = None
-        try:
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            with tmp.open("w", encoding="utf-8") as f:
-                json.dump(existing, f)
-            os.replace(tmp, path)
-        except Exception as e:
-            _log.warning("save_check_cache failed: %s", e)
+    try:
+        with _cache_lock, _update_resource.hold():
+            try:
+                existing = _read_update_record(path)
+            except FileNotFoundError:
+                existing = {}
+            existing.update(data)
+            if "pending_version" in data and data["pending_version"] is None:
+                existing["candidate_id"] = None
+            _write_update_record(path, existing)
+    except (OSError, ValueError, TypeError, RuntimeError) as e:
+        _log.warning("save_check_cache failed; existing record preserved: %s", e)
 
 
 def _update_allowed() -> bool:
@@ -958,9 +997,16 @@ def _get_sha256_from_url(sha256_url: str) -> str:
 
 
 def _report(msg: str, exc: Exception | None = None, level: str = "warning", **ctx) -> None:
-    """统一上报入口：附加更新通用上下文后转发给 telemetry"""
+    """Keep a local event when telemetry is not initialized; do not log context."""
     if _query_readonly.get():
         return
+    event = msg if isinstance(msg, str) and re.fullmatch(r"[a-z0-9_]{1,64}", msg) else "invalid_event"
+    log_level = {"info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}.get(level, logging.WARNING)
+    try:
+        _log.log(log_level, "update event: %s", event)
+    except Exception:
+        # An unavailable log must not interrupt update or recovery.
+        pass
     try:
         import core.telemetry as _tel
         base: dict = {
@@ -1312,7 +1358,7 @@ def apply_verified_pending():
         pending = _get_pending_path()
         if pending.is_symlink() or not pending.is_file() or not _verify_binary(pending):
             raise RuntimeError("pending update artifact is invalid")
-        if not _do_apply(pending, version):
+        if not _apply_owned_pending(pending, version):
             raise RuntimeError("pending update verification or application failed")
         return {"version": version, "state": "scheduled" if sys.platform == "win32" else "applied",
                 "health_confirmed": False}
@@ -1330,17 +1376,69 @@ def apply_pending_update() -> None:
         return
 
     if not _verify_binary(pending):
-        _log.warning("exit: pending binary failed verification, removing")
+        _log.warning("exit: pending binary failed verification, preserving")
         _report("exit_pending_verify_failed", level="error",
                 pending=str(pending),
                 file_size=str(pending.stat().st_size) if pending.exists() else "0")
-        pending.unlink(missing_ok=True)
         return
 
     cache = _load_check_cache()
     remote_ver = cache.get("pending_version") or (APP_VERSION + 1)
     _log.info("exit: applying pending v%s", remote_ver)
-    _do_apply(pending, remote_ver)
+    _apply_owned_pending(pending, remote_ver)
+
+
+@_update_mutation
+def _apply_owned_pending(pending: Path, version: int) -> bool:
+    """Apply only a published candidate bound to its record and digest.
+
+    Legacy fixed-name files have no ownership receipt; keep them untouched.
+    A transaction-bound retry marker has its own recovery validation path.
+    """
+    try:
+        cache_path = _get_cache_path()
+        cache = _read_update_record(cache_path)
+        if cache.get("apply_job") is not None:
+            # An indexed helper may be waiting, executing, or awaiting
+            # reconciliation. Never replace its identity with another job.
+            _log.warning("pending update deferred; indexed job retained")
+            return False
+        identity = cache.get("candidate_id")
+        if (not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{32}", identity)
+                or type(version) is not int or cache.get("pending_version") != version):
+            return False
+        expected = cache_path.parent / "update-candidates" / identity / "opskit.pending"
+        if pending != expected:
+            return False
+        _update_record_path(pending)
+        record = _read_update_record(expected.parent / "candidate.json")
+        digest = record.get("sha256")
+        if (type(record.get("schema_version")) is not int or record["schema_version"] != 1
+                or record.get("candidate_id") != identity or record.get("state") != "verified"
+                or type(record.get("build")) is not int or record["build"] != version
+                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)):
+            return False
+        before = pending.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_UPDATE_BYTES:
+            return False
+        descriptor = os.open(pending, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as source:
+            opened = os.fstat(source.fileno())
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                    or not same_file_identity(opened, before) or opened.st_size != before.st_size):
+                return False
+            hasher = hashlib.sha256()
+            for chunk in iter(lambda: source.read(65536), b""):
+                hasher.update(chunk)
+        current = pending.stat()
+        if (not same_file_identity(current, before) or current.st_size != before.st_size
+                or hasher.hexdigest() != digest):
+            return False
+    except (OSError, ValueError, TypeError):
+        _log.warning("pending update ownership verification failed; preserving candidate")
+        return False
+    # _do_apply revalidates its release signature and target transaction.
+    return _do_apply(pending, version)
 
 
 @_update_mutation
@@ -1364,6 +1462,97 @@ def _do_apply(pending: Path, remote_ver: int) -> bool:
     return _do_apply_verified(pending, remote_ver)
 
 
+def _copy_open_file_xattrs(source: int, destination: int) -> None:
+    """Copy supported extended attributes without reopening either pathname."""
+    if not hasattr(os, "listxattr"):
+        return
+    try:
+        names = os.listxattr(source)
+    except OSError as exc:
+        if exc.errno not in (errno.ENOTSUP, errno.ENODATA, errno.EINVAL):
+            raise
+        return
+    for name in names:
+        try:
+            os.setxattr(destination, name, os.getxattr(source, name))
+        except OSError as exc:
+            if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.ENODATA, errno.EINVAL, errno.EACCES):
+                raise
+
+
+def _restore_backup_times(descriptor: int, info: os.stat_result) -> None:
+    """Set copy2-compatible timestamps through the opened file, not its path."""
+    if os.utime in os.supports_fd:
+        os.utime(descriptor, ns=(info.st_atime_ns, info.st_mtime_ns))
+    elif os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        def filetime(nanoseconds):
+            ticks = nanoseconds // 100 + 116444736000000000
+            return wintypes.FILETIME(ticks & 0xffffffff, ticks >> 32)
+
+        access, modified = filetime(info.st_atime_ns), filetime(info.st_mtime_ns)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.SetFileTime.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+                                      ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME)]
+        kernel.SetFileTime.restype = wintypes.BOOL
+        if not kernel.SetFileTime(msvcrt.get_osfhandle(descriptor), None,
+                                  ctypes.byref(access), ctypes.byref(modified)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _create_update_backup(source: Path, backup: Path, *, old_digest: str,
+                          new_digest: str, new_version: int) -> None:
+    """Create a backup and receipt without replacing any existing pathname.
+
+    Incomplete files are retained on failure: a pathname may have changed
+    since it was opened, so an unconditional unlink could delete user data.
+    """
+    sidecar = backup.with_name(backup.name + ".json")
+    _update_record_path(backup)
+    _update_record_path(sidecar)
+    record = {"schema_version": 1, "backup_id": backup.name,
+              "target": str(source.resolve()), "from_build": APP_VERSION,
+              "to_build": new_version, "sha256": old_digest,
+              "replacement_sha256": new_digest}
+    with source.open("rb") as input_file, backup.open("x+b") as output:
+        original = os.fstat(input_file.fileno())
+        shutil.copyfileobj(input_file, output, 1024 * 1024)
+        output.flush()
+        _copy_open_file_xattrs(input_file.fileno(), output.fileno())
+        if hasattr(os, "fchmod"):
+            os.fchmod(output.fileno(), stat.S_IMODE(original.st_mode))
+        opened = os.fstat(output.fileno())
+        current = backup.lstat()
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                or not same_file_identity(opened, current)):
+            raise ValueError("update backup identity changed")
+        output.seek(0)
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: output.read(65536), b""):
+            digest.update(chunk)
+        if digest.hexdigest() != old_digest or _sha256_file(source) != old_digest:
+            raise ValueError("update backup integrity mismatch")
+        _restore_backup_times(output.fileno(), original)
+        os.fsync(output.fileno())
+        # A direct exclusive receipt write is intentionally not an overwrite:
+        # interruption leaves evidence and the update has not yet begun.
+        with sidecar.open("xb") as receipt:
+            receipt.write(json.dumps(record).encode("utf-8"))
+            receipt.flush()
+            os.fsync(receipt.fileno())
+            receipt_info = os.fstat(receipt.fileno())
+            current_receipt = sidecar.lstat()
+            if (not stat.S_ISREG(receipt_info.st_mode) or receipt_info.st_nlink != 1
+                    or not same_file_identity(receipt_info, current_receipt)):
+                raise ValueError("update backup receipt identity changed")
+        current = backup.lstat()
+        if not same_file_identity(opened, current):
+            raise ValueError("update backup identity changed")
+
+
 @_update_target_mutation
 def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
     if not _verify_pending_signature(pending, remote_ver):
@@ -1373,6 +1562,9 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
 
     try:
         from core import update_target_state
+        transaction = update_target_state.read(self_path)
+        if transaction is not None and transaction["phase"] == "prepared":
+            raise ValueError("executable has an unresolved update transaction")
         original_digest = _sha256_file(self_path)
         installed_build = update_target_state.current_build(self_path, original_digest, APP_VERSION)
         if installed_build != APP_VERSION or remote_ver <= installed_build:
@@ -1383,24 +1575,12 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
         backup.parent.mkdir(parents=True, exist_ok=True)
         restrict_permissions(backup.parent)
         pending_digest = _sha256_file(pending)
-        shutil.copy2(self_path, backup)
-        if _sha256_file(backup) != original_digest or _sha256_file(self_path) != original_digest:
-            backup.unlink(missing_ok=True)
-            _log.error("_do_apply: backup integrity check failed, aborting")
-            _report("apply_backup_integrity_fail", level="error",
-                    self_path=str(self_path), backup=str(backup),
-                    remote_ver=str(remote_ver))
-            return False
-        _write_update_record(backup.with_name(backup.name + ".json"), {
-            "schema_version": 1, "backup_id": backup.name,
-            "target": str(self_path.resolve()), "from_build": APP_VERSION,
-            "to_build": remote_ver, "sha256": original_digest,
-            "replacement_sha256": pending_digest,
-        })
+        _create_update_backup(self_path, backup, old_digest=original_digest,
+                              new_digest=pending_digest, new_version=remote_ver)
         transaction = update_target_state.prepare(self_path, operation="upgrade", from_build=installed_build,
             to_build=remote_ver, from_digest=original_digest, to_digest=pending_digest)
     except Exception as e:
-        _log.error("_do_apply: backup failed: %s", e)
+        _log.error("_do_apply: backup failed (%s)", type(e).__name__)
         _report("apply_backup_failed", exc=e, level="error",
                 self_path=str(self_path), backup=str(backup),
                 remote_ver=str(remote_ver))
@@ -1428,16 +1608,19 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
                         if not pending.exists():
                             _atomic_copy(self_path, pending)
                     except Exception as retry_error:
-                        _log.error("_do_apply: retry artifact preservation failed: %s", retry_error)
+                        _log.error("_do_apply: retry artifact preservation failed (%s)", type(retry_error).__name__)
                     if _sha256_file(backup) != original_digest:
                         raise RuntimeError("update recovery backup changed")
                     _atomic_copy(backup, self_path)
                 elif current_digest != original_digest:
                     raise RuntimeError("update target changed outside this operation")
+                # Once the original target is verified back in place, close
+                # only this transaction so a future retry may proceed. If the
+                # state changed or persistence fails, retain it for recovery.
+                update_target_state.aborted(self_path, transaction)
             except Exception as recovery_error:
-                _log.critical("_do_apply: recovery incomplete; backup retained at %s: %s",
-                              backup, recovery_error)
-        _log.error("_do_apply: apply failed: %s", e)
+                _log.critical("_do_apply: recovery incomplete; backup retained (%s)", type(recovery_error).__name__)
+        _log.error("_do_apply: apply failed (%s)", type(e).__name__)
         _report("apply_failed", exc=e, level="error",
                 self_path=str(self_path), pending=str(pending),
                 remote_ver=str(remote_ver), platform=sys.platform)
@@ -1451,7 +1634,7 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
         try:
             _cleanup_old_backups()
         except Exception as e:
-            _log.warning("_do_apply: backup cleanup deferred: %s", e)
+            _log.warning("_do_apply: backup cleanup deferred (%s)", type(e).__name__)
     if sys.platform != "win32":
         mark_update_applied(remote_ver, backup=backup)
     _report("update_applied", level="info",
@@ -1460,25 +1643,50 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
 
 
 def _atomic_copy(source: Path, target: Path, *, expected_digest: str | None = None):
-    """Copy, flush and verify beside the target, then atomically replace it."""
+    """Copy and verify beside target; retain staged evidence after failure.
+
+    The final path replacement is not conditional on target identity. Callers
+    must still serialize cooperating writers and revalidate transaction state.
+    """
     import tempfile
     descriptor, temporary = tempfile.mkstemp(prefix=".opskit-replace-", dir=target.parent)
     staged = Path(temporary)
-    try:
-        with os.fdopen(descriptor, "wb") as output, source.open("rb") as input_file:
-            shutil.copyfileobj(input_file, output, 1024 * 1024)
-            output.flush()
-            os.fsync(output.fileno())
-        shutil.copystat(source, staged)
-        staged_digest = _sha256_file(staged)
+    with os.fdopen(descriptor, "w+b") as output, source.open("rb") as input_file:
+        source_info = os.fstat(input_file.fileno())
+        shutil.copyfileobj(input_file, output, 1024 * 1024)
+        output.flush()
+        _copy_open_file_xattrs(input_file.fileno(), output.fileno())
+        if hasattr(os, "fchmod"):
+            os.fchmod(output.fileno(), stat.S_IMODE(source_info.st_mode))
+        output.seek(0)
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: output.read(65536), b""):
+            digest.update(chunk)
+        staged_digest = digest.hexdigest()
         if staged_digest != _sha256_file(source) or (expected_digest is not None and staged_digest != expected_digest):
             raise RuntimeError("replacement copy integrity check failed")
+        _restore_backup_times(output.fileno(), source_info)
+        os.fsync(output.fileno())
+        opened = os.fstat(output.fileno())
+        current = staged.lstat()
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or not same_file_identity(opened, current)):
+            raise RuntimeError("replacement staging identity changed")
         if os.name == "nt" and target.is_file():
-            from core.windows_permissions import copy_dacl
-            copy_dacl(target, staged)
-        os.replace(staged, target)
-    finally:
-        staged.unlink(missing_ok=True)
+            from core.windows_permissions import copy_dacl_to_verified_file
+            copy_dacl_to_verified_file(target, staged, opened)
+        current = staged.lstat()
+        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or not same_file_identity(opened, current)):
+            raise RuntimeError("replacement staging identity changed")
+    # Closing the stage is required by Windows. A non-cooperating process can
+    # still change either pathname between this check and os.replace.
+    current = staged.lstat()
+    if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+            or not same_file_identity(opened, current)):
+        raise RuntimeError("replacement staging identity changed")
+    os.replace(staged, target)
 
 
 def _apply_unix(pending: Path, self_path: Path, new_version: int) -> None:

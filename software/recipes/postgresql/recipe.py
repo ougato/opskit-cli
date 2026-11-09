@@ -38,6 +38,15 @@ class PostgreSQLRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        from software.disk import known_path_or_none
+        if sys.platform == "linux":
+            download_dir = known_path_or_none(lambda: Path(tempfile.gettempdir()))
+        else:
+            from core.paths import cache_dir
+            download_dir = known_path_or_none(lambda: cache_dir() / "work")
+        return (known_path_or_none(pgsql_versions_dir), download_dir)
+
     def detect(self) -> str | None:
         return get_driver().detect()
 

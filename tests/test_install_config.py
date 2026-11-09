@@ -28,7 +28,7 @@ def test_config_install_routes_explicit_options(tmp_path, monkeypatch):
     path.write_text("schema_version: 1\nwith_p10k: false\nswitch_shell: false\n")
     monkeypatch.setattr(main, "_get_recipe_for_direct", lambda name: (object, object()))
     monkeypatch.setattr(main, "_resolve_deps_or_exit", lambda *args: None)
-    monkeypatch.setattr(main, "_check_disk_or_exit", lambda: None)
+    monkeypatch.setattr(main, "_check_disk_or_exit", lambda instance: None)
     seen = []
     def install(name, options):
         seen.append(options)

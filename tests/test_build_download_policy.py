@@ -76,6 +76,8 @@ def test_pyinstaller_collects_dynamic_official_modules_without_ambient_upx(tmp_p
     assert {"--collect-submodules=" + name for name in (
         "core", "plugin", "software", "monitor", "network")} <= set(command)
     assert "--noupx" in command
+    # PyInstaller --clean also clears its shared user cache, not just workpath.
+    assert "--clean" not in command
     assert any(item.startswith("--add-data=") and "plugin-bootstrap.json" in item for item in command)
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert any(item.startswith("--add-data=") and item.endswith(

@@ -3,6 +3,8 @@
 Callers must hold the fixed cache-root update lock. Unknown content is counted
 but preserved; active and startup-retry candidates are never reclaimed.
 """
+import hashlib
+import os
 from pathlib import Path
 import re
 import stat
@@ -85,12 +87,81 @@ def _inventory(root, checkpoint):
                 or record["build"] <= 0 or record.get("state") not in {"preparing", "verified"}
                 or (record.get("sha256") is not None and (not isinstance(record["sha256"], str)
                     or not re.fullmatch(r"[a-f0-9]{64}", record["sha256"])))
+                or (record.get("signature_sha256") is not None and
+                    (not isinstance(record["signature_sha256"], str)
+                     or not re.fullmatch(r"[a-f0-9]{64}", record["signature_sha256"])))
                 or (record.get("state") == "verified" and record.get("sha256") is None)):
             raise ValueError("invalid update candidate ownership record")
         rows.append({"path": node, "bytes": sum(value.st_size for value in files.values()),
                      "eligible": owned and record is not None, "files": files,
-                     "state": record["state"] if record else "unknown", "mtime": info.st_mtime_ns})
+                     "record": record, "state": record["state"] if record else "unknown", "mtime": info.st_mtime_ns})
     return rows
+
+
+def _same_file(left, right):
+    # Windows fstat and stat can report different meanings for st_ctime.
+    identity = (left.st_dev, left.st_ino, left.st_size, left.st_mtime_ns)
+    other = (right.st_dev, right.st_ino, right.st_size, right.st_mtime_ns)
+    return identity == other and (os.name == "nt" or left.st_ctime_ns == right.st_ctime_ns)
+
+
+def _matches_digest(path, previous, expected, checkpoint):
+    """Check a bounded, stable file against its receipt without following links."""
+    from core import updater
+    if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+        return False
+    if previous.st_size > updater.MAX_UPDATE_BYTES:
+        return False
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as source:
+        opened = os.fstat(source.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or not _same_file(opened, previous):
+            return False
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(65536), b""):
+            checkpoint()
+            digest.update(chunk)
+        if not _same_file(os.fstat(source.fileno()), opened):
+            return False
+    return _same_file(_info(path), previous) and digest.hexdigest() == expected
+
+
+def _contents_proven(row, checkpoint):
+    """Retain partials and signatures whose content cannot be proven."""
+    record, files, node = row["record"], row["files"], row["path"]
+    for name, key in (("opskit.pending", "sha256"),
+                      ("opskit.pending.sig.json", "signature_sha256"),
+                      ("opskit.pending.tmp", None)):
+        path = node / name
+        if path not in files:
+            continue
+        if record["state"] != "verified" or key is None:
+            return False
+        if key == "signature_sha256" and record.get(key) is None:
+            if not _legacy_signature_proven(path, files[path], record):
+                return False
+            continue
+        if not _matches_digest(path, files[path], record.get(key), checkpoint):
+            return False
+    return True
+
+
+def _legacy_signature_proven(path, previous, record):
+    """Older receipts can be reclaimed only if their signature still verifies."""
+    from core import updater
+    from core.config import load_config
+    from core.release_signature import verify
+    if previous.st_size > 4096:
+        return False
+    try:
+        envelope = updater._read_update_record(path)
+        if not _same_file(_info(path), previous):
+            return False
+        cfg = load_config().get("update", {})
+        return isinstance(cfg, dict) and verify(envelope, updater._signing_key(cfg),
+            build=record["build"], filename=updater._asset_filename(), digest=record["sha256"])
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _reclaim(row, checkpoint):
@@ -102,6 +173,19 @@ def _reclaim(row, checkpoint):
     # Also reject an old orphan worker still holding its local staging lock.
     resource = ResourceLock(lambda: lock_path, label="update candidate")
     with resource.hold():
+        # Do not partially remove a generation after its contents changed.
+        # The lock serializes cooperating updater processes; metadata and
+        # content are rechecked after acquiring it.
+        if not _contents_proven(row, checkpoint):
+            return False
+        for path, previous in row["files"].items():
+            if path != lock_path and not _same_file(_info(path), previous):
+                raise ValueError("update candidate changed during cleanup")
+        expected_entries = {path for path in row["files"] if path.parent == node}
+        if locks.exists():
+            expected_entries.add(locks)
+        if set(_entries(node)) != expected_entries:
+            raise ValueError("update candidate gained unknown content")
         for path, info in row["files"].items():
             checkpoint()
             if path not in {ownership, lock_path}:
@@ -114,6 +198,7 @@ def _reclaim(row, checkpoint):
         raise ValueError("update candidate gained unknown content")
     _unlink(ownership, row["files"][ownership])
     node.rmdir()
+    return True
 
 
 def reserve_candidate(cache_path, incoming_bytes, *, checkpoint=lambda: None):
@@ -139,7 +224,8 @@ def reserve_candidate(cache_path, incoming_bytes, *, checkpoint=lambda: None):
         checkpoint()
         if row["state"] != "preparing" and count + 1 <= MAX_CANDIDATES and total + incoming_bytes <= MAX_CANDIDATE_BYTES:
             continue
-        _reclaim(row, checkpoint)
+        if not _reclaim(row, checkpoint):
+            continue
         count -= 1
         total -= row["bytes"]
         removed += 1

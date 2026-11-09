@@ -36,6 +36,11 @@ class PythonRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        # uv may be unavailable, in which case a package manager or source
+        # build selects a different target. The route is not known here.
+        return (None,)
+
     def detect(self) -> str | None:
         return get_driver().detect_active()
 
@@ -53,7 +58,7 @@ class PythonRecipe(Recipe):
     def installed_versions(self) -> list[str]:
         base = uv_python_dir()
         versions: list[str] = []
-        for entry in uv_installation_directories(base):
+        for entry in uv_installation_directories(base, only_installed_versions=True):
             name = entry.name
             if not name.startswith("cpython-"):
                 continue

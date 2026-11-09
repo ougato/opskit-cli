@@ -94,8 +94,9 @@ def test_actual_child_holds_lock_across_health_read_and_write(health, action):
 
 def test_background_confirmation_retries_native_contention_without_losing_count(health):
     results = []
+    updater._write_update_record(health, {**updater._read_update_record(health), "fails": 0})
     replacement = {"build": updater.APP_VERSION, "confirmed": False,
-                   "fails": 2, "job_id": "a" * 32, "backup_id": "owned-backup"}
+                   "fails": 1, "job_id": "a" * 32, "backup_id": "owned-backup"}
     with owned_process(_hold_lock, health.parent.parent, replacement) as (_, release):
         busy_seen = threading.Event()
         original_hold = updater._update_resource.hold
@@ -122,7 +123,7 @@ def test_background_confirmation_retries_native_contention_without_losing_count(
                 thread.join(8)
     assert results == [True]
     result = updater._read_update_record(health)
-    assert result["confirmed"] is True and result["fails"] == 2 and result["job_id"] == "a" * 32
+    assert result["confirmed"] is True and result["fails"] == 1 and result["job_id"] == "a" * 32
 
 
 def test_background_confirmation_contention_budget_is_bounded(health):
@@ -167,15 +168,20 @@ def test_invalid_health_is_retained_and_not_confirmed(health, field, value, capl
 def test_rollback_keeps_health_backup_evidence_and_holds_root_lock(health, monkeypatch):
     record = updater._read_update_record(health)
     updater._write_update_record(health, {**record, "fails": updater.MAX_HEALTH_FAILS - 1})
-    before = health.read_bytes()
     def rollback():
         with pytest.raises(ResourceBusyError):
             with ResourceLock(updater._update_lock_path, label="concurrent health writer").hold():
                 pytest.fail("rollback decision must remain under the root lock")
+        decision = updater._read_update_record(health)
+        assert decision["fails"] == updater.MAX_HEALTH_FAILS
+        assert decision["confirmed"] is False
+        assert decision["job_id"] == record["job_id"]
+        assert decision["backup_id"] == record["backup_id"]
         return True
     monkeypatch.setattr(updater, "rollback", rollback)
     assert updater._check_health() is True
-    assert health.read_bytes() == before
+    after = updater._read_update_record(health)
+    assert after == {**record, "fails": updater.MAX_HEALTH_FAILS}
 
 
 def test_cleanup_error_does_not_undo_successful_confirmation(health, monkeypatch):

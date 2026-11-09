@@ -26,6 +26,21 @@ module:
   plugin:
     desc: "Plugin management and installed plugin entries"
 
+startup:
+  modules_failed: "Some built-in modules failed to load: {modules}. Check the log; other functions remain available."
+  registry: "built-in module registry"
+
+platform:
+  no_pkg_manager: "No supported package manager was detected"
+  no_pkg_manager_suggestion: "Some software installation features may be unavailable"
+  non_root: "Running without root / administrator privileges"
+  non_root_suggestion: "Some features require elevated privileges"
+  disk_unknown: "Could not read free disk space for the data directory"
+  disk_unknown_suggestion: "Check the data directory and its filesystem"
+  low_disk: "Insufficient disk space for the data directory ({free_mb}MB free)"
+  low_disk_suggestion: "Free space on the data directory filesystem and retry"
+  install_disk_unknown: "The installation target's free disk space is unknown; installation may fail."
+
 plugin:
   manage: "Plugin Management"
   install: "Install Plugin"
@@ -108,6 +123,16 @@ prompt:
   next_page: "Next Page"
 
 error:
+  config_unreadable: "Configuration is invalid, unreadable, or exceeds the size limit; the original configuration was preserved."
+  config_publication: "Cannot safely create configuration; check directory permissions and filesystem support."
+  config_io: "Cannot access or create configuration; check directory permissions and filesystem."
+  config_busy: "Configuration is being used by another operation; please retry."
+  config_lock_identity: "Cannot verify the configuration lock file; check the directory and filesystem."
+  config_field: "Invalid configuration field {field}: expected {expected}; the original configuration was preserved."
+  config_expected_string: "a string"
+  config_expected_boolean: "a boolean"
+  config_expected_mapping: "a mapping"
+  config_expected_module_mapping: "module configuration mappings"
   permission: "Permission denied. Run as root / administrator"
   disk_space: "Insufficient disk space (need {required}, free {free})"
   network: "Network connection failed"
@@ -758,6 +783,8 @@ cli:
   version_help: "Show version"
   theme_help: "Override theme"
   lang_help: "Override language (zh / en)"
+  output_help: "Output format: text or json"
+  non_interactive_help: "Reject prompts and menus"
   help_text: "Show this help message"
   software: "Software Management"
   monitor: "System Monitor"

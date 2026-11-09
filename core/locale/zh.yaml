@@ -26,6 +26,21 @@ module:
   plugin:
     desc: "插件管理与已安装插件入口"
 
+startup:
+  modules_failed: "部分内置模块加载失败：{modules}。请查看日志，其他功能仍可使用。"
+  registry: "内置模块注册表"
+
+platform:
+  no_pkg_manager: "未检测到支持的包管理器"
+  no_pkg_manager_suggestion: "部分软件安装功能可能不可用"
+  non_root: "当前非 root / 管理员权限"
+  non_root_suggestion: "部分功能需要提权后使用"
+  disk_unknown: "无法读取数据目录的磁盘剩余空间"
+  disk_unknown_suggestion: "请检查数据目录及其磁盘状态"
+  low_disk: "数据目录的磁盘剩余空间不足（{free_mb}MB）"
+  low_disk_suggestion: "清理数据目录所在磁盘后重试"
+  install_disk_unknown: "无法确定安装目标的磁盘剩余空间，安装可能失败。"
+
 plugin:
   manage: "插件管理"
   install: "安装插件"
@@ -108,6 +123,16 @@ prompt:
   next_page: "下一页"
 
 error:
+  config_unreadable: "配置无效、无法读取或超过大小限制；原配置已保留。"
+  config_publication: "无法安全创建配置，请检查配置目录权限和文件系统支持。"
+  config_io: "无法访问或创建配置，请检查配置目录权限和文件系统。"
+  config_busy: "配置正被其他操作使用，请稍后重试。"
+  config_lock_identity: "无法确认配置锁文件的身份，请检查配置目录和文件系统。"
+  config_field: "配置字段 {field} 无效：应为{expected}；原配置已保留。"
+  config_expected_string: "字符串"
+  config_expected_boolean: "布尔值"
+  config_expected_mapping: "映射"
+  config_expected_module_mapping: "模块配置映射"
   permission: "权限不足，请以 root / 管理员身份运行"
   disk_space: "磁盘空间不足（需要 {required}，剩余 {free}）"
   network: "网络连接失败"
@@ -757,6 +782,8 @@ cli:
   version_help: "显示版本号"
   theme_help: "指定主题（覆盖配置文件）"
   lang_help: "指定语言（zh / en，覆盖配置文件）"
+  output_help: "输出格式：text 或 json"
+  non_interactive_help: "拒绝交互提示和菜单"
   help_text: "显示帮助信息"
   software: "软件管理"
   monitor: "系统监控"

@@ -72,13 +72,12 @@ function Digest($path) {{
 }}
 function AtomicRecord($path, $body) {{
     $tmp = $path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-    try {{
-        $bytes = [Text.Encoding]::UTF8.GetBytes($body)
-        $output = [IO.File]::Open($tmp, 'CreateNew', 'Write', 'None')
-        try {{ $output.Write($bytes, 0, $bytes.Length); $output.Flush($true) }}
-        finally {{ $output.Dispose() }}
-        if (-not [OpsKitReplace]::MoveFileEx($tmp, $path, 9)) {{ throw 'record_commit_failed' }}
-    }} finally {{ if ([IO.File]::Exists($tmp)) {{ [IO.File]::Delete($tmp) }} }}
+    $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+    $output = [IO.File]::Open($tmp, 'CreateNew', 'Write', 'None')
+    try {{ $output.Write($bytes, 0, $bytes.Length); $output.Flush($true) }}
+    finally {{ $output.Dispose() }}
+    # On failure the path may no longer name our file; preserve it for review.
+    if (-not [OpsKitReplace]::MoveFileEx($tmp, $path, 9)) {{ throw 'record_commit_failed' }}
 }}
 try {{
     if ($jobId -ne '') {{
@@ -189,7 +188,7 @@ try {{
     try {{ AtomicRecord $result (@{{state=$state; version=$version; health_confirmed=$false; phase=$phase}} | ConvertTo-Json -Compress) }} catch {{}}
     exit 1
 }} finally {{
-    if ($null -ne $stage -and [IO.File]::Exists($stage)) {{ [IO.File]::Delete($stage) }}
+    # Preserve stage paths after failure: the name could have been replaced.
     if ($null -ne $lockFile) {{
         $lockFile.Dispose()
     }}

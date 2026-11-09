@@ -73,7 +73,7 @@ include = [
 ]
 
 [tool.setuptools.package-data]
-"core" = ["themes/*.yaml", "locale/*.yaml", "mirrors/*.yaml", "plugin-bootstrap.json"]
+"core" = ["themes/*.yaml", "locale/*.yaml", "locale/bootstrap.json", "mirrors/*.yaml", "plugin-bootstrap.json"]
 
 [tool.ruff]
 target-version = "py310"

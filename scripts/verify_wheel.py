@@ -22,6 +22,7 @@ def inventory(source):
     for directory in ("locale", "themes", "mirrors"):
         paths.extend((source / "core" / directory).glob("*.yaml"))
     paths.append(source / "core" / "plugin-bootstrap.json")
+    paths.append(source / "core" / "locale" / "bootstrap.json")
     result = {}
     for path in paths:
         if path.is_symlink() or not path.is_file():

@@ -10,6 +10,67 @@ import pytest
 from core.cli_secrets import export_secret, read_secret_file
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX publication uses directory links')
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason='published inode is unlinked after another process edits it')
+def test_failed_directory_sync_preserves_published_file_modified_by_another_process(tmp_path, monkeypatch):
+    parent = tmp_path / 'parent'
+    parent.mkdir(mode=0o700)
+    target = parent / 'credentials.json'
+    real_sync = os.fsync
+    injected = False
+
+    def fail_directory_sync(fd):
+        nonlocal injected
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and not injected:
+            injected = True
+            subprocess.run([
+                sys.executable, '-c',
+                'from pathlib import Path; import sys; Path(sys.argv[1]).write_bytes(b"user content")',
+                str(target),
+            ], check=True, timeout=10)
+            raise OSError('injected directory sync failure')
+        return real_sync(fd)
+
+    monkeypatch.setattr(os, 'fsync', fail_directory_sync)
+    with pytest.raises(OSError, match='injected directory sync failure'):
+        export_secret(str(target), {'secret': 'synthetic'})
+    assert injected
+    assert target.exists()
+    assert target.read_bytes() == b'user content'
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX publication uses directory links')
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason='temporary path is unlinked after another process replaces it')
+def test_publication_preserves_replaced_temporary_name(tmp_path, monkeypatch):
+    parent = tmp_path / 'parent'
+    parent.mkdir(mode=0o700)
+    target = parent / 'credentials.json'
+    unrelated = parent / 'unrelated'
+    unrelated.write_bytes(b'user content')
+    real_link = os.link
+    replaced = []
+
+    def replace_after_link(source, destination, **kwargs):
+        real_link(source, destination, **kwargs)
+        subprocess.run([
+            sys.executable, '-c',
+            'import os, sys; os.replace(sys.argv[1], sys.argv[2])',
+            str(unrelated), str(parent / source),
+        ], check=True, timeout=10)
+        replaced.append(parent / source)
+
+    monkeypatch.setattr(os, 'link', replace_after_link)
+    try:
+        export_secret(str(target), {'secret': 'synthetic'})
+    except (OSError, ValueError):
+        pass  # A safe implementation may refuse the publication.
+    assert replaced
+    assert replaced[0].exists()
+    assert replaced[0].read_bytes() == b'user content'
+
+
 @pytest.mark.skipif(os.name == 'nt', reason='POSIX directory descriptor sync')
 @pytest.mark.parametrize('phase', ['file', 'directory'])
 def test_parent_replaced_during_sync_is_not_reported_success(tmp_path, monkeypatch, phase):

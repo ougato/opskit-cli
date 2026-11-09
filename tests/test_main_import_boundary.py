@@ -26,6 +26,37 @@ def test_import_without_virtual_env_never_bootstraps(tmp_path):
     assert not (tmp_path / "data").exists()
 
 
+def test_help_does_not_import_http_client_before_network_use(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, OPSKIT_DATA_DIR=str(tmp_path / "data"), PYTHONDONTWRITEBYTECODE="1")
+    program = "\n".join([
+        "import sys, types",
+        "import main",
+        "assert 'httpx' not in sys.modules",
+        "from typer.testing import CliRunner",
+        "result = CliRunner().invoke(main.app, ['--help'])",
+        "assert result.exit_code == 0, result.exception",
+        "assert 'httpx' not in sys.modules",
+        "fake = types.ModuleType('httpx')",
+        "class Client:",
+        "    def __init__(self, **kwargs): pass",
+        "    def __enter__(self): return self",
+        "    def __exit__(self, *args): pass",
+        "    def get(self, url): return types.SimpleNamespace(status_code=200, content=b'payload')",
+        "fake.Client = Client",
+        "sys.modules['httpx'] = fake",
+        "from core import http",
+        "assert http.httpx is fake",
+        "assert http.get_bytes('https://example.invalid') == b'payload'",
+        "print('HTTP_LAZY_OK')",
+    ])
+    result = capture([sys.executable, "-c", program], cwd=root, env=env,
+                     timeout=30, max_bytes=4096, stdin=subprocess.DEVNULL)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "HTTP_LAZY_OK"
+    assert not (tmp_path / "data").exists()
+
+
 def test_active_external_venv_does_not_reenter_project_environment(tmp_path, monkeypatch):
     from core import venv_bootstrap
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)

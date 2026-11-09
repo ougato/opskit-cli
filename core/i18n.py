@@ -48,7 +48,7 @@ def _detect_system_lang() -> str:
     检测系统语言，返回 'zh' 或 'en'。
 
     优先级：
-    1. Linux: LANG / LC_ALL 环境变量
+    1. Linux/macOS: 首个非空环境变量 LC_ALL / LC_MESSAGES / LANG / LANGUAGE
     2. Windows: ctypes.windll.kernel32.GetUserDefaultUILanguage()
     3. macOS: defaults read -g AppleLanguages（子进程）
     4. 兜底 → 'en'
@@ -58,10 +58,10 @@ def _detect_system_lang() -> str:
     platform = sys.platform
 
     if platform in ("linux", "linux2", "darwin"):
-        for var in ("LANG", "LC_ALL", "LC_MESSAGES", "LANGUAGE"):
-            val = os.environ.get(var, "")
-            if val.startswith("zh"):
-                return "zh"
+        for var in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+            val = os.environ.get(var, "").strip()
+            if val:
+                return "zh" if val.lower().startswith("zh") else "en"
         if platform == "darwin":
             try:
                 import subprocess

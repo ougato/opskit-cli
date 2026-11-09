@@ -346,9 +346,10 @@ class TestBootstrapUrls:
 
 
 class TestVenvBootstrap:
-    def test_exec_reenter_uses_venv_launcher_path(self):
+    def test_posix_exec_reenter_uses_venv_launcher_path(self, monkeypatch):
         from core.venv_bootstrap import _exec_reenter
 
+        monkeypatch.setattr(sys, "platform", "linux")
         venv_python = Path("/tmp/opskit/.venv/bin/python")
         with patch("os.execv") as mock_execv:
             _exec_reenter(venv_python)

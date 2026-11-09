@@ -9,15 +9,21 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-import httpx
-
 logger = logging.getLogger("opskit.http")
 _request_lock = threading.Lock()
 _inflight: dict[str, Future] = {}
 _github_retry_at = 0.0
 
 
-def _rate_limit_delay(resp: httpx.Response) -> float | None:
+def __getattr__(name: str):
+    """Preserve access to the HTTP client without loading it during CLI setup."""
+    if name == "httpx":
+        import httpx
+        return httpx
+    raise AttributeError(name)
+
+
+def _rate_limit_delay(resp: Any) -> float | None:
     """Only classify GitHub throttling using status, headers and API message."""
     if resp.status_code not in (403, 429):
         return None
@@ -79,6 +85,7 @@ def _get_json(url: str, *, timeout: float, retries: int) -> Any | None:
             if github and time.monotonic() < _github_retry_at:
                 return None
         try:
+            import httpx
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(url)
                 if resp.status_code == 200:
@@ -106,6 +113,7 @@ def get_bytes(url: str, *, timeout: float = 10, retries: int = 2) -> bytes | Non
     """
     for attempt in range(1, retries + 1):
         try:
+            import httpx
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(url)
                 if resp.status_code == 200:
@@ -119,6 +127,7 @@ def get_bytes(url: str, *, timeout: float = 10, retries: int = 2) -> bytes | Non
 def head_ok(url: str, *, timeout: float = 5) -> bool:
     """HEAD 请求检测 URL 是否可达"""
     try:
+        import httpx
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             resp = client.head(url)
             return resp.status_code < 500

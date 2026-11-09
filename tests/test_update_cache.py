@@ -45,12 +45,13 @@ def test_count_quota_preserves_active_and_marker_candidates(cache):
     assert updater._get_pending_path().read_bytes() == b"candidate"
 
 
-def test_failed_owned_staging_is_reclaimed_even_below_quota(cache):
+def test_partial_staging_without_content_receipt_is_preserved(cache):
     failed = candidate(cache, 1, state="preparing")
     (failed / "opskit.pending.tmp").write_bytes(b"partial")
     result = reserve(cache)
-    assert result == {"removed": 1, "retained": 0, "bytes": 0}
-    assert not failed.exists()
+    assert result["removed"] == 0 and result["retained"] == 1
+    assert (failed / "opskit.pending.tmp").read_bytes() == b"partial"
+    assert (failed / "candidate.json").exists()
 
 
 def test_byte_quota_counts_metadata_and_preserves_active(cache, monkeypatch):
@@ -139,8 +140,9 @@ def test_inventory_is_bounded_before_any_deletion(cache):
 
 
 def test_unlink_failure_retains_owner_record_and_active_pointer(cache, monkeypatch):
-    old = candidate(cache, 1, state="preparing")
+    old = candidate(cache, 1)
     active = candidate(cache, 2)
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 2)
     updater._write_update_record(cache, {"candidate_id": active.name})
     before = cache.read_bytes()
     unlink = Path.unlink
@@ -155,6 +157,78 @@ def test_unlink_failure_retains_owner_record_and_active_pointer(cache, monkeypat
     assert (old / "opskit.pending").exists()
     assert cache.read_bytes() == before
     assert active.exists()
+
+
+def test_changed_candidate_is_preserved_under_quota_pressure(cache, monkeypatch):
+    old = candidate(cache, 1)
+    pending = old / "opskit.pending"
+    pending.write_bytes(b"user data")
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
+    with pytest.raises(RuntimeError, match="quota exhausted"):
+        reserve(cache)
+    assert pending.read_bytes() == b"user data"
+    assert (old / "candidate.json").exists()
+
+
+def test_old_signature_without_digest_is_preserved(cache, monkeypatch):
+    old = candidate(cache, 1)
+    sidecar = old / "opskit.pending.sig.json"
+    sidecar.write_bytes(b"unproven signature data")
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
+    with pytest.raises(RuntimeError, match="quota exhausted"):
+        reserve(cache)
+    assert sidecar.read_bytes() == b"unproven signature data"
+    assert (old / "opskit.pending").exists()
+
+
+def test_verified_signature_digest_allows_owned_reclamation(cache, monkeypatch):
+    old = candidate(cache, 1)
+    sidecar = old / "opskit.pending.sig.json"
+    sidecar.write_bytes(b"signature data")
+    record = updater._read_update_record(old / "candidate.json")
+    updater._write_update_record(old / "candidate.json", {
+        **record, "signature_sha256": hashlib.sha256(sidecar.read_bytes()).hexdigest()})
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
+    assert reserve(cache)["removed"] == 1
+    assert not old.exists()
+
+
+def test_legacy_receipt_can_reclaim_cryptographically_verified_signature(cache, monkeypatch):
+    import base64
+    import json
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from core import config
+    from core.release_signature import payload
+
+    old = candidate(cache, 1)
+    record = updater._read_update_record(old / "candidate.json")
+    key = Ed25519PrivateKey.generate()
+    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+    monkeypatch.setattr(config, "load_config", lambda: {"update": {"signing_public_key": public}})
+    filename = updater._asset_filename()
+    envelope = {"build": record["build"], "filename": filename, "sha256": record["sha256"],
+                "signature": base64.b64encode(key.sign(payload(record["build"], filename, record["sha256"]))).decode()}
+    (old / "opskit.pending.sig.json").write_text(json.dumps(envelope), encoding="utf-8")
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
+    assert reserve(cache)["removed"] == 1
+    assert not old.exists()
+
+
+def test_candidate_replaced_during_cleanup_keeps_changed_file_and_record(cache, monkeypatch):
+    old = candidate(cache, 1)
+    pending = old / "opskit.pending"
+    unlink = update_cache._unlink
+    def replace_before_unlink(path, previous):
+        if path == pending:
+            path.write_bytes(b"new bytes")  # Same length, different content.
+        return unlink(path, previous)
+    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
+    monkeypatch.setattr(update_cache, "_unlink", replace_before_unlink)
+    with pytest.raises(ValueError, match="changed"):
+        reserve(cache)
+    assert pending.read_bytes() == b"new bytes"
+    assert (old / "candidate.json").exists()
 
 
 def test_invalid_marker_blocks_cleanup_instead_of_guessing_ownership(cache):

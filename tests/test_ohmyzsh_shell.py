@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from core import i18n
 from software.recipes.ohmyzsh import impl
 
 
@@ -119,3 +120,25 @@ def test_prime_privilege_prompts_once(monkeypatch):
     monkeypatch.setattr(impl, "prime_sudo", lambda: called.append(True) or True)
     impl._prime_privilege_if_needed()
     assert called == [True]
+
+
+def test_install_and_uninstall_breadcrumb_follow_current_language(monkeypatch, tmp_path):
+    monkeypatch.setattr(i18n, "_current", {})
+    monkeypatch.setattr(i18n, "_lang", "en")
+    monkeypatch.setattr(i18n, "_core_keys", set())
+    monkeypatch.setattr(impl, "_ensure_supported", lambda: None)
+    monkeypatch.setattr(impl, "omz_dir", lambda: tmp_path)
+    breadcrumbs = []
+
+    def cancel(**kwargs):
+        breadcrumbs.append(kwargs["breadcrumb"])
+        raise impl.UserCancel()
+
+    monkeypatch.setattr(impl, "confirm", cancel)
+    for language in ("zh", "en"):
+        i18n.init(language=language)
+        assert impl.install_ohmyzsh() == {"installed": False}
+        impl.uninstall_ohmyzsh()
+        expected = ["OpsKit", i18n.t("menu.software"), i18n.t("software.category.systools"), i18n.t("software.ohmyzsh")]
+        assert breadcrumbs[-2:] == [expected, expected]
+    assert breadcrumbs[0] != breadcrumbs[-1]

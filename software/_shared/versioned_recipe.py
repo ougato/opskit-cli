@@ -59,6 +59,16 @@ class VersionedTarballRecipe(Recipe):
     # 验证阶段运行主命令的版本参数（go 等工具用子命令 version 而非 --version）
     _version_args: ClassVar[tuple[str, ...]] = ("--version",)
 
+    def disk_check_path(self) -> Path:
+        return self._versions_dir()
+
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        # install() downloads to the default TemporaryDirectory before
+        # extracting to the version directory, potentially on another volume.
+        from software.disk import known_path_or_none
+        return (known_path_or_none(self._versions_dir),
+                known_path_or_none(lambda: Path(tempfile.gettempdir())))
+
     # ── 子类必须实现的钩子 ───────────────────────────────────────────────────
     @abstractmethod
     def _get_driver(self):

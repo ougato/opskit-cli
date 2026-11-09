@@ -14,8 +14,10 @@ def publish_private_file(target, payload):
     if not target.name:
         raise ValueError("secret output requires a filename")
     if os.name == "nt":
+        is_reserved = getattr(os.path, "isreserved", None)
+        reserved = is_reserved(target.name) if is_reserved else PureWindowsPath(target.name).is_reserved()
         if (":" in target.name or target.name.endswith((".", " "))
-                or PureWindowsPath(target.name).is_reserved()):
+                or reserved):
             raise ValueError("invalid secret output filename")
         _windows_publish(Path(os.path.abspath(target)), payload)
     elif sys.platform.startswith("linux") or sys.platform == "darwin":

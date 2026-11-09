@@ -145,7 +145,7 @@ def test_wg_client_token_install_resolves_deps_first(monkeypatch) -> None:
     from wireguard import token
     monkeypatch.setattr(token, "decode_token", lambda _: {})
     monkeypatch.setattr(lifecycle_cli, "_resolve_deps_or_exit", lambda *args, **kwargs: events.append("deps"))
-    monkeypatch.setattr(lifecycle_cli, "_check_disk_or_exit", lambda: None)
+    monkeypatch.setattr(lifecycle_cli, "_check_disk_or_exit", lambda instance: None)
     monkeypatch.setattr("core.theme.print_success", lambda *args, **kwargs: None)
 
     main._install_direct(["OpsKit"], FakeRecipe, FakeInstance(), token="TOKEN")

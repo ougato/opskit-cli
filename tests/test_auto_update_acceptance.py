@@ -642,8 +642,8 @@ class TestWindowsReplacement:
         assert not marker.exists(), "标记文件应被清除"
         assert fake_self.exists(), "目标 exe 应存在（rename 完成）"
 
-    def test_T20_old_exe_cleaned_on_startup(self, tmp_data, monkeypatch):
-        """T20: 启动时清理同目录下的 .old.exe 残留"""
+    def test_T20_unowned_old_exe_preserved_on_startup(self, tmp_data, monkeypatch):
+        """A matching legacy filename alone does not prove ownership."""
         import core.updater as upd
 
         fake_self = tmp_data / "opskit.exe"
@@ -652,8 +652,9 @@ class TestWindowsReplacement:
         _make_fake_exe(old_exe)
 
         assert old_exe.exists()
-        upd._cleanup_old_exe(fake_self)
-        assert not old_exe.exists(), ".old.exe 应被清理"
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        assert upd.check_and_apply_pending() is False
+        assert old_exe.exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -766,8 +767,8 @@ class TestPostUpdateExceptions:
             assert upd._check_health() is False
             rb.assert_not_called()
 
-    def test_T26_old_exe_cleaned_on_check_and_apply_pending(self, tmp_data, monkeypatch):
-        """T26: check_and_apply_pending 调用时清理 .old.exe 残留"""
+    def test_T26_old_exe_preserved_on_check_and_apply_pending(self, tmp_data, monkeypatch):
+        """T26: 未证明归属的同名 .old.exe 保留"""
         import core.updater as upd
 
         fake_self = tmp_data / "opskit.exe"
@@ -786,10 +787,10 @@ class TestPostUpdateExceptions:
         with patch("sys.argv", []):
             upd.check_and_apply_pending()
 
-        assert not old_exe.exists(), ".old.exe 应在 check_and_apply_pending 调用时被清理"
+        assert old_exe.exists()
 
-    def test_T27_pending_deleted_cache_cleared(self, tmp_data, monkeypatch):
-        """T27: pending 文件被手动删除后，cache 中 pending_version 被清除"""
+    def test_T27_pending_missing_preserves_cache(self, tmp_data, monkeypatch):
+        """T27: 候选缺失可能属于未完成事务，保留索引证据。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -810,7 +811,7 @@ class TestPostUpdateExceptions:
 
         assert result is False
         cache = upd._load_check_cache()
-        assert cache.get("pending_version") is None, "cache 中 pending_version 应被清除"
+        assert cache.get("pending_version") == 2
 
     def test_T28_backoff_until_skips_check(self, tmp_data, monkeypatch):
         """T28: 限流退避期内 _update_allowed 返回 False，过期后恢复"""
@@ -841,10 +842,10 @@ class TestPostUpdateExceptions:
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
         with patch("sys.argv", ["main.py", "--post-update"]):
-            result = upd.check_and_apply_pending()
+            result = upd.check_and_apply_pending(post_update=True)
 
         assert result is False
-        assert not fake_pending.exists(), "--post-update 时 pending 文件应被清理"
+        assert fake_pending.exists(), "--post-update 时应保留无归属证明的 pending"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1063,22 +1064,23 @@ class TestGapCoverage:
         monkeypatch.setattr("core.updater._self_path", lambda: fake_self)
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        # 第一次：--post-update 启动，清理 pending
+        # 第一次：--post-update 启动，保留未证明归属的 pending
         fake_pending = tmp_data / "cache" / "opskit.pending"
         _make_fake_exe(fake_pending)
 
         with patch("sys.argv", ["main.py", "--post-update"]):
-            result1 = upd.check_and_apply_pending()
+            result1 = upd.check_and_apply_pending(post_update=True)
         assert result1 is False
-        assert not fake_pending.exists()
+        assert fake_pending.exists()
 
-        # 第二次：正常启动，无 pending，应正常通过（返回 False 但不崩溃）
+        # 第二次：正常启动仍不将未证明归属的 pending 当作更新应用
         with patch("sys.argv", ["main.py"]):
             result2 = upd.check_and_apply_pending()
-        assert result2 is False, "无 pending 时应正常返回 False"
+        assert result2 is False
+        assert fake_pending.exists()
 
-    def test_D4_pending_invalid_binary_removed_and_cache_cleared(self, tmp_data, monkeypatch):
-        """D4: pending 文件非 MZ 头（如被杀毒删内容）时删除并清 cache"""
+    def test_D4_pending_invalid_binary_and_cache_preserved(self, tmp_data, monkeypatch):
+        """D4: 未证明归属的无效 pending 和索引均保留。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -1104,9 +1106,9 @@ class TestGapCoverage:
             result = upd.check_and_apply_pending()
 
         assert result is False
-        assert not fake_pending.exists(), "损坏的 pending 文件应被删除"
+        assert fake_pending.read_bytes() == b"\x00" * 1024
         cache = upd._load_check_cache()
-        assert cache.get("pending_version") is None, "损坏 pending 后 cache 中 pending_version 应被清除"
+        assert cache.get("pending_version") == 2
 
     def test_A5_httpx_reads_https_proxy_env(self, tmp_data, monkeypatch):
         """A5: 下载请求保留代理环境并委托httpx；不模拟真实代理服务器。"""
@@ -1178,16 +1180,16 @@ class TestGapCoverage:
         assert result["pending_version"] == 2, "merge 写入不应丢失 pending_version"
         assert result["etag"] == '"abc"', "新字段应被写入"
 
-    def test_cleanup_only_owned_old_exe(self, tmp_data):
-        """Unrelated .old.exe files are not updater-owned garbage."""
+    def test_preserve_all_unproven_old_exes(self, tmp_data, monkeypatch):
+        """Even the exact historical filename is not proof of ownership."""
         import core.updater as upd
         fake_self = tmp_data / "opskit.exe"
         _make_fake_exe(fake_self)
         for name in ["opskit.old.exe", "opskit_v1.old.exe", "app.old.exe"]:
             _make_fake_exe(tmp_data / name)
-        upd._cleanup_old_exe(fake_self)
-        assert not (tmp_data / "opskit.old.exe").exists()
-        for name in ["opskit_v1.old.exe", "app.old.exe"]:
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        assert not upd.check_and_apply_pending()
+        for name in ["opskit.old.exe", "opskit_v1.old.exe", "app.old.exe"]:
             assert (tmp_data / name).exists()
 
 

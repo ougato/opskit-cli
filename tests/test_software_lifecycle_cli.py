@@ -55,7 +55,7 @@ def software_environment(monkeypatch):
         print("dependency progress")
         state["events"].append(("deps", None))
     monkeypatch.setattr(resolver, "resolve_deps", deps)
-    monkeypatch.setattr(lifecycle_cli, "_check_disk_or_exit", lambda: None)
+    monkeypatch.setattr(lifecycle_cli, "_check_disk_or_exit", lambda instance: None)
     yield SimpleNamespace(state=state, recipe=Recipe)
     configure("text", False)
 

@@ -51,6 +51,44 @@ def test_retirement_is_durable_before_index_moves_to_history(rolled_job, monkeyp
     assert updater._get_health_path().read_bytes() == health_before
 
 
+def test_retired_failed_job_allows_a_new_candidate(recovery, monkeypatch):
+    target, backup, job, metadata, transaction = recovery
+    updater._write_update_record(job / "running.json", {
+        "schema_version": 1, "job_id": job.name,
+        "version": metadata["version"], "created_ticks": 123,
+    })
+    assert reconcile()["state"] == "failed"
+    retired_before = (job / "job.json").read_bytes()
+    cache = updater._read_update_record(updater._get_cache_path())
+    assert cache["apply_job"] is None and cache["last_apply_job"] == job.name
+    candidate_id = "c" * 32
+    build = updater.APP_VERSION + 1
+    updater._write_update_record(updater._get_cache_path(), {
+        **cache, "candidate_id": candidate_id, "pending_version": build,
+    })
+    pending = updater._get_pending_path()
+    pending.parent.mkdir(parents=True)
+    pending.write_bytes(b"new candidate")
+    updater._write_update_record(pending.parent / "candidate.json", {
+        "schema_version": 1, "candidate_id": candidate_id, "build": build,
+        "sha256": updater._sha256_file(pending), "state": "verified",
+    })
+    monkeypatch.setattr(updater, "_verify_pending_signature", lambda *args: True)
+    launches = []
+    monkeypatch.setattr(updater, "_apply_windows", lambda *args: launches.append(args))
+
+    def apply_unix(source, destination, version):
+        launches.append((source, destination, version))
+        updater._atomic_copy(source, destination)
+
+    monkeypatch.setattr(updater, "_apply_unix", apply_unix)
+    assert updater._apply_owned_pending(pending, build)
+    assert len(launches) == 1
+    assert (job / "job.json").read_bytes() == retired_before
+    assert backup.read_bytes() == b"old"
+    assert update_target_state.read(target)["transaction_id"] != transaction["transaction_id"]
+
+
 @pytest.mark.parametrize("failure", ["ownership", "index"])
 def test_retirement_write_interruption_is_retryable(rolled_job, monkeypatch, failure):
     target, backup, job, metadata, transaction = rolled_job

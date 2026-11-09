@@ -12,6 +12,22 @@ def test_init_auto_loads(tmp_path) -> None:
     assert lang in ("zh", "en")
 
 
+@pytest.mark.parametrize("environment,expected", [
+    ({"LC_ALL": "en_US.UTF-8", "LANG": "zh_CN.UTF-8"}, "en"),
+    ({"LC_MESSAGES": "zh_CN.UTF-8", "LANG": "en_US.UTF-8"}, "zh"),
+    ({"LANG": "en_US.UTF-8", "LANGUAGE": "zh_CN:en"}, "en"),
+    ({"LANGUAGE": "zh_CN:en"}, "zh"),
+    ({"LANG": "C.UTF-8"}, "en"),
+])
+def test_unix_locale_first_nonempty_value_wins(monkeypatch, environment, expected):
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(i18n.sys, "platform", "linux")
+    assert i18n._detect_system_lang() == expected
+
+
 def test_t_returns_string(tmp_path) -> None:
     i18n.init()
     result = i18n.t("menu.exit")
