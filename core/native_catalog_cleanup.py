@@ -84,6 +84,10 @@ def _collect(root, kind, token, digest):
     target = root / "objects" / token
     if _directory(target.parent) != value["parent"]:
         raise ValueError("catalog parent changed")
+    # Retain the same identity and per-entry checks while allowing the
+    # collector to inspect long Windows paths in the recorded object.
+    from core.native_runtime import absolute_path
+    target = absolute_path(target)
     if os.path.lexists(target):
         ownership.validate(root, token)
     def checkpoint():

@@ -51,6 +51,92 @@ def test_post_update_without_marker_preserves_pending_and_temporary_file(isolate
     assert temporary.read_bytes() == b"unrelated temporary"
 
 
+@pytest.mark.parametrize("language,expected", [
+    ("zh", "无法保存更新健康状态"), ("en", "Cannot save update health state"),
+])
+@pytest.mark.parametrize("command", [[], ["--post-update"], ["software", "list"]])
+def test_boot_stops_on_unpersisted_health_decision(tmp_path, monkeypatch, language, expected, command):
+    from core import i18n
+
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(updater, "_reconcile_indexed_job_on_boot", lambda: (False, False))
+    monkeypatch.setattr(updater, "_is_frozen", lambda: False)
+    health = updater._get_health_path()
+    updater._write_update_record(health, {"build": updater.APP_VERSION, "confirmed": False,
+                                         "fails": updater.MAX_HEALTH_FAILS - 1})
+    original = health.read_bytes()
+    unrelated = tmp_path / "user-file"
+    unrelated.write_bytes(b"user data")
+    original_write = updater._write_update_record
+
+    def fail_health_write(path, record):
+        if path == health:
+            raise OSError("PRIVATE-DISK-DETAIL")
+        return original_write(path, record)
+
+    monkeypatch.setattr(updater, "_write_update_record", fail_health_write)
+    monkeypatch.setattr(main, "ensure_config", lambda: {"log": {}, "update": {}})
+    monkeypatch.setattr(main, "theme_init", lambda *_: None)
+    monkeypatch.setattr(main, "i18n_init", i18n.init)
+    monkeypatch.setattr("core.config.load_config", lambda **_: {"language": "en" if language == "zh" else "zh"})
+    monkeypatch.setattr("core.logger.init", lambda *_: None)
+    monkeypatch.setattr("core.cleanup.init", lambda: None)
+    monkeypatch.setattr("core.platform.preflight_check", lambda: [])
+    monkeypatch.setattr("core.cli.require_interaction", lambda: None)
+    monkeypatch.setattr(main, "_main_menu", lambda *_: pytest.fail("business menu entered"))
+    monkeypatch.setattr(main, "_software_inventory", lambda **_: False)
+    monkeypatch.setattr(main, "_print_software_table", lambda **_: pytest.fail("business command entered"))
+    arguments = ["--lang", language, *command]
+    result = CliRunner().invoke(main.app, arguments)
+    assert result.exit_code != 0 and expected in result.output
+    assert "PRIVATE-DISK-DETAIL" not in result.output and "Traceback" not in result.output
+    assert health.read_bytes() == original and unrelated.read_bytes() == b"user data"
+
+
+@pytest.mark.parametrize("command", [
+    ["--output", "json", "software", "list"],
+    ["software", "list", "--category", "test"],
+])
+def test_inventory_shortcut_does_not_execute_boot_or_count_health(tmp_path, monkeypatch, command):
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
+    health = updater._get_health_path()
+    updater._write_update_record(health, {"build": updater.APP_VERSION, "confirmed": False,
+                                         "fails": updater.MAX_HEALTH_FAILS - 1})
+    before = health.read_bytes()
+    monkeypatch.setattr(main, "_boot", lambda **_: pytest.fail("read-only command called boot"))
+    monkeypatch.setattr(updater, "_check_health", lambda: pytest.fail("read-only command counted health"))
+    monkeypatch.setattr(main, "theme_init", lambda *_: None)
+    calls = []
+    monkeypatch.setattr("software.query.inventory", lambda **kwargs: calls.append(kwargs) or [])
+    result = CliRunner().invoke(main.app, ["--lang", "en", *command])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert len(calls) == 1 and health.read_bytes() == before
+
+
+@pytest.mark.parametrize("action", ["install", "uninstall", "upgrade"])
+def test_named_software_action_skips_boot_and_health_decision(tmp_path, monkeypatch, action):
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
+    health = updater._get_health_path()
+    updater._write_update_record(health, {"build": updater.APP_VERSION, "confirmed": False,
+                                         "fails": updater.MAX_HEALTH_FAILS - 1})
+    before = health.read_bytes()
+    monkeypatch.setattr(main, "_boot", lambda **_: pytest.fail("named action called boot"))
+    monkeypatch.setattr(updater, "_check_health", lambda: pytest.fail("named action counted health"))
+    monkeypatch.setattr(main, "theme_init", lambda *_: None)
+    actions = []
+    monkeypatch.setattr(main, "_sw_action_by_name", lambda *args, **kwargs: actions.append((args, kwargs)))
+    result = CliRunner().invoke(main.app, ["--lang", "en", "software", action, "example"])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert len(actions) == 1 and actions[0][0] == ("example", action)
+    assert health.read_bytes() == before
+
+
+def test_deferred_reconciliation_skips_health_decision(monkeypatch):
+    monkeypatch.setattr(updater, "_reconcile_indexed_job_on_boot", lambda: (True, False))
+    monkeypatch.setattr(updater, "_check_health", lambda: pytest.fail("deferred job counted health"))
+    assert updater.check_and_apply_pending() is False
+
+
 @pytest.mark.parametrize("field,value", [("candidate_id", "b" * 32), ("build", 1),
                                        ("state", "preparing"), ("sha256", "0" * 64)])
 def test_unowned_or_modified_candidate_cannot_be_applied(isolated, monkeypatch, field, value):

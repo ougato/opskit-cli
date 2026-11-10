@@ -3,7 +3,7 @@ from pathlib import PurePosixPath
 import shutil
 
 from core.native_preparation import workspace
-from core.native_runtime import inventory, stage
+from core.native_runtime import absolute_path, inventory, stage
 from core.plugin_runtime_inventory import code_digest, snapshot
 
 
@@ -16,7 +16,9 @@ def refresh(catalog, manifest, fingerprint, *, checkpoint, authorize):
             return
         checkpoint()
         with workspace() as work:
-            candidate = work / 'candidate'
+            # All subsequent SDK reads, removal and writes must use the same
+            # extended Windows path as stage/inventory, including long names.
+            candidate = absolute_path(work / 'candidate')
             stage(source, candidate, old['files'])
             checkpoint()
             sdk_root = candidate / 'site-packages' / 'core'

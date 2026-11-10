@@ -42,11 +42,34 @@ class ResourceLock:
                     raise self.error_type(self.label + " resource changed during operation")
                 yield
                 return
+            # Windows may reject directory creation below MAX_PATH. Count
+            # UTF-16 units because non-BMP characters occupy two units.
+            if os.name == "nt" and len(identity.encode("utf-16-le", "surrogatepass")) // 2 >= 248:
+                from core.paths import absolute_path
+                path = absolute_path(path)
             for parent in path.parents:
                 self._reject_link(parent)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            from core.secrets import restrict_permissions
-            restrict_permissions(path.parent)
+            try:
+                previous_directory = path.parent.lstat()
+            except FileNotFoundError:
+                previous_directory = None
+            identity_error = ResourceIdentityError if self.error_type is RuntimeError else self.error_type
+            from core.resource_lock_permissions import create_windows_lock_directory, restrict_lock_directory
+            try:
+                # A directory which appears after the missing-path check is not
+                # ours to chmod or change ACLs on.  Exclusive creation lets us
+                # distinguish that race from creation by this process.
+                if os.name == "nt" and previous_directory is None:
+                    path.parent.parent.mkdir(parents=True, exist_ok=True)
+                    create_windows_lock_directory(path.parent, identity_error)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=previous_directory is not None)
+            except FileExistsError:
+                if previous_directory is None:
+                    raise identity_error(self.label + " lock directory appeared during creation") from None
+                raise
+            if os.name != "nt" or previous_directory is not None:
+                restrict_lock_directory(path.parent, previous_directory, identity_error)
             self._reject_link(path)
             descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(descriptor, "r+b") as handle:

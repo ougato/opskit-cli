@@ -128,6 +128,7 @@ error:
   config_io: "Cannot access or create configuration; check directory permissions and filesystem."
   config_busy: "Configuration is being used by another operation; please retry."
   config_lock_identity: "Cannot verify the configuration lock file; check the directory and filesystem."
+  update_health_write: "Cannot save update health state. Startup stopped and recovery data was preserved. Check data directory permissions and available space, then retry."
   config_field: "Invalid configuration field {field}: expected {expected}; the original configuration was preserved."
   config_expected_string: "a string"
   config_expected_boolean: "a boolean"

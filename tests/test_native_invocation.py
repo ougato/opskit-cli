@@ -426,3 +426,59 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
     with tarfile.open(fileobj=io.BytesIO(base64.b64decode(result["state"]))) as archive:
         assert archive.extractfile("state/result.txt").read().decode("utf-8") == "测试"
     assert "example" not in sys.modules
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_long_workspace_interpreter_probe_uses_verified_alias(sdk_runtime, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from core import native_interpreter
+    from core.native_interpreter import probe
+    from core.native_short_path import _short_path
+    from core.native_runtime import absolute_path
+    parent = absolute_path(tmp_path)
+    while len(str(parent)) < 185:
+        parent /= "long-workspace-component-abcdefghij"
+        parent.mkdir()
+    # The optimization is optional; a volume with disabled 8.3 names cannot
+    # provide the precondition for this real-runtime test.
+    if len(str(_short_path(parent))) >= len(str(parent)):
+        pytest.skip("this volume has no usable 8.3 alias")
+    root, _ = sdk_runtime
+    tags, markers = probe(root / "python", staging_parent=parent)
+    assert tags
+    assert markers["sys_platform"] == "win32"
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+def test_long_workspace_actual_plugin_invocation(sdk_runtime, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from core import native_invocation
+    from core.native_invocation import invoke
+    from core.native_runtime import absolute_path
+    from core.native_short_path import _short_path
+    parent = absolute_path(tmp_path)
+    while len(str(parent)) < 185:
+        parent /= "long-workspace-component-abcdefghij"
+        parent.mkdir()
+    if len(str(_short_path(parent))) >= len(str(parent)):
+        pytest.skip("this volume has no usable 8.3 alias")
+    selected = []
+    original = native_invocation.short_execution_root
+    @contextmanager
+    def observe(root, executable):
+        with original(root, executable) as short:
+            selected.append((root, short))
+            yield short
+    monkeypatch.setattr(native_invocation, "short_execution_root", observe)
+    plugin, seed = tmp_path / "plugin", tmp_path / "seed"
+    plugin.mkdir()
+    seed.mkdir()
+    (plugin / "example.py").write_text("def cli(argv):\n    return 42\n", encoding="utf-8")
+    request = {"action": "cli", "name": "demo", "kind": "python", "entry": "example",
+               "args": [], "kwargs": {}, "service": "", "method": "", "caller": "platform",
+               "service_contract": None}
+    runtime, record = sdk_runtime
+    result = invoke(runtime, record, plugin, inventory(plugin), seed, {}, request,
+                    fingerprint="a" * 64, sdk_sha256=record["sdk_sha256"],
+                    deadline=time.monotonic() + 120, dispatch=lambda _: None,
+                    checkpoint=lambda: None, output=lambda _: None, staging_parent=parent)
+    assert result["value"] == 42
+    assert selected and len(str(selected[0][1])) < len(str(selected[0][0]))

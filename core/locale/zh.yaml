@@ -128,6 +128,7 @@ error:
   config_io: "无法访问或创建配置，请检查配置目录权限和文件系统。"
   config_busy: "配置正被其他操作使用，请稍后重试。"
   config_lock_identity: "无法确认配置锁文件的身份，请检查配置目录和文件系统。"
+  update_health_write: "无法保存更新健康状态，已停止启动并保留恢复数据。请检查数据目录权限和可用空间后重试。"
   config_field: "配置字段 {field} 无效：应为{expected}；原配置已保留。"
   config_expected_string: "字符串"
   config_expected_boolean: "布尔值"

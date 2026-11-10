@@ -59,6 +59,56 @@ def test_committed_target_rebuilds_missing_health_and_result_idempotently(recove
     assert not (job / "result.json").exists()
 
 
+def test_applied_job_retires_only_after_health_confirmation(recovery, monkeypatch):
+    target, backup, job, metadata, transaction = recovery
+    target.write_bytes(b"new")
+    monkeypatch.setattr(updater, "APP_VERSION", metadata["version"])
+    updater._write_update_record(job / "running.json", {
+        "schema_version": 1, "job_id": job.name, "version": metadata["version"],
+        "created_ticks": 123,
+    })
+    assert reconcile()["state"] == "applied"
+    assert updater._read_update_record(job / "job.json")["state"] == "scheduled"
+    assert updater._check_health() is False
+    assert updater._read_health_record(updater._get_health_path())["fails"] == 1
+    assert updater.confirm_health() is True
+    assert reconcile()["state"] == "applied"
+    retired = updater._read_update_record(job / "job.json")
+    assert retired["state"] == "retired" and retired["retirement"]["health_confirmed"] is True
+    assert updater._check_health() is False and updater.confirm_health() is True
+
+    # A retired receipt proves this same record was already confirmed. Do not
+    # silently overwrite a later contradictory unconfirmed health record.
+    health = updater._get_health_path()
+    updater._write_update_record(health, {**updater._read_health_record(health), "confirmed": False})
+    before = health.read_bytes(), (job / "job.json").read_bytes(), target.read_bytes(), backup.read_bytes()
+    assert updater._check_health() is False and updater.confirm_health() is False
+    assert (health.read_bytes(), (job / "job.json").read_bytes(), target.read_bytes(), backup.read_bytes()) == before
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_copied_job_cannot_reconcile_another_data_directory(recovery, tmp_path, monkeypatch, indexed):
+    target, backup, job, metadata, transaction = recovery
+    target.write_bytes(b"new")
+    owner = update_target_state.data_directory_identity(tmp_path)
+    transaction = {**transaction, "owner_data_dir": owner, "backup_id": backup.name}
+    updater._write_update_record(update_target_state.path(target), transaction)
+    updater._write_update_record(job / "job.json", {**metadata, "owner_data_dir": owner})
+    if not indexed:
+        updater._write_update_record(updater._get_cache_path(), {"other": "preserved"})
+    copied = tmp_path / "other-data"
+    shutil.copytree(tmp_path / "backups", copied / "backups")
+    shutil.copytree(tmp_path / "cache", copied / "cache")
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(copied))
+    copied_cache = updater._get_cache_path()
+    before = target.read_bytes(), update_target_state.path(target).read_bytes(), copied_cache.read_bytes(), backup.read_bytes()
+    with pytest.raises(update_target_state.UpdateOwnerMismatch):
+        reconcile()
+    assert (target.read_bytes(), update_target_state.path(target).read_bytes(), copied_cache.read_bytes(), backup.read_bytes()) == before
+    assert not updater._get_health_path().exists()
+    assert not (copied / "cache" / "update-jobs" / job.name / "recovery.json").exists()
+
+
 def test_original_target_closes_transaction_without_replacing_executable(recovery):
     target, backup, job, metadata, transaction = recovery
     report = reconcile()

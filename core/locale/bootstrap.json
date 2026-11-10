@@ -6,17 +6,18 @@
     "system_install": "[OpsKit] Installing {package} with {manager}...",
     "system_install_failed": "[OpsKit] {manager} installation failed: {error}",
     "pip_bootstrap": "[OpsKit] pip is missing; trying the interpreter's bundled ensurepip...",
-    "pip_failed": "pip is unavailable in {environment}. Install the operating system's Python venv/ensurepip package, then retry. OpsKit will not run an unverified downloaded script.",
+    "pip_failed": "pip is unavailable in {environment}. Check that the operating system's Python venv/ensurepip package is installed. Before retrying, inspect and resolve the incomplete environment; its directory was preserved. OpsKit will not run an unverified downloaded script.",
     "venv_create": "[OpsKit] Creating virtual environment {environment} using {python}...",
-    "venv_without_pip": "[OpsKit] ensurepip is unavailable; creating the environment without pip...",
     "venv_failed": "[OpsKit ERROR] Could not create the virtual environment: {error}",
     "venv_incomplete": "[OpsKit ERROR] The existing environment at {environment} has no interpreter. It was left unchanged; inspect or repair it before retrying.",
     "venv_resume": "[OpsKit ERROR] Environment setup was interrupted at {environment}. The directory was left unchanged; inspect and repair it before retrying.",
     "venv_busy": "[OpsKit ERROR] The environment setup is already running or its marker is unsafe: {error}",
+    "venv_dir_sync_failed": "Could not sync the environment directory; the filesystem may not support directory synchronization. First-time setup stopped, and any created directory was preserved.",
     "deps_install": "[OpsKit] Installing dependencies...",
     "deps_ready": "[OpsKit] Environment setup complete; restarting...",
     "deps_failed": "[OpsKit ERROR] Dependency installation failed: {error}",
-    "reenter_failed": "[OpsKit ERROR] Could not restart in the virtual environment: {error}"
+    "reenter_failed": "[OpsKit ERROR] Could not restart in the virtual environment: {error}",
+    "deps_manifest_missing": "[OpsKit ERROR] Dependency file {path} is missing or not a file; restore it before setup. Existing data was left unchanged."
   },
   "zh": {
     "first_run": "[OpsKit] 首次运行，初始化虚拟环境...",
@@ -25,16 +26,17 @@
     "system_install": "[OpsKit] 使用 {manager} 安装 {package}...",
     "system_install_failed": "[OpsKit] {manager} 安装失败：{error}",
     "pip_bootstrap": "[OpsKit] pip 不存在，尝试使用解释器自带的 ensurepip...",
-    "pip_failed": "虚拟环境 {environment} 中没有可用的 pip。请安装操作系统提供的 Python venv/ensurepip 软件包后重试；OpsKit 不会执行未验证的下载脚本。",
+    "pip_failed": "虚拟环境 {environment} 中没有可用的 pip。请检查是否已安装操作系统提供的 Python venv/ensurepip 软件包；重试前须检查并处理未完成的虚拟环境，原目录已保留。OpsKit 不会执行未验证的下载脚本。",
     "venv_create": "[OpsKit] 使用 {python} 创建虚拟环境 {environment}...",
-    "venv_without_pip": "[OpsKit] ensurepip 不可用，尝试不含 pip 的虚拟环境...",
     "venv_failed": "[OpsKit ERROR] 虚拟环境创建失败：{error}",
     "venv_incomplete": "[OpsKit ERROR] 现有虚拟环境 {environment} 中没有解释器，已保留原目录；请检查或修复后重试。",
     "venv_resume": "[OpsKit ERROR] 虚拟环境 {environment} 此前初始化中断，目录已保留且未修改；请检查并修复后重试。",
     "venv_busy": "[OpsKit ERROR] 虚拟环境正在初始化，或者初始化标记不安全：{error}",
+    "venv_dir_sync_failed": "无法同步虚拟环境目录，文件系统可能不支持目录同步；首次初始化已停止，已创建的目录会保留。",
     "deps_install": "[OpsKit] 安装依赖包...",
     "deps_ready": "[OpsKit] 虚拟环境初始化完成，重新启动...",
     "deps_failed": "[OpsKit ERROR] 依赖安装失败：{error}",
-    "reenter_failed": "[OpsKit ERROR] 虚拟环境重启失败：{error}"
+    "reenter_failed": "[OpsKit ERROR] 虚拟环境重启失败：{error}",
+    "deps_manifest_missing": "[OpsKit ERROR] 依赖文件 {path} 不存在或不是普通文件，请恢复后再初始化；现有数据已保留。"
   }
 }

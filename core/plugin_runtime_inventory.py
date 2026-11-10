@@ -12,10 +12,10 @@ BUNDLE_NAME = "plugin-runtime-sources.zip"
 MAX_SOURCE_BYTES = 4 * 1024**2
 MAX_CONTEXT_SOURCE_BYTES = 24 * 1024**2
 RUNTIME_FILES = (
-    "__init__.py", "bounded_yaml.py", "cli.py", "config.py", "constants.py", "i18n.py", "installation_progress.py", "logger.py",
-    "module.py", "paths.py", "plugin_json.py", "plugin_tree.py", "plugin_worker.py", "process.py",
-    "prompt.py", "resource_lock.py", "runner.py", "sdk.py", "secrets.py", "theme.py", "yamlio.py",
-    "windows_console_input.py", "windows_job.py", "windows_job_lifecycle.py",
+    "__init__.py", "bounded_yaml.py", "cli.py", "config.py", "config_anonymous.py", "constants.py", "i18n.py", "installation_progress.py", "logger.py",
+    "file_identity.py", "module.py", "paths.py", "plugin_json.py", "plugin_tree.py", "plugin_worker.py", "process.py",
+    "private_export.py", "private_file.py", "prompt.py", "resource_lock.py", "resource_lock_permissions.py", "runner.py", "sdk.py", "secrets.py", "theme.py", "yamlio.py",
+    "windows_console_input.py", "windows_job.py", "windows_job_lifecycle.py", "windows_permissions.py",
     "locale/en.yaml", "locale/zh.yaml", "themes/catppuccin.yaml",
 )
 NATIVE_FETCH_FILES = ("__init__.py", "native_fetch_worker.py", "plugin_git_archive.py")

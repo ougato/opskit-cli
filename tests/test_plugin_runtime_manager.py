@@ -1,5 +1,6 @@
 """Runtime maintenance preserves prepared dependencies and authorization."""
 from contextlib import contextmanager
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -89,3 +90,51 @@ def test_only_verified_sdk_mismatch_gets_maintenance_reason(environment):
     with pytest.raises(ValueError) as error:
         catalog.load('demo', fingerprint=old['fingerprint'], sdk_sha256=digest)
     assert not isinstance(error.value, RuntimeSdkOutdated)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows extended path behavior')
+def test_sdk_refresh_uses_long_paths_without_changing_original(tmp_path, monkeypatch):
+    from core.native_runtime import absolute_path, inventory
+
+    source, record = prepare(tmp_path)
+    old_name = 'old_' + 'x' * 120 + '.py'
+    new_name = 'new_' + 'y' * 120 + '.py'
+    original = absolute_path(source / 'site-packages' / 'core' / old_name)
+    original.write_bytes(b'old sdk file')
+    record = dict(record, files=inventory(source))
+    sdk = {'core/__init__.py': b'', 'core/' + new_name: b'new sdk file'}
+    digest = code_digest(sdk)
+    work = tmp_path / ('long_workspace_' + 'z' * 70)
+    work.mkdir()
+    outside = tmp_path / 'user-data'
+    outside.write_bytes(b'user data')
+    published = []
+
+    @contextmanager
+    def workspace():
+        yield work
+
+    class Catalog:
+        @contextmanager
+        def acquire_for_sdk_refresh(self, name, *, fingerprint):
+            yield source, record
+
+        def is_current(self, name, runtime, old):
+            return runtime == source and old == record
+
+        def publish(self, name, candidate, updated, *, check_identity):
+            assert check_identity(name, record['fingerprint']) is True
+            assert len(str(work / 'candidate' / 'site-packages' / 'core' / new_name)) > 260
+            assert (candidate / 'site-packages' / 'core' / new_name).read_bytes() == b'new sdk file'
+            assert not (candidate / 'site-packages' / 'core' / old_name).exists()
+            assert inventory(candidate) == updated['files']
+            published.append(True)
+
+    monkeypatch.setattr(refresh, 'workspace', workspace)
+    monkeypatch.setattr(refresh, 'snapshot', lambda: sdk)
+    monkeypatch.setattr(refresh, 'code_digest', lambda files=None: digest)
+    refresh.refresh(Catalog(), SimpleNamespace(name='demo'), record['fingerprint'],
+                    checkpoint=lambda: None, authorize=lambda: True)
+    assert published == [True]
+    assert original.read_bytes() == b'old sdk file'
+    assert outside.read_bytes() == b'user data'

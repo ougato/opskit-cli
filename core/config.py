@@ -187,8 +187,7 @@ def ensure_config() -> dict[str, Any]:
         if os.name == "nt":
             # The Windows private publisher commits by handle without replacing
             # an existing target; a non-cooperating writer may have created it
-            # since the check above. The POSIX publisher has different cleanup
-            # semantics and cannot safely be used for this purpose yet.
+            # since the check above.
             from core.private_export import publish_private_file
             raw = yaml.safe_dump(DEFAULT_CONFIG, allow_unicode=True, sort_keys=False).encode("utf-8")
             parse_bounded_yaml(raw)
@@ -202,7 +201,19 @@ def ensure_config() -> dict[str, Any]:
             except ValueError:
                 raise StartupConfigPublicationError from None
         else:
-            save_config(DEFAULT_CONFIG)
+            from core.config_anonymous import publish_if_supported
+            raw = yaml.safe_dump(DEFAULT_CONFIG, allow_unicode=True, sort_keys=False).encode("utf-8")
+            parse_bounded_yaml(raw)
+            try:
+                published = publish_if_supported(path, raw)
+            except FileExistsError:
+                return _load_config_path(path, missing_is_error=True)
+            except ValueError:
+                raise StartupConfigPublicationError from None
+            if not published:
+                # The legacy fallback remains subject to an external writer
+                # racing first creation on unsupported POSIX filesystems.
+                save_config(DEFAULT_CONFIG)
         import copy
         return copy.deepcopy(DEFAULT_CONFIG)
     return load_config()

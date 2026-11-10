@@ -81,6 +81,14 @@ def boot(host, *, post_update: bool | None, compiled: bool) -> dict:
     if shown:
         pause()
 
+    # Pending-update checks run before the background telemetry provider is
+    # initialized. Keep only bounded, sanitized event names when enabled.
+    try:
+        from core.telemetry import prepare_startup_updates
+        prepare_startup_updates(cfg)
+    except Exception as exc:
+        host._log_startup_failure("telemetry_prepare", exc)
+
     try:
         from core.updater import check_and_apply_pending, pending_version
         if check_and_apply_pending(post_update=post_update):
@@ -91,6 +99,11 @@ def boot(host, *, post_update: bool | None, compiled: bool) -> dict:
                 arguments = host._restart_arguments(sys.argv[1:])
                 os.execv(sys.executable, [sys.executable, "--post-update", *arguments])
     except Exception as exc:
+        updater_module = sys.modules.get("core.updater")
+        decision_error = getattr(updater_module, "HealthDecisionPersistenceError", None)
+        if decision_error is not None and isinstance(exc, decision_error):
+            prepare_error_locale(cfg)
+            raise host._StartupClickException(host.t("error.update_health_write")) from None
         host._log_startup_failure("pending_update", exc)
 
     return cfg

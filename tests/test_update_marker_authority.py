@@ -100,6 +100,18 @@ def test_bound_marker_refuses_changed_authority_without_replacement(bound_marker
     assert pending.exists() and backup.exists()
 
 
+def test_marker_cannot_replace_target_for_other_owner(bound_marker, tmp_path):
+    from core import update_target_state
+    pending, target, marker, backup, transaction = bound_marker
+    state_path = update_target_state.path(target)
+    updater._write_update_record(state_path, {**transaction,
+        "owner_data_dir": update_target_state.data_directory_identity(tmp_path / "other-data"),
+        "backup_id": backup.name})
+    before = pending.read_bytes(), target.read_bytes(), marker.read_bytes(), backup.read_bytes(), state_path.read_bytes()
+    assert updater._apply_update_pending_path() is False
+    assert (pending.read_bytes(), target.read_bytes(), marker.read_bytes(), backup.read_bytes(), state_path.read_bytes()) == before
+
+
 def test_committed_marker_retains_evidence_when_health_write_fails_and_retries(bound_marker, monkeypatch):
     from core import update_target_state
     pending, target, marker, backup, transaction = bound_marker

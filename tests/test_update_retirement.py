@@ -256,6 +256,22 @@ def test_boot_resumes_pending_restore_before_post_update_cleanup(recovery, monke
     assert updater._read_update_record(job / "job.json")["state"] == "retired"
 
 
+@pytest.mark.parametrize("confirmed,fails", [(True, 2), (False, 1)])
+def test_boot_does_not_resume_pending_restore_after_health_conflicts(recovery, confirmed, fails):
+    from core.update_reconcile import reconcile_on_boot
+    target, backup, job, metadata, original = recovery
+    pending_rollback(recovery)
+    health_path = updater._get_health_path()
+    health = updater._read_health_record(health_path)
+    updater._write_update_record(health_path, {**health, "confirmed": confirmed, "fails": fails})
+    paths = [target, backup, backup.with_name(backup.name + ".json"), job / "job.json",
+             health_path, updater._get_cache_path(), update_target_state.path(target)]
+    before = [path.read_bytes() for path in paths]
+    result = reconcile_on_boot()
+    assert result["state"] == "deferred" and result["reason"] == "rollback_health_conflict"
+    assert [path.read_bytes() for path in paths] == before
+
+
 @pytest.mark.parametrize("helper", ["alive", "unknown", "identity_mismatch"])
 def test_boot_never_resumes_rollback_with_uncertain_helper(recovery, monkeypatch, helper):
     from core.update_reconcile import reconcile_on_boot
@@ -382,6 +398,8 @@ def test_real_helper_commit_rollback_and_retirement_preserve_history(recovery, m
     assert target.read_bytes() == b"new" and NATIVE_HELPER_STATUS(job, metadata) == "exited"
     if interrupted_restore:
         from core.update_reconcile import reconcile_on_boot
+        health = updater._read_health_record(updater._get_health_path())
+        updater._write_update_record(updater._get_health_path(), {**health, "fails": updater.MAX_HEALTH_FAILS})
         with monkeypatch.context() as patch:
             def interrupted(*args, **kwargs):
                 raise OSError("restore interrupted")

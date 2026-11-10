@@ -11,8 +11,10 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 _INCOMPLETE_MARKER = ".opskit-bootstrap-incomplete"
+_SETUP_WITNESS = ".opskit-bootstrap-witness"
 _MARKER_CONTENT = "OpsKit virtual environment bootstrap v1\n"
 _COMPLETE_MARKER_CONTENT = "OpsKit virtual environment bootstrap v1: complete\n"
+_WITNESS_CONTENT = "OpsKit virtual environment bootstrap witness v1\n"
 _MIN_PYTHON_VERSION = "3.10"
 
 
@@ -72,17 +74,40 @@ def _hold_setup_marker(venv_dir: Path, *, created_marker=None):
 
 
 def _complete_setup(marker) -> None:
-    marker.seek(0)
-    marker.write(_COMPLETE_MARKER_CONTENT.encode())
-    marker.truncate()
-    marker.flush()
-    os.fsync(marker.fileno())
+    def write_and_sync(content: str) -> None:
+        encoded = content.encode()
+        marker.seek(0)
+        if marker.write(encoded) != len(encoded):
+            raise OSError("short bootstrap marker write")
+        marker.truncate()
+        marker.flush()
+        os.fsync(marker.fileno())
+
+    try:
+        write_and_sync(_COMPLETE_MARKER_CONTENT)
+    except BaseException:
+        # The failed write or sync may have left a complete marker visible to
+        # the next process. Restore using the held file, not its replaceable
+        # pathname, so a retry refuses to enter the unconfirmed environment.
+        # This is best-effort: a second I/O failure can leave an unknown state.
+        try:
+            write_and_sync(_MARKER_CONTENT)
+        except BaseException as recovery_error:
+            raise RuntimeError("bootstrap completion failed and marker restoration failed") from recovery_error
+        raise
 
 
 def _check_existing_marker(venv_dir: Path) -> bool:
     """Reject incomplete or unsafe setup markers without changing the directory."""
     setup_marker = venv_dir / _INCOMPLETE_MARKER
     if not setup_marker.exists() and not setup_marker.is_symlink():
+        # Environments created before this witness existed remain supported.
+        # Its presence proves this was a managed setup even if its primary
+        # marker was removed; preserve it and refuse an unverified reentry.
+        witness = venv_dir / _SETUP_WITNESS
+        if witness.exists() or witness.is_symlink():
+            print(_t("venv_resume", environment=venv_dir))
+            raise SystemExit(1)
         return False
     try:
         with _hold_setup_marker(venv_dir) as (_marker, incomplete):
@@ -100,6 +125,54 @@ def _same_path(left: str | Path, right: Path) -> bool:
         return Path(left).resolve() == right.resolve()
     except (OSError, RuntimeError):
         return False
+
+
+def _executable_inside_venv(venv_dir: Path) -> bool:
+    """Recognize the current executable's directory, including directory aliases.
+
+    Resolve the parent, not the executable: on POSIX a venv's python is often
+    a symlink to the system interpreter and resolving it loses the venv path.
+    """
+    if not sys.executable:
+        return False
+    try:
+        parent = Path(sys.executable).absolute().parent
+        root = venv_dir.absolute()
+        return parent.is_relative_to(root) or parent.resolve().is_relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+@contextmanager
+def _hold_setup_parent(path: Path):
+    """Hold and preflight the parent used to persist the new directory entry."""
+    if os.name == "nt":
+        # Automatic creation is POSIX-only. Windows callers only reuse venvs.
+        yield None
+        return
+    from core.file_identity import same_file_identity
+    expected = path.stat()
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (not stat.S_ISDIR(opened.st_mode) or not same_file_identity(expected, opened)
+                or not same_file_identity(opened, path.stat())):
+            raise RuntimeError("virtual environment parent directory changed")
+        # Fail before creating .venv when the parent cannot sync directory
+        # entries. Successful fsync is not a guarantee against every device
+        # failure, but silently ignoring unsupported sync would not even
+        # establish the intended ordering.
+        _sync_setup_directory(descriptor)
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _sync_setup_directory(descriptor: int) -> None:
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        raise RuntimeError(_t("venv_dir_sync_failed")) from None
 
 
 @contextmanager
@@ -129,10 +202,14 @@ def _hold_new_directory(path: Path, initial: os.stat_result):
 
 def _open_new_marker(venv_dir: Path, directory_fd: int | None):
     """Claim a marker without overwriting an existing file or following a link."""
+    return _open_new_setup_file(venv_dir, directory_fd, _INCOMPLETE_MARKER)
+
+
+def _open_new_setup_file(venv_dir: Path, directory_fd: int | None, name: str):
     if directory_fd is None:
-        return (venv_dir / _INCOMPLETE_MARKER).open("x+b")
+        return (venv_dir / name).open("x+b")
     flags = os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(_INCOMPLETE_MARKER, flags, 0o600, dir_fd=directory_fd)
+    descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
     try:
         return os.fdopen(descriptor, "w+b")
     except BaseException:
@@ -151,11 +228,11 @@ def _check_new_directory_contents(venv_dir: Path, directory_fd: int | None) -> N
         if os.listdir not in os.supports_fd:
             raise RuntimeError("directory-relative inspection is unavailable")
         names = os.listdir(directory_fd)
-    if set(names) != {_INCOMPLETE_MARKER}:
+    if set(names) not in ({_INCOMPLETE_MARKER}, {_INCOMPLETE_MARKER, _SETUP_WITNESS}):
         raise RuntimeError("virtual environment directory contains unexpected files")
 
 
-def _validate_setup_identity(venv_dir: Path, opened_dir: os.stat_result, marker) -> None:
+def _validate_setup_identity(venv_dir: Path, opened_dir: os.stat_result, marker, witness=None, parent_fd=None) -> None:
     """Check held identities before using a newly built environment.
 
     This narrows races between stages; it cannot prevent later path swaps.
@@ -171,11 +248,29 @@ def _validate_setup_identity(venv_dir: Path, opened_dir: os.stat_result, marker)
             or marker_info.st_nlink != 1 or current_marker.st_nlink != 1
             or not same_file_identity(marker_info, current_marker)):
         raise RuntimeError("bootstrap marker changed during setup")
+    if witness is not None:
+        witness_info = os.fstat(witness.fileno())
+        current_witness = (venv_dir / _SETUP_WITNESS).lstat()
+        if (not stat.S_ISREG(witness_info.st_mode) or not stat.S_ISREG(current_witness.st_mode)
+                or witness_info.st_nlink != 1 or current_witness.st_nlink != 1
+                or not same_file_identity(witness_info, current_witness)):
+            raise RuntimeError("bootstrap witness changed during setup")
+        witness.seek(0)
+        if witness.read(128) != _WITNESS_CONTENT.encode():
+            raise RuntimeError("bootstrap witness content changed during setup")
+    if parent_fd is not None:
+        if not same_file_identity(os.fstat(parent_fd), venv_dir.parent.stat()):
+            raise RuntimeError("virtual environment parent directory changed")
 
 
 def reenter_existing_windows_venv(project_root: Path) -> None:
     """Reuse the project's prepared environment without changing system Python."""
     venv_dir = project_root / ".venv"
+    # -S in older Python versions can make prefix look like the base Python,
+    # while an inherited VIRTUAL_ENV may describe a different environment.
+    # Check the actual executable before either compatibility shortcut.
+    if _executable_inside_venv(venv_dir):
+        _check_existing_marker(venv_dir)
     if sys.prefix != sys.base_prefix:
         if _same_path(sys.prefix, venv_dir):
             _check_existing_marker(venv_dir)
@@ -185,8 +280,13 @@ def reenter_existing_windows_venv(project_root: Path) -> None:
             _check_existing_marker(venv_dir)
         return
     executable = venv_dir / "Scripts" / "python.exe"
+    # A failed setup can leave the marker before creating the interpreter.
+    # Inspect it even when there is no executable to re-enter.
+    completed = _check_existing_marker(venv_dir)
+    if completed and not executable.is_file():
+        print(_t("venv_incomplete", environment=venv_dir))
+        raise SystemExit(1)
     if executable.is_file():
-        _check_existing_marker(venv_dir)
         _exec_reenter(executable)
 
 
@@ -205,6 +305,11 @@ def ensure_venv(project_root: Path | None = None) -> None:
 
     venv_dir = project_root / ".venv"
     venv_python = venv_dir / "bin" / "python"
+
+    # An inherited VIRTUAL_ENV or prefix can disagree with the executable,
+    # especially under -S; do not let it hide an interrupted project setup.
+    if _executable_inside_venv(venv_dir):
+        _check_existing_marker(venv_dir)
 
     # An explicitly selected external virtual environment is already isolated,
     # even when its launcher did not export VIRTUAL_ENV.
@@ -241,6 +346,9 @@ def ensure_venv(project_root: Path | None = None) -> None:
     # A marker alone cannot establish ownership of a pre-existing directory.
     # Refuse to mutate an interrupted setup until its owner has inspected it.
     if _check_existing_marker(venv_dir):
+        if not venv_python.is_file():
+            print(_t("venv_incomplete", environment=venv_dir))
+            raise SystemExit(1)
         _exec_reenter(venv_python)
         return
 
@@ -254,6 +362,7 @@ def ensure_venv(project_root: Path | None = None) -> None:
         raise SystemExit(1)
 
     # ── .venv 不存在，首次初始化 ─────────────────────────────────────────────
+    _require_dependencies_file(project_root)
     print(_t("first_run"))
 
     python_bin = _find_python(_MIN_PYTHON_VERSION)
@@ -266,22 +375,41 @@ def ensure_venv(project_root: Path | None = None) -> None:
 
     # Claim only a newly created directory; never delete it on failure.
     try:
-        venv_dir.mkdir()
-        identity = venv_dir.lstat()
-        with _hold_new_directory(venv_dir, identity) as (directory_fd, opened_dir):
-            with _open_new_marker(venv_dir, directory_fd) as created_marker:
-                created_marker.write(_MARKER_CONTENT.encode())
-                created_marker.flush()
-                with _hold_setup_marker(venv_dir, created_marker=created_marker) as (marker, incomplete):
-                    _validate_setup_identity(venv_dir, opened_dir, marker)
-                    if incomplete:
-                        _check_new_directory_contents(venv_dir, directory_fd)
-                        _create_venv(python_bin, venv_dir)
-                        _validate_setup_identity(venv_dir, opened_dir, marker)
-                        _install_dependencies(venv_dir, project_root)
-                        _validate_setup_identity(venv_dir, opened_dir, marker)
-                        _complete_setup(marker)
-                        _validate_setup_identity(venv_dir, opened_dir, marker)
+        with _hold_setup_parent(venv_dir.parent) as parent_fd:
+            # A permissive umask must not make the in-progress environment
+            # writable by other accounts. This does not protect against another
+            # process running as the same user or a writable project parent.
+            venv_dir.mkdir(mode=0o755)
+            identity = venv_dir.lstat()
+            with _hold_new_directory(venv_dir, identity) as (directory_fd, opened_dir):
+                # Create the witness first. If setup stops before the primary
+                # marker exists, its presence still blocks accidental reentry.
+                with _open_new_setup_file(venv_dir, directory_fd, _SETUP_WITNESS) as witness:
+                    witness_data = _WITNESS_CONTENT.encode()
+                    if witness.write(witness_data) != len(witness_data):
+                        raise OSError("short bootstrap witness write")
+                    witness.flush()
+                    os.fsync(witness.fileno())
+                    with _open_new_marker(venv_dir, directory_fd) as created_marker:
+                        marker_data = _MARKER_CONTENT.encode()
+                        if created_marker.write(marker_data) != len(marker_data):
+                            raise OSError("short bootstrap marker write")
+                        created_marker.flush()
+                        os.fsync(created_marker.fileno())
+                        if directory_fd is not None:
+                            _sync_setup_directory(directory_fd)
+                        if parent_fd is not None:
+                            _sync_setup_directory(parent_fd)
+                        with _hold_setup_marker(venv_dir, created_marker=created_marker) as (marker, incomplete):
+                            _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
+                            if incomplete:
+                                _check_new_directory_contents(venv_dir, directory_fd)
+                                _create_venv(python_bin, venv_dir, opened_dir, marker, witness, parent_fd)
+                                _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
+                                _install_dependencies(venv_dir, project_root, opened_dir, marker, witness, parent_fd)
+                                _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
+                                _complete_setup(marker)
+                                _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
     except (OSError, RuntimeError) as exc:
         print(_t("venv_busy", error=exc))
         raise SystemExit(1) from None
@@ -374,6 +502,18 @@ def _install_python(project_root: Path) -> str | None:
     return None
 
 
+def _python_setup_env() -> dict[str, str]:
+    """Keep setup independent of ambient Python paths, preserving pip settings.
+
+    Setup commands also use Python's ``-I`` to exclude the working directory
+    and user site; clearing environment variables alone does not exclude them.
+    """
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    return env
+
+
 def _ensure_venv_pkg(python_bin: str) -> None:
     """
     确保 python3.X-venv 包已安装（Debian/Ubuntu 特有问题）。
@@ -384,8 +524,8 @@ def _ensure_venv_pkg(python_bin: str) -> None:
     # 检测 ensurepip 是否可用
     try:
         r = subprocess.run(
-            [python_bin, "-m", "ensurepip", "--version"],
-            capture_output=True, text=True, timeout=5
+            [python_bin, "-I", "-m", "ensurepip", "--version"],
+            capture_output=True, text=True, timeout=5, env=_python_setup_env()
         )
         if r.returncode == 0:
             return  # ensurepip 正常，无需处理
@@ -423,42 +563,55 @@ def _ensure_venv_pkg(python_bin: str) -> None:
 def _bootstrap_pip(venv_dir: Path) -> None:
     """Ensure pip is usable without executing an unverified downloaded script."""
     venv_python = venv_dir / "bin" / "python"
+    env = _python_setup_env()
     try:
-        available = subprocess.run([str(venv_python), "-m", "pip", "--version"],
-                                   capture_output=True, timeout=15)
+        available = subprocess.run([str(venv_python), "-I", "-m", "pip", "--version"],
+                                   capture_output=True, timeout=15, env=env)
         if available.returncode == 0:
             return
         print(_t("pip_bootstrap"))
-        subprocess.run([str(venv_python), "-m", "ensurepip"],
-                       capture_output=True, check=True, timeout=60)
-        subprocess.run([str(venv_python), "-m", "pip", "--version"],
-                       capture_output=True, check=True, timeout=15)
+        # Match the default venv bootstrap, including the unversioned pip
+        # entry point, but run it only after the caller rechecks identities.
+        subprocess.run([str(venv_python), "-I", "-m", "ensurepip", "--upgrade", "--default-pip"],
+                       capture_output=True, check=True, timeout=60, env=env)
+        subprocess.run([str(venv_python), "-I", "-m", "pip", "--version"],
+                       capture_output=True, check=True, timeout=15, env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(_t("pip_failed", environment=venv_dir)) from exc
 
 
-def _create_venv(python_bin: str, venv_dir: Path) -> None:
+def _create_venv(python_bin: str, venv_dir: Path, opened_dir=None, marker=None, witness=None, parent_fd=None) -> None:
     """创建并检查 venv；依赖安装由调用方在身份复核后执行。"""
-    # 确保 python3.X-venv 包存在（Debian 特有）
-    _ensure_venv_pkg(python_bin)
+    # Package discovery and installation can take minutes. Do not let a
+    # directory or file substituted during that wait reach the venv command.
+    # This check narrows the race; it cannot stop a later substitution.
+    try:
+        initial = opened_dir if opened_dir is not None else venv_dir.lstat()
+        if marker is not None:
+            _validate_setup_identity(venv_dir, initial, marker, witness, parent_fd)
+        _ensure_venv_pkg(python_bin)
+        if marker is not None:
+            _validate_setup_identity(venv_dir, initial, marker, witness, parent_fd)
+        with _hold_new_directory(venv_dir, initial) as (directory_fd, opened):
+            from core.file_identity import same_file_identity
+            if not same_file_identity(opened, venv_dir.lstat()):
+                raise RuntimeError("virtual environment directory changed during package preparation")
+            _check_new_directory_contents(venv_dir, directory_fd)
+    except (OSError, RuntimeError) as exc:
+        print(_t("venv_busy", error=exc))
+        raise SystemExit(1) from None
 
     print(_t("venv_create", environment=venv_dir, python=python_bin))
     try:
         result = subprocess.run(
-            [python_bin, "-m", "venv", str(venv_dir)],
-            capture_output=True, text=True, timeout=60
+            [python_bin, "-I", "-m", "venv", "--without-pip", str(venv_dir)],
+            capture_output=True, text=True, timeout=60, env=_python_setup_env()
         )
         if result.returncode != 0:
-            # Debian ensurepip 缺失时 venv 创建失败，改用 --without-pip
-            if "ensurepip" in result.stdout + result.stderr:
-                print(_t("venv_without_pip"))
-                subprocess.run(
-                    [python_bin, "-m", "venv", "--without-pip", str(venv_dir)],
-                    check=True, capture_output=True, timeout=60
-                )
-            else:
-                print(_t("venv_failed", error=result.stderr))
-                sys.exit(1)
+            # Do not rerun venv over a partially created directory: files
+            # encountered on a retry cannot be proven to be ours.
+            print(_t("venv_failed", error=result.stderr))
+            sys.exit(1)
     except Exception as e:
         print(_t("venv_failed", error=e))
         sys.exit(1)
@@ -468,21 +621,37 @@ def _create_venv(python_bin: str, venv_dir: Path) -> None:
         raise SystemExit(1)
 
 
-def _install_dependencies(venv_dir: Path, project_root: Path) -> None:
+def _require_dependencies_file(project_root: Path) -> Path:
+    """Never mark a newly created environment ready without its dependency list."""
+    path = project_root / "requirements.txt"
+    if not path.is_file():
+        print(_t("deps_manifest_missing", path=path))
+        raise SystemExit(1)
+    return path
+
+
+def _install_dependencies(venv_dir: Path, project_root: Path, opened_dir=None, marker=None,
+                          witness=None, parent_fd=None) -> None:
     """Complete setup before a managed environment can be reentered."""
-    req_file = project_root / "requirements.txt"
-    if req_file.exists():
-        try:
-            _bootstrap_pip(venv_dir)
-            print(_t("deps_install"))
-            subprocess.run(
-                [str(venv_dir / "bin" / "python"), "-m", "pip", "install", "-q", "-r", str(req_file)],
-                check=True, timeout=300
-            )
-            print(_t("deps_ready"))
-        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
-            print(_t("deps_failed", error=e))
-            sys.exit(1)
+    req_file = _require_dependencies_file(project_root)
+    try:
+        if marker is not None:
+            _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
+        _bootstrap_pip(venv_dir)
+        # Initializing pip can take time. Do not run a second executable from
+        # a directory or marker substituted while that process was running.
+        # This is a stage boundary check, not a substitute for safe publication.
+        if marker is not None:
+            _validate_setup_identity(venv_dir, opened_dir, marker, witness, parent_fd)
+        print(_t("deps_install"))
+        subprocess.run(
+            [str(venv_dir / "bin" / "python"), "-I", "-m", "pip", "install", "-q", "-r", str(req_file)],
+            check=True, timeout=300, env=_python_setup_env()
+        )
+        print(_t("deps_ready"))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+        print(_t("deps_failed", error=e))
+        sys.exit(1)
 
 
 def _exec_reenter(venv_python: Path) -> None:

@@ -11,6 +11,21 @@ _BACKUP = re.compile(r"opskit\.v[0-9]+\.[0-9]+\.[a-f0-9]{32}\.bak")
 _DIGEST = re.compile(r"[a-f0-9]{64}")
 
 
+def _require_job_owner(metadata, transaction=None):
+    from core import update_target_state
+    from core.config import get_data_dir
+    if "owner_data_dir" in metadata:
+        update_target_state.require_owner(metadata, get_data_dir())
+    if transaction is None:
+        return
+    update_target_state.require_owner(transaction, get_data_dir())
+    if "backup_id" in transaction and transaction["backup_id"] != metadata.get("backup_id"):
+        raise ValueError("update reconciliation backup does not match transaction")
+    if (transaction["operation"] == "rollback" and "source_transaction_id" in transaction
+            and transaction["source_transaction_id"] != metadata.get("transaction_id")):
+        raise ValueError("update reconciliation source transaction changed")
+
+
 def read_receipt(job, metadata):
     from core.updater import _read_update_record
     try:
@@ -129,6 +144,7 @@ def _discover_index(cache_path, cache):
             continue
         if metadata.get("job_id") != node.name:
             raise ValueError("invalid unindexed update job identity")
+        _require_job_owner(metadata)
         if update_retirement.receipt(metadata) is not None:
             continue
         unresolved = True
@@ -155,6 +171,7 @@ def _discover_index(cache_path, cache):
             backup_transaction = {
                 "from_build": transaction["to_build"], "to_build": transaction["from_build"],
                 "from_sha256": transaction["to_sha256"], "to_sha256": transaction["from_sha256"]}
+        _require_job_owner(metadata, transaction)
         if (metadata.get("state") not in {"preparing", "launching", "scheduled"}
                 or type(metadata.get("version")) is not int
                 or metadata["version"] != backup_transaction["to_build"]
@@ -213,6 +230,12 @@ def reconcile_on_boot():
         result = _reconcile_locked(cache_path)
         if result.get("reason") != "rollback_pending":
             return result
+        # A prepared transaction is not by itself a current health decision.
+        # Preserve it if another process has confirmed the build or if the
+        # failure threshold is no longer met; do not replace the executable.
+        health = updater._read_health_record(updater._get_health_path())
+        if health["confirmed"] or health["fails"] < updater.MAX_HEALTH_FAILS:
+            return {**result, "reason": "rollback_health_conflict"}
         if not updater.rollback():
             return result
         # Restored bytes require restarting even if retirement publication fails.
@@ -252,6 +275,7 @@ def _reconcile_locked(cache_path):
             or not _ID.fullmatch(metadata["transaction_id"])):
         raise ValueError("invalid update reconciliation ownership")
     from core import update_retirement
+    _require_job_owner(metadata)
     retired = update_retirement.receipt(metadata)
     if retired is not None:
         update_retirement.clear_index(cache_path, metadata)
@@ -276,6 +300,7 @@ def _reconcile_locked(cache_path):
     if not unlaunched and helper != "exited":
         return {"id": identity, "state": "deferred", "reason": "helper_" + helper}
     transaction = update_target_state.read(target)
+    _require_job_owner(metadata, transaction)
     if (transaction is not None and transaction["operation"] == "rollback"
             and transaction["from_build"] == metadata["version"]
             and transaction["from_sha256"] == metadata.get("new_sha256")

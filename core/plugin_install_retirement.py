@@ -144,9 +144,10 @@ def abort_status(journal, record):
 def abort(token):
     from core.plugin_trust import authorization_transaction, invalidate
     root, _, journal, _ = publication._roots()
-    publication._private_directory(journal)
+    journal_identity = publication._private_directory(journal)
     record = read_publication(journal, token)
     with publication._locks(root, record["plugin"]), authorization_transaction():
+        publication._sync_journal(journal, journal_identity)
         if read_publication(journal, token) != record or retirement_status(journal, record):
             raise ValueError("publication changed before abort")
         status = publication._topology(journal, record)
@@ -169,9 +170,10 @@ def withdraw(token, workspace):
     from core.plugin_trust import authorization_transaction, invalidate
     from core.private_export import publish_private_file
     root, _, journal, _ = publication._roots()
-    publication._private_directory(journal)
+    journal_identity = publication._private_directory(journal)
     record = read_publication(journal, token)
     with publication._locks(root, record["plugin"]):
+        publication._sync_journal(journal, journal_identity)
         if read_publication(journal, token) != record or retirement_status(journal, record):
             raise ValueError("publication changed before withdrawal")
         status = publication._topology(journal, record)
@@ -306,6 +308,9 @@ def retire(token):
         return "absent"
     record = read_publication(journal, token)
     with publication._locks(root, record["plugin"]):
+        publication._sync_journal(journal, identity)
+        if read_publication(journal, token) != record:
+            raise ValueError("publication intent changed during sync")
         path = journal / (token + ".retired.json")
         if not path_present(path):
             status = publication._topology(journal, record)
@@ -324,6 +329,12 @@ def retire(token):
         tomb, version = _tombstone(journal, token)
         if tomb["intent"] != record:
             raise ValueError("retirement intent changed")
+        # A previous worker can stop after creating the tombstone but before
+        # synchronizing its directory. Never retire the bound records until
+        # that evidence has passed a fresh identity-bound barrier.
+        publication._sync_journal(journal, identity)
+        if _tombstone(journal, token) != (tomb, version):
+            raise ValueError("retirement intent changed during sync")
         # The tombstone remains sufficient authority after the primary intent
         # has been unlinked. Resume only exact file versions/digests it names.
         for suffix in publication.RECORD_SUFFIXES[:-1]:

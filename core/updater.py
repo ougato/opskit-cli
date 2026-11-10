@@ -41,6 +41,15 @@ from core.constants import (
 
 _log = logging.getLogger("opskit.updater")
 
+
+def _safe_recovery_log(level, message, *args):
+    """A broken log sink must not change the update recovery decision."""
+    try:
+        _log.log(level, message, *args)
+    except Exception:
+        pass
+
+
 _cache_lock = threading.Lock()
 _query_readonly = ContextVar("update_query_readonly", default=False)
 _download_staging = ContextVar("update_download_staging", default=None)
@@ -406,6 +415,40 @@ def _read_health_record(path):
     return data
 
 
+def _verify_health_job(data, transaction, target):
+    """Bind job-backed health to its update without modifying recovery evidence."""
+    job_id = data.get("job_id")
+    if job_id is None:
+        return  # Older health records did not include a job identity.
+    if transaction is None:
+        raise ValueError("health update transaction is missing")
+    metadata = _read_update_record(_get_cache_path().parent / "update-jobs" / job_id / "job.json")
+    from core.config import get_data_dir
+    from core.update_target_state import require_owner
+    require_owner(metadata, get_data_dir())
+    backup_id = data.get("backup_id")
+    if (type(metadata.get("schema_version")) is not int or metadata["schema_version"] != 2
+            or metadata.get("job_id") != job_id or metadata.get("state") not in {"launching", "scheduled"}
+            or type(metadata.get("version")) is not int or metadata["version"] != data["build"]
+            or metadata.get("target") != str(target.resolve())
+            or not isinstance(backup_id, str)
+            or not re.fullmatch(r"opskit\.v[0-9]+\.[0-9]+\.[a-f0-9]{32}\.bak", backup_id)
+            or metadata.get("backup_id") != backup_id
+            or not isinstance(metadata.get("transaction_id"), str)
+            or not re.fullmatch(r"[a-f0-9]{32}", metadata["transaction_id"])):
+        raise ValueError("health job does not match update")
+    if transaction["operation"] == "upgrade":
+        if (metadata["transaction_id"] != transaction["transaction_id"]
+                or metadata.get("old_sha256") != transaction["from_sha256"]
+                or metadata.get("new_sha256") != transaction["to_sha256"]):
+            raise ValueError("health job does not match upgrade transaction")
+    elif (metadata.get("old_sha256") != transaction["to_sha256"]
+            or metadata.get("new_sha256") != transaction["from_sha256"]
+            or ("source_transaction_id" in transaction
+                and metadata["transaction_id"] != transaction["source_transaction_id"])):
+        raise ValueError("health job does not match rollback transaction")
+
+
 def confirm_health() -> bool:
     """新版本平稳运行 HEALTH_CONFIRM_DELAY 秒后调用：确认当前 build 健康。"""
     try:
@@ -414,7 +457,11 @@ def confirm_health() -> bool:
         with _update_resource.hold():
             _confirm_health_locked()
         return True
-    except Exception:
+    except Exception as error:
+        from core.update_target_state import UpdateOwnerMismatch
+        if isinstance(error, UpdateOwnerMismatch):
+            _log.warning("update data directory changed; health confirmation deferred and recovery evidence retained")
+            return False
         _log.warning("update health confirmation deferred; existing record retained")
         return False
 
@@ -438,6 +485,11 @@ def _confirm_health_locked():
             from core import update_target_state
             target = _self_path()
             transaction = update_target_state.read(target)
+            from core.config import get_data_dir
+            update_target_state.require_owner(transaction, get_data_dir())
+            if (transaction and transaction["operation"] == "upgrade" and "backup_id" in transaction
+                    and transaction["backup_id"] != data.get("backup_id")):
+                raise ValueError("health confirmation backup does not match update")
             if transaction is None and data.get("job_id") is not None:
                 # A job-based update needs its target transaction to prove
                 # which executable and transition this health record covers.
@@ -446,6 +498,12 @@ def _confirm_health_locked():
                     and transaction["phase"] in {"prepared", "applied"}
                     and transaction["from_build"] == data["build"]):
                 raise ValueError("health confirmation blocked by rollback")
+            if (transaction is not None and transaction["operation"] == "rollback"
+                    and data.get("job_id") is not None):
+                # A rollback record replaces the upgrade transaction. Its job
+                # ID alone cannot prove which upgrade this data directory owns,
+                # even if the rollback was aborted and old bytes still match.
+                raise ValueError("health confirmation upgrade transaction is unavailable")
             if transaction is not None:
                 # An older process must not confirm a version after its target
                 # has been replaced or its recorded transition was aborted.
@@ -464,24 +522,7 @@ def _confirm_health_locked():
                     # The job in this data directory must identify the same
                     # transaction and backup. A copied health record alone is
                     # not proof that this directory owns the update.
-                    job_id = data["job_id"]
-                    metadata = _read_update_record(
-                        _get_cache_path().parent / "update-jobs" / job_id / "job.json"
-                    )
-                    if (type(metadata.get("schema_version")) is not int
-                            or metadata["schema_version"] != 2
-                            or metadata.get("job_id") != job_id
-                            or metadata.get("state") not in {"launching", "scheduled"}
-                            or metadata.get("transaction_id") != transaction["transaction_id"]
-                            or type(metadata.get("version")) is not int
-                            or metadata["version"] != data["build"]
-                            or metadata.get("target") != str(target.resolve())
-                            or not isinstance(data.get("backup_id"), str)
-                            or not re.fullmatch(r"opskit\.v[0-9]+\.[0-9]+\.[a-f0-9]{32}\.bak", data["backup_id"])
-                            or metadata.get("backup_id") != data.get("backup_id")
-                            or metadata.get("old_sha256") != transaction["from_sha256"]
-                            or metadata.get("new_sha256") != transaction["to_sha256"]):
-                        raise ValueError("health confirmation job does not match update")
+                    _verify_health_job(data, transaction, target)
             data["confirmed"] = True
             _write_update_record(path, data)
     else:
@@ -516,9 +557,17 @@ def confirm_health_after(delay, *, retry_timeout=360):
                 _log.warning("update health confirmation contention deadline exceeded")
                 return False
             time.sleep(min(1, remaining))
-        except Exception:
+        except Exception as error:
+            from core.update_target_state import UpdateOwnerMismatch
+            if isinstance(error, UpdateOwnerMismatch):
+                _log.warning("update data directory changed; health confirmation deferred and recovery evidence retained")
+                return False
             _log.warning("update health confirmation refused; existing record retained")
             return False
+
+
+class HealthDecisionPersistenceError(RuntimeError):
+    """The current boot could not persist its unconfirmed health decision."""
 
 
 def _check_health() -> bool:
@@ -536,8 +585,14 @@ def _check_health() -> bool:
     try:
         with _update_resource.hold():
             return _check_health_locked()
-    except Exception:
-        _log.warning("update health check deferred; existing record retained")
+    except HealthDecisionPersistenceError:
+        raise
+    except Exception as error:
+        from core.update_target_state import UpdateOwnerMismatch
+        if isinstance(error, UpdateOwnerMismatch):
+            _safe_recovery_log(logging.WARNING, "update data directory changed; health check deferred and recovery evidence retained")
+            return False
+        _safe_recovery_log(logging.WARNING, "update health check deferred; existing record retained")
         return False
 
 
@@ -554,6 +609,34 @@ def _check_health_locked():
     if data["build"] != APP_VERSION:
         return False
 
+    if _is_frozen():
+        # A different data directory must not increment a copied health record
+        # or make a recovery decision for this executable. Keep this lock until
+        # the decision and any nested rollback have finished.
+        with _update_target_resource.hold():
+            from core import update_target_state
+            from core.config import get_data_dir
+            transaction = update_target_state.read(_self_path())
+            update_target_state.require_owner(transaction, get_data_dir())
+            if transaction and "backup_id" in transaction and transaction["backup_id"] != data.get("backup_id"):
+                raise ValueError("health backup does not match update transaction")
+            if transaction is not None:
+                digest = _sha256_file(_self_path())
+                if transaction["operation"] == "upgrade":
+                    if (transaction["phase"] == "aborted" or transaction["to_build"] != data["build"]
+                            or transaction["to_sha256"] != digest):
+                        raise ValueError("health target does not match update")
+                elif (transaction["phase"] != "prepared" or transaction["from_build"] != data["build"]
+                        or transaction["from_sha256"] != digest):
+                    raise ValueError("health target does not match rollback")
+            _verify_health_job(data, transaction, _self_path())
+            return _advance_health_decision(path, data)
+    return _advance_health_decision(path, data)
+
+
+def _advance_health_decision(path, data):
+    """Persist the startup decision while the caller owns the relevant locks."""
+
     # Persist the decision before attempting replacement. In particular, a
     # failed restore must not leave the old count eligible for confirmation.
     # If persistence fails, preserve the existing record and do not restore.
@@ -563,9 +646,12 @@ def _check_health_locked():
     if fails < MAX_HEALTH_FAILS:
         fails += 1
         data["fails"] = fails
-        _write_update_record(path, data)
+        try:
+            _write_update_record(path, data)
+        except Exception as error:
+            raise HealthDecisionPersistenceError("update health decision could not be persisted") from error
     if fails >= MAX_HEALTH_FAILS:
-        _log.warning("_check_health: build %d unconfirmed after %d boots — rolling back", APP_VERSION, fails)
+        _safe_recovery_log(logging.WARNING, "_check_health: build %d unconfirmed after %d boots — rolling back", APP_VERSION, fails)
         ok = rollback()
         if ok:
             # Even an atomic restore may have lost its completion record.
@@ -616,6 +702,7 @@ def _apply_marker_locked(marker) -> bool:
             from core.config import get_data_dir
             _update_record_path(target)
             transaction = update_target_state.read(target)
+            update_target_state.require_owner(transaction, get_data_dir())
             if (transaction is None or transaction["operation"] != "upgrade"
                     or transaction["transaction_id"] != data["transaction_id"]
                     or transaction["to_build"] != version
@@ -623,6 +710,8 @@ def _apply_marker_locked(marker) -> bool:
                     or transaction["to_sha256"] != data["new_sha256"]
                     or transaction["phase"] == "aborted"):
                 raise ValueError("update marker transaction changed")
+            if "backup_id" in transaction and transaction["backup_id"] != data["backup_id"]:
+                raise ValueError("update marker backup does not match transaction")
             _backup(data, transaction, target)
             backup = get_data_dir() / "backups" / data["backup_id"]
             try:
@@ -729,6 +818,12 @@ def check_and_apply_pending(*, post_update: bool = False) -> bool:
             if restarted:
                 _pending_version = _load_check_cache().get("latest")
             return restarted  # Do not erase evidence after incomplete health publication.
+        # The loop guard only suppresses reapplying pending updates.  This is
+        # still a boot of the new build and must count towards its health
+        # decision; otherwise repeated post-update boots can evade rollback.
+        if _check_health():
+            _pending_version = APP_VERSION
+            return True
         # No transaction proves either fixed name belongs to this update.
         # Keep both files and their cache evidence; skip apply to avoid a loop.
         _log.info("post-update boot, preserving unproven pending files")
@@ -1009,6 +1104,9 @@ def _report(msg: str, exc: Exception | None = None, level: str = "warning", **ct
         pass
     try:
         import core.telemetry as _tel
+        defer = getattr(_tel, "defer_startup_update", None)
+        if defer is not None and defer(event, level):
+            return
         base: dict = {
             "component": "updater",
             "app_version": str(APP_VERSION),
@@ -1553,6 +1651,59 @@ def _create_update_backup(source: Path, backup: Path, *, old_digest: str,
             raise ValueError("update backup identity changed")
 
 
+class _PreviousUpdateUnconfirmed(ValueError):
+    """A new update cannot supersede unresolved health evidence."""
+
+
+def _require_previous_update_confirmed(transaction, target, owner):
+    """Prove that the target transaction's own recovery was confirmed."""
+    try:
+        # The persisted owner is a declaration, not authority to open an
+        # arbitrary path or UNC share. The caller supplies its own data root.
+        owner = Path(owner)
+        prior = _read_health_record(owner / "cache" / FILE_UPDATE_HEALTH)
+        backup_id = transaction.get("backup_id")
+        if (not isinstance(backup_id, str) or prior.get("backup_id") != backup_id
+                or prior["build"] != transaction["to_build"] or not prior["confirmed"]):
+            raise _PreviousUpdateUnconfirmed
+        backup = owner / "backups" / backup_id
+        _update_record_path(backup)
+        info = backup.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_UPDATE_BYTES:
+            raise _PreviousUpdateUnconfirmed
+        receipt = _read_update_record(backup.with_name(backup.name + ".json"))
+        if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1
+                or receipt.get("backup_id") != backup_id or receipt.get("target") != str(target.resolve())
+                or type(receipt.get("from_build")) is not int or receipt["from_build"] != transaction["from_build"]
+                or type(receipt.get("to_build")) is not int or receipt["to_build"] != transaction["to_build"]
+                or receipt.get("sha256") != transaction["from_sha256"]
+                or receipt.get("replacement_sha256") != transaction["to_sha256"]
+                or _sha256_file(backup) != transaction["from_sha256"]):
+            raise _PreviousUpdateUnconfirmed
+        if prior.get("job_id") is not None:
+            job_id = prior["job_id"]
+            metadata = _read_update_record(owner / "cache" / "update-jobs" / job_id / "job.json")
+            if (type(metadata.get("schema_version")) is not int or metadata["schema_version"] != 2
+                    or metadata.get("job_id") != job_id or metadata.get("target") != str(target.resolve())
+                    or type(metadata.get("version")) is not int or metadata["version"] != transaction["to_build"]
+                    or metadata.get("transaction_id") != transaction["transaction_id"]
+                    or metadata.get("backup_id") != backup_id
+                    or ("owner_data_dir" in metadata and metadata["owner_data_dir"] != transaction["owner_data_dir"])
+                    or metadata.get("old_sha256") != transaction["from_sha256"]
+                    or metadata.get("new_sha256") != transaction["to_sha256"]):
+                raise _PreviousUpdateUnconfirmed
+            if metadata.get("state") == "retired":
+                from core.update_retirement import receipt as retirement_receipt
+                retirement = retirement_receipt(metadata)
+                if (not retirement or retirement.get("outcome") != "applied"
+                        or retirement.get("from_build") != transaction["from_build"]):
+                    raise _PreviousUpdateUnconfirmed
+            elif metadata.get("state") not in {"launching", "scheduled"}:
+                raise _PreviousUpdateUnconfirmed
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise _PreviousUpdateUnconfirmed from error
+
+
 @_update_target_mutation
 def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
     if not _verify_pending_signature(pending, remote_ver):
@@ -1562,9 +1713,18 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
 
     try:
         from core import update_target_state
+        from core.config import get_data_dir
         transaction = update_target_state.read(self_path)
+        update_target_state.require_owner(transaction, get_data_dir())
         if transaction is not None and transaction["phase"] == "prepared":
             raise ValueError("executable has an unresolved update transaction")
+        if (transaction is not None and transaction["operation"] == "upgrade"
+                and transaction["phase"] == "applied" and "owner_data_dir" in transaction):
+            # Do not discard a previous upgrade's only target-scoped recovery
+            # authority, even when a second data directory owns the candidate.
+            # All current health decisions also hold the target lock, which is
+            # already held here; older releases may not follow this protocol.
+            _require_previous_update_confirmed(transaction, self_path, get_data_dir())
         original_digest = _sha256_file(self_path)
         installed_build = update_target_state.current_build(self_path, original_digest, APP_VERSION)
         if installed_build != APP_VERSION or remote_ver <= installed_build:
@@ -1578,8 +1738,14 @@ def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
         _create_update_backup(self_path, backup, old_digest=original_digest,
                               new_digest=pending_digest, new_version=remote_ver)
         transaction = update_target_state.prepare(self_path, operation="upgrade", from_build=installed_build,
-            to_build=remote_ver, from_digest=original_digest, to_digest=pending_digest)
+            to_build=remote_ver, from_digest=original_digest, to_digest=pending_digest,
+            owner_data_dir=get_data_dir(), backup_id=backup.name)
     except Exception as e:
+        from core.update_target_state import UpdateOwnerMismatch
+        if isinstance(e, UpdateOwnerMismatch):
+            _log.warning("update data directory changed; upgrade deferred and recovery evidence retained")
+        if isinstance(e, _PreviousUpdateUnconfirmed):
+            _log.warning("previous update health is unconfirmed or unavailable; upgrade deferred and recovery evidence retained")
         _log.error("_do_apply: backup failed (%s)", type(e).__name__)
         _report("apply_backup_failed", exc=e, level="error",
                 self_path=str(self_path), backup=str(backup),
@@ -1724,6 +1890,11 @@ def _apply_unix(pending: Path, self_path: Path, new_version: int) -> None:
 @_update_mutation
 def _apply_windows(pending: Path, self_path: Path, new_version: int, recovery=None) -> None:
     """Schedule a digest-bound private job; never register a mutable reboot move."""
+    transaction = (recovery or {}).get("transaction")
+    if transaction is not None and transaction.get("operation") == "rollback":
+        # The upgrade fallback marker cannot represent rollback ownership.
+        # Reject before the fallback handler can publish misleading evidence.
+        raise ValueError("rollback requires a separate recovery scheduler")
     from core.update_windows import schedule
     try:
         schedule(pending, self_path, new_version, recovery)
@@ -1801,6 +1972,44 @@ def rollback() -> bool:
     return _rollback_locked()
 
 
+def _verify_rollback_job(health: dict, receipt: dict, target: Path, transaction: dict | None) -> None:
+    """Validate available ownership evidence without discarding old recovery records."""
+    job_id = health.get("job_id")
+    if job_id is None:
+        return  # Legacy records predate Windows jobs.
+    metadata = _read_update_record(_get_cache_path().parent / "update-jobs" / job_id / "job.json")
+    from core.config import get_data_dir
+    from core.update_target_state import require_owner
+    require_owner(metadata, get_data_dir())
+    if (transaction is None or type(metadata.get("schema_version")) is not int
+            or metadata["schema_version"] != 2 or metadata.get("job_id") != job_id
+            or metadata.get("state") not in {"launching", "scheduled"}
+            or type(metadata.get("version")) is not int or metadata["version"] != health["build"]
+            or metadata.get("target") != str(target.resolve())
+            or metadata.get("backup_id") != health.get("backup_id")
+            or metadata.get("old_sha256") != receipt["sha256"]
+            or metadata.get("new_sha256") != receipt["replacement_sha256"]
+            or not isinstance(metadata.get("transaction_id"), str)
+            or not re.fullmatch(r"[a-f0-9]{32}", metadata["transaction_id"])):
+        raise ValueError("rollback job ownership is unverified")
+    if transaction["operation"] == "upgrade":
+        if (transaction["phase"] == "aborted"
+                or transaction["transaction_id"] != metadata["transaction_id"]
+                or transaction["from_build"] != receipt["from_build"]
+                or transaction["to_build"] != receipt["to_build"]
+                or transaction["from_sha256"] != receipt["sha256"]
+                or transaction["to_sha256"] != receipt["replacement_sha256"]):
+            raise ValueError("rollback job does not match the upgrade transaction")
+    elif (transaction["from_build"] != receipt["to_build"]
+            or transaction["to_build"] != receipt["from_build"]
+            or transaction["from_sha256"] != receipt["replacement_sha256"]
+            or transaction["to_sha256"] != receipt["sha256"]):
+        raise ValueError("rollback job does not match the recovery transaction")
+    if (transaction["operation"] == "rollback" and "source_transaction_id" in transaction
+            and transaction["source_transaction_id"] != metadata["transaction_id"]):
+        raise ValueError("rollback retry belongs to another upgrade transaction")
+
+
 @_update_mutation
 @_update_target_mutation
 def _rollback_locked() -> bool:
@@ -1832,8 +2041,13 @@ def _rollback_locked() -> bool:
             raise ValueError("rollback backup identity or integrity mismatch")
         current_digest = _sha256_file(self_path)
         from core import update_target_state
+        latest = update_target_state.read(self_path)
+        update_target_state.require_owner(latest, get_data_dir())
+        if (latest and "backup_id" in latest
+                and latest["backup_id"] != backup_id):
+            raise ValueError("rollback backup does not match update transaction")
+        _verify_rollback_job(health, record, self_path, latest)
         if current_digest == record["sha256"]:
-            latest = update_target_state.read(self_path)
             if (latest is None or latest["operation"] != "rollback"
                     or latest["from_build"] != record["to_build"] or latest["to_build"] != record["from_build"]
                     or latest["from_sha256"] != record["replacement_sha256"] or latest["to_sha256"] != record["sha256"]):
@@ -1845,7 +2059,6 @@ def _rollback_locked() -> bool:
         installed_build = update_target_state.current_build(self_path, current_digest, record["to_build"])
         if installed_build != record["to_build"]:
             raise ValueError("rollback version changed outside this update")
-        latest = update_target_state.read(self_path)
         if latest is not None and latest["operation"] == "rollback":
             if (latest["phase"] != "prepared" or latest["from_build"] != installed_build
                     or latest["to_build"] != record["from_build"]
@@ -1854,13 +2067,24 @@ def _rollback_locked() -> bool:
             transaction = latest
         else:
             transaction = update_target_state.prepare(self_path, operation="rollback", from_build=installed_build,
-                to_build=record["from_build"], from_digest=current_digest, to_digest=record["sha256"])
+                to_build=record["from_build"], from_digest=current_digest, to_digest=record["sha256"],
+                owner_data_dir=get_data_dir(),
+                source_transaction_id=latest["transaction_id"] if latest and latest["operation"] == "upgrade" else None,
+                backup_id=backup_id)
+        if sys.platform == "win32":
+            from core.update_windows import current_process_maps_image
+            if current_process_maps_image(self_path):
+                # Replacing a currently mapped Windows image fails, leaving a
+                # full-sized staged file on every boot. The prepared recovery
+                # transaction and its backup remain available to a later helper.
+                _safe_recovery_log(logging.WARNING, "rollback deferred: target is the current process image")
+                return False
         _atomic_copy(backup, self_path, expected_digest=record["sha256"])
         committed = True
         update_target_state.completed(self_path, transaction)
         return True
     except Exception as e:
-        _log.error("rollback refused or failed; backup and health retained: %s", e)
+        _safe_recovery_log(logging.ERROR, "rollback refused or failed; backup and health retained: %s", e)
         return committed
 
 

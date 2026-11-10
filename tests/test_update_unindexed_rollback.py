@@ -60,7 +60,7 @@ def test_boot_restores_unindexed_prepared_rollback_using_existing_transaction(re
     target, backup, job, metadata, original = recovery
     target.write_bytes(b"new")
     updater._write_update_record(updater._get_health_path(), {"build": metadata["version"], "confirmed": False,
-        "fails": updater.MAX_HEALTH_FAILS - 1, "job_id": job.name, "backup_id": backup.name})
+        "fails": updater.MAX_HEALTH_FAILS, "job_id": job.name, "backup_id": backup.name})
     updater._write_update_record(job / "running.json", {"schema_version": 1, "job_id": job.name,
         "version": metadata["version"], "created_ticks": 123})
     with monkeypatch.context() as patch:

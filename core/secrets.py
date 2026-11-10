@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 
@@ -45,20 +46,29 @@ def before_send(event, hint):
 def atomic_write(path: Path, content: str | bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".opskit-", dir=path.parent)
-    try:
+    # After creation the name can be replaced by an uncooperative process.
+    # Unlinking that name on failure or after publication could delete its
+    # file; leave any residual entry for a future ownership-aware recovery.
+    with os.fdopen(fd, "wb") as output:
         if os.name == "nt":
-            restrict_permissions(Path(temporary))
+            from core.windows_permissions import restrict_verified_file
+            restrict_verified_file(temporary, os.fstat(output.fileno()))
         else:
             # Bind permission changes to the created file, not a name that a
             # concurrent process can replace with a link to an unrelated file.
-            os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "wb") as output:
-            output.write(content.encode("utf-8") if isinstance(content, str) else content)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+            os.fchmod(output.fileno(), 0o600)
+        output.write(content.encode("utf-8") if isinstance(content, str) else content)
+        output.flush()
+        os.fsync(output.fileno())
+        from core.file_identity import same_file_identity
+        opened = os.fstat(output.fileno())
+        current = os.lstat(temporary)
+        if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(current.st_mode)
+                or opened.st_nlink != 1 or current.st_nlink != 1
+                or not same_file_identity(opened, current)):
+            raise ValueError("atomic write temporary file changed")
+    # Another process can still replace either path after this check.
+    os.replace(temporary, path)
 
 
 def restrict_permissions(path: Path) -> None:

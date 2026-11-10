@@ -46,10 +46,8 @@ def test_ensure_config_idempotent(tmp_path: Path) -> None:
     (b"# external\nlanguage: zh\nuser_marker: keep\n", True),
     (b"language: [invalid\n", False),
 ])
-@pytest.mark.xfail(os.name != "nt", strict=True, raises=AssertionError,
-                   reason="initial configuration can replace an outside writer's file")
 def test_ensure_config_does_not_replace_file_created_during_publication(
-    monkeypatch, contents, valid,
+    monkeypatch, contents, valid, tmp_path, request,
 ) -> None:
     import core.config as config
 
@@ -57,7 +55,16 @@ def test_ensure_config_does_not_replace_file_created_during_publication(
         import core.private_export as private_export
         publish = private_export.publish_private_file
     else:
-        publish = config.save_config
+        import core.config_anonymous as anonymous
+        supported = anonymous.publish_if_supported(tmp_path / "publication-probe", b"probe")
+        if supported:
+            publish = anonymous._link_descriptor
+        else:
+            request.node.add_marker(pytest.mark.xfail(
+                strict=True, raises=AssertionError,
+                reason="unsupported POSIX filesystem still uses the legacy initial publisher",
+            ))
+            publish = config.save_config
 
     def create_before_publish(*args):
         # This writer does not participate in OpsKit's configuration lock.
@@ -71,6 +78,8 @@ def test_ensure_config_does_not_replace_file_created_during_publication(
 
     if os.name == "nt":
         monkeypatch.setattr(private_export, "publish_private_file", create_before_publish)
+    elif supported:
+        monkeypatch.setattr(anonymous, "_link_descriptor", create_before_publish)
     else:
         monkeypatch.setattr(config, "save_config", create_before_publish)
     try:
@@ -81,6 +90,34 @@ def test_ensure_config_does_not_replace_file_created_during_publication(
         assert valid
         assert result.get("user_marker") == "keep"
     assert get_config_path().read_bytes() == contents
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX compatibility fallback")
+def test_unsupported_initial_publisher_preserves_existing_startup(monkeypatch):
+    import core.config as config
+    import core.config_anonymous as anonymous
+
+    monkeypatch.setattr(anonymous, "publish_if_supported", lambda path, raw: False)
+    assert config.ensure_config()["language"] == DEFAULT_CONFIG["language"]
+    assert get_config_path().is_file()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX publication errors")
+def test_initial_publisher_error_does_not_fall_back(monkeypatch):
+    import core.config as config
+    import core.config_anonymous as anonymous
+
+    def fail(*args):
+        raise PermissionError("publication denied")
+
+    def no_fallback(*args):
+        pytest.fail("an operational failure must not select the legacy fallback")
+
+    monkeypatch.setattr(anonymous, "publish_if_supported", fail)
+    monkeypatch.setattr(config, "save_config", no_fallback)
+    with pytest.raises(PermissionError, match="publication denied"):
+        config.ensure_config()
+    assert not get_config_path().exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows handle-bound publication")

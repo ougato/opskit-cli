@@ -11,19 +11,10 @@ from pathlib import Path
 import stat
 
 from core.plugin_tree import bounded_paths
+from core.paths import absolute_path
 
 MAX_BYTES = 512 * 1024**2
 MAX_ENTRIES = 16384
-
-
-def absolute_path(path):
-    """Use extended Windows paths without requiring a machine registry change."""
-    result = Path(path).absolute()
-    value = str(result)
-    if os.name == "nt" and not value.startswith("\\\\?\\"):
-        value = "\\\\?\\UNC\\" + value[2:] if value.startswith("\\\\") else "\\\\?\\" + value
-        return Path(value)
-    return result
 
 
 def inventory(root: Path, *, allow_empty=False) -> dict[str, str]:

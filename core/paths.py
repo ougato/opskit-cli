@@ -15,6 +15,16 @@ import sys
 from pathlib import Path
 
 
+def absolute_path(path: str | Path) -> Path:
+    """Use extended Windows paths without a machine-wide registry setting."""
+    result = Path(path).absolute()
+    value = str(result)
+    if os.name == "nt" and not value.startswith("\\\\?\\"):
+        value = "\\\\?\\UNC\\" + value[2:] if value.startswith("\\\\") else "\\\\?\\" + value
+        return Path(value)
+    return result
+
+
 # ─── 懒加载 platformdirs（打包环境已内置，开发环境按需 import）────────────────
 def _get_platformdirs():
     try:

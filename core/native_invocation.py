@@ -14,6 +14,7 @@ from core.native_protocol import exchange
 from core.native_runtime import stage, verify, absolute_path
 from core.native_runtime_prepare import stage_candidate, validate_record
 from core.native_sandbox import get_backend
+from core.native_short_path import short_execution_root
 
 
 def _stage_runtime_worker(connection, source, destination, files):
@@ -131,47 +132,49 @@ def invoke(runtime, record, plugin, plugin_files, seed, seed_files, request, *,
         inputs.mkdir()
         request_path = inputs / "request.json"
         request_path.write_text(envelope, encoding="utf-8")
-        private_runtime = base / "runtime"
-        executable = private_runtime / "python" / "python.exe"
-        # Linux/macOS backends define their interpreter layout when implemented.
-        bootstrap = ("import sys,runpy; sys.path.insert(0," +
-                     repr(str(private_runtime / "site-packages")) +
-                     "); sys.argv=['core.plugin_worker'," + repr(str(request_path)) +
-                     "]; runpy.run_module('core.plugin_worker',run_name='__main__')")
-        environment = {"OPSKIT_SANDBOX": "1", "OPSKIT_DATA_DIR": str(base / "data"),
-                       "OPSKIT_PLUGIN_ROOT": str(base / "plugin"),
-                       "OPSKIT_SEED_ROOT": str(base / "seed"),
-                       "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
-        checkpoint()
-        if preload is not None:
-            from core.native_preload import open_preloaded_worker
-            startup_deadline = deadline() if callable(deadline) else deadline
-            with open_preloaded_worker(backend, base, deadline=startup_deadline, cancel_event=preload.cancelled) as worker:
-                def validate():
-                    if worker.child.poll() is not None:
-                        # A worker can be stopped externally while its menu is
-                        # idle. Retire it before retrying the ordinary path.
-                        from core.plugin_entry_preload import PreloadStale
-                        raise PreloadStale()
-                    # User-idle time is excluded from the invocation budget;
-                    # take() has installed the selected deadline on this thread.
-                    from core.plugin_sandbox import _invocations
-                    selected_deadline = getattr(_invocations, "deadline", None) or startup_deadline
-                    with verify_runtime_snapshot(base / "runtime", record["files"],
-                                                 deadline=selected_deadline,
-                                                 cancel_event=preload.cancelled) as wait:
-                        verify(base / "plugin", plugin_files)
-                        verify(base / "seed", seed_files, allow_empty=True)
-                        validate_preload()
-                        wait()
-                return preload.handoff(worker, checkpoint=checkpoint, dispatch=dispatch,
-                                       output=output, validate=validate, state=preload_state)
-        # -I ignores PYTHONIOENCODING. Explicit UTF-8 mode keeps Chinese plugin
-        # output consistent with the UTF-8 pipe protocol on Windows.
-        with open_worker(backend, str(executable), ["-I", "-X", "utf8", "-S", "-B", "-u", "-c", bootstrap],
-                         filter_python_startup=True,
-                         readonly_trees=(base,),
-                         writable_trees=(base / "data",), environment=environment,
-                         cwd=str(base / "data")) as child:
-            return exchange(child, deadline=deadline, dispatch=dispatch,
-                            checkpoint=checkpoint, output=output)
+        with short_execution_root(base, "runtime/python/python.exe") as base:
+            request_path = base / "inputs" / "request.json"
+            private_runtime = base / "runtime"
+            executable = private_runtime / "python" / "python.exe"
+            # Linux/macOS backends define their interpreter layout when implemented.
+            bootstrap = ("import sys,runpy; sys.path.insert(0," +
+                         repr(str(private_runtime / "site-packages")) +
+                         "); sys.argv=['core.plugin_worker'," + repr(str(request_path)) +
+                         "]; runpy.run_module('core.plugin_worker',run_name='__main__')")
+            environment = {"OPSKIT_SANDBOX": "1", "OPSKIT_DATA_DIR": str(base / "data"),
+                           "OPSKIT_PLUGIN_ROOT": str(base / "plugin"),
+                           "OPSKIT_SEED_ROOT": str(base / "seed"),
+                           "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
+            checkpoint()
+            if preload is not None:
+                from core.native_preload import open_preloaded_worker
+                startup_deadline = deadline() if callable(deadline) else deadline
+                with open_preloaded_worker(backend, base, deadline=startup_deadline, cancel_event=preload.cancelled) as worker:
+                    def validate():
+                        if worker.child.poll() is not None:
+                            # A worker can be stopped externally while its menu is
+                            # idle. Retire it before retrying the ordinary path.
+                            from core.plugin_entry_preload import PreloadStale
+                            raise PreloadStale()
+                        # User-idle time is excluded from the invocation budget;
+                        # take() has installed the selected deadline on this thread.
+                        from core.plugin_sandbox import _invocations
+                        selected_deadline = getattr(_invocations, "deadline", None) or startup_deadline
+                        with verify_runtime_snapshot(base / "runtime", record["files"],
+                                                     deadline=selected_deadline,
+                                                     cancel_event=preload.cancelled) as wait:
+                            verify(base / "plugin", plugin_files)
+                            verify(base / "seed", seed_files, allow_empty=True)
+                            validate_preload()
+                            wait()
+                    return preload.handoff(worker, checkpoint=checkpoint, dispatch=dispatch,
+                                           output=output, validate=validate, state=preload_state)
+            # -I ignores PYTHONIOENCODING. Explicit UTF-8 mode keeps Chinese plugin
+            # output consistent with the UTF-8 pipe protocol on Windows.
+            with open_worker(backend, str(executable), ["-I", "-X", "utf8", "-S", "-B", "-u", "-c", bootstrap],
+                             filter_python_startup=True,
+                             readonly_trees=(base,),
+                             writable_trees=(base / "data",), environment=environment,
+                             cwd=str(base / "data")) as child:
+                return exchange(child, deadline=deadline, dispatch=dispatch,
+                                checkpoint=checkpoint, output=output)

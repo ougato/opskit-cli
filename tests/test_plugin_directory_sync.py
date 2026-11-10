@@ -43,3 +43,14 @@ def test_directory_replaced_during_fsync_is_not_confirmed(tmp_path, monkeypatch)
         metadata.sync_directory(target, original_identity)
     assert _directory(old) == original_identity
     assert _directory(target) != original_identity
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows directory identity contract')
+def test_windows_journal_barrier_checks_identity_without_posix_fsync(tmp_path, monkeypatch):
+    from core import plugin_install_transaction as publication
+
+    def unexpected_sync(descriptor):
+        pytest.fail('Windows does not claim a POSIX directory fsync')
+
+    monkeypatch.setattr(os, 'fsync', unexpected_sync)
+    publication._sync_journal(tmp_path, publication._private_directory(tmp_path))

@@ -103,9 +103,15 @@ def test_captured_guest_imports_and_rpc_adapter_without_platform_modules(tmp_pat
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     code = '''
-import importlib.util, json, sys
+import importlib.util, json, os, sys
+from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 sys.path.extend(json.loads(sys.argv[2]))
+os.environ['OPSKIT_DATA_DIR'] = sys.argv[3]
+os.environ['OPSKIT_LANGUAGE'] = 'en'
+from core.config import ensure_config
+assert isinstance(ensure_config(), dict)
+assert (Path(sys.argv[3]) / 'config' / 'common.yaml').is_file()
 from core import sdk, plugin_worker
 plugin_worker._adapt_sdk('owned')
 for name in ('updater', 'privilege', 'http', 'plugin', 'plugin_services', 'plugin_runtime', 'plugin_sandbox', 'plugin_gateway', 'plugin_egress'):
@@ -118,12 +124,19 @@ assert sdk.open_service_menu(name='approved', breadcrumb=['one'], context={'test
 assert calls[0][0] == ('service.call', 'approved', 'open_menu', [['one'], {'test': True}], {})
 assert sdk.current_lang() in ('en', 'zh')
 assert sdk.get_color('success')
+state_file = Path(sys.argv[3]) / 'state' / 'values.yaml'
+sdk.save_yaml(state_file, {'value': 42})
+assert sdk.load_yaml(state_file) == {'value': 42}
+from core.resource_lock import ResourceLock
+with ResourceLock(lambda: Path(sys.argv[3]) / 'locks' / 'lock', label='guest test').hold():
+    pass
 print(json.dumps({'sdk_exports': sorted(sdk.__all__), 'platform_modules_absent': True}))
 '''
     # Match a guest with dependencies but no host editable-install import hook.
     # -I alone still executes site-packages .pth files from the host environment.
     libraries = sorted({sysconfig.get_paths()[key] for key in ("purelib", "platlib")})
-    result = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(captured), json.dumps(libraries)],
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(captured), json.dumps(libraries),
+                             str(tmp_path / 'guest-data')],
                             cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads(result.stdout)

@@ -101,6 +101,19 @@ def _private_directory(path):
     return identity
 
 
+def _sync_journal(journal, identity):
+    """Recheck and sync existing evidence before resuming a transaction.
+
+    A worker may have stopped after linking a record but before its directory
+    sync. This barrier does not establish power-loss durability of ancestors.
+    """
+    if _private_directory(journal) != identity:
+        raise ValueError("publication journal changed before sync")
+    sync_directory(journal, identity)
+    if _private_directory(journal) != identity:
+        raise ValueError("publication journal changed during sync")
+
+
 def _roots(*, create=False):
     from core.paths import data_dir, plugins_dir
     root, state = plugins_dir().absolute(), data_dir().absolute()
@@ -335,11 +348,15 @@ def _worker(connection, operation, arguments, request):
             from core.plugin_install_retirement import read_publication, retirement_status, confirm_withdrawal
             token, = arguments
             root, _, journal, _ = _roots()
-            _private_directory(journal)
+            journal_identity = _private_directory(journal)
             record = read_publication(journal, token)
             with (_locks(root, record["plugin"]) if operation == "recover" else nullcontext()):
                 if read_publication(journal, token) != record:
                     raise ValueError("publication intent changed")
+                if operation == "recover":
+                    _sync_journal(journal, journal_identity)
+                    if read_publication(journal, token) != record:
+                        raise ValueError("publication intent changed during sync")
                 status = retirement_status(journal, record) or _topology(journal, record)
                 if operation == "recover" and status == "published-unconfirmed":
                     from core.plugin_trust import authorization_transaction, invalidate

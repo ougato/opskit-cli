@@ -525,6 +525,90 @@ def test_recorded_rollback_restores_complete_old_binary(committed_update):
     assert updater.rollback()  # Idempotent after a committed restore.
 
 
+def test_mapped_windows_image_defers_without_repeated_staging(committed_update, monkeypatch):
+    from core import update_target_state, update_windows
+    current, backup, build, new_bytes = committed_update
+    health = updater._get_health_path()
+    previous = health.read_bytes(), backup.read_bytes(), current.read_bytes()
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    monkeypatch.setattr(update_windows, "current_process_maps_image", lambda target: target == current)
+    copy = updater._atomic_copy
+    monkeypatch.setattr(updater, "_atomic_copy", lambda *a, **kw: pytest.fail("mapped image staged"))
+    for _ in range(3):
+        assert updater.rollback() is False
+        transaction = update_target_state.read(current)
+        assert transaction["operation"] == "rollback" and transaction["phase"] == "prepared"
+        assert (health.read_bytes(), backup.read_bytes(), current.read_bytes()) == previous
+        assert not list(current.parent.glob(".opskit-replace-*"))
+    # A distinct process that does not map the target retains the existing
+    # successful recovery path and completes the same prepared transaction.
+    monkeypatch.setattr(update_windows, "current_process_maps_image", lambda target: False)
+    monkeypatch.setattr(updater, "_atomic_copy", copy)
+    assert updater.rollback()
+    assert current.read_bytes() == b"old-program"
+    assert backup.read_bytes() == b"old-program" and health.read_bytes() == previous[0]
+    assert update_target_state.read(current)["phase"] == "applied"
+
+
+def test_failed_log_sink_does_not_change_health_or_mapped_image_decision(committed_update, monkeypatch):
+    import logging
+    from core import update_target_state, update_windows
+    current, backup, build, new_bytes = committed_update
+    monkeypatch.setattr(updater, "APP_VERSION", build)
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    monkeypatch.setattr(update_windows, "current_process_maps_image", lambda target: True)
+    health = updater._get_health_path()
+    record = updater._read_health_record(health)
+    updater._write_update_record(health, {**record, "fails": updater.MAX_HEALTH_FAILS - 1})
+    messages = []
+    def broken_sink(record):
+        messages.append(record.msg)
+        raise OSError("log sink unavailable")
+    monkeypatch.setattr(updater._log, "handle", broken_sink)
+    monkeypatch.setattr(updater._log, "level", logging.WARNING)
+    monkeypatch.setattr(updater, "_atomic_copy", lambda *a, **kw: pytest.fail("mapped image staged"))
+    assert updater._check_health() is False
+    assert updater._read_health_record(health)["fails"] == updater.MAX_HEALTH_FAILS
+    assert current.read_bytes() == new_bytes and backup.read_bytes() == b"old-program"
+    assert update_target_state.read(current)["phase"] == "prepared"
+    assert len(messages) >= 2
+
+
+def test_failed_log_sink_preserves_rollback_validation_failure(committed_update, monkeypatch):
+    import logging
+    current, backup, build, new_bytes = committed_update
+    health = updater._get_health_path().read_bytes()
+    backup.write_bytes(b"modified backup")
+    messages = []
+    def broken_sink(record):
+        messages.append(record.msg)
+        raise OSError("log sink unavailable")
+    monkeypatch.setattr(updater._log, "handle", broken_sink)
+    monkeypatch.setattr(updater._log, "level", logging.WARNING)
+    assert updater.rollback() is False
+    assert messages and current.read_bytes() == new_bytes
+    assert backup.read_bytes() == b"modified backup" and updater._get_health_path().read_bytes() == health
+
+
+def test_failed_log_sink_preserves_success_after_lost_rollback_completion(committed_update, monkeypatch):
+    import logging
+    from core import update_target_state
+    current, backup, build, new_bytes = committed_update
+    messages = []
+    def broken_sink(record):
+        messages.append(record.msg)
+        raise OSError("log sink unavailable")
+    def lost_completion(target, transaction):
+        raise OSError("completion record unavailable")
+    monkeypatch.setattr(updater._log, "handle", broken_sink)
+    monkeypatch.setattr(updater._log, "level", logging.WARNING)
+    monkeypatch.setattr(update_target_state, "completed", lost_completion)
+    assert updater.rollback() is True  # Bytes committed; caller still needs restart.
+    assert messages and current.read_bytes() == b"old-program" and backup.read_bytes() == b"old-program"
+    transaction = update_target_state.read(current)
+    assert transaction["operation"] == "rollback" and transaction["phase"] == "prepared"
+
+
 def test_signed_rolled_back_version_cannot_be_reapplied(committed_update, monkeypatch):
     from core import update_target_state
     current, backup, build, new_bytes = committed_update
@@ -636,7 +720,10 @@ def test_health_record_atomic_write_failure_preserves_previous(tmp_path, monkeyp
     with pytest.raises(OSError):
         updater._write_update_record(path, {"confirmed": True})
     assert updater._read_update_record(path) == {"confirmed": False}
-    assert not list(tmp_path.glob(".opskit-*"))
+    # A failed commit leaves the candidate: unlink-by-name could delete a
+    # different file if another process had replaced the temporary path.
+    temporary, = tmp_path.glob(".opskit-*")
+    assert updater._read_update_record(temporary) == {"confirmed": True}
 
 
 @pytest.mark.parametrize("body", [b"[]", b" " * 65537], ids=["array", "oversize"])

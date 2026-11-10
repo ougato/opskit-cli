@@ -107,6 +107,67 @@ def test_inspection_does_not_initialize_missing_catalog():
     assert not root.exists()
 
 
+def _owned_preparation():
+    from core import native_catalog_ownership as ownership
+    root = cleanup._root('prepare')
+    (root / 'objects').mkdir(parents=True)
+    token = 'a' * 32
+    target = root / 'objects' / token
+    target.mkdir()
+    ownership.record_creation(root, token)
+    _, digest = ownership.validate(root, token)
+    return root, token, target, digest
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows extended path behavior')
+def test_collector_handles_long_recorded_tree_and_preserves_unknown(tmp_path):
+    from core.native_runtime import absolute_path
+    root, token, target, digest = _owned_preparation()
+    directory = absolute_path(target / ('d' * 85))
+    directory.mkdir()
+    item = directory / ('f' * 85)
+    item.write_bytes(b'recorded object')
+    assert len(str(target / ('d' * 85) / ('f' * 85))) > 260
+    unknown = root / 'objects' / ('b' * 32)
+    unknown.mkdir()
+    (unknown / 'user-data').write_bytes(b'keep')
+    assert cleanup.collect('prepare', token, digest)['removed']
+    assert not target.exists()
+    assert not (root / 'ownership' / (token + '.json')).exists()
+    assert (unknown / 'user-data').read_bytes() == b'keep'
+
+
+def test_preparation_collector_refuses_replaced_object_during_cleanup(tmp_path, monkeypatch):
+    root, token, target, digest = _owned_preparation()
+    (target / 'owned').write_bytes(b'owned')
+    moved = target.with_name('original')
+    original = cleanup._remove_owned_tree
+
+    def replace_before_deletion(path, identity, checkpoint, **limits):
+        path.rename(moved)
+        path.mkdir()
+        (path / 'user-data').write_bytes(b'keep')
+        return original(path, identity, checkpoint, **limits)
+
+    monkeypatch.setattr(cleanup, '_remove_owned_tree', replace_before_deletion)
+    with pytest.raises((OSError, ValueError, RuntimeError)):
+        cleanup._collect(root, 'prepare', token, digest)
+    assert (target / 'user-data').read_bytes() == b'keep'
+    assert (moved / 'owned').read_bytes() == b'owned'
+    assert (root / 'ownership' / (token + '.json')).exists()
+
+
+def test_preparation_collector_refuses_symlink(tmp_path, symlink_capable):
+    root, token, target, digest = _owned_preparation()
+    outside = tmp_path / 'user-data'
+    outside.write_bytes(b'keep')
+    (target / 'link').symlink_to(outside)
+    with pytest.raises(RuntimeError):
+        cleanup.collect('prepare', token, digest)
+    assert outside.read_bytes() == b'keep'
+    assert (root / 'ownership' / (token + '.json')).exists()
+
+
 def test_actual_crash_mid_deletion_keeps_receipt_and_allows_retry(tmp_path):
     root, old, new, item = prepare_catalog(tmp_path, "runtime")
     code = (

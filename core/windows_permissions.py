@@ -85,3 +85,59 @@ def copy_dacl_to_verified_file(source, target, expected):
             raise ctypes.WinError(ctypes.get_last_error())
     finally:
         os.close(fd)
+
+
+def restrict_verified_file(target, expected):
+    """Apply the private file DACL only to the verified open staging object."""
+    import ctypes
+    import msvcrt
+    import stat
+    from ctypes import wintypes
+
+    if os.name != "nt":
+        raise NotImplementedError("Windows security descriptors require Windows")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    # Keep this handle without delete sharing while setting the DACL.
+    handle = create(str(target), 0x00020000 | 0x00040000, 3, None, 3,
+                    0x00200000 | 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    try:
+        actual = os.fstat(fd)
+        if (not stat.S_ISREG(actual.st_mode) or actual.st_nlink != 1
+                or getattr(actual, "st_file_attributes", 0) & 0x400
+                or not same_file_identity(actual, expected)):
+            raise ValueError("atomic write temporary file changed")
+        api = ctypes.WinDLL("advapi32", use_last_error=True)
+        convert = api.ConvertStringSecurityDescriptorToSecurityDescriptorW
+        convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                            ctypes.POINTER(wintypes.ULONG)]
+        convert.restype = wintypes.BOOL
+        apply = api.SetKernelObjectSecurity
+        apply.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p]
+        apply.restype = wintypes.BOOL
+        descriptor = ctypes.c_void_p()
+        if not convert("D:P(A;;FA;;;OW)", 1, ctypes.byref(descriptor), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not apply(msvcrt.get_osfhandle(fd), 4 | 0x80000000, descriptor):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            free = kernel.LocalFree
+            free.argtypes = [ctypes.c_void_p]
+            free.restype = ctypes.c_void_p
+            free(descriptor)
+    finally:
+        os.close(fd)
