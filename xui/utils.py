@@ -214,7 +214,7 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
     return None
 
 
-def install_xui_script(*, on_status=None, checkpoint=None) -> None:
+def install_xui_script(*, checkpoint=None) -> None:
     from core.process import stream
 
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as script:
@@ -231,21 +231,11 @@ def install_xui_script(*, on_status=None, checkpoint=None) -> None:
             "env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
             BASH_COMMAND, str(script_path),
         ])
-        updates = {
-            "beginning the installation": "xui.step.fetch_release",
-            "checksum verified": "xui.step.prepare_release",
-            "setting up systemd unit": "xui.step.setup_service",
-        }
         output = stream(command, stdin_data=XUI_INSTALL_SCRIPT_INPUT.encode(),
                         timeout=INSTALL_SCRIPT_TIMEOUT, checkpoint=checkpoint)
         try:
             while True:
-                line = next(output).lower()
-                if on_status is not None:
-                    for marker, key in updates.items():
-                        if marker in line:
-                            on_status(key)
-                            break
+                next(output)
         except StopIteration as done:
             if done.value:
                 raise InstallError(t("xui.error.install_script_exit", code=done.value)) from None

@@ -398,10 +398,6 @@ xui:
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
-    fetch_installer: "Fetching the 3x-ui install script"
-    fetch_release: "Downloading the 3x-ui release"
-    prepare_release: "Release checksum verified, preparing installation"
-    setup_service: "Setting up the systemd service"
     enable_bbr: "Enable BBR"
     install_xui: "Install X-UI"
     generate_credentials: "Generate credentials"

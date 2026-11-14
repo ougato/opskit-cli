@@ -316,12 +316,7 @@ def install_server(options: dict | None = None) -> dict | None:
 
         sp.step(t("xui.step.install_xui"))
         if not command_exists(XUI_COMMAND):
-            if options is None:
-                sp.print_status(t("xui.step.fetch_installer"))
-            install_xui_script(
-                on_status=(lambda key: sp.print_status(t(key))) if options is None else None,
-                checkpoint=sp.check_interrupt,
-            )
+            install_xui_script(checkpoint=sp.check_interrupt)
 
         sp.step(t("xui.step.generate_credentials"))
         private_key, public_key = generate_reality_keypair()

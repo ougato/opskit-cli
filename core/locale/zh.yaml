@@ -397,10 +397,6 @@ xui:
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"
-    fetch_installer: "正在获取 3x-ui 安装脚本"
-    fetch_release: "正在下载 3x-ui 发布包"
-    prepare_release: "发布包校验通过，正在准备安装"
-    setup_service: "正在配置 systemd 服务"
     enable_bbr: "开启 BBR"
     install_xui: "安装 X-UI"
     generate_credentials: "生成凭据"

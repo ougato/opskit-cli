@@ -193,7 +193,7 @@ def test_esc_returns_from_install_wizard_without_failure(monkeypatch):
     menu._do_install(["OpsKit"], XuiRecipe, XuiRecipe())
 
 
-def test_upstream_install_reports_only_relevant_stages(monkeypatch):
+def test_upstream_install_keeps_script_output_hidden(monkeypatch, capsys):
     from core import process
     from xui import utils
 
@@ -212,8 +212,9 @@ def test_upstream_install_reports_only_relevant_stages(monkeypatch):
         return 0
 
     monkeypatch.setattr(process, "stream", installer)
-    utils.install_xui_script(on_status=stages.append, checkpoint=lambda: stages.append("checkpoint"))
-    assert stages == ["checkpoint", "xui.step.fetch_release", "xui.step.prepare_release", "xui.step.setup_service"]
+    utils.install_xui_script(checkpoint=lambda: stages.append("checkpoint"))
+    assert stages == ["checkpoint"]
+    assert capsys.readouterr() == ("", "")
 
 
 @pytest.mark.parametrize("valid_ip", [b"8.8.8.8\n", b"2606:4700::1111", b""])
