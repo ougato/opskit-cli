@@ -1,4 +1,5 @@
 """TCP tuning capability, persistence, readback and failure recovery."""
+from pathlib import Path
 from types import SimpleNamespace
 import subprocess
 
@@ -12,7 +13,7 @@ from xui import network_tuning as tuning
 def host(tmp_path, monkeypatch):
     sysctl = tmp_path / "sysctl.conf"
     modules = tmp_path / "modules.conf"
-    sysctl.write_text("# previous managed config\n")
+    sysctl.write_bytes(b"# previous managed config\r\n# no final newline \xff")
     values = {"net.ipv4.tcp_available_congestion_control": "reno cubic",
               "net.ipv4.tcp_congestion_control": "cubic", "net.ipv4.tcp_mtu_probing": "0",
               "net.core.default_qdisc": "fq_codel"}
@@ -22,6 +23,11 @@ def host(tmp_path, monkeypatch):
     def run(command, **kwargs):
         state.commands.append(command)
         assert kwargs["timeout"] > 0
+        if command[:2] == ["test", "-f"]:
+            return SimpleNamespace(returncode=0 if Path(command[2]).is_file() else 1)
+        if command[0] == "head":
+            assert not kwargs.get("text")
+            return SimpleNamespace(stdout=Path(command[-1]).read_bytes()[:int(command[2])])
         if command[0] == "modprobe":
             if state.available:
                 values["net.ipv4.tcp_available_congestion_control"] += " bbr"
@@ -35,7 +41,6 @@ def host(tmp_path, monkeypatch):
             if not (state.ignore_readback and value == "bbr"):
                 values[key] = value
         elif command[:2] == ["rm", "-f"]:
-            from pathlib import Path
             Path(command[2]).unlink(missing_ok=True)
         return SimpleNamespace(returncode=0, stdout="")
 
@@ -53,8 +58,6 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(tuning, "BBR_MODULES_FILE", modules)
     monkeypatch.setattr(tuning, "run_as_root", run)
     monkeypatch.setattr(tuning, "write_root_file", write)
-    monkeypatch.setattr(tuning, "read_unix_root_file",
-                        lambda path, **kwargs: path.read_bytes() if path.exists() else None)
     return state
 
 
@@ -89,5 +92,5 @@ def test_failed_tuning_restores_runtime_and_files(host, failure):
         tuning.enable()
     assert host.values["net.ipv4.tcp_congestion_control"] == "cubic"
     assert host.values["net.ipv4.tcp_mtu_probing"] == "0"
-    assert host.sysctl.read_text() == "# previous managed config\n"
+    assert host.sysctl.read_bytes() == b"# previous managed config\r\n# no final newline \xff"
     assert not host.modules.exists()
