@@ -317,9 +317,9 @@ def install_server(options: dict | None = None) -> dict | None:
         sp.step(t("xui.step.install_xui"))
         if not command_exists(XUI_COMMAND):
             if options is None:
-                console.print(t("xui.step.fetch_installer"), markup=False)
+                sp.print_status(t("xui.step.fetch_installer"))
             install_xui_script(
-                on_status=(lambda key: console.print(t(key), markup=False)) if options is None else None,
+                on_status=(lambda key: sp.print_status(t(key))) if options is None else None,
                 checkpoint=sp.check_interrupt,
             )
 

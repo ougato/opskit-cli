@@ -315,6 +315,10 @@ class MultiStepProgress:
             self._finish_current(failed=False)
         self._start_live(desc)
 
+    def print_status(self, message: str) -> None:
+        """Print a status line above the progress display using its Rich console."""
+        console.print(message, markup=False)
+
     def set_step_pct(self, pct: int) -> None:
         """更新当前步骤的百分比（0~100），切换为真实百分比渲染模式"""
         if self._ticker is not None:
