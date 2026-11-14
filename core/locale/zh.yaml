@@ -383,14 +383,14 @@ rustdesk:
     hbbr: "\u4e2d\u7ee7\u670d\u52a1 active\uff1a{active}"
 xui:
   input:
-    panel_port: "面板端口（默认 {default}）"
-    panel_user: "面板用户（默认 {default}）"
+    panel_port: "面板端口"
+    panel_user: "面板用户"
     panel_password: "面板密码（默认自动生成）"
     panel_base_path: "面板路径（默认空）"
-    host: "公网主机或 IP（默认 {default}）"
-    vless_port: "VLESS 端口（默认 {default}）"
-    sni: "REALITY SNI（默认 {default}）"
-    dest: "REALITY dest（默认 {default}）"
+    host: "公网主机或 IP"
+    vless_port: "VLESS 端口"
+    sni: "REALITY SNI"
+    dest: "REALITY dest"
   wsl:
     restarting: "已开启 systemd，正在重启 WSL\n↳ 重启后重开终端重新安装即可"
     enabled: "已开启 systemd\n↳ 在 Windows 执行 wsl --shutdown 重启 WSL 后重新安装"

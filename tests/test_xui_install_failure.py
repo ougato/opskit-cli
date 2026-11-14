@@ -154,3 +154,40 @@ def test_invalid_ports_fail_before_system_changes(monkeypatch, panel, vless):
                "sni": "example.invalid", "dest": "example.invalid:443"}
     with pytest.raises(server.InstallError):
         server.install_server(options)
+
+@pytest.mark.parametrize("lang,label", [("zh", "\u9762\u677f\u7aef\u53e3"), ("en", "Panel port")])
+def test_install_prompt_keeps_default_on_input_line(monkeypatch, capsys, lang, label):
+    from core import i18n, prompt
+    from xui import server
+
+    configure("text", False)
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(lang)))
+    monkeypatch.setattr(prompt.os, "system", lambda command: 0)
+    monkeypatch.setattr(prompt, "_read_line", lambda **kwargs: "")
+
+    assert server._read_int(["OpsKit"], "xui.input.panel_port", 54321) == 54321
+    output = capsys.readouterr().out
+    assert "{default}" not in output
+    assert "54321" not in next(line for line in output.splitlines() if label in line)
+    assert output.count("(54321)") == 1
+    assert output.rstrip().endswith("(54321)")
+
+
+def test_esc_returns_from_install_wizard_without_failure(monkeypatch):
+    from core import prompt
+    from software import menu, resolver
+    from software.recipes.xui.recipe import XuiRecipe
+
+    configure("text", False)
+    monkeypatch.setattr(resolver, "resolve_deps", lambda *args: None)
+    monkeypatch.setattr(XuiRecipe, "detect", lambda self: None)
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(prompt.os, "system", lambda command: 0)
+    monkeypatch.setattr(menu, "report_failure", lambda *args, **kwargs: pytest.fail("Esc reported as a failure"))
+    monkeypatch.setattr(menu, "pause", lambda: pytest.fail("Esc caused a pause"))
+
+    def cancel(**kwargs):
+        raise prompt.UserCancel
+
+    monkeypatch.setattr(prompt, "_read_line", cancel)
+    menu._do_install(["OpsKit"], XuiRecipe, XuiRecipe())

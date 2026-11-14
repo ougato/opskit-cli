@@ -341,7 +341,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         try:
             instance.install("latest")
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, UserCancel):
             return
         except Exception as e:
             report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install")
