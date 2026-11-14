@@ -214,3 +214,17 @@ def test_upstream_install_reports_only_relevant_stages(monkeypatch):
     monkeypatch.setattr(process, "stream", installer)
     utils.install_xui_script(on_status=stages.append, checkpoint=lambda: stages.append("checkpoint"))
     assert stages == ["checkpoint", "xui.step.fetch_release", "xui.step.prepare_release", "xui.step.setup_service"]
+
+
+@pytest.mark.parametrize("valid_ip", [b"8.8.8.8\n", b"2606:4700::1111", b""])
+def test_public_host_probe_ignores_html(monkeypatch, valid_ip):
+    from io import BytesIO
+    from xui import utils
+
+    responses = {
+        "https://api.ip.sb/ip": b"<!doctype html><title>IP.SB</title>",
+        "https://api.ipify.org": valid_ip,
+    }
+    monkeypatch.setattr(utils, "PUBLIC_IP_APIS", list(responses))
+    monkeypatch.setattr(utils.urllib.request, "urlopen", lambda req, **kwargs: BytesIO(responses[req.full_url]))
+    assert utils.detect_public_host() == valid_ip.decode().strip()

@@ -1,6 +1,7 @@
 """x-ui 自动化工具函数。"""
 from __future__ import annotations
 
+import ipaddress
 import http.cookiejar
 import json
 import os
@@ -106,12 +107,15 @@ def gen_password() -> str:
 
 
 def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
-    """并发探测公网 IP，取最快返回的非空结果；整体受 timeout 限制，避免逐个超时累加阻塞。"""
+    """并发探测公网 IP，取最快返回的有效 IP；整体受 timeout 限制，避免逐个超时累加阻塞。"""
     def _probe(url: str) -> str:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": OPSKIT_USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8").strip()
+                body = resp.read(129)
+                if len(body) > 128:
+                    return ""
+                return str(ipaddress.ip_address(body.decode("ascii").strip()))
         except Exception:
             return ""
 
@@ -126,7 +130,8 @@ def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
                 break
     except Exception:
         pass
-    pool.shutdown(wait=False)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return result
 
 

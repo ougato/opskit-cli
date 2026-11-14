@@ -5,6 +5,7 @@ from core.archive_reader import open_zip
 
 from core.archive import extract_zip
 
+import ipaddress
 import json
 import platform
 import shlex
@@ -420,9 +421,9 @@ def detect_public_host() -> str:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "opskit"})
             with urllib.request.urlopen(req, timeout=RUSTDESK_PUBLIC_IP_TIMEOUT_SECONDS) as resp:
-                text = resp.read().decode("utf-8").strip()
-            if text:
-                return text
+                body = resp.read(129)
+            if len(body) <= 128:
+                return str(ipaddress.ip_address(body.decode("ascii").strip()))
         except Exception:
             continue
     return "127.0.0.1"

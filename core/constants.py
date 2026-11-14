@@ -139,7 +139,7 @@ GHPROXY_BASE = "https://mirror.ghproxy.com"
 
 # ─── 公网 IP 探测 API ────────────────────────────────────────────────────────
 PUBLIC_IP_APIS = [
-    "https://ip.sb",
+    "https://api.ip.sb/ip",
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
     "https://icanhazip.com",

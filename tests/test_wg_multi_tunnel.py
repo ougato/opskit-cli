@@ -238,7 +238,7 @@ class TestPublicIpDetection:
 
         source = inspect.getsource(server._detect_public_ip)
 
-        assert "https://ip.sb" in PUBLIC_IP_APIS
+        assert "https://api.ip.sb/ip" in PUBLIC_IP_APIS
         assert "ThreadPoolExecutor" in source
         assert "ipaddress.ip_address" in source
         assert '"." in ip' not in source
