@@ -398,6 +398,10 @@ xui:
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
+    fetch_installer: "Fetching the 3x-ui install script"
+    fetch_release: "Downloading the 3x-ui release"
+    prepare_release: "Release checksum verified, preparing installation"
+    setup_service: "Setting up the systemd service"
     enable_bbr: "Enable BBR"
     install_xui: "Install X-UI"
     generate_credentials: "Generate credentials"
@@ -416,6 +420,10 @@ xui:
     startup_verify_failed: "X-UI startup verification failed: check service logs and TCP listeners for panel {panel_port} and VLESS {vless_port}."
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
+    install_script_exit: "The 3x-ui installer exited with code {code}"
+    install_script_timeout: "The 3x-ui installer timed out after {seconds} seconds"
+    link_format_conflict: "Choose either --raw or --mihomo"
+    invalid_link: "The saved VLESS REALITY link is invalid"
     download_script_fail: "Failed to download X-UI install script, check network: {url}"
   output:
     install_done: "X-UI configured"

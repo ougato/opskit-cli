@@ -191,3 +191,26 @@ def test_esc_returns_from_install_wizard_without_failure(monkeypatch):
 
     monkeypatch.setattr(prompt, "_read_line", cancel)
     menu._do_install(["OpsKit"], XuiRecipe, XuiRecipe())
+
+
+def test_upstream_install_reports_only_relevant_stages(monkeypatch):
+    from core import process
+    from xui import utils
+
+    stages = []
+    monkeypatch.setattr(utils, "get_bytes", lambda *a, **k: b"script")
+    monkeypatch.setattr(utils, "root_command", list)
+
+    def installer(command, **kwargs):
+        assert kwargs["stdin_data"] == b"\n"
+        assert kwargs["timeout"] > 0
+        kwargs["checkpoint"]()
+        yield "Got x-ui latest version: v1, beginning the installation..."
+        yield "Password: upstream-password"
+        yield "Checksum verified: digest"
+        yield "Setting up systemd unit..."
+        return 0
+
+    monkeypatch.setattr(process, "stream", installer)
+    utils.install_xui_script(on_status=stages.append, checkpoint=lambda: stages.append("checkpoint"))
+    assert stages == ["checkpoint", "xui.step.fetch_release", "xui.step.prepare_release", "xui.step.setup_service"]

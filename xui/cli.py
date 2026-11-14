@@ -44,16 +44,26 @@ def register(app, context_settings):
     def links(
         output_file: str = typer.Option(..., "--output-file"),
         raw: bool = typer.Option(False, "--raw"),
+        mihomo: bool = typer.Option(False, "--mihomo"),
     ):
+        if raw and mihomo:
+            from core.i18n import t
+            fail(t("xui.error.link_format_conflict"), 2)
         value = state()
         from core.cli_secrets import export_secret
         link = value.get("vless", {}).get("link")
         if not link:
             fail("XUI link not found")
-        if raw:
+        if raw or mihomo:
             from pathlib import Path
             from core.private_export import publish_private_file
-            publish_private_file(Path(output_file), (link + "\n").encode("utf-8"))
+            from xui.links import mihomo_proxy_yaml
+            try:
+                payload = mihomo_proxy_yaml(link) if mihomo else (link + "\n").encode("utf-8")
+            except ValueError:
+                from core.i18n import t
+                fail(t("xui.error.invalid_link"), 2)
+            publish_private_file(Path(output_file), payload)
         else:
             export_secret(output_file, {"vless_link": link})
         emit({"exported": True})

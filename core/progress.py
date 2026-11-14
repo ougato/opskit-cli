@@ -272,7 +272,7 @@ class MultiStepProgress:
             except (OSError, ValueError):
                 pass
 
-    def _check_interrupt(self) -> None:
+    def check_interrupt(self) -> None:
         if self._interrupted:
             raise KeyboardInterrupt
 
@@ -310,7 +310,7 @@ class MultiStepProgress:
 
     def step(self, desc: str) -> None:
         """开始新一步：将上一步标绿，启动新步骤 Live"""
-        self._check_interrupt()
+        self.check_interrupt()
         if self._live is not None:
             self._finish_current(failed=False)
         self._start_live(desc)
@@ -324,7 +324,7 @@ class MultiStepProgress:
         """手动标记当前步骤完成（__exit__ 正常退出时也会自动调用）"""
         if self._live is not None:
             self._finish_current(failed=False)
-        self._check_interrupt()
+        self.check_interrupt()
 
     @property
     def elapsed(self) -> float:

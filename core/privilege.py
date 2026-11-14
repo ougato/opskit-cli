@@ -137,13 +137,18 @@ def run_as_root(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
     - Linux/macOS：sudo {cmd}
     - Windows：直接执行（需调用方已确保权限）
     """
+    return subprocess.run(root_command(cmd), **kwargs)
+
+
+def root_command(cmd: Sequence[str]) -> list[str]:
+    """Build the command for a root operation, honoring CLI interaction mode."""
     if is_root() or sys.platform == "win32":
-        return subprocess.run(list(cmd), **kwargs)
+        return list(cmd)
 
     import shutil
     if shutil.which("sudo"):
         from core.cli import non_interactive
-        return subprocess.run(["sudo"] + (["-n"] if non_interactive.get() else []) + list(cmd), **kwargs)
+        return ["sudo"] + (["-n"] if non_interactive.get() else []) + list(cmd)
 
     raise PermissionError("root privileges required and sudo is unavailable")
 

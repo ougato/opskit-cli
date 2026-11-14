@@ -20,7 +20,7 @@ from pathlib import Path
 from core.constants import PUBLIC_IP_APIS
 from core.http import get_bytes
 from core.i18n import t
-from core.privilege import run_as_root, write_root_file
+from core.privilege import root_command, run_as_root, write_root_file
 from software.base import InstallError
 from xui.constants import (
     HTTP_CONTENT_TYPE_FORM,
@@ -209,7 +209,9 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
     return None
 
 
-def install_xui_script() -> None:
+def install_xui_script(*, on_status=None, checkpoint=None) -> None:
+    from core.process import stream
+
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as script:
         script_path = Path(script.name)
     try:
@@ -220,17 +222,32 @@ def install_xui_script() -> None:
         script_path.write_bytes(content)
         script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         # env 前缀确保 DEBIAN_FRONTEND 透传（sudo 默认会清理环境变量）。
-        run_as_root(
-            ["env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
-             BASH_COMMAND, str(script_path)],
-            input=XUI_INSTALL_SCRIPT_INPUT,
-            text=True,
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=INSTALL_SCRIPT_TIMEOUT,
-        )
+        command = root_command([
+            "env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
+            BASH_COMMAND, str(script_path),
+        ])
+        updates = {
+            "beginning the installation": "xui.step.fetch_release",
+            "checksum verified": "xui.step.prepare_release",
+            "setting up systemd unit": "xui.step.setup_service",
+        }
+        output = stream(command, stdin_data=XUI_INSTALL_SCRIPT_INPUT.encode(),
+                        timeout=INSTALL_SCRIPT_TIMEOUT, checkpoint=checkpoint)
+        try:
+            while True:
+                line = next(output).lower()
+                if on_status is not None:
+                    for marker, key in updates.items():
+                        if marker in line:
+                            on_status(key)
+                            break
+        except StopIteration as done:
+            if done.value:
+                raise InstallError(t("xui.error.install_script_exit", code=done.value)) from None
+        except subprocess.TimeoutExpired:
+            raise InstallError(t("xui.error.install_script_timeout", seconds=INSTALL_SCRIPT_TIMEOUT)) from None
+        finally:
+            output.close()
     finally:
         script_path.unlink(missing_ok=True)
 

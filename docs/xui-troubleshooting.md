@@ -48,6 +48,16 @@ journalctl -u x-ui -n 80 --no-pager
 
 终端可能将长链接折行。优先用面板复制按钮或 `opskit xui links --raw --output-file <新文件路径>` 导出，导入时确保链接没有空格或换行。该导出文件包含凭据，请妥善保存。分享排查日志前隐藏面板密码、UUID、分享链接及私钥。
 
+### OpenClash / Mihomo
+
+如果 Xray 客户端能连接，而 Mihomo 提示 `REALITY authentication failed`，使用支持 X25519MLKEM768 的 Mihomo 内核，并在节点的 `reality-opts` 内设置 `support-x25519mlkem768: true`。OpsKit 可直接导出包含该字段的私有 YAML：
+
+```bash
+opskit xui links --mihomo --output-file openclash-node.yaml
+```
+
+将导出的节点条目加入 OpenClash 配置的 `proxies` 列表，并在相应代理组中选择该节点。
+
 ## 回滚本次修复
 
 生产变更前应备份 x-ui 数据库（使用 SQLite backup 接口取得一致快照）、OpsKit 状态文件和源码。若需恢复数据库，先停止 x-ui，恢复备份及其受限权限，再启动服务，避免数据库与面板内存不同步。恢复旧数据库会恢复旧配额和有效期，不会保留备份后新增的流量与配置。
