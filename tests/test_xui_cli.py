@@ -63,6 +63,15 @@ def test_xui_status_redacts_and_links_require_export(tmp_path, monkeypatch):
     assert "synthetic" not in exported.stdout
     assert json.loads(target.read_text())["vless_link"].startswith("vless://")
 
+    raw_target = tmp_path / "links.txt"
+    args = ["xui", "links", "--raw", "--output-file", str(raw_target)]
+    exported = runner.invoke(main.app, args)
+    assert exported.exit_code == 0
+    assert "synthetic" not in exported.stdout
+    assert raw_target.read_bytes() == b"vless://synthetic-id@host\n"
+    assert runner.invoke(main.app, args).exit_code != 0
+
+
 
 def test_script_install_executes_without_input_and_exports_only_to_file(tmp_path, monkeypatch):
     from xui import server

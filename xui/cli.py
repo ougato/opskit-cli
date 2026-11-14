@@ -41,13 +41,21 @@ def register(app, context_settings):
 
     @group.command("links")
     @guarded
-    def links(output_file: str = typer.Option(..., "--output-file")):
+    def links(
+        output_file: str = typer.Option(..., "--output-file"),
+        raw: bool = typer.Option(False, "--raw"),
+    ):
         value = state()
         from core.cli_secrets import export_secret
         link = value.get("vless", {}).get("link")
         if not link:
             fail("XUI link not found")
-        export_secret(output_file, {"vless_link": link})
+        if raw:
+            from pathlib import Path
+            from core.private_export import publish_private_file
+            publish_private_file(Path(output_file), (link + "\n").encode("utf-8"))
+        else:
+            export_secret(output_file, {"vless_link": link})
         emit({"exported": True})
 
     @group.command("logs")

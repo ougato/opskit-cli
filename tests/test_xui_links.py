@@ -32,3 +32,18 @@ def test_ipv6_link_and_explicit_encryption():
     assert parsed.hostname == "2001:db8::1"
     assert parsed.port == 443
     assert parse_qs(parsed.query)["encryption"] == ["none"]
+
+
+def test_manage_link_writes_complete_uri_at_narrow_console_width(monkeypatch):
+    from io import StringIO
+
+    from rich.console import Console
+
+    from xui import server
+
+    output = StringIO()
+    monkeypatch.setattr(server, "console", Console(file=output, width=24, force_terminal=True))
+    link = "vless://test@host:443?security=reality&pbk=" + "a" * 43 + "&sid=abcd#test"
+    server._print_links({"vless": {"link": link}})
+
+    assert output.getvalue().endswith("\n" + link + "\n")

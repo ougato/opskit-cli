@@ -422,7 +422,7 @@ def install_server(options: dict | None = None) -> dict | None:
     console.print(f"{t('xui.output.panel')}: {panel_url}")
     console.print(f"{t('xui.output.panel_user')}: {panel_user}")
     console.print(f"{t('xui.output.panel_password')}: ********")
-    console.print(f"{t('xui.output.vless_link')}: {vless_link}", markup=False, highlight=False)
+    _print_vless_link(vless_link)
     pause()
 
 
@@ -557,12 +557,18 @@ def diagnose_server() -> None:
     pause()
 
 
+def _print_vless_link(link: str) -> None:
+    console.print(t("xui.output.vless_link"))
+    # Write the URI directly so Rich cannot insert line breaks or crop it.
+    print(link, file=console.file, flush=True)
+
+
 def _print_links(state: dict[str, object]) -> None:
     vless_state = state.get("vless")
     if isinstance(vless_state, dict):
         link = vless_state.get("link")
         if isinstance(link, str):
-            console.print(f"{t('xui.output.vless_link')}: {link}")
+            _print_vless_link(link)
 
 
 def _show_traffic() -> None:
