@@ -28,6 +28,12 @@ Windows 源码入口 `python .\main.py` 会复用已有的项目 `.venv`，尊�
 
 命令行用 `opskit plugin update NAME` 更新单个插件，或用 `opskit --output json plugin update --all` 批量更新。批量结果中 `authorization_required: true` 的插件可通过 `opskit plugin show NAME` 核对，再用 `opskit plugin trust NAME --fingerprint SHA256` 完成授信。详细参数和退出码见[插件生命周期](cli-contract.md#插件生命周期)。
 
+## 发布验收
+
+插件维护者修改仓库中的文件后，执行 `opskit plugin fingerprint <插件仓库路径>` 重新生成 `CHECKSUMS.yaml`，并随改动一并提交。从 OpsKit 源码目录运行 `python -m scripts.check_plugin_release <插件仓库路径> --index` 校验暂存树。提交后用同一命令加 `--ref HEAD` 校验将推送的提交。
+
+生命周期变更要从旧版安装开始，通过「更新全部」获取远端候选，验证新指纹确认、运行时准备、菜单可进入及再次更新的结果。候选清单不匹配时应报告清单错误，保留当前安装和授信，并继续处理批量更新的其他插件。
+
 ## 失败与重试
 
 - 工具准备、仓库传输和运行环境准备分别报告错误，不提前显示“正在克隆”。

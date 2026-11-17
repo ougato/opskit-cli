@@ -93,11 +93,14 @@ def test_executable_entry_is_checked_without_running_it(staged):
 
 
 def test_mismatched_checksums_rejected_even_when_archive_matches(staged):
+    from core.native_sandbox import NativeSandboxError
+
     items = entries(checksums=True)
     items[-1] = ("CHECKSUMS.yaml", b'{"files":{}}', {})
     value = staged(items)
-    with pytest.raises(ValueError, match="review rejected"):
+    with pytest.raises(NativeSandboxError) as failure:
         check(value)
+    assert failure.value.code == "candidate_checksums"
 
 
 @pytest.mark.parametrize("field", ["identity", "archive_sha256", "reported_commit", "files"])

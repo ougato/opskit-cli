@@ -523,6 +523,8 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
         old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
         return True, "downgrade" if old_key is not None and new_key is not None and new_key < old_key else "updated"
     except Exception as exc:
+        if not isinstance(exc, NativeSandboxError):
+            _log_install_failure("update", exc)
         return False, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.update_failed")
     finally:
         if _directory(work) != owned:

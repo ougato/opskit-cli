@@ -105,6 +105,10 @@ def _entry(manifest, inventory):
             raise ValueError("candidate executable entry is not executable")
 
 
+class CandidateChecksumMismatch(ValueError):
+    """The reviewed repository tree disagrees with its checksum manifest."""
+
+
 def _review_tree(prepared, inventory):
     """Shared final-content check; callers pin the private owning workspace."""
     from core.loader import builtin_module_keys
@@ -125,7 +129,7 @@ def _review_tree(prepared, inventory):
     _entry(manifest, inventory)
     checksums = verify_checksums(prepared.root)
     if checksums == CHECK_MISMATCH:
-        raise ValueError("candidate checksum mismatch")
+        raise CandidateChecksumMismatch("candidate checksum mismatch")
     fingerprint = compute_fingerprint(prepared.root)
     if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         raise ValueError("candidate fingerprint unavailable")
@@ -151,6 +155,8 @@ def _review_worker(connection, source, workspace, prepared, request):
                     result = {"ok": True, "request": request, "manifest": review.manifest_sha256,
                               "fingerprint": review.fingerprint, "receipt": review.content_receipt,
                               "checksums": review.checksums}
+    except CandidateChecksumMismatch:
+        result = {"ok": False, "request": request, "error": "candidate_checksums"}
     except (OSError, ValueError, TypeError, RuntimeError, EOFError, tarfile.TarError):
         # Metadata/parser errors never disclose candidate content over the pipe.
         result = {"ok": False, "request": request}
@@ -185,6 +191,9 @@ def review_candidate(response, workspace, prepared, *, timeout):
         raise TimeoutError("candidate review deadline exceeded; workspace retained")
     result = run(_review_worker, (_SpawnFile(descriptor), workspace, prepared, request),
                  timeout=remaining, label="plugin candidate review")
+    if result == {"ok": False, "request": request, "error": "candidate_checksums"}:
+        from core.native_sandbox import NativeSandboxError
+        raise NativeSandboxError("candidate_checksums")
     if result == {"ok": False, "request": request}:
         raise ValueError("candidate review rejected; workspace retained")
     if (not isinstance(result, dict)

@@ -50,7 +50,7 @@ def register(app, translate=None):
         # Only fixed host-generated translations are safe to show. Never render
         # raw process, repository, credential or filesystem diagnostics.
         keys = ("fetch_dependency_missing", "fetch_python_failed", "fetch_setup_failed", "runtime_setup_failed", "fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed", "workspace_failed", "workspace_full", "workspace_busy",
-                "update_failed", "update_modified", "execution_timeout", "platform_unsupported",
+                "update_failed", "update_modified", "candidate_checksums", "execution_timeout", "platform_unsupported",
                 "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
                 "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
