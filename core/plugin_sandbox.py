@@ -490,9 +490,10 @@ def _broker(manifest, request: dict):
         from core.plugin_http import request as https_request
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
-    if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version"}:
-        expected = 4 if method == "host.execute" else (1 if method == "host.file_version" else 2)
-        if kwargs or (len(args) != expected and not (method == "host.path_info" and len(args) in (3, 4))):
+    if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version", "host.list_files"}:
+        expected = 4 if method == "host.execute" else (1 if method in {"host.file_version", "host.list_files"} else 2)
+        allowed = {"missing_ok"} if method == "host.list_files" else set()
+        if set(kwargs) - allowed or (len(args) != expected and not (method == "host.path_info" and len(args) in (3, 4))):
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -529,6 +530,10 @@ def _broker(manifest, request: dict):
         if method == "host.file_version":
             from core.plugin_host_tools import file_version
             return file_version(manifest.name, fingerprint, *args, **context)
+        if method == "host.list_files":
+            from core.plugin_host_files import list_files
+            return list_files(manifest.name, fingerprint, *args, authority=authority,
+                              check_identity=identity, checkpoint=checkpoint, **kwargs)
         from core.plugin_artifacts import manage
         return manage(manifest.name, fingerprint, *args, **context)
     if method == "host.asar_directories":
@@ -610,6 +615,18 @@ def _broker(manifest, request: dict):
             value = getattr(prompt, method)(*args, **kwargs)
             checkpoint()
             return value
+    if method == "service.install_provider":
+        if kwargs or len(args) != 1 or not isinstance(args[0], str):
+            raise SandboxError("invalid plugin installation arguments")
+        from core.plugin_provider_install import request_install
+        from core.prompt import guard_input
+
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations(extra=((manifest.name, fingerprint),))
+
+        with guard_input(checkpoint):
+            return request_install(manifest, fingerprint, args[0], checkpoint=checkpoint)
     if method == "service.call":
         if (kwargs or len(args) != 4 or not isinstance(args[0], str)
                 or not isinstance(args[1], str) or not isinstance(args[2], list)
@@ -1018,7 +1035,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
             try:
                 from contextlib import nullcontext
                 display = getattr(_invocations, "wait_display", None)
-                suspend = display.suspend() if display is not None and message.get("method") in {"service.call", "service.describe"} else nullcontext()
+                suspend = display.suspend() if display is not None and message.get("method") in {"service.call", "service.describe", "service.install_provider"} else nullcontext()
                 with suspend, input_wait_scope(_input_wait_budget):
                     return {"value": _broker(manifest, message)}
             except UserCancel:

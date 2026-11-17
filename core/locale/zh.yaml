@@ -966,7 +966,16 @@ plugin_native:
       manage: "读写目录并执行工具"
     tool:
       execute: "执行工具"
+  provider:
+    install: 安装并授权
+    approve: 确认授权
+    scope: "{caller} → {provider} 调用 {service} 的 {methods}"
+    trust: 确认后信任以上指纹并授予所列服务调用权限
   errors:
+    provider_interaction_required: "仅可在交互菜单中确认插件安装或授权"
+    provider_request_denied: "未声明该服务依赖或框架未登记安装来源"
+    provider_incompatible: "服务提供方不可用，请在插件管理检查启用状态、版本和服务契约"
+    provider_install_failed: "安装服务插件失败，请检查仓库连接或插件日志"
     sdk_required: "插件 SDK 版本不兼容；当前要求 SDK 4，旧插件须升级清单和代码。"
     fetch_prepare_invalid: "隔离 Python 运行目录无效，请提供可用的 Python 安装目录。"
     fetch_profile_invalid: "无法安全读取仓库凭据。请检查私有文件权限、格式及绑定的完整仓库地址。"

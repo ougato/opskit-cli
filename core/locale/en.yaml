@@ -967,7 +967,16 @@ plugin_native:
       manage: "Read, write and run tools"
     tool:
       execute: "Run a host tool"
+  provider:
+    install: Install and authorize
+    approve: Approve access
+    scope: "{caller} → {provider} may call {methods} on {service}"
+    trust: Approval trusts the shown fingerprint and authorizes the listed service calls
   errors:
+    provider_interaction_required: "Approve plugin installation or access from an interactive menu"
+    provider_request_denied: "No declared dependency or registered provider source"
+    provider_incompatible: "Check the provider's enabled state, version and service contract in Plugin Management"
+    provider_install_failed: "Provider installation failed, check repository connectivity or plugin logs"
     sdk_required: "Plugin SDK is incompatible; SDK 4 is required. Upgrade older plugin manifests and code."
     fetch_prepare_invalid: "Invalid isolated Python runtime. Provide a usable Python installation directory."
     fetch_profile_invalid: "Cannot securely read repository credentials. Check private file permissions, format and exact repository binding."

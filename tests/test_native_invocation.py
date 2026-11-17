@@ -376,7 +376,7 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
     (plugin / "example.py").write_text(
         "from pathlib import Path\n"
         "import sys\n"
-        "from core.sdk import current_lang, register_locale, t, text_input, plugin_data_dir, run\n"
+        "from core.sdk import current_lang, load_yaml, register_locale, save_yaml, t, text_input, plugin_data_dir, run\n"
         "def cli(argv):\n"
         "    try:\n"
         "        child = run([sys.executable, '-I', '-S', '-c', \"print('child-ok')\"], capture=True, timeout=5)\n"
@@ -398,6 +398,10 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
         "    register_locale({'zh': {'example': {'title': '你好'}}, 'en': {'example': {'title': 'Hello'}}})\n"
         "    value = text_input(['OpsKit'], t('example.title'))\n"
         "    (plugin_data_dir('demo') / 'result.txt').write_text(value, encoding='utf-8')\n"
+        "    config = plugin_data_dir('demo') / 'config.yaml'\n"
+        "    save_yaml(config, {'value': 'previous'})\n"
+        "    save_yaml(config, {'value': value})\n"
+        "    assert load_yaml(config) == {'value': value}\n"
         "    return {'language': current_lang(), 'title': t('example.title'), 'value': value}\n",
         encoding="utf-8")
     seed = tmp_path / "seed"
@@ -425,6 +429,7 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
     import tarfile
     with tarfile.open(fileobj=io.BytesIO(base64.b64decode(result["state"]))) as archive:
         assert archive.extractfile("state/result.txt").read().decode("utf-8") == "测试"
+        assert "测试" in archive.extractfile("state/config.yaml").read().decode("utf-8")
     assert "example" not in sys.modules
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")

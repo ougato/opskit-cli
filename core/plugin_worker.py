@@ -107,6 +107,17 @@ def _adapt_sdk(name: str):
         return _data_root() / "state"
 
     paths.plugin_data_dir = sdk.plugin_data_dir = owned_data
+
+    if os.name == "nt":
+        def save_sandbox_yaml(path, data):
+            from core.yamlio import _save_yaml
+            target = Path(path).resolve()
+            # AppContainer can write to its private data directory using its
+            # inherited DACL but cannot set a replacement DACL on the file.
+            in_private_data = target.is_relative_to(_data_root().resolve())
+            _save_yaml(target, data, inherit_windows_acl=in_private_data)
+
+        sdk.save_yaml = save_sandbox_yaml
     paths.plugins_dir = sdk.plugins_dir = _plugin_root
     sdk.get_service = lambda name: RemoteService(name)
     def read_host_file(directory, relative):
@@ -127,6 +138,7 @@ def _adapt_sdk(name: str):
         return broker("host.create_file", directory, relative, base64.b64encode(content).decode("ascii"))
     sdk.create_host_file = create_host_file
     sdk.host_file_status = lambda directory, relative: broker("host.file_status", directory, relative)
+    sdk.list_host_files = lambda directory, *, missing_ok=False: broker("host.list_files", directory, missing_ok=missing_ok)
     sdk.host_asar_directories = lambda directory, relative, member: broker("host.asar_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
@@ -149,8 +161,9 @@ def _adapt_sdk(name: str):
     sdk.https_request = https_request
     sdk.upload_file = lambda directory, relative, url, sha256, headers=None: broker(
         "host.upload_file", directory, relative, url, sha256, headers or {})
+    sdk.request_plugin_install = lambda provider: broker("service.install_provider", provider)
+
     def open_menu(name, breadcrumb, context=None):
-        # Installing a new provider requires the platform's explicit lifecycle.
         broker("service.call", name, "open_menu", [breadcrumb, context or {}], {})
         return True
     sdk.open_service_menu = open_menu

@@ -89,6 +89,11 @@ def get_service(name: str) -> object:
     raise PermissionError("service API requires an isolated plugin worker")
 
 
+def request_plugin_install(provider: str) -> bool:
+    """Request an approved, declared provider from an interactive plugin menu."""
+    raise PermissionError("plugin installation requires an isolated plugin worker")
+
+
 def open_service_menu(name: str, breadcrumb: list[str], context: dict[str, object] | None = None) -> bool:
     """Open an authorized provider's menu; never install a provider implicitly."""
     raise PermissionError("service API requires an isolated plugin worker")
@@ -121,6 +126,7 @@ __all__ = [
     "compare_write_host_file",
     "create_host_file",
     "host_file_status",
+    "list_host_files",
     "artifact_info",
     "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
@@ -131,7 +137,7 @@ __all__ = [
     "get_color", "get_icon",
     "print_success", "print_error", "print_warning", "print_info",
     "select", "select_input", "multi_select", "paged_select", "confirm", "text_input", "pause", "clear_screen", "print_header", "waiting", "UserCancel", "console",
-    "get_service", "open_service_menu",
+    "get_service", "open_service_menu", "request_plugin_install",
     "ensure_python_package",
     "run", "run_lines", "which", "cmd_ok",
     "data_dir", "cache_dir", "log_dir", "plugins_dir", "plugin_data_dir",
@@ -163,6 +169,11 @@ def host_file_status(directory: str, relative: str) -> dict:
 def host_asar_directories(directory: str, relative: str, member: str) -> list[str]:
     """List bounded immediate ASAR directories after host directory authorization."""
     raise PermissionError("host archive API requires an isolated plugin worker")
+
+
+def list_host_files(directory: str, *, missing_ok: bool = False) -> list[str]:
+    """List ordinary files under an authorized host directory, or allow an absent directory."""
+    raise PermissionError("host file listing requires an isolated plugin worker")
 
 
 def artifact_info(directory: str, relative: str) -> dict:

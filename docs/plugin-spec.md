@@ -108,6 +108,7 @@ if not git:
 The Windows host finds an ordinary executable in the preferred location, PATH or conventional install directories. Directory consent is required before returning a match; execution requires its own authorization. An empty string means no candidate was found.
 - `host_file_version(path)`：在 Windows 经所在目录读取授权后检查普通可执行文件的固定版本信息，返回四位文件版本和产品版本；接口不运行可执行文件。
 - `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
+- `list_host_files(directory, *, missing_ok=False)`：经目录读取授权后，递归返回排序后的普通文件相对路径，路径使用 `/`。启用 `missing_ok` 时，尚未创建的目录返回空列表。拒绝链接、重解析点、硬链接和特殊文件。最多遍历 65,536 项、64 层，返回的路径 UTF-8 总长度最多 1 MiB。文件内容和摘要分别通过各自的 SDK 接口读取。
 - `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell，不解释业务成功码。返回原始 `returncode`。
   options 支持 `output_parent`、布尔值 `capture_output`、`capture_after`、`tool_dependencies`、`stdin_base64`、`config_base64`、`timeout_seconds`、`output_header`。`output_header` 是可选的简短面包屑字符串列表，仅交互终端在授权完成并启动工具前清屏显示标题；重定向和非交互输出不清屏，且它不改变授权范围。`output_parent` 创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。执行授权记录原始参数模板和输出父目录，而不是每次生成的随机目录名；模板以外的参数变化仍需要重新授权。`capture_output=true` 将合并的标准输出和标准错误作为 `captured_output` 返回插件（最多 16KiB，超限失败），不再流式显示；该选项纳入执行授权范围。`capture_after` 是最多 128 字符的单行标记，正常流式显示仍保留，且仅当标记恰好出现一次并有下一行时，将下一行作为 `captured_after` 返回（最多 16KiB，否则为 null）；标记纳入执行授权范围。`stdin_base64` 可提供最多 16KiB 的标准输入，执行授权绑定输入内容的长度及 SHA-256，默认不开放输入。`config_base64` 可提供至多 16KiB 的临时工具配置；必须在参数中使用 `{config_file}`，宿主在本次执行期间建立临时文件，正常退出时清理，执行授权绑定内容长度和摘要，参数模板保持稳定。宿主被强制终止时临时文件可能残留，调用方不可将秘密写入此配置。`timeout_seconds` 是 1..3600 的整数，默认为 300，显式值纳入授权范围。外部进程在独立的有限期限内运行时不消耗插件计算期限，但仍持续检查插件授权、工具授权和资源身份；超时或撤权会回收进程树。`tool_dependencies` 是至多 8 个普通绝对 `.exe` 路径，其父目录加入工具的 PATH；授权包含可执行文件路径、摘要和搜索目录，并在启动前重验文件。目录内其他程序也可能通过 PATH 被调用，故授权展示完整搜索目录。默认仍流式显示，不向插件返回内容，也不额外添加搜索目录。
 - `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
@@ -155,6 +156,8 @@ opskit plugin revoke-service CALLER SERVICE
 ```
 
 SHA256 必须换为核实后的实际指纹。批准精确绑定调用方、提供方、服务版本与方法集，不执行插件。独立运行授信不等于批准调用边；提供方替换、双方更新或撤权不会继承旧边。调用和状态提交检查整条授权链，嵌套返回后仍保留其授权依赖，避免提交依赖已撤销服务的结果。
+
+`request_plugin_install(provider: str) -> bool` 是服务提供方唯一面向插件的安装入口。宿主从当前运行身份读取 `uses`，使用宿主登记的来源、分支和最低版本，并在隔离区核对候选指纹、权限和服务契约。用户在同一确认页批准安装、候选授信及指定服务调用边。有效授权直接复用。SDK 调用成功后可在当前操作中获取服务。
 
 get_service 返回 JSON RPC 代理，参数与结果必须可序列化；函数、回调和共享对象不跨边界。循环调用及超过四层嵌套拒绝。宿主先校验授权，worker 在执行点核对快照契约、实际业务版本和公开方法，不在宿主导入提供方。
 

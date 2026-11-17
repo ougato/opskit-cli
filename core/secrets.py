@@ -43,17 +43,17 @@ def before_send(event, hint):
     return redact(event)
 
 
-def atomic_write(path: Path, content: str | bytes) -> None:
+def atomic_write(path: Path, content: str | bytes, *, inherit_windows_acl: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".opskit-", dir=path.parent)
     # After creation the name can be replaced by an uncooperative process.
     # Unlinking that name on failure or after publication could delete its
     # file; leave any residual entry for a future ownership-aware recovery.
     with os.fdopen(fd, "wb") as output:
-        if os.name == "nt":
+        if os.name == "nt" and not inherit_windows_acl:
             from core.windows_permissions import restrict_verified_file
             restrict_verified_file(temporary, os.fstat(output.fileno()))
-        else:
+        elif os.name != "nt":
             # Bind permission changes to the created file, not a name that a
             # concurrent process can replace with a link to an unrelated file.
             os.fchmod(output.fileno(), 0o600)

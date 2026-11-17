@@ -2,9 +2,28 @@ import base64
 
 import pytest
 
-from core.plugin_host_files import read_file
+from core.plugin_host_files import list_files, read_file
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
 from core.native_sandbox import GrantChoice
+
+
+def test_host_file_listing_needs_consent_and_returns_only_relative_files(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    child = root / "assets"
+    child.mkdir(parents=True)
+    (child / "game.bin").write_bytes(b"data")
+    (root / "manifest.json").write_bytes(b"{}")
+    authority = CapabilityAuthority(path=tmp_path / "permissions.yaml")
+    require = authority.require
+    context = {"authority": authority, "check_identity": lambda *args: True,
+               "checkpoint": lambda: None}
+    monkeypatch.setattr(authority, "require", lambda scope, **kwargs:
+                        require(scope, prompt=lambda _: GrantChoice.DENY, **kwargs))
+    with pytest.raises(CapabilityDenied):
+        list_files("demo", "a" * 64, str(root), **context)
+    monkeypatch.setattr(authority, "require", lambda scope, **kwargs:
+                        require(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs))
+    assert list_files("demo", "a" * 64, str(root), **context) == ["assets/game.bin", "manifest.json"]
 
 
 def test_host_read_requires_exact_authorized_scope(tmp_path, monkeypatch):
@@ -112,3 +131,16 @@ def test_broker_uses_supervisor_identity_and_scoped_authority(tmp_path, monkeypa
                "args": [str(tmp_path), "config.json"], "kwargs": {}}
     assert sandbox._broker(SimpleNamespace(name="demo"), request)["encoding"] == "base64"
     assert calls == [("demo", "a" * 64, str(tmp_path), "config.json")]
+
+
+def test_optional_file_listing_only_accepts_missing_directories(tmp_path):
+    from core.plugin_host_files import list_files
+
+    options = {"authority": None, "check_identity": lambda *_: True, "checkpoint": lambda: None}
+    missing = str(tmp_path / "artifacts")
+    assert list_files("demo", "a" * 64, missing, missing_ok=True, **options) == []
+    with pytest.raises(FileNotFoundError):
+        list_files("demo", "a" * 64, missing, **options)
+    (tmp_path / "artifacts").write_text("not a directory")
+    with pytest.raises(ValueError):
+        list_files("demo", "a" * 64, missing, missing_ok=True, **options)

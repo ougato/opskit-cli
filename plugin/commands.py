@@ -273,7 +273,7 @@ def _remove_tree(path: Path) -> None:
 
 def install(url: str, branch: str | None = None, alias: str | None = None, *,
             fetch_profile: str | None = None, allow_private: bool = False, fetch_interaction=None,
-            automatic: bool = False, progress=None) -> tuple[PluginManifest | None, str]:
+            automatic: bool = False, progress=None, review_candidate=None) -> tuple[PluginManifest | None, str]:
     """原生隔离采集已提交内容，审核后发布；不执行宿主 Git。
     返回 (清单, 错误串)；信任确认由菜单层负责"""
     if alias is not None and not valid_install_dir_name(alias):
@@ -313,6 +313,12 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
             return None, "no_manifest"
         if manifest.name in builtin_module_keys():
             return None, "official_name_conflict"
+        if review_candidate is not None:
+            if (content_receipt(staging) != acquired.receipt
+                    or compute_fingerprint(staging) != acquired.fingerprint):
+                raise ValueError("installation candidate changed before review")
+            if not review_candidate(manifest, acquired.fingerprint):
+                return None, "declined"
         # Acquire independently; serialize identity validation and publication.
         # Discovery never sees a partial or unreviewed candidate.
         with _installation_lock.hold():
@@ -353,8 +359,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
     except FileExistsError:
         return None, f"exists:{name}"
     except Exception as exc:
+        from core.plugin_capabilities import CapabilityDenied
         from core.prompt import UserCancel
-        if isinstance(exc, UserCancel):
+        if isinstance(exc, (UserCancel, CapabilityDenied)):
             raise
         from core.native_sandbox import NativeSandboxError
         if isinstance(exc, NativeSandboxError):
