@@ -581,6 +581,7 @@ def test_windows_project_environment_rejects_incomplete_marker(tmp_path, monkeyp
     marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
     monkeypatch.setattr(sys, "prefix", str(venv if selection == "prefix" else tmp_path / "base"))
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "executable", str(executable if selection == "executable" else tmp_path / "base" / "python"))
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     if selection == "environment":
         monkeypatch.setenv("VIRTUAL_ENV", str(venv))
@@ -600,6 +601,146 @@ def test_windows_external_environment_ignores_project_marker(tmp_path, monkeypat
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
     monkeypatch.setenv("VIRTUAL_ENV", str(venv))
     bootstrap.reenter_existing_windows_venv(project)
+    assert marker.read_bytes() == bootstrap._MARKER_CONTENT.encode()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize("metadata_next_to_executable", [False, True])
+def test_external_executable_venv_preserves_project_marker_with_base_prefix(
+        tmp_path, monkeypatch, windows, metadata_next_to_executable):
+    project = tmp_path / "project"
+    marker = project / ".venv" / bootstrap._INCOMPLETE_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
+    external = tmp_path / "external"
+    executable = external / ("Scripts/python.exe" if windows else "bin/python")
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    metadata_dir = executable.parent if metadata_next_to_executable else external
+    (metadata_dir / "pyvenv.cfg").write_text("home = example\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr(bootstrap, "_exec_reenter", lambda *args: pytest.fail("unexpected reentry"))
+    monkeypatch.setattr(bootstrap, "_require_dependencies_file", lambda *args: pytest.fail("unexpected creation"))
+
+    (bootstrap.reenter_existing_windows_venv if windows else bootstrap.ensure_venv)(project)
+    assert marker.read_bytes() == bootstrap._MARKER_CONTENT.encode()
+
+
+def test_empty_executable_does_not_infer_environment_from_working_directory(tmp_path, monkeypatch):
+    (tmp_path / "pyvenv.cfg").write_text("home = example\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "executable", "")
+    assert bootstrap._executable_venv_root() is None
+
+
+@pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize("project_reference", ["prefix", "environment"])
+def test_project_marker_precedes_external_executable_metadata(tmp_path, monkeypatch, windows, project_reference):
+    project = tmp_path / "project"
+    venv = project / ".venv"
+    marker = venv / bootstrap._INCOMPLETE_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
+    external = tmp_path / "external"
+    executable = external / ("Scripts/python.exe" if windows else "bin/python")
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    (external / "pyvenv.cfg").write_text("home = example\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "prefix", str(venv if project_reference == "prefix" else tmp_path / "base"))
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    if project_reference == "environment":
+        monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    with pytest.raises(SystemExit):
+        (bootstrap.reenter_existing_windows_venv if windows else bootstrap.ensure_venv)(project)
+    assert marker.read_bytes() == bootstrap._MARKER_CONTENT.encode()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_project_executable_with_nearby_metadata_keeps_existing_reentry(tmp_path, monkeypatch, windows):
+    project = tmp_path / "project"
+    venv = project / ".venv"
+    executable = venv / ("Scripts/python.exe" if windows else "bin/python")
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    (executable.parent / "pyvenv.cfg").write_text("home = example\n", encoding="utf-8")
+    marker = venv / bootstrap._INCOMPLETE_MARKER
+    marker.write_bytes(bootstrap._COMPLETE_MARKER_CONTENT.encode())
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    entered = []
+    monkeypatch.setattr(bootstrap, "_exec_reenter", entered.append)
+
+    (bootstrap.reenter_existing_windows_venv if windows else bootstrap.ensure_venv)(project)
+    assert entered == ([executable] if windows else [])
+    assert marker.read_bytes() == bootstrap._COMPLETE_MARKER_CONTENT.encode()
+
+
+@pytest.mark.parametrize("flags", [["-S"], ["-I", "-S"]])
+@pytest.mark.parametrize("stale_virtual_env", [False, True])
+def test_actual_external_python_without_site_preserves_project_marker(tmp_path, flags, stale_virtual_env):
+    project = tmp_path / "project"
+    marker = project / ".venv" / bootstrap._INCOMPLETE_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
+    external = tmp_path / "external"
+    clean_env = bootstrap._python_setup_env()
+    clean_env.pop("VIRTUAL_ENV", None)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(external)],
+                   env=clean_env, check=True, capture_output=True, timeout=60)
+    executable = external / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    repository = Path(bootstrap.__file__).resolve().parents[1]
+    code = ("import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(repository)!r}); "
+            "from core import venv_bootstrap as b; "
+            "f = b.reenter_existing_windows_venv if sys.platform == 'win32' else b.ensure_venv; "
+            "f(Path(sys.argv[1])); print('external-preserved')")
+    if stale_virtual_env:
+        clean_env["VIRTUAL_ENV"] = str(tmp_path / "stale")
+    result = subprocess.run([str(executable), *flags, "-c", code, str(project)],
+                            env=clean_env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "external-preserved" in result.stdout
+    assert marker.read_bytes() == bootstrap._MARKER_CONTENT.encode()
+
+
+def test_actual_external_python_directory_alias_without_site(tmp_path):
+    project = tmp_path / "project"
+    marker = project / ".venv" / bootstrap._INCOMPLETE_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
+    external = tmp_path / "external"
+    clean_env = bootstrap._python_setup_env()
+    clean_env.pop("VIRTUAL_ENV", None)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(external)],
+                   env=clean_env, check=True, capture_output=True, timeout=60)
+    alias = tmp_path / "external-alias"
+    try:
+        alias.symlink_to(external, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            pytest.skip("directory symlink unavailable")
+        junction = subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(alias), str(external)],
+                                  capture_output=True, timeout=15)
+        if junction.returncode:
+            pytest.skip("directory alias unavailable")
+    executable = alias / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    repository = Path(bootstrap.__file__).resolve().parents[1]
+    code = ("import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(repository)!r}); "
+            "from core import venv_bootstrap as b; "
+            "f = b.reenter_existing_windows_venv if sys.platform == 'win32' else b.ensure_venv; "
+            "f(Path(sys.argv[1])); print('external-alias-preserved')")
+    result = subprocess.run([str(executable), "-I", "-S", "-c", code, str(project)],
+                            env=clean_env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "external-alias-preserved" in result.stdout
     assert marker.read_bytes() == bootstrap._MARKER_CONTENT.encode()
 
 
@@ -703,6 +844,78 @@ def test_actual_project_python_with_no_site_and_other_virtual_env_preserves_inco
 
 
 @pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize("denied_name", [bootstrap._INCOMPLETE_MARKER, bootstrap._SETUP_WITNESS])
+@pytest.mark.parametrize("failure", [PermissionError(13, "denied"), OSError(5, "I/O error")])
+def test_marker_metadata_error_preserves_environment_and_prevents_reentry(
+        tmp_path, monkeypatch, windows, denied_name, failure):
+    project = tmp_path / "project"
+    venv = project / ".venv"
+    executable = venv / ("Scripts/python.exe" if windows else "bin/python")
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"existing user file")
+    marker = venv / bootstrap._INCOMPLETE_MARKER
+    if denied_name == bootstrap._INCOMPLETE_MARKER:
+        marker.write_bytes(bootstrap._MARKER_CONTENT.encode())
+    witness = venv / bootstrap._SETUP_WITNESS
+    if denied_name == bootstrap._SETUP_WITNESS:
+        witness.write_bytes(bootstrap._WITNESS_CONTENT.encode())
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "base" / "python"))
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr(bootstrap, "_exec_reenter", lambda *args: pytest.fail("reentered despite metadata error"))
+    real_lstat = Path.lstat
+    real_exists = Path.exists
+    real_is_symlink = Path.is_symlink
+
+    def inaccessible(path, *args, **kwargs):
+        if path.name == denied_name:
+            raise failure
+        return real_lstat(path, *args, **kwargs)
+
+    # Windows and Python 3.14 may report False from these convenience checks
+    # when metadata is inaccessible; the old code then treated it as absent.
+    def absent(path, *args, **kwargs):
+        if path.name == denied_name:
+            return False
+        return real_exists(path, *args, **kwargs)
+
+    def not_a_symlink(path):
+        if path.name == denied_name:
+            return False
+        return real_is_symlink(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "lstat", inaccessible)
+        scoped.setattr(Path, "exists", absent)
+        scoped.setattr(Path, "is_symlink", not_a_symlink)
+        with pytest.raises(SystemExit) as exc:
+            (bootstrap.reenter_existing_windows_venv if windows else bootstrap.ensure_venv)(project)
+        assert exc.value.code == 1
+    assert executable.read_bytes() == b"existing user file"
+    evidence = marker if denied_name == bootstrap._INCOMPLETE_MARKER else witness
+    assert evidence.read_bytes() == (bootstrap._MARKER_CONTENT if evidence == marker
+                                     else bootstrap._WITNESS_CONTENT).encode()
+
+
+def test_missing_environment_and_marker_are_accepted_as_absent(tmp_path):
+    assert bootstrap._check_existing_marker(tmp_path / "missing" / ".venv") is False
+
+
+def test_dangling_witness_link_refuses_reentry(tmp_path):
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    witness = venv / bootstrap._SETUP_WITNESS
+    try:
+        witness.symlink_to(tmp_path / "missing-target")
+    except OSError:
+        pytest.skip("symbolic links unavailable")
+    with pytest.raises(SystemExit):
+        bootstrap._check_existing_marker(venv)
+    assert witness.is_symlink()
+
+
+@pytest.mark.parametrize("windows", [False, True])
 @pytest.mark.parametrize("witness_kind", ["file", "symlink"])
 def test_missing_primary_marker_with_witness_refuses_reentry(tmp_path, monkeypatch, windows, witness_kind):
     project = tmp_path / "project"
@@ -742,6 +955,7 @@ def test_windows_existing_environment_is_reused(tmp_path, monkeypatch, marker_co
         (venv / bootstrap._INCOMPLETE_MARKER).write_bytes(marker_content.encode())
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "base"))
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "base" / "python"))
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     entered = []
     monkeypatch.setattr(bootstrap, "_exec_reenter", entered.append)

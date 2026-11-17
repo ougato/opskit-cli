@@ -100,16 +100,19 @@ def _complete_setup(marker) -> None:
 def _check_existing_marker(venv_dir: Path) -> bool:
     """Reject incomplete or unsafe setup markers without changing the directory."""
     setup_marker = venv_dir / _INCOMPLETE_MARKER
-    if not setup_marker.exists() and not setup_marker.is_symlink():
-        # Environments created before this witness existed remain supported.
-        # Its presence proves this was a managed setup even if its primary
-        # marker was removed; preserve it and refuse an unverified reentry.
-        witness = venv_dir / _SETUP_WITNESS
-        if witness.exists() or witness.is_symlink():
+    try:
+        try:
+            setup_marker.lstat()
+        except FileNotFoundError:
+            # Only a confirmed absence is compatible with a legacy environment.
+            # Path.exists()/is_symlink() can report False for access errors.
+            witness = venv_dir / _SETUP_WITNESS
+            try:
+                witness.lstat()
+            except FileNotFoundError:
+                return False
             print(_t("venv_resume", environment=venv_dir))
             raise SystemExit(1)
-        return False
-    try:
         with _hold_setup_marker(venv_dir) as (_marker, incomplete):
             if incomplete:
                 print(_t("venv_resume", environment=venv_dir))
@@ -141,6 +144,33 @@ def _executable_inside_venv(venv_dir: Path) -> bool:
         return parent.is_relative_to(root) or parent.resolve().is_relative_to(root.resolve())
     except (OSError, RuntimeError, ValueError):
         return False
+
+
+def _executable_venv_root() -> Path | None:
+    """Find the venv metadata beside the executable or its parent directory.
+
+    Older Python versions expose the base prefix under ``-S`` even when the
+    interpreter belongs to a virtual environment. CPython searches these two
+    directories for pyvenv.cfg; keep the executable's final symlink intact,
+    since resolving a POSIX venv's python usually leads to the base binary.
+    """
+    if not sys.executable:
+        return None
+    try:
+        directory = Path(sys.executable).absolute().parent
+        for candidate in (directory, directory.parent):
+            if (candidate / "pyvenv.cfg").is_file():
+                return candidate
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return None
+
+
+def _using_external_executable_venv(venv_dir: Path) -> bool:
+    if _executable_inside_venv(venv_dir):
+        return False
+    root = _executable_venv_root()
+    return root is not None and not _same_path(root, venv_dir)
 
 
 @contextmanager
@@ -279,6 +309,8 @@ def reenter_existing_windows_venv(project_root: Path) -> None:
         if _same_path(os.environ["VIRTUAL_ENV"], venv_dir):
             _check_existing_marker(venv_dir)
         return
+    if _using_external_executable_venv(venv_dir):
+        return
     executable = venv_dir / "Scripts" / "python.exe"
     # A failed setup can leave the marker before creating the interpreter.
     # Inspect it even when there is no executable to re-enter.
@@ -323,6 +355,8 @@ def ensure_venv(project_root: Path | None = None) -> None:
     if os.environ.get("VIRTUAL_ENV"):
         if _same_path(os.environ["VIRTUAL_ENV"], venv_dir):
             _check_existing_marker(venv_dir)
+        return
+    if _using_external_executable_venv(venv_dir):
         return
 
     # 方法 2：sys.prefix 指向 venv 目录
