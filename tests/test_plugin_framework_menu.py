@@ -65,6 +65,64 @@ def test_update_all_continues_after_one_trust_failure(monkeypatch):
     assert updates == ["second"]
 
 
+@pytest.mark.parametrize("approved", [True, False])
+def test_update_all_finishes_each_plugin_before_advancing(monkeypatch, approved):
+    from core.plugin import PluginManifest
+    def manifest(name, version):
+        return PluginManifest(name=name, version=version, api_version=4, kind="python", entry=name)
+
+    original = manifest("first", "1.0.0")
+    refreshed = manifest("first", "2.0.0")
+    pending = manifest("pending", "2.0.0")
+    latest = manifest("latest", "1.0.0")
+    installed = [original, pending, latest]
+    events = []
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda plugin: {})
+    monkeypatch.setattr(menu.commands, "manifests", lambda: list(installed))
+    monkeypatch.setattr(menu.commands, "trusted_record", lambda name: dict(source="repo", installation_receipt="receipt"))
+    monkeypatch.setattr(menu.commands, "trust_status", lambda plugin:
+                        menu.commands.TRUST_CHANGED if plugin in (refreshed, pending) else menu.commands.TRUST_OK)
+    monkeypatch.setattr(menu, "pause", lambda: events.append(("pause",)))
+    monkeypatch.setattr(menu, "print_info", lambda message: events.append(("info", message)))
+    monkeypatch.setattr(menu, "print_success", lambda message: events.append(("success", message)))
+    monkeypatch.setattr(menu, "print_warning", lambda message: events.append(("warning", message)))
+
+    def update(plugin, **kwargs):
+        events.append(("update", plugin.name, plugin.version))
+        if plugin is original:
+            installed[0] = refreshed
+            return True, "updated"
+        return True, "unchanged"
+
+    def confirm_trust(plugin, **kwargs):
+        events.append(("trust", plugin.name, plugin.version))
+        if plugin is refreshed and not approved:
+            raise menu.UserCancel()
+        return True
+
+    monkeypatch.setattr(menu.commands, "update", update)
+    monkeypatch.setattr(menu, "confirm_trust", confirm_trust)
+    menu._update_all()
+    first_result = ("success", i18n.t("plugin.update_success", name="first", version="2.0.0")) if approved else (
+        "warning", i18n.t("plugin.trust_declined", name="first"))
+    assert events == [
+        ("update", "first", "1.0.0"),
+        ("trust", "first", "2.0.0"),
+        first_result,
+        ("pause",),
+        ("update", "pending", "2.0.0"),
+        ("trust", "pending", "2.0.0"),
+        ("success", i18n.t("plugin.update_trusted", name="pending", version="2.0.0")),
+        ("pause",),
+        ("update", "latest", "1.0.0"),
+        ("info", i18n.t("plugin.update_latest", name="latest")),
+        ("pause",),
+    ]
+
+
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_management_and_maintenance_structure(monkeypatch, language):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))

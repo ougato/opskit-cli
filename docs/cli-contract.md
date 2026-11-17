@@ -50,9 +50,68 @@ available时percent/per_core为数值。counter_reset、topology_changed、inval
 
 ## 插件生命周期
 
-`plugin list/show NAME/install URL/update NAME/remove NAME/enable NAME/disable NAME/trust NAME/revoke NAME` 为平台能力，插件业务参数仍由 `plugin run NAME -- ARGS` 原样传递。
+以下命令以 `opskit plugin` 开头，每个子命令都支持 `--help`。
 
-安装支持 `--branch/-b` 和 `--as`，安装只记录来源与分支，不授权。先用 `plugin show NAME` 核对内容指纹和权限，再显式 `plugin trust NAME --fingerprint SHA256`。`--yes` 不替代指纹。更新内容改变立即撤销原授权，包括降级和校验异常路径。删除只移除插件源码与授权，保留其状态数据；JSON/无交互删除需要 `--yes`。
+| 功能 | 子命令 |
+|---|---|
+| 列表与详情 | `list`、`show NAME` |
+| 安装与卸载 | `install URL [--branch BRANCH] [--as ALIAS]`、`remove NAME` |
+| 更新 | `update NAME [--fetch-profile FILE] [--allow-private]`、`update --all` |
+| 启停与运行 | `enable NAME`、`disable NAME`、`run NAME -- ARGS` |
+| 插件信任 | `trust NAME --fingerprint SHA256`、`revoke NAME` |
+| 插件权限 | `permissions list [--plugin NAME]`、`permissions show GRANT_ID`、`permissions revoke GRANT_ID` |
+| 插件服务授权 | `authorize-service CALLER SERVICE --caller-fingerprint SHA256 --provider-fingerprint SHA256`、`revoke-service CALLER SERVICE` |
+| 更新恢复 | `inspect-updates [--limit N]`、`recover-update TRANSACTION --record-sha256 SHA256` |
+| 沙盒清理 | `inspect-native-profiles [--limit N]`、`recover-native-profile TRANSACTION --record-sha256 SHA256` |
+| 临时清理 | `inspect-native-workspaces [--limit N]`、`recover-native-workspace TRANSACTION --record-sha256 SHA256` |
+| 缓存清理 | `inspect-native-cache CATALOG [--limit N]`、`clean-native-cache CATALOG OBJECT_ID --record-sha256 SHA256` |
+| 磁盘策略 | `disk-policy [--minimum-free-mib MIB]` |
+| 状态检查与修复 | `inspect-state NAME [--caller CALLER]`、`repair-state NAME --record-sha256 SHA256 [--caller CALLER]` |
+
+安装还支持 `--fetch-profile FILE` 和 `--allow-private`，完成后需要显式授信。用 `plugin show NAME` 核对内容指纹和权限，再用 `plugin trust NAME --fingerprint SHA256` 确认。`--yes` 无法替代指纹。卸载保留插件状态数据，JSON 或无交互模式下需在根命令上指定 `--yes`。插件业务参数由 `plugin run NAME -- ARGS` 原样传入插件。
+
+### 安装与卸载
+
+```powershell
+opskit plugin install "E:/repos/my-plugin" --branch develop --as my-plugin-local
+opskit plugin list
+opskit plugin show my_plugin
+opskit plugin trust my_plugin --fingerprint SHA256
+opskit --yes plugin remove my_plugin
+```
+
+用 `list` 返回的清单名称更新、授信及卸载。上例的 `SHA256` 替换为 `show` 返回的指纹，`--as` 只指定本机安装目录。
+
+### 更新结果
+
+- `update NAME` 与 `update --all` 二选一。更新使用安装时记录的来源和分支。私有凭据和私网放行请用单个插件命令指定
+- `update --all` 按顺序处理所有已安装插件，单项失败后继续，最终返回 `plugins` 结果列表及 `failed` 计数。有失败项时退出 1，参数错误退出 2。使用 `opskit --output json plugin update --all` 可在脚本中读取完整结果
+- `updated` 表示已装入新内容，`unchanged` 表示内容相同。两者均可通过 `authorization_required` 判断是否需要授信
+- `downgrade` 表示已装入较低版本，保留待授信状态并计入需要处理的条目。核对版本和指纹后可显式授信。内容校验拒绝或更新失败时，结果包含 `error`
+- 交互菜单在当轮确认待授信版本，按任意键继续下一个。CLI 将确认留给显式的 `plugin trust`，便于脚本审查每个指纹
+
+### 插件权限
+
+```powershell
+opskit --output json plugin permissions list --plugin cocos
+opskit plugin permissions show GRANT_ID
+opskit plugin permissions revoke GRANT_ID
+```
+
+`GRANT_ID` 使用列表中的完整 `id`。详情包含插件名、指纹、操作与资源。撤销会删除指定的永久权限，同时使正在使用的本次授权失效。插件执行信任由 `plugin trust` 和 `plugin revoke` 管理。
+
+### 插件维护
+
+```powershell
+opskit --output json plugin inspect-updates
+opskit --output json plugin inspect-native-profiles
+opskit --output json plugin inspect-native-workspaces
+opskit --output json plugin inspect-native-cache runtime
+opskit plugin disk-policy
+opskit plugin disk-policy --minimum-free-mib 4096
+```
+
+从对应的检查结果中取有效条目的 `transaction` 或 `object`、`record_sha256`，填入上表中对应的恢复或清理命令。缓存类型为 `runtime`、`fetch`、`prepare`，检查和清理使用同一类型。`--limit` 范围为 1–256，默认 256，超过查询上限会报错。磁盘最低剩余空间范围为 256–1048576 MiB，适用于框架写入前的检查。
 
 ## 软件查询与偏好
 

@@ -303,7 +303,11 @@ def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
     assert unchanged.exit_code == 0, unchanged.output
     assert json.loads(unchanged.stdout)["data"]["status"] == "unchanged"
     commit_version("1.1.0")
-    updated = call("plugin", "update", "native_example")
+    updated = call("plugin", "update", "--all")
+    assert json.loads(updated.stdout)["data"] == {
+        "plugins": [{"name": "native_example", "status": "updated", "authorization_required": True}],
+        "failed": 0,
+    }
     assert updated.exit_code == 0, updated.output
     assert load_manifest(root).version == "1.1.0"
     assert trusted_record("native_example")["fingerprint"] == ""

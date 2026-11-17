@@ -378,8 +378,10 @@ opskit network public-ip              # 查询公网 IP
 | 操作 | 菜单路径 | 说明 |
 |---|---|---|
 | 安装 | `插件管理 → 安装插件` | 输入 Git 仓库地址；可在地址后追加 `-b <分支>` 指定分支，或追加 `--as <本地目录名>` 指定安装目录 |
-| 更新 | `插件管理 → 更新插件` | 可更新单个插件或全部插件；内容变化后需重新审核并授信，无法核实来源或安装内容时拒绝覆盖 |
+| 更新 | `插件管理 → 更新插件` | 可更新单个插件或依次更新全部插件，当轮确认待授信版本，按任意键处理下一项 |
 | 卸载 | `插件管理 → 卸载插件` | 确认后删除插件目录与对应的信任记录，不删除插件运行数据 |
+| 权限 | `插件管理 → 插件权限` | 查看和撤销永久宿主权限，CLI 使用 `plugin permissions list/show/revoke` |
+| 维护 | `插件管理 → 插件维护` | 更新恢复、沙盒清理、临时清理、缓存清理及磁盘策略 |
 
 安装时会显示来源不在可信白名单的提醒，并要求确认信任。插件代码在 Windows 原生沙盒中运行；经授权的宿主工具按当前用户权限运行，并可能执行项目脚本。未被信任、内容发生变化，或 `CHECKSUMS.yaml` 校验不通过的插件都不会被加载。Linux/macOS 插件沙盒后端尚未实现。
 
@@ -388,12 +390,23 @@ opskit network public-ip              # 查询公网 IP
 # 在“安装插件”的输入框中填写这一整行
 git@git.example.com:team/client-tools.git -b develop --as insight-client-tools
 
+# 查看插件名称，再更新单个或全部插件
+opskit plugin list
+opskit plugin update cocos
+opskit --output json plugin update --all
+
+# 核对待授信版本和指纹，确认后使用显示的 SHA256
+opskit plugin show cocos
+opskit plugin trust cocos --fingerprint SHA256
+
 # 插件开发/发布：生成文件指纹清单
 opskit plugin fingerprint ./my-plugin
 
 # 发布前校验当前内容是否与指纹清单一致
 opskit plugin fingerprint ./my-plugin --check
 ```
+
+完整的插件管理命令、批量结果及退出码见[插件 CLI 契约](docs/cli-contract.md#插件生命周期)。
 
 > 安装目录与插件身份是两回事：`--as` 只决定本机目录，用来避免同名仓库目录冲突；`plugin.yaml` 中的 `name` 才是全局插件身份，必须与内置模块及其他插件保持唯一。开发规则、交互菜单和完整 SDK 目录见[插件开发指南](docs/plugin-development.md)，安全细节见[插件规范](docs/plugin-spec.md)。
 

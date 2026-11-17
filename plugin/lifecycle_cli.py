@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 from rich.markup import escape
 
-from core.cli import emit, fail, guarded
+from core.cli import emit, fail, guarded, output_mode
 from core.i18n import t
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, invalidate
@@ -79,7 +79,7 @@ def register(app, translate=None):
 
     @app.command("inspect-updates", help=translate("lifecycle.inspect_updates_help"))
     @guarded
-    def inspect_updates(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+    def inspect_updates(limit: int = typer.Option(256, "--limit", min=1, max=256, help=translate("lifecycle.limit_help"))):
         from core.plugin_update_recovery import inspect
         try:
             emit(inspect(limit=limit))
@@ -88,7 +88,8 @@ def register(app, translate=None):
 
     @app.command("recover-update", help=translate("lifecycle.recover_update_help"))
     @guarded
-    def recover_update(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+    def recover_update(transaction: str = typer.Argument(..., help=translate("lifecycle.transaction_help")),
+                       record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_update_recovery import recover
         try:
             emit(recover(transaction, record_sha256))
@@ -97,7 +98,7 @@ def register(app, translate=None):
 
     @app.command("inspect-native-profiles", help=translate("lifecycle.inspect_profiles_help"))
     @guarded
-    def inspect_native_profiles(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+    def inspect_native_profiles(limit: int = typer.Option(256, "--limit", min=1, max=256, help=translate("lifecycle.limit_help"))):
         from core.windows_profile_recovery import inspect
         from core.native_sandbox import NativeSandboxError
         try:
@@ -109,7 +110,8 @@ def register(app, translate=None):
 
     @app.command("recover-native-profile", help=translate("lifecycle.recover_profile_help"))
     @guarded
-    def recover_native_profile(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+    def recover_native_profile(transaction: str = typer.Argument(..., help=translate("lifecycle.transaction_help")),
+                               record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.windows_profile_recovery import recover
         from core.native_sandbox import NativeSandboxError
         try:
@@ -121,7 +123,7 @@ def register(app, translate=None):
 
     @app.command("inspect-native-workspaces", help=translate("lifecycle.inspect_native_workspaces_help"))
     @guarded
-    def inspect_native_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+    def inspect_native_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256, help=translate("lifecycle.limit_help"))):
         from core.plugin_workspace_recovery import inspect
         try:
             emit(inspect(limit=limit))
@@ -130,7 +132,8 @@ def register(app, translate=None):
 
     @app.command("recover-native-workspace", help=translate("lifecycle.recover_workspace_help"))
     @guarded
-    def recover_native_workspace(transaction: str, record_sha256: str = typer.Option(..., "--record-sha256")):
+    def recover_native_workspace(transaction: str = typer.Argument(..., help=translate("lifecycle.transaction_help")),
+                                 record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_workspace_recovery import recover
         try:
             emit(recover(transaction, record_sha256))
@@ -139,7 +142,8 @@ def register(app, translate=None):
 
     @app.command("inspect-native-cache", help=translate("lifecycle.inspect_cache_help"))
     @guarded
-    def inspect_native_cache(catalog: str, limit: int = typer.Option(256, "--limit", min=1, max=256)):
+    def inspect_native_cache(catalog: str = typer.Argument(..., help=translate("lifecycle.catalog_help")),
+                             limit: int = typer.Option(256, "--limit", min=1, max=256, help=translate("lifecycle.limit_help"))):
         from core.native_catalog_cleanup import inspect
         try:
             emit(inspect(catalog, limit=limit))
@@ -148,8 +152,9 @@ def register(app, translate=None):
 
     @app.command("clean-native-cache", help=translate("lifecycle.clean_cache_help"))
     @guarded
-    def clean_native_cache(catalog: str, object_id: str,
-                           record_sha256: str = typer.Option(..., "--record-sha256")):
+    def clean_native_cache(catalog: str = typer.Argument(..., help=translate("lifecycle.catalog_help")),
+                           object_id: str = typer.Argument(..., help=translate("lifecycle.cache_object_help")),
+                           record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.native_catalog_cleanup import collect
         try:
             emit(collect(catalog, object_id, record_sha256))
@@ -170,7 +175,7 @@ def register(app, translate=None):
 
     @app.command("inspect-workspaces", help=translate("lifecycle.inspect_workspaces_help"))
     @guarded
-    def inspect_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256)):
+    def inspect_workspaces(limit: int = typer.Option(256, "--limit", min=1, max=256, help=translate("lifecycle.limit_help"))):
         from core.plugin_workspace import inspect_workspaces as inspect
         from core.plugin_sandbox import CONTROL_TIMEOUT, _execution_budget, _remaining
         try:
@@ -250,7 +255,9 @@ def register(app, translate=None):
 
     @app.command("install", help=translate("lifecycle.install_help"))
     @guarded
-    def install(url: str, branch: str = typer.Option("", "--branch", "-b"), alias: str = typer.Option("", "--as"),
+    def install(url: str = typer.Argument(..., help=translate("lifecycle.repository_help")),
+                branch: str = typer.Option("", "--branch", "-b", help=translate("lifecycle.branch_help")),
+                alias: str = typer.Option("", "--as", help=translate("lifecycle.alias_help")),
                 fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
                 allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
         if url.startswith("-") or branch.startswith("-"):
@@ -262,22 +269,55 @@ def register(app, translate=None):
             fail(acquisition_error(error, "acquisition_failed"))
         emit(describe(manifest))
 
+    def update_result(manifest, fetch_profile, allow_private):
+        ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private)
+        result = {"name": manifest.name, "status": status if ok else "failed"}
+        if not ok:
+            result["error"] = (t("plugin.update_not_git", name=manifest.name) if status == "not_git"
+                               else acquisition_error(status, "update_failed"))
+        elif status == "tampered":
+            result["error"] = t("plugin.update_tampered", name=manifest.name)
+        elif status == "downgrade":
+            result["authorization_required"] = True
+            result["error"] = t("plugin_native.lifecycle.update_downgrade_pending", name=manifest.name)
+        elif status == "unchanged":
+            result["authorization_required"] = commands.trust_status(manifest) != commands.TRUST_OK
+        else:
+            result["authorization_required"] = True
+        return result
+
     @app.command("update", help=translate("lifecycle.update_help"))
     @guarded
-    def update(name: str,
+    def update(name: str = typer.Argument(None, help=translate("lifecycle.update_name_help")),
+               all_plugins: bool = typer.Option(False, "--all", "-a", help=translate("lifecycle.update_all_help")),
                fetch_profile: str = typer.Option(None, "--fetch-profile", help=translate("fetch_profile_help")),
                allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
-        manifest = resolve(name)
-        ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private)
-        if not ok:
-            fail(acquisition_error(status, "update_failed"))
-        if status in {"tampered", "downgrade"}:
-            fail(t("plugin_native.lifecycle.update_rejected", status=status))
-        emit({"name": name, "status": status, "authorization_required": status != "unchanged"})
+        if (name is not None) == all_plugins:
+            fail(t("plugin_native.lifecycle.update_target_required"), 2)
+        if all_plugins and (fetch_profile is not None or allow_private):
+            fail(t("plugin_native.lifecycle.update_named_source_required"), 2)
+        if not all_plugins:
+            result = update_result(resolve(name), fetch_profile, allow_private)
+            if "error" in result:
+                emit(result, error={"code": 1, "message": result["error"]})
+                raise typer.Exit(1)
+            emit(result)
+            return
+
+        results = [update_result(item, fetch_profile, allow_private) for item in commands.manifests()]
+        failures = sum("error" in result for result in results)
+        report = {"plugins": results, "failed": failures}
+        if failures:
+            if output_mode.get() == "text":
+                emit(report)
+            message = t("plugin_native.lifecycle.update_batch_failed", count=failures)
+            emit(report, error={"code": 1, "message": message})
+            raise typer.Exit(1)
+        emit(report)
 
     @app.command("remove", help=translate("lifecycle.remove_help"))
     @guarded
-    def remove(name: str):
+    def remove(name: str = typer.Argument(..., help=translate("lifecycle.update_name_help"))):
         manifest = resolve(name)
         from core.prompt import confirm
         if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("confirm_ui.uninstall"), info_lines=[escape(name), t("confirm_ui.plugin_delete")]):

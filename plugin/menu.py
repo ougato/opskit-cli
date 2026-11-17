@@ -495,55 +495,73 @@ def _pick(subtitle_key: str, all_label: str = ""):
 
 
 def _update_all() -> None:
-    """依次更新全部已安装插件（含分组内成员），逐个显示结果，最后一次返回。
-    内容变化 / 未信任的插件就地弹交互式信任确认，确认后继续更新，拒绝才跳过"""
+    """逐个更新插件，每个结果确认后继续"""
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), t("plugin.update_all")]
+    for manifest in commands.manifests():
+        _update_one(manifest, [*crumb, _display_name(manifest)])
+        pause()
+
+
+def _confirm_update_trust(manifest, crumb, **kwargs):
+    """Return to the update screen before showing the result."""
+    error = None
+    try:
+        approved = confirm_trust(manifest, **kwargs)
+    except UserCancel:
+        approved = False
+    except (OSError, ValueError, RuntimeError) as exc:
+        error = str(exc)
+        approved = None
     clear_screen()
     print_header(crumb)
-    for manifest in commands.manifests():
-        if commands.trust_status(manifest) != commands.TRUST_OK:
-            approved = _confirm_update_trust(manifest)
-            if approved is None:
-                continue
-            clear_screen()
-            print_header(crumb)
-            if not approved:
-                print_warning(t("plugin.trust_needed", name=_display_name(manifest)))
-                continue
-        ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
-        if not ok:
-            if msg == "not_git":
-                print_error(t("plugin.update_not_git", name=_display_name(manifest)))
-            else:
-                print_error(t("plugin.update_failed", error=msg))
-            continue
-        refreshed = next((m for m in commands.manifests() if m.name == manifest.name), None)
-        if refreshed is None:
-            print_error(t("plugin.install_no_manifest"))
-            continue
-        if msg == "unchanged":
-            print_info(t("plugin.update_latest", name=_display_name(refreshed)))
-            continue
-        if msg == "tampered":
-            print_error(t("plugin.update_tampered", name=_display_name(refreshed)))
-            continue
-        if msg == "downgrade":
-            print_warning(t("plugin.update_all_downgrade", name=_display_name(refreshed)))
-            continue
-        if commands.trust_status(refreshed) == commands.TRUST_OK:
-            print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
-        else:
-            print_warning(t("plugin.trust_needed", name=_display_name(refreshed)))
-    pause()
+    if error is not None:
+        print_error(t("plugin.update_failed", error=error))
+    elif not approved:
+        print_warning(t("plugin.trust_declined", name=_display_name(manifest)))
+    return approved
 
 
-def _confirm_update_trust(manifest, **kwargs):
-    """Report trust failures separately from an ordinary user refusal."""
+def _update_one(manifest, crumb) -> None:
+    clear_screen()
+    print_header(crumb)
+    record = commands.trusted_record(manifest.name) or {}
+    # 有安装凭据时先校验并获取远端内容，再对最终安装的版本确认信任
+    managed = record.get("source") and record.get("installation_receipt")
+    if not managed and commands.trust_status(manifest) != commands.TRUST_OK:
+        if not _confirm_update_trust(manifest, crumb):
+            return
     try:
-        return confirm_trust(manifest, **kwargs)
-    except (OSError, ValueError, RuntimeError) as error:
-        print_error(t("plugin.update_failed", error=str(error)))
-        return None
+        ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
+    except UserCancel:
+        print_info(t("plugin.update_cancelled", name=_display_name(manifest)))
+        return
+    if not ok:
+        if msg == "not_git":
+            print_error(t("plugin.update_not_git", name=_display_name(manifest)))
+        else:
+            print_error(t("plugin.update_failed", error=msg))
+        return
+    if msg == "tampered":
+        print_error(t("plugin.update_tampered", name=_display_name(manifest)))
+        return
+
+    refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
+    if refreshed is None:
+        print_error(t("plugin.install_no_manifest"))
+        return
+    name = _display_name(refreshed)
+    if msg == "downgrade" or commands.trust_status(refreshed) != commands.TRUST_OK:
+        detail = t("confirm_ui.downgrade_detail", old=manifest.version, new=refreshed.version) if msg == "downgrade" else ""
+        if not _confirm_update_trust(refreshed, crumb, additional_detail=detail):
+            return
+        if msg == "unchanged":
+            print_success(t("plugin.update_trusted", name=name, version=refreshed.version))
+            return
+
+    if msg == "unchanged":
+        print_info(t("plugin.update_latest", name=name))
+    else:
+        print_success(t("plugin.update_success", name=name, version=refreshed.version))
 
 
 def _update() -> None:
@@ -553,65 +571,8 @@ def _update() -> None:
     if manifest is _ALL:
         _update_all()
         return
-    # 手动 clone / 内容变化后未信任的插件：先走信任确认，确认后继续更新
-    if commands.trust_status(manifest) != commands.TRUST_OK:
-        approved = _confirm_update_trust(manifest)
-        if approved is None:
-            pause()
-            return
-        if not approved:
-            print_error(t("plugin.trust_declined", name=_display_name(manifest)))
-            pause()
-            return
-    old_version = manifest.version
-    ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), _display_name(manifest)]
-    clear_screen()
-    print_header(crumb)
-    if not ok:
-        if msg == "not_git":
-            print_error(t("plugin.update_not_git", name=_display_name(manifest)))
-        else:
-            print_error(t("plugin.update_failed", error=msg))
-        pause()
-        return
-    refreshed = next((m for m in commands.manifests() if m.name == manifest.name), None)
-    if refreshed is None:
-        print_error(t("plugin.install_no_manifest"))
-        pause()
-        return
-    if msg == "unchanged":
-        print_info(t("plugin.update_latest", name=_display_name(refreshed)))
-        pause()
-        return
-    if msg == "tampered":
-        print_error(t("plugin.update_tampered", name=_display_name(refreshed)))
-        pause()
-        return
-    if msg == "downgrade":
-        try:
-            agreed = _confirm_update_trust(refreshed, additional_detail=t(
-                "confirm_ui.downgrade_detail", old=old_version, new=refreshed.version))
-        except UserCancel:
-            agreed = False
-        if agreed is None:
-            pause()
-            return
-        if not agreed:
-            print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
-            pause()
-            return
-        clear_screen()
-        print_header(crumb)
-    approved = (True if commands.trust_status(refreshed) == commands.TRUST_OK
-                else _confirm_update_trust(refreshed))
-    if approved is None:
-        pause()
-        return
-    if approved:
-        print_success(t("plugin.update_success", name=_display_name(refreshed), version=refreshed.version))
-    else:
-        print_error(t("plugin.trust_needed", name=_display_name(refreshed)))
+    _update_one(manifest, crumb)
     pause()
 
 

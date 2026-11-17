@@ -193,3 +193,112 @@ def test_source_builder_reuses_cli_and_rejects_unlocked_or_secret_parameters(tmp
     assert rejected.returncode == 2 and "SECRET" not in rejected.stdout + rejected.stderr
     assert "Traceback" not in rejected.stderr
     assert not (tmp_path / "runtime").exists() and not (tmp_path / "clones").exists()
+
+@pytest.mark.parametrize("args", [(), ("demo", "--all"), ("--all", "--allow-private"),
+                                  ("--all", "--fetch-profile", "profile")])
+def test_update_rejects_invalid_target_or_bulk_source_options(isolated, monkeypatch, args):
+    from plugin import commands
+    monkeypatch.setattr(commands, "manifests", lambda: pytest.fail("invalid options reached discovery"))
+    result = call("plugin", "update", *args)
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"]["code"] == 2
+
+
+def test_update_all_reports_each_result_and_continues_after_failures(isolated, monkeypatch):
+    from core.plugin import PluginManifest
+    from plugin import commands
+    statuses = {
+        "broken": (False, "private diagnostic"),
+        "pending": (True, "unchanged"),
+        "latest": (True, "unchanged"),
+        "older": (True, "downgrade"),
+        "updated": (True, "updated"),
+    }
+    manifests = [PluginManifest(name=name, version="1.0.0", api_version=4, kind="python", entry=name)
+                 for name in statuses]
+    calls = []
+
+    def update(manifest, *, fetch_profile, allow_private):
+        calls.append(manifest.name)
+        assert fetch_profile is None and not allow_private
+        return statuses[manifest.name]
+
+    monkeypatch.setattr(commands, "manifests", lambda: manifests)
+    monkeypatch.setattr(commands, "update", update)
+    monkeypatch.setattr(commands, "trust_status", lambda manifest:
+                        commands.TRUST_OK if manifest.name == "latest" else commands.TRUST_CHANGED)
+    result = call("plugin", "update", "--all")
+    assert result.exit_code == 1 and "private diagnostic" not in result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["data"]["failed"] == 2
+    assert calls == list(statuses)
+    results = payload["data"]["plugins"]
+    assert [(item["name"], item["status"], item.get("authorization_required")) for item in results] == [
+        ("broken", "failed", None),
+        ("pending", "unchanged", True),
+        ("latest", "unchanged", False),
+        ("older", "downgrade", True),
+        ("updated", "updated", True),
+    ]
+    assert {item["name"] for item in results if "error" in item} == {"broken", "older"}
+
+    single = call("plugin", "update", "pending")
+    assert single.exit_code == 0
+    assert json.loads(single.stdout)["data"] == results[1]
+
+
+def test_update_all_empty_installation(isolated):
+    result = call("plugin", "update", "--all")
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["data"] == {"plugins": [], "failed": 0}
+
+
+def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
+    from core.native_sandbox import CapabilityRequest, GrantChoice
+    from core.plugin_capabilities import CapabilityAuthority
+
+    authority = CapabilityAuthority()
+    grants = [CapabilityRequest(name, "a" * 64, "directory.read", str(isolated))
+              for name in ("demo", "other")]
+    try:
+        for request in grants:
+            authority.require(request, check_identity=lambda *_: True, prompt=lambda _: GrantChoice.ALWAYS)
+
+        listed = call("plugin", "permissions", "list", "--plugin", "demo")
+        assert listed.exit_code == 0, listed.output
+        [grant] = json.loads(listed.stdout)["data"]
+        assert grant["plugin"] == "demo" and grant["resource"] == str(isolated)
+        grant_id = grant["id"]
+        shown = call("plugin", "permissions", "show", grant_id)
+        assert shown.exit_code == 0 and json.loads(shown.stdout)["data"] == grant
+        assert call("plugin", "permissions", "revoke", "invalid").exit_code == 2
+        assert authority.list_grants() == grants
+
+        revoked = call("plugin", "permissions", "revoke", grant_id)
+        assert revoked.exit_code == 0 and json.loads(revoked.stdout)["data"] == {"revoked": grant_id}
+        assert call("plugin", "permissions", "show", grant_id).exit_code == 2
+        assert authority.list_grants() == [grants[1]]
+    finally:
+        authority.close()
+
+
+@pytest.mark.parametrize("args", [("inspect-updates",), ("inspect-native-profiles",),
+                                  ("inspect-native-workspaces",), ("inspect-native-cache", "runtime"),
+                                  ("inspect-native-cache", "fetch"), ("inspect-native-cache", "prepare")])
+def test_maintenance_inspection_cli_in_empty_workspace(isolated, args):
+    inspected = call("plugin", *args, "--limit", "1")
+    assert inspected.exit_code == 0, inspected.output
+    assert json.loads(inspected.stdout)["data"] == []
+    assert call("plugin", *args, "--limit", "0").exit_code == 2
+
+
+def test_disk_policy_cli_reads_and_persists_in_isolated_config(isolated):
+    shown = call("plugin", "disk-policy")
+    assert shown.exit_code == 0, shown.output
+    assert json.loads(shown.stdout)["data"] == {"minimum_free_mib": 2048, "hard_quota": False}
+    assert call("plugin", "disk-policy", "--minimum-free-mib", "255").exit_code == 2
+    saved = call("plugin", "disk-policy", "--minimum-free-mib", "512")
+    assert saved.exit_code == 0, saved.output
+    shown = call("plugin", "disk-policy")
+    assert json.loads(shown.stdout)["data"] == {"minimum_free_mib": 512, "hard_quota": False}
