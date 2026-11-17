@@ -423,18 +423,19 @@ def rollback_install(manifest: PluginManifest) -> None:
 
 
 def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
-           allow_private: bool = False, fetch_interaction=None) -> tuple[bool, str]:
+           allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
     """Exclude active invocations before reading or changing plugin sources."""
     from core.plugin_invocation_lock import hold
     try:
         with hold(plugin=manifest.name, timeout=30):
-            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
+            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
+                                  fetch_interaction=fetch_interaction, automatic=automatic)
     except (OSError, ValueError, RuntimeError) as exc:
         return False, str(exc)
 
 
 def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
-                   allow_private: bool = False, fetch_interaction=None) -> tuple[bool, str]:
+                   allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
     """Acquire a fresh reviewed tree, revoke trust, then replace with rollback."""
     from core.native_acquisition import populate
     from core.native_sandbox import NativeSandboxError
@@ -465,6 +466,9 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
         if _directory(root) != initial or content_receipt(root) != before:
             raise ValueError("installed plugin changed during acquisition")
         if before == acquired.receipt:
+            if automatic:
+                from core.plugin_runtime_manager import prepare_update
+                prepare_update(manifest, before)
             return True, "unchanged"
         replacement = _directory(payload)
         with _installation_lock.hold(), authorization_transaction():
@@ -488,6 +492,12 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                 published = True
                 if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
                     raise ValueError("update publication identity changed")
+                if automatic:
+                    from core.plugin_runtime_manager import prepare_update
+                    installed = load_manifest(root)
+                    if installed is None or installed.name != manifest.name:
+                        raise ValueError("updated plugin manifest is invalid")
+                    prepare_update(installed, acquired.receipt)
                 grant(manifest.name, "", refreshed.version, acquired.source, record.get("branch"),
                       installation_receipt=acquired.receipt, source_commit=acquired.commit)
             except BaseException:

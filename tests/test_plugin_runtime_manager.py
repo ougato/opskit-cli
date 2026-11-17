@@ -80,6 +80,30 @@ def test_invalid_or_changed_inputs_do_not_publish(environment, monkeypatch, faul
     assert (catalog.root / 'demo.json').read_bytes() == before
 
 
+@pytest.mark.parametrize("matches_receipt", [True, False])
+def test_selected_installed_update_recovers_verified_old_runtime(environment, monkeypatch, matches_receipt):
+    catalog, old, old_id, digest, manifest = environment
+    manifest.root = catalog.root.parent / "demo"
+    fingerprint = "b" * 64
+    trust = {"fingerprint": fingerprint, "source": "reviewed", "installation_receipt": "receipt"}
+    monkeypatch.setattr("core.plugin_trust.trusted_record", lambda name: trust)
+    monkeypatch.setattr("core.plugin_trust.compute_fingerprint", lambda root: fingerprint)
+    monkeypatch.setattr("core.plugin_install_receipt.content_receipt",
+                        lambda root: "receipt" if matches_receipt else "modified")
+    if matches_receipt:
+        with manager.acquire(manifest, fingerprint, checkpoint=lambda: None,
+                             authorize=lambda: True) as (runtime, record):
+            assert runtime.parent.name != old_id
+            assert record["fingerprint"] == fingerprint and record["sdk_sha256"] == digest
+            assert record["wheels"] == old["wheels"] and record["lock_sha256"] == old["lock_sha256"]
+    else:
+        with pytest.raises(NativeSandboxError):
+            with manager.acquire(manifest, fingerprint, checkpoint=lambda: None, authorize=lambda: True):
+                pytest.fail("modified installation was accepted")
+        runtime, _ = catalog.load("demo", fingerprint=old["fingerprint"], sdk_sha256=old["sdk_sha256"])
+        assert runtime.parent.name == old_id
+
+
 def test_only_verified_sdk_mismatch_gets_maintenance_reason(environment):
     catalog, old, old_id, digest, _ = environment
     with pytest.raises(ValueError, match='expected native SDK identity'):

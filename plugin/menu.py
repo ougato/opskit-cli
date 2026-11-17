@@ -531,7 +531,7 @@ def _update_one(manifest, crumb) -> None:
         if not _confirm_update_trust(manifest, crumb):
             return
     try:
-        ok, msg = commands.update(manifest, **_update_fetch_options(manifest))
+        ok, msg = commands.update(manifest, automatic=True, **_update_fetch_options(manifest))
     except UserCancel:
         print_info(t("plugin.update_cancelled", name=_display_name(manifest)))
         return

@@ -47,6 +47,29 @@ def test_update_replaces_tree_and_revokes_before_publication(installed, monkeypa
     assert not list(root.parent.glob(".opskit-update-*"))
 
 
+@pytest.mark.parametrize("prepare_ok", [True, False])
+def test_automatic_update_prepares_published_bytes_before_reporting_success(installed, monkeypatch, prepare_ok):
+    root, original_receipt = installed
+    observed = []
+
+    def prepare(manifest, receipt):
+        assert manifest.root == root and manifest.version == "1.1.0"
+        assert content_receipt(root) == receipt
+        assert trusted_record("demo")["fingerprint"] == ""
+        observed.append(receipt)
+        if not prepare_ok:
+            raise ValueError("runtime preparation failed")
+
+    monkeypatch.setattr("core.plugin_runtime_manager.prepare_update", prepare)
+    ok, status = commands._update_locked(load_manifest(root), automatic=True)
+    assert ok is prepare_ok and len(observed) == 1
+    if prepare_ok:
+        assert status == "updated" and trusted_record("demo")["installation_receipt"] == observed[0]
+    else:
+        assert content_receipt(root) == original_receipt
+        assert trusted_record("demo")["installation_receipt"] == original_receipt
+
+
 def test_update_publication_failure_restores_old_bytes_without_regrant(installed, monkeypatch):
     root, receipt = installed
     publish = commands.publish_new_directory

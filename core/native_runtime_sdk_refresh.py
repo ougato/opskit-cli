@@ -7,12 +7,20 @@ from core.native_runtime import absolute_path, inventory, stage
 from core.plugin_runtime_inventory import code_digest, snapshot
 
 
-def refresh(catalog, manifest, fingerprint, *, checkpoint, authorize):
+def refresh(catalog, manifest, fingerprint, *, checkpoint, authorize, rebind=False):
     """Publish only if the plugin, SDK and original runtime remain current."""
     sdk = snapshot()
     sdk_sha256 = code_digest(sdk)
-    with catalog.acquire_for_sdk_refresh(manifest.name, fingerprint=fingerprint) as (source, old):
+    with catalog.acquire_for_sdk_refresh(manifest.name, fingerprint=None if rebind else fingerprint) as (source, old):
+        def unchanged(name, expected):
+            checkpoint()
+            return (name == manifest.name and expected == fingerprint
+                    and catalog.is_current(name, source, old)
+                    and code_digest() == sdk_sha256 and authorize())
+
         if old['sdk_sha256'] == sdk_sha256:
+            if old['fingerprint'] != fingerprint:
+                catalog.publish(manifest.name, source, dict(old, fingerprint=fingerprint), check_identity=unchanged)
             return
         checkpoint()
         with workspace() as work:
@@ -33,13 +41,6 @@ def refresh(catalog, manifest, fingerprint, *, checkpoint, authorize):
                 destination = candidate / 'site-packages' / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
-            record = dict(old, sdk_sha256=sdk_sha256, files=inventory(candidate))
+            record = dict(old, fingerprint=fingerprint, sdk_sha256=sdk_sha256, files=inventory(candidate))
             checkpoint()
-
-            def unchanged(name, expected):
-                checkpoint()
-                return (name == manifest.name and expected == fingerprint
-                        and catalog.is_current(name, source, old)
-                        and code_digest() == sdk_sha256 and authorize())
-
             catalog.publish(manifest.name, candidate, record, check_identity=unchanged)

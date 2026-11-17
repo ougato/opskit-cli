@@ -19,6 +19,10 @@ class RuntimeSdkOutdated(ValueError):
     """A verified runtime targets an older host SDK."""
 
 
+class RuntimePluginOutdated(ValueError):
+    """A verified runtime targets a different version of the installed plugin."""
+
+
 def _name(name):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name):
         raise ValueError("invalid native runtime plugin identity")
@@ -48,7 +52,7 @@ class RuntimeCatalog:
             yield runtime, record
 
     @contextmanager
-    def acquire_for_sdk_refresh(self, name, *, fingerprint):
+    def acquire_for_sdk_refresh(self, name, *, fingerprint=None):
         """Pin and validate the existing runtime using its recorded SDK identity."""
         from core.native_catalog_leases import reader
         with ExitStack() as lease:
@@ -110,6 +114,8 @@ class RuntimeCatalog:
     def load(self, name, *, fingerprint, sdk_sha256):
         if not isinstance(sdk_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sdk_sha256) is None:
             raise ValueError("invalid expected native SDK identity")
+        if not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None:
+            raise ValueError("invalid expected plugin fingerprint")
         return self._load(name, fingerprint=fingerprint, sdk_sha256=sdk_sha256)
 
     def _load(self, name, *, fingerprint, sdk_sha256):
@@ -128,6 +134,14 @@ class RuntimeCatalog:
             content = json.dumps(record, sort_keys=True, separators=(",", ":"))
             if hashlib.sha256(content.encode("utf-8")).hexdigest() != pointer["manifest_sha256"]:
                 raise ValueError("native runtime manifest identity mismatch")
+            if fingerprint is None:
+                if not isinstance(record, dict):
+                    raise ValueError("invalid native runtime manifest")
+                fingerprint = record.get("fingerprint")
+            if isinstance(record, dict) and record.get("fingerprint") != fingerprint:
+                validate_candidate(object_root / "runtime", record,
+                                   fingerprint=record.get("fingerprint"), sdk_sha256=record.get("sdk_sha256"))
+                raise RuntimePluginOutdated("native runtime plugin fingerprint is outdated")
             if sdk_sha256 is None:
                 if not isinstance(record, dict):
                     raise ValueError("invalid native runtime manifest")

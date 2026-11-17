@@ -24,6 +24,8 @@ Windows 源码入口 `python .\main.py` 会复用已有的项目 `.venv`，尊�
 
 在菜单中选择「更新插件 → 更新全部」。框架依次检查各插件已记录的仓库和分支，内容没变且已信任时直接显示结果。新内容或待授信版本会在本轮提示确认，同意后显示更新或授信结果，按任意键继续下一个。取消确认时，该版本保持待授信。
 
+更新时，框架会先为新版准备运行时，再报告更新结果。可校验的既有运行时会保留原有 Python、依赖和锁，按新版插件指纹及当前 SDK 发布新运行时。已装入新版但仍指向旧运行时的插件，在选中时自动恢复，前提是安装凭据、当前授信和旧运行时文件均能通过校验。
+
 命令行用 `opskit plugin update NAME` 更新单个插件，或用 `opskit --output json plugin update --all` 批量更新。批量结果中 `authorization_required: true` 的插件可通过 `opskit plugin show NAME` 核对，再用 `opskit plugin trust NAME --fingerprint SHA256` 完成授信。详细参数和退出码见[插件生命周期](cli-contract.md#插件生命周期)。
 
 ## 失败与重试
