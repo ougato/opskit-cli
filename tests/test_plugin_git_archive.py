@@ -128,10 +128,12 @@ def test_worker_bundled_independently_of_sdk_and_gateway():
     sources = inventory.native_fetch_snapshot()
     assert {"core/" + name for name in inventory.NATIVE_FETCH_FILES} <= set(sources)
     assert "core/dulwich/__init__.py" in sources
+    bundled = inventory.bundle_snapshot()
+    sdk = inventory.snapshot()
     for name, source in sources.items():
-        assert source == inventory.bundle_snapshot()[name]
+        assert source == bundled[name]
         if name != "core/__init__.py":
-            assert name not in inventory.snapshot()
+            assert name not in sdk
     assert "core/native_git_ssh.py" not in inventory.snapshot()
 
 
