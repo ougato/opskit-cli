@@ -127,6 +127,7 @@ def ssh_repository(native_tools, tmp_path):
 @pytest.mark.skipif(os.name != "nt", reason="real AppContainer required")
 @pytest.mark.timeout(300)
 def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, native_tools, tmp_path, monkeypatch):
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import copy
     url, profile, commit, attempts, commands, source = ssh_repository
     python, git_runtime, git = native_tools

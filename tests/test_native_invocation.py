@@ -174,6 +174,7 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_old_sdk_is_refreshed_before_real_native_invocation(sdk_runtime, tmp_path, monkeypatch):
     from core import plugin_sandbox as sandbox
     from core.native_runtime import stage, inventory

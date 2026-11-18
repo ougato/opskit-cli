@@ -48,7 +48,10 @@ print(json.dumps({'module': windows.__file__, 'checks': records, 'resources_remo
 '''
     result = subprocess.run([str(python), "-I", "-c", probe, str(output / "python-route-home")],
                             cwd=outside, env=env, capture_output=True, text=True,
-                            encoding="utf-8", timeout=60, check=True)
+                            encoding="utf-8", timeout=60)
+    (output / "windows-routes.stdout").write_text(result.stdout, encoding="utf-8")
+    (output / "windows-routes.stderr").write_text(result.stderr, encoding="utf-8")
+    result.check_returncode()
     report = json.loads(result.stdout)
     if not Path(report["module"]).resolve().is_relative_to(environment):
         raise ValueError("Python route imported code outside the installed environment")

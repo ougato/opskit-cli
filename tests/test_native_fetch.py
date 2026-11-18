@@ -68,6 +68,8 @@ def test_real_smart_protocol_pack_is_indexed_only_in_appcontainer(tools, tmp_pat
 # Each production operation retains its own deadline; the test needs their sum
 @pytest.mark.timeout(300)
 def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch):
+    # Runtime downloads have separate coverage; acquisition stays local/offline
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import datetime
     import ipaddress
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -251,6 +253,7 @@ def test_invalid_branch_rejected_before_tool_or_source_access(tmp_path, monkeypa
 
 @pytest.mark.timeout(300)
 def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import json
     import main
     from typer.testing import CliRunner
