@@ -81,7 +81,7 @@ def install_reader(monkeypatch, before, after, *, times=(10, 10.15)):
 
     monkeypatch.setattr(psutil, "cpu_times", read)
     monkeypatch.setattr(psutil, "cpu_percent", lambda **kwargs: pytest.fail("global percent caches must not be used"))
-    monkeypatch.setattr(psutil, "cpu_freq", lambda: SimpleNamespace(current=1000))
+    monkeypatch.setattr(psutil, "cpu_freq", lambda: SimpleNamespace(current=1000), raising=False)
     monkeypatch.setattr(psutil, "cpu_count", lambda **kwargs: 1)
     monkeypatch.setattr(cpu_sampling.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(cpu_sampling.time, "sleep", sleep)
@@ -105,6 +105,22 @@ def test_invalid_window_has_nullable_rates(monkeypatch):
     result = commands.get_cpu()
     assert result.percent is None and result.per_core == [None]
     assert result.window_seconds is None and result.rate_status == "invalid_window"
+
+
+@pytest.mark.parametrize("failure", [None, NotImplementedError, OSError, RuntimeError])
+def test_optional_frequency_does_not_break_cpu_sampling(monkeypatch, failure):
+    import psutil
+    new = counters(user=10, idle=10)
+    install_reader(monkeypatch, [zeros(new)], [new])
+    if failure is None:
+        monkeypatch.delattr(psutil, "cpu_freq")
+    else:
+        def unavailable():
+            raise failure("frequency unavailable")
+        monkeypatch.setattr(psutil, "cpu_freq", unavailable)
+    result = commands.get_cpu()
+    assert result.freq_mhz == 0.0
+    assert result.percent == 50 and result.rate_status == "available"
 
 
 def test_cancel_during_wait_never_reads_second_counter(monkeypatch):
