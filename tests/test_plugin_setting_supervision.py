@@ -4,10 +4,10 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
-import psutil
 import pytest
 
-from worker_test_markers import publish_marker
+from worker_test_markers import (marked_process_exists, process_birth, process_identity_exists,
+                                 publish_process_marker)
 
 from core import config, plugin_inspection as inspection, plugin_sandbox as sandbox
 
@@ -16,7 +16,7 @@ def _blocked_setting(connection, buffer, length, requested):
     requested.wait()
     request = json.loads(bytes(memoryview(buffer).cast('B')[:length.value]))
     read, write = os.pipe()
-    publish_marker(Path(request['config']), str(os.getpid()))
+    publish_process_marker(Path(request['config']))
     try:
         os.read(read, 1)
     finally:
@@ -30,12 +30,13 @@ def test_real_settings_fresh_same_reader_and_no_other_plugin_grants():
         'private_targets': {'demo': ['example.internal:443'], 'other': ['private-marker:80']}}}})
     with sandbox._execution_budget():
         pid = sandbox._invocations.inspector.pid
+        identity = {"pid": pid, "birth": process_birth(pid)}
         assert sandbox._read_sandbox_setting('private_targets', 'demo') == ['example.internal:443']
         config.save_config({'plugin': {'sandbox': {'timeout': 20, 'wsl_distribution': 'Ubuntu',
             'private_targets': {'demo': [], 'other': ['private-marker:80']}}}})
         assert sandbox._read_sandbox_setting('private_targets', 'demo') == []
         assert sandbox._invocations.inspector.pid == pid
-    assert not psutil.pid_exists(pid)
+    assert not process_identity_exists(identity)
 
 
 def test_standalone_settings_closes_owned_reader(monkeypatch):
@@ -43,11 +44,11 @@ def test_standalone_settings_closes_owned_reader(monkeypatch):
     original = inspection.ContentInspector.config_setting
     def observed(self, *args, **kwargs):
         result = original(self, *args, **kwargs)
-        pids.append(self.pid)
+        pids.append({"pid": self.pid, "birth": process_birth(self.pid)})
         return result
     monkeypatch.setattr(inspection.ContentInspector, 'config_setting', observed)
     assert sandbox._read_sandbox_setting('private_targets', 'demo') == []
-    assert pids and not psutil.pid_exists(pids[0])
+    assert pids and not process_identity_exists(pids[0])
     assert getattr(sandbox._invocations, 'inspector', None) is None
 
 
@@ -56,6 +57,7 @@ def test_actual_setting_result_cannot_continue_after_parent_deadline(monkeypatch
     with sandbox._execution_budget():
         original = inspection.ContentInspector.config_setting
         pid = sandbox._invocations.inspector.pid
+        identity = {"pid": pid, "birth": process_birth(pid)}
         def delayed(self, *args, **kwargs):
             value = original(self, *args, **kwargs)
             sandbox._invocations.deadline = sandbox.time.monotonic() - 1
@@ -63,7 +65,7 @@ def test_actual_setting_result_cannot_continue_after_parent_deadline(monkeypatch
         monkeypatch.setattr(inspection.ContentInspector, 'config_setting', delayed)
         with pytest.raises(sandbox.SandboxError, match='execution deadline'):
             sandbox._read_sandbox_setting('private_targets', 'demo')
-    assert not psutil.pid_exists(pid)
+    assert not process_identity_exists(identity)
 
 
 def test_blocked_standalone_setting_reaped(tmp_path, monkeypatch, expire_worker_after_marker):
@@ -73,7 +75,7 @@ def test_blocked_standalone_setting_reaped(tmp_path, monkeypatch, expire_worker_
     _, observed = expire_worker_after_marker(marker, startup_budget=sandbox.CONFIG_READ_TIMEOUT)
     with pytest.raises(sandbox.SandboxError, match='execution deadline reading sandbox settings'):
         sandbox._read_sandbox_setting('private_targets', 'demo')
-    assert observed and not psutil.pid_exists(int(marker.read_text()))
+    assert observed and not marked_process_exists(marker)
 
 
 def test_cancel_setting_reaps_worker(tmp_path, monkeypatch):
@@ -89,7 +91,7 @@ def test_cancel_setting_reaps_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=clock))
     with pytest.raises(KeyboardInterrupt):
         sandbox._read_sandbox_setting('private_targets', 'demo')
-    assert not psutil.pid_exists(int(marker.read_text()))
+    assert not marked_process_exists(marker)
 
 
 @pytest.mark.parametrize('result', [{}, {'ok': 1, 'value': []},

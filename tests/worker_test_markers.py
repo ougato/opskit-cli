@@ -52,8 +52,13 @@ def publish_process_marker(path):
 
 def marked_process_exists(path):
     """A reused PID is not the marked worker; inspection errors propagate."""
-    import psutil
     identity = json.loads(Path(path).read_text(encoding="utf-8"))
+    return process_identity_exists(identity)
+
+
+def process_identity_exists(identity):
+    """Check the recorded process identity and its actual exit state."""
+    import psutil
     try:
         if process_birth(identity["pid"]) != identity["birth"]:
             return False
