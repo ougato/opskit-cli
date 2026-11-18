@@ -115,6 +115,7 @@ def test_first_setup_ignores_cwd_modules_but_keeps_pip_config_and_relative_requi
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "base"))
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.setattr(bootstrap, "_find_python", lambda _: sys.executable)
+    monkeypatch.setattr(bootstrap, "_executable_venv_root", lambda: None)
     entered = []
     monkeypatch.setattr(bootstrap, "_exec_reenter", entered.append)
 
@@ -1354,6 +1355,7 @@ os.umask(0)
 sys.prefix = sys.base_prefix = str(root / "system")
 os.environ.pop("VIRTUAL_ENV", None)
 bootstrap._find_python = lambda version: "system-python"
+bootstrap._executable_venv_root = lambda: None
 def stop(*args):
     raise SystemExit(23)
 bootstrap._create_venv = stop

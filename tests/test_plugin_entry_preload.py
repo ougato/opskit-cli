@@ -325,6 +325,7 @@ def test_budget_counts_preparation_but_excludes_user_idle(monkeypatch, preparati
     try:
         ready = session._ready.get_nowait()
         ready[-1]["deadline"] -= preparation + idle
+        ready[0].ready_at -= idle
         session._ready_at -= idle
         session._ready.put(ready)
         session.check_cancelled()

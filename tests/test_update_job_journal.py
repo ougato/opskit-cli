@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("simulated_windows_launcher")
+
 from core import updater
 from core.update_cli import status
 

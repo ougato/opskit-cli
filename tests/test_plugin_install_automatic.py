@@ -97,6 +97,8 @@ def test_bootstrap_rejects_unapproved_sources(url):
 
 
 def test_pinned_manifest_has_complete_sdk_wheels(monkeypatch):
+    monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+    monkeypatch.setattr(bootstrap.platform, "machine", lambda: "AMD64")
     monkeypatch.setattr(bootstrap, "get_backend", lambda: SimpleNamespace(probe=lambda: None))
     assets = bootstrap._manifest()
     packages = {a["package"] for a in assets if a["kind"] == "wheel"}

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("prepared_native_catalog")
+
 from core import plugin_json, plugin_worker as worker
 
 

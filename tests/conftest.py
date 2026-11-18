@@ -30,9 +30,11 @@ def symlink_capable(tmp_path):
 def prepared_native_catalog(monkeypatch, tmp_path):
     """State/inspection unit fixtures stop before executing native guest code."""
     from types import SimpleNamespace
+    from contextlib import nullcontext
+    monkeypatch.setattr("core.native_invocation.prepare_runtime",
+                        lambda *args, **kwargs: nullcontext(lambda: None))
     monkeypatch.setattr("core.native_sandbox.get_backend", lambda: SimpleNamespace(probe=lambda: None))
     monkeypatch.setattr("core.native_runtime_catalog.RuntimeCatalog.load", lambda *args, **kwargs: (tmp_path, {}))
-    from contextlib import nullcontext
     monkeypatch.setattr("core.native_runtime_catalog.RuntimeCatalog.acquire",
                         lambda self, *args, **kwargs: nullcontext(self.load(*args, **kwargs)))
 
@@ -84,3 +86,28 @@ def prepared_fetch_tools(isolated_data_dir, native_lifecycle_tools):
     from core.native_fetch_catalog import FetchCatalog
     python, _, _ = native_lifecycle_tools
     FetchCatalog().prepare(python)
+
+
+@pytest.fixture(autouse=True)
+def isolated_cli_context():
+    """In-process CLI runners must not leak JSON/noninteractive state to other tests."""
+    from core import cli
+    tokens = [(variable, variable.set(value)) for variable, value in (
+        (cli.output_mode, "text"), (cli.non_interactive, False), (cli._result_stream, None))]
+    try:
+        yield
+    finally:
+        for variable, token in reversed(tokens):
+            variable.reset(token)
+
+
+@pytest.fixture
+def simulated_windows_launcher(monkeypatch):
+    """Cross-platform scheduling units fake OS handles; Windows integration tests remain real."""
+    if os.name != "nt":
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        import subprocess
+        monkeypatch.setattr("core.update_windows._inherited_parent_handle", lambda: nullcontext(1234))
+        monkeypatch.setattr(subprocess, "STARTUPINFO", SimpleNamespace, raising=False)
+        monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0, raising=False)

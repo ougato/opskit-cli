@@ -57,10 +57,11 @@ def test_duplicate_request_fields_refused():
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_format):
+def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_format, monkeypatch):
     import subprocess
     import shutil
     from core import native_fetch_worker as native
+    monkeypatch.setattr(native.sys, "platform", "win32")
 
     git = shutil.which("git")
     if git is None:
@@ -98,10 +99,11 @@ def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_for
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, object_format):
+def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, object_format, monkeypatch):
     import subprocess
     import shutil
     from core import native_fetch_worker as native
+    monkeypatch.setattr(native.sys, "platform", "win32")
 
     git = shutil.which("git")
     if git is None:

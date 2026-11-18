@@ -22,6 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("simulated_windows_launcher")
+
 # ─── 辅助：隔离 data_dir ──────────────────────────────────────────────────────
 
 @pytest.fixture()

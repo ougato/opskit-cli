@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
@@ -183,7 +185,7 @@ def test_source_builder_reuses_cli_and_rejects_unlocked_or_secret_parameters(tmp
                    "OPSKIT_PLUGINS_DIR": str(tmp_path / "clones")}
     help_result = subprocess.run([sys.executable, str(script), "--help"],
         env=environment, capture_output=True, text=True, encoding="utf-8", timeout=20)
-    assert help_result.returncode == 0 and "lock-file" in help_result.stdout
+    assert help_result.returncode == 0 and "lock-file" in re.sub(r"\x1b\[[0-9;]*m", "", help_result.stdout)
     missing = subprocess.run([sys.executable, str(script), str(tmp_path)],
         env=environment, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert missing.returncode == 2
@@ -288,6 +290,10 @@ def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
                                   ("inspect-native-cache", "fetch"), ("inspect-native-cache", "prepare")])
 def test_maintenance_inspection_cli_in_empty_workspace(isolated, args):
     inspected = call("plugin", *args, "--limit", "1")
+    if args == ("inspect-native-profiles",) and sys.platform != "win32":
+        assert inspected.exit_code == 1
+        assert json.loads(inspected.stdout)["ok"] is False
+        return
     assert inspected.exit_code == 0, inspected.output
     assert json.loads(inspected.stdout)["data"] == []
     assert call("plugin", *args, "--limit", "0").exit_code == 2
