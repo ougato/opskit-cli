@@ -279,7 +279,7 @@ def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
         shown = call("plugin", "permissions", "show", grant_id)
         assert shown.exit_code == 0 and json.loads(shown.stdout)["data"] == grant
         assert call("plugin", "permissions", "revoke", "invalid").exit_code == 2
-        assert authority.list_grants() == grants
+        assert sorted(authority.list_grants(), key=lambda item: item.plugin) == grants
 
         revoked = call("plugin", "permissions", "revoke", grant_id)
         assert revoked.exit_code == 0 and json.loads(revoked.stdout)["data"] == {"revoked": grant_id}
