@@ -478,7 +478,7 @@ else:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires a Windows console")
-@pytest.mark.parametrize("phase", ["render", "input"])
+@pytest.mark.parametrize("phase", ["render", "input", "key", "pause"])
 def test_root_ctrl_c_during_render_and_input_exits_cleanly(tmp_path, phase):
     marker = tmp_path / "root.txt"
     script = """
@@ -501,7 +501,17 @@ def record(value):
 cleanup.register_cleanup(lambda: record('cleanup'))
 cleanup.init()
 main.discover_modules = lambda cfg: []
-main._on_exit = lambda cfg: record('update')
+original_mode = ctypes.c_ulong()
+if not kernel.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(original_mode)):
+    raise OSError('cannot get initial console mode')
+if not original_mode.value & 1:
+    raise RuntimeError('test requires processed input enabled initially')
+def on_exit(cfg):
+    mode = ctypes.c_ulong()
+    if not kernel.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)) or mode.value != original_mode.value:
+        raise RuntimeError('console input mode was not restored')
+    record('update')
+main._on_exit = on_exit
 plugin_entry_preload.cancel_pending = lambda **kwargs: record('cancel')
 prompt._stdin_is_tty = lambda: True
 actual_select = main.select
@@ -515,6 +525,23 @@ def send(wait_input):
             return
     else:
         time.sleep(.3)
+    if sys.argv[2] in ('key', 'pause'):
+        from core.windows_console_input import _InputRecord
+        mode = ctypes.c_ulong()
+        if not kernel.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)) or mode.value & 1:
+            record('Ctrl+C would broadcast outside the program')
+            return
+        event = _InputRecord()
+        event.event_type = 1
+        event.event.key.key_down = True
+        event.event.key.repeat_count = 1
+        event.event.key.virtual_key = 0x43
+        event.event.key.character = chr(3)
+        event.event.key.control_state = 0x0008  # LEFT_CTRL_PRESSED
+        written = ctypes.c_ulong()
+        if not kernel.WriteConsoleInputW(ctypes.c_void_p(handle), ctypes.byref(event), 1, ctypes.byref(written)):
+            record('key delivery failed')
+        return
     if not kernel.GenerateConsoleCtrlEvent(0, 0):
         record('delivery failed')
 def select(**kwargs):
@@ -524,8 +551,12 @@ def select(**kwargs):
         time.sleep(3)
         raise RuntimeError('Ctrl+C was not delivered during rendering')
     def ready():
-        record('input')
+        record(sys.argv[2])
         threading.Thread(target=send, args=(True,), daemon=True).start()
+    if sys.argv[2] == 'pause':
+        ready()
+        prompt.pause('pause')
+        raise RuntimeError('expected UserExit from pause')
     kwargs['on_ready'] = ready
     return actual_select(**kwargs)
 main.select = select

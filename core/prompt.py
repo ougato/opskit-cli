@@ -59,6 +59,13 @@ def _check_input() -> None:
 
 
 def _getwch() -> str:
+    from core.windows_console_input import read_control_keys
+
+    with read_control_keys():
+        return _read_windows_key()
+
+
+def _read_windows_key() -> str:
     import msvcrt
     from core.cleanup import (_begin_console_input, _console_interrupt_pending,
                               _end_console_input)
@@ -1056,7 +1063,8 @@ def pause(msg: str = '') -> None:
         sys.stdout.write(f'\n\033[{_PIPE_COLOR_ANSI}m{msg}\033[0m ')
         sys.stdout.flush()
         try:
-            _read_key()
+            if _read_key() in ('\x03', '\x04'):
+                raise UserExit
         except KeyboardInterrupt:
             if not shield:
                 raise

@@ -1,5 +1,6 @@
 """Inspect pending Windows console keys without consuming or blocking on them."""
 import ctypes
+from contextlib import contextmanager
 from ctypes import wintypes
 import io
 import sys
@@ -51,3 +52,35 @@ def key_available():
     if not peek(handle, records, len(records), ctypes.byref(count)):
         raise ctypes.WinError(ctypes.get_last_error())
     return _has_key(records[:count.value])
+
+
+@contextmanager
+def read_control_keys():
+    """Keep Ctrl+C in the input queue instead of broadcasting to the console."""
+    if sys.platform != "win32":
+        yield
+        return
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_handle = kernel.GetStdHandle
+    get_handle.argtypes = [wintypes.DWORD]
+    get_handle.restype = wintypes.HANDLE
+    get_mode = kernel.GetConsoleMode
+    get_mode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    get_mode.restype = wintypes.BOOL
+    set_mode = kernel.SetConsoleMode
+    set_mode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    set_mode.restype = wintypes.BOOL
+
+    handle = get_handle(-10)  # STD_INPUT_HANDLE
+    mode = wintypes.DWORD()
+    processed_input = 0x0001
+    restore = (handle not in (None, ctypes.c_void_p(-1).value)
+               and get_mode(handle, ctypes.byref(mode))
+               and mode.value & processed_input
+               and set_mode(handle, mode.value & ~processed_input))
+    try:
+        yield
+    finally:
+        if restore:
+            set_mode(handle, mode.value)
