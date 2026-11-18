@@ -126,11 +126,6 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: pin release verification key
-        env:
-          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
-        run: python scripts/pin_release_key.py
-
       - name: install deps (non-manylinux)
         if: ${{ !matrix.manylinux }}
         shell: python
@@ -207,13 +202,14 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # Sign with the same immutable source used by this tag event's builds.
+          # Publish with the same immutable source used by this tag event's builds.
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: download all artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
+          pattern: opskit-*
           path: artifacts/
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -223,35 +219,10 @@ jobs:
       - name: validate complete artifact matrix
         run: python -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts
 
-      - name: install release verification dependency
-        run: |
-          set -euo pipefail
-          python -I -m venv "$RUNNER_TEMP/opskit-signing"
-          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip --isolated --disable-pip-version-check install \
-            --index-url https://pypi.org/simple --only-binary=:all: --require-hashes --no-deps \
-            -r requirements-installer.txt
-          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip --isolated install \
-            --index-url https://pypi.org/simple --only-binary=:all: --require-hashes --no-deps \
-            -r requirements-release-signing.txt
-          "$RUNNER_TEMP/opskit-signing/bin/python" -I -m pip check
-
-      - name: sign release assets
-        env:
-          OPSKIT_RELEASE_SIGNING_KEY: ${{ secrets.OPSKIT_RELEASE_SIGNING_KEY }}
-          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
-        run: |
-          set -euo pipefail
-          BUILD="${GITHUB_REF_NAME#v}"
-          for f in artifacts/*/opskit-*; do
-            [[ "$f" == *.sha256 || "$f" == *.sig.json || "$f" == *.sig || "$f" == *.signed ]] && continue
-            "$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/sign_release.py --build "$BUILD" "$f"
-          done
-
       - name: verify and publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
-        run: '"$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts --publish'
+        run: 'python -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts --publish'
 
       # 发布控制面：把 tag 对应的 build 写回默认分支的 constants.py + bootstrap.json，
       # 客户端经 raw.githubusercontent/<default>/bootstrap.json 即可发现新版本
@@ -264,14 +235,11 @@ jobs:
           path: bootstrap-target
 
       - name: publish bootstrap manifest
-        env:
-          OPSKIT_RELEASE_PUBLIC_KEY: ${{ vars.OPSKIT_RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --preflight
-          python -I scripts/pin_release_key.py --root bootstrap-target
-          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target
-          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --check
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --sync-installers --preflight
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --sync-installers
+          python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target --sync-installers --check
           if git -C bootstrap-target diff --quiet -- core/constants.py bootstrap.json install.sh install.ps1; then
             echo "[bootstrap] 无变更，跳过提交"
             exit 0

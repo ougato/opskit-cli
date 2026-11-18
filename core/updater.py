@@ -727,8 +727,8 @@ def _apply_marker_locked(marker) -> bool:
                         or transaction["from_build"] != APP_VERSION or version <= APP_VERSION):
                     raise ValueError("update marker target changed")
                 _update_record_path(pending)
-                if not _verify_pending_signature(pending, version):
-                    raise ValueError("update marker signature refused")
+                if not _verify_pending_checksum(pending, version):
+                    raise ValueError("update marker checksum refused")
                 update_target_state.validate_upgrade(target, version)
                 _atomic_copy(pending, target, expected_digest=data["new_sha256"])
             committed = True
@@ -1020,51 +1020,28 @@ def _https_update_stream(url, *, client=None, timeout=None, headers=None):
 def _small_update_body(response):
     response.raise_for_status()
     if response.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
-        raise ValueError("compressed update signature/checksum refused")
+        raise ValueError("compressed update checksum refused")
     body = bytearray()
     for chunk in response.iter_bytes(4096):
         if len(body) + len(chunk) > 4096:
-            raise ValueError("update signature/checksum exceeds limit")
+            raise ValueError("update checksum exceeds limit")
         body.extend(chunk)
     return bytes(body)
 
-def _signing_key(cfg: dict) -> str:
-    from core.constants import UPDATE_SIGNING_PUBLIC_KEY
-    return cfg.get("signing_public_key", "") or UPDATE_SIGNING_PUBLIC_KEY
 
-
-@_update_mutation
-def _fetch_release_signature(pending: Path, asset_url: str, build: int, cfg: dict) -> bool:
-    from urllib.parse import urlparse
-    from core.release_signature import verify
-    from core.secrets import atomic_write
-    key = _signing_key(cfg)
-    if not key or urlparse(asset_url).scheme != "https" or build <= APP_VERSION:
+def _verify_pending_checksum(pending: Path, build: int) -> bool:
+    """Bind the candidate's bytes and version to its local verified receipt."""
+    if type(build) is not int or build <= APP_VERSION:
         return False
     try:
-        with httpx.Client(timeout=10) as client:
-            with _https_update_stream(asset_url + ".sig.json", client=client) as response:
-                envelope = json.loads(_small_update_body(response))
-        if not verify(envelope, key, build=build, filename=_asset_filename(), digest=_sha256_file(pending)):
-            return False
-        atomic_write(pending.with_name(pending.name + ".sig.json"), json.dumps(envelope))
-        return True
-    except Exception:
-        return False
-
-
-def _verify_pending_signature(pending: Path, build: int) -> bool:
-    from core.config import load_config
-    from core.release_signature import verify
-    if build <= APP_VERSION:
-        return False
-    try:
-        sidecar = pending.with_name(pending.name + ".sig.json")
-        if sidecar.stat().st_size > 4096:
-            return False
-        envelope = json.loads(sidecar.read_text(encoding="utf-8"))
-        return verify(envelope, _signing_key(load_config().get("update", {})),
-                      build=build, filename=_asset_filename(), digest=_sha256_file(pending))
+        record = _read_update_record(pending.parent / "candidate.json")
+        expected = record.get("sha256")
+        return (type(record.get("schema_version")) is int and record["schema_version"] == 1
+                and record.get("state") == "verified"
+                and type(record.get("build")) is int and record["build"] == build
+                and record.get("candidate_id") == pending.parent.name
+                and isinstance(expected, str) and re.fullmatch(r"[a-f0-9]{64}", expected) is not None
+                and _sha256_file(pending) == expected)
     except (OSError, ValueError, TypeError):
         return False
 
@@ -1535,7 +1512,7 @@ def _apply_owned_pending(pending: Path, version: int) -> bool:
     except (OSError, ValueError, TypeError):
         _log.warning("pending update ownership verification failed; preserving candidate")
         return False
-    # _do_apply revalidates its release signature and target transaction.
+    # _do_apply revalidates its release checksum and target transaction.
     return _do_apply(pending, version)
 
 
@@ -1554,8 +1531,8 @@ def _do_apply(pending: Path, remote_ver: int) -> bool:
     """
     if not _is_frozen():
         return False
-    if not _verify_pending_signature(pending, remote_ver):
-        _log.warning("unsigned, changed or outdated pending release refused")
+    if not _verify_pending_checksum(pending, remote_ver):
+        _log.warning("unverified, changed or outdated pending release refused")
         return False
     return _do_apply_verified(pending, remote_ver)
 
@@ -1706,7 +1683,7 @@ def _require_previous_update_confirmed(transaction, target, owner):
 
 @_update_target_mutation
 def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
-    if not _verify_pending_signature(pending, remote_ver):
+    if not _verify_pending_checksum(pending, remote_ver):
         return False
     self_path = _self_path()
     backup = _get_backup_path()
@@ -1902,7 +1879,7 @@ def _apply_windows(pending: Path, self_path: Path, new_version: int, recovery=No
         return
     except Exception as e:
         _log.error("_apply_windows: scheduling failed")
-        # Startup can retry through the same signature/identity gates. No
+        # Startup can retry through the same checksum/identity gates. No
         # MoveFileEx reboot fallback can bypass verification using shared pending.
         marker = _get_cache_path().parent / "update_pending_path.json"
         record = {"pending": str(pending), "target": str(self_path), "version": new_version}

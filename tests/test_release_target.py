@@ -1,5 +1,4 @@
 """Execute trusted release tools against a separate, untrusted data checkout."""
-import base64
 import json
 import os
 from pathlib import Path
@@ -27,42 +26,61 @@ def target(tmp_path):
     (root / "core").mkdir(parents=True)
     (root / "scripts").mkdir()
     (root / "core/constants.py").write_text(
-        'APP_VERSION = 2\nUPDATE_SIGNING_PUBLIC_KEY = "old"\n', encoding="utf-8")
+        'APP_VERSION = 2\n', encoding="utf-8")
     (root / "bootstrap.json").write_text(json.dumps({
         "latest_build": 2, "min_build": 1, "rollout": 100}), encoding="utf-8")
-    (root / "install.sh").write_text('RELEASE_PUBLIC_KEY="old"\n', encoding="utf-8")
-    (root / "install.ps1").write_text('$RELEASE_PUBLIC_KEY = "old"\n', encoding="utf-8")
-    for name in ("release_bump.py", "pin_release_key.py"):
+    for name in ("release_bump.py",):
         (root / "scripts" / name).write_text('raise RuntimeError("branch code executed")\n')
     return root
 
 
 def run_tool(target, script, *args):
-    env = dict(os.environ, OPSKIT_RELEASE_PUBLIC_KEY=base64.b64encode(bytes(range(32))).decode())
     return subprocess.run([sys.executable, "-I", str(SCRIPTS / script), *args,
-                           "--root", str(target)], cwd=target, env=env,
+                           "--root", str(target)], cwd=target,
                           capture_output=True, text=True, encoding="utf-8", timeout=15)
 
 
 def test_separate_checkout_updated_without_executing_branch_code(target):
     original = {name: (SCRIPTS / name).read_bytes() for name in
-                ("release_bump.py", "pin_release_key.py")}
-    for script, args in (("pin_release_key.py", ()), ("release_bump.py", ("v7",)),
+                ("release_bump.py",)}
+    for script, args in (("release_bump.py", ("v7",)),
                          ("release_bump.py", ("v7", "--check"))):
         result = run_tool(target, script, *args)
         assert result.returncode == 0, result.stderr
     assert json.loads((target / "bootstrap.json").read_text())["latest_build"] == 7
-    key = base64.b64encode(bytes(range(32))).decode()
-    for name in ("core/constants.py", "install.sh", "install.ps1"):
-        assert key in (target / name).read_text()
     assert "APP_VERSION = 7" in (target / "core/constants.py").read_text()
     for name, content in original.items():
         assert (SCRIPTS / name).read_bytes() == content
 
 
+def test_installers_are_synced_from_event_source_after_preflight(target):
+    for name in ("install.sh", "install.ps1"):
+        (target / name).write_text("obsolete installer\n")
+    before = {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    result = run_tool(target, "release_bump.py", "v7", "--sync-installers", "--preflight")
+    assert result.returncode == 0, result.stderr
+    assert all(p.read_bytes() == content for p, content in before.items())
+    result = run_tool(target, "release_bump.py", "v7", "--sync-installers")
+    assert result.returncode == 0, result.stderr
+    for name in ("install.sh", "install.ps1"):
+        assert (target / name).read_bytes() == (SCRIPTS.parent / name).read_bytes()
+    assert run_tool(target, "release_bump.py", "v7", "--sync-installers", "--check").returncode == 0
+
+
+def test_linked_installer_blocks_version_and_installer_writes(target, tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("external content")
+    os.link(outside, target / "install.sh")
+    (target / "install.ps1").write_text("old installer")
+    before = {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    result = run_tool(target, "release_bump.py", "v7", "--sync-installers")
+    assert result.returncode != 0
+    assert "unlinked regular file" in result.stderr
+    assert all(p.read_bytes() == content for p, content in before.items())
+
+
 @pytest.mark.parametrize("script,args,name", [
     ("release_bump.py", ("v7",), "bootstrap.json"),
-    ("pin_release_key.py", (), "install.ps1"),
 ])
 def test_linked_target_rejected_before_any_write(target, tmp_path, script, args, name):
     before = {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
@@ -98,7 +116,6 @@ def test_bootstrap_commit_preserves_latest_branch_parent(target):
 
 @pytest.mark.parametrize("script,args,name", [
     ("release_bump.py", ("v7",), "bootstrap.json"),
-    ("pin_release_key.py", (), "install.ps1"),
 ])
 def test_symlink_target_cannot_escape_checkout(target, tmp_path, script, args, name):
     outside = tmp_path / "outside"
@@ -119,7 +136,7 @@ def test_symlink_target_cannot_escape_checkout(target, tmp_path, script, args, n
 @pytest.mark.parametrize("version,latest", [(8, 8), (8, 2), (2, 8)])
 def test_old_tag_cannot_lower_either_version_source(target, version, latest):
     constants = target / "core/constants.py"
-    constants.write_text(f'APP_VERSION = {version}\nUPDATE_SIGNING_PUBLIC_KEY = "old"\n')
+    constants.write_text(f'APP_VERSION = {version}\n')
     bootstrap = target / "bootstrap.json"
     data = json.loads(bootstrap.read_text())
     data["latest_build"] = latest

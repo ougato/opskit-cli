@@ -16,21 +16,6 @@ def test_only_release_job_can_write_repository():
         assert effective == {"contents": "write" if name == "release" else "read"}
 
 
-def test_signer_comes_from_event_commit_without_persisted_credentials():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["release"]["steps"]
-    signer = next(i for i, step in enumerate(steps) if
-                  "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
-    checkouts = [step for step in steps[:signer] if
-                 step.get("uses", "").startswith("actions/checkout@")]
-    assert checkouts[-1]["with"]["ref"] == "${{ github.sha }}"
-    assert checkouts[-1]["with"]["persist-credentials"] is False
-    assert sum("OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {})
-               for step in steps) == 1
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in workflow.get("env", {})
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in workflow["jobs"]["release"].get("env", {})
-
-
 def test_bootstrap_commit_uses_default_branch_after_release_upload():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release"]["steps"]
@@ -45,11 +30,10 @@ def test_bootstrap_commit_uses_default_branch_after_release_upload():
     assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
     assert checkout["with"]["path"] == "bootstrap-target"
     commands = steps[publish]["run"]
-    assert "python -I scripts/pin_release_key.py --root bootstrap-target" in commands
     assert 'python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target' in commands
     assert "git -C bootstrap-target push" in commands
     preflight = commands.index("--preflight")
-    assert preflight < commands.index("scripts/pin_release_key.py")
+    assert preflight < commands.index("--check")
 
 
 def test_release_tags_share_non_cancelling_publish_lock():
@@ -58,18 +42,18 @@ def test_release_tags_share_non_cancelling_publish_lock():
     assert concurrency == {"group": "opskit-release-publish", "cancel-in-progress": False}
 
 
-def test_artifact_validation_precedes_signing_and_publication():
+def test_artifact_validation_precedes_publication():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release"]["steps"]
     validate = next(i for i, step in enumerate(steps) if
                     "scripts/release_assets.py" in step.get("run", "") and
                     "--publish" not in step["run"])
-    signer = next(i for i, step in enumerate(steps) if
-                  "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
     publish = next(i for i, step in enumerate(steps) if "--publish" in step.get("run", ""))
-    assert validate < signer < publish
-    assert "pip install" not in steps[signer]["run"]
-    assert "OPSKIT_RELEASE_PUBLIC_KEY" in steps[publish]["env"]
+    assert validate < publish
+    assert steps[publish]["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+    download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+    assert download["with"]["pattern"] == "opskit-*"
+    assert download["with"].get("merge-multiple", False) is False
 
 
 def test_all_external_actions_use_immutable_commits():
@@ -80,20 +64,6 @@ def test_all_external_actions_use_immutable_commits():
                 action = step.get("uses")
                 if action is not None:
                     assert re.fullmatch(r"actions/[a-z-]+@[0-9a-f]{40}", action), (path, action)
-
-
-def test_signing_uses_isolated_hash_locked_environment():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["release"]["steps"]
-    install = next(step for step in steps if step.get("name") == "install release verification dependency")
-    assert "-I -m venv" in install["run"]
-    assert "--isolated install" in install["run"]
-    for option in ("--require-hashes", "--only-binary=:all:", "--no-deps", "requirements-release-signing.txt"):
-        assert option in install["run"]
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in install.get("env", {})
-    assert install["run"].index("requirements-installer.txt") < install["run"].index("requirements-release-signing.txt")
-    signer = next(step for step in steps if "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
-    assert '"$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/sign_release.py' in signer["run"]
 
 
 def test_manylinux_builder_is_pinned_to_amd64_digest():

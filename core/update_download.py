@@ -1,4 +1,4 @@
-"""Supervised signed downloads, published by one atomic candidate pointer.
+"""Supervised checksum-verified downloads, published by one atomic candidate pointer.
 
 The disposable worker holds the existing staging lock and uses the
 existing downloader in a unique private directory, never the active candidate.
@@ -7,6 +7,7 @@ Only a complete verified generation is made visible to apply/startup.
 import math
 import os
 from pathlib import Path
+import re
 import time
 from uuid import uuid4
 
@@ -33,7 +34,6 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
     from core import updater
     from core.config import load_config
     from core.constants import FILE_UPDATE_CACHE
-    from core.release_signature import verify
     from core.secrets import restrict_permissions
     from network.worker import send
 
@@ -45,8 +45,8 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
     try:
         _remaining(deadline)
         cfg = update_cfg if update_cfg is not None else load_config(max_bytes=65536).get("update", {})
-        if not isinstance(cfg, dict) or not updater._signing_key(cfg):
-            raise ValueError("update signing key is not configured")
+        if not isinstance(cfg, dict):
+            raise ValueError("invalid update configuration")
         target = updater.query_update_target(cfg)
         _remaining(deadline)
         if target is None:
@@ -58,6 +58,12 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
         from core.update_target_state import validate_upgrade
         phase = "version_policy"
         validate_upgrade(updater._self_path(), build)
+        _remaining(deadline)
+        phase = "checksum_source"
+        digest = digest or updater._get_sha256_from_url(url + ".sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
+            raise ValueError("valid update checksum is required")
+        digest = digest.lower()
         _remaining(deadline)
         root_cache = Path(root_cache)
         try:
@@ -89,35 +95,29 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
         _remaining(deadline)
         if pending is None or not updater._verify_binary(pending):
             raise ValueError("update download or binary validation failed")
-        phase = "signature"
-        if not updater._fetch_release_signature(pending, url, build, cfg):
-            raise ValueError("update signature verification failed")
-        _remaining(deadline)
+        phase = "checksum"
         updater._update_record_path(pending)
-        sidecar = pending.with_name(pending.name + ".sig.json")
-        envelope = updater._read_update_record(sidecar)
         actual_digest = updater._sha256_file(pending)
-        if not verify(envelope, updater._signing_key(cfg), build=build,
-                      filename=updater._asset_filename(), digest=actual_digest):
-            raise ValueError("update signature verification failed")
+        if actual_digest != digest:
+            raise ValueError("update checksum mismatch before publication")
+        _remaining(deadline)
         phase = "persistence"
-        for artifact in (pending, sidecar):
-            restrict_permissions(artifact)
-            with artifact.open("r+b") as handle:
-                os.fsync(handle.fileno())
+        restrict_permissions(pending)
+        with pending.open("r+b") as handle:
+            os.fsync(handle.fileno())
         updater._write_update_record(staging / "candidate.json", {
             "schema_version": 1, "candidate_id": identity, "build": build,
-            "sha256": actual_digest, "signature_sha256": updater._sha256_file(sidecar),
+            "sha256": actual_digest,
             "state": "verified"})
         _remaining(deadline)
         phase = "publication"
         # Last write is the publication point. Interruption before it leaves
         # the previous pointer intact; interruption after it leaves a complete
-        # signed generation, even when the response cannot reach the parent.
+        # verified generation, even when the response cannot reach the parent.
         updater._write_update_record(root_cache, {**existing, "candidate_id": identity,
             "pending_version": build, "latest": build})
         send(connection, {"ok": True, "data": {"available": True, "candidate_version": build,
-            "candidate_id": identity, "signature_verified": True, "state": "downloaded",
+            "candidate_id": identity, "checksum_verified": True, "state": "downloaded",
             "applied": False}})
     except Exception:
         # Never expose URLs, API bodies, configuration or transport exceptions.

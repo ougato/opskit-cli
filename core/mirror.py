@@ -295,7 +295,7 @@ def _is_cached_valid(path: Path, suffix: str | None = None) -> bool:
     if not path.exists():
         return False
     try:
-        from core.release_signature import file_digest
+        from core.file_digest import file_digest
         if file_digest(path) != path.with_name(path.name + ".cache-sha256").read_text(encoding="ascii").strip():
             return False
     except OSError:
@@ -307,7 +307,7 @@ def _is_cached_valid(path: Path, suffix: str | None = None) -> bool:
 
 
 def _record_download_cache(path: Path) -> None:
-    from core.release_signature import file_digest
+    from core.file_digest import file_digest
     from core.secrets import atomic_write
     atomic_write(path.with_name(path.name + ".cache-sha256"), file_digest(path))
 

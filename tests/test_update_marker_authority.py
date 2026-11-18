@@ -63,7 +63,7 @@ def test_marker_without_bound_backup_and_transaction_does_not_replace_target(mar
     updater._write_update_record(marker, {"pending": str(pending), "target": str(target),
                                          "version": updater.APP_VERSION + 1})
     # A signed candidate alone does not prove recovery/backup ownership.
-    monkeypatch.setattr(updater, "_verify_pending_signature", lambda *args: True)
+    monkeypatch.setattr(updater, "_verify_pending_checksum", lambda *args: True)
     assert updater._apply_update_pending_path() is False
     assert target.read_bytes() == b"known old program"
     assert pending.exists() and marker.exists()
@@ -74,7 +74,7 @@ def bound_marker(marker_context, monkeypatch):
     from update_marker_fixtures import bind_marker
     pending, target, marker = marker_context
     marker, backup, transaction = bind_marker(target, pending, updater.APP_VERSION + 1)
-    monkeypatch.setattr(updater, "_verify_pending_signature", lambda *args: True)
+    monkeypatch.setattr(updater, "_verify_pending_checksum", lambda *args: True)
     return pending, target, marker, backup, transaction
 
 
@@ -90,7 +90,7 @@ def test_bound_marker_refuses_changed_authority_without_replacement(bound_marker
     elif authority == "target":
         target.write_bytes(b"unrelated target")
     elif authority == "signature":
-        monkeypatch.setattr(updater, "_verify_pending_signature", lambda *args: False)
+        monkeypatch.setattr(updater, "_verify_pending_checksum", lambda *args: False)
     else:
         updater._write_update_record(updater._get_health_path(), {"build": transaction["to_build"],
             "confirmed": False, "fails": 0, "backup_id": "other-backup"})

@@ -8,7 +8,7 @@ import pytest
 
 from core import updater
 from core.file_identity import same_file_identity
-from core.release_signature import file_digest
+from core.file_digest import file_digest
 
 
 class StatWithUnavailableIdentity:

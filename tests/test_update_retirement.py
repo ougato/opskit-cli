@@ -73,7 +73,7 @@ def test_retired_failed_job_allows_a_new_candidate(recovery, monkeypatch):
         "schema_version": 1, "candidate_id": candidate_id, "build": build,
         "sha256": updater._sha256_file(pending), "state": "verified",
     })
-    monkeypatch.setattr(updater, "_verify_pending_signature", lambda *args: True)
+    monkeypatch.setattr(updater, "_verify_pending_checksum", lambda *args: True)
     launches = []
     monkeypatch.setattr(updater, "_apply_windows", lambda *args: launches.append(args))
 
@@ -308,20 +308,15 @@ def test_boot_restore_failure_retains_pending_transaction(recovery, monkeypatch)
 
 
 def test_download_rejects_rolled_back_build_before_transfer(rolled_job, monkeypatch):
-    import base64
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     from core import update_download
     from test_update_download import Capture
     target, backup, job, metadata, transaction = rolled_job
-    key = Ed25519PrivateKey.generate()
-    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
     monkeypatch.setattr(updater, "query_update_target", lambda cfg: (metadata["version"], "https://example.org/asset", None))
     monkeypatch.setattr(updater, "_download_update", lambda *args: pytest.fail("bad version must not transfer"))
     before = updater._get_cache_path().read_bytes()
     connection = Capture()
     update_download._worker(connection, str(updater._get_cache_path()), time.monotonic() + 10,
-                            {"signing_public_key": public})
+                            {})
     assert connection.result["ok"] is False and "version_policy" in connection.result["error"]
     assert updater._get_cache_path().read_bytes() == before
     assert not (updater._get_cache_path().parent / "update-candidates").exists()

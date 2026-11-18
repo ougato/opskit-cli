@@ -1,27 +1,20 @@
-"""Real signatures plus target state prevent stale-runtime/cross-cache downgrades."""
-import base64
-import json
+"""Real checksums plus target state prevent stale-runtime/cross-cache downgrades."""
 import logging
 import sys
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import pytest
 
 from core import config, updater, update_target_state as state
-from core.release_signature import payload, file_digest
+from core.file_digest import file_digest
 
 
 @pytest.fixture
-def signed_installer(tmp_path, monkeypatch):
+def verified_installer(tmp_path, monkeypatch):
     target = tmp_path / "program.exe"
     target.write_bytes(b"old-program")
     monkeypatch.setattr(updater, "_self_path", lambda: target)
     monkeypatch.setattr(updater, "_is_frozen", lambda: True)
-    key = Ed25519PrivateKey.generate()
-    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
-    monkeypatch.setattr(config, "load_config", lambda **kw: {"update": {"signing_public_key": public}})
     def commit(pending, destination, version, recovery=None):
         updater._atomic_copy(pending, destination)
         pending.unlink()
@@ -42,17 +35,13 @@ def signed_installer(tmp_path, monkeypatch):
         updater._write_update_record(pending.parent / "candidate.json", {
             "schema_version": 1, "candidate_id": identity, "build": build,
             "sha256": digest, "state": "verified"})
-        filename = updater._asset_filename()
-        envelope = {"build": build, "filename": filename, "sha256": digest,
-                    "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
-        pending.with_name(pending.name + ".sig.json").write_text(json.dumps(envelope))
         return updater.apply_verified_pending()
     return target, install
 
 
 @pytest.mark.parametrize("offset", [1, 3], ids=["downgrade", "newer-but-stale-runtime"])
-def test_stale_runtime_cannot_apply_another_cache_candidate(signed_installer, tmp_path, offset):
-    target, install = signed_installer
+def test_stale_runtime_cannot_apply_another_cache_candidate(verified_installer, tmp_path, offset):
+    target, install = verified_installer
     running_build = updater.APP_VERSION
     install(tmp_path / "first", running_build + 2, b"H")
     before = target.read_bytes(), state.path(target).read_bytes()
@@ -63,8 +52,8 @@ def test_stale_runtime_cannot_apply_another_cache_candidate(signed_installer, tm
     assert updater._get_pending_path().exists()
 
 
-def test_fresh_runtime_can_upgrade_then_restore_authorized_backup(signed_installer, tmp_path, monkeypatch):
-    target, install = signed_installer
+def test_fresh_runtime_can_upgrade_then_restore_authorized_backup(verified_installer, tmp_path, monkeypatch):
+    target, install = verified_installer
     higher = updater.APP_VERSION + 2
     install(tmp_path / "first", higher, b"H")
     higher_bytes = target.read_bytes()
@@ -80,8 +69,8 @@ def test_fresh_runtime_can_upgrade_then_restore_authorized_backup(signed_install
     assert updater.rollback()
 
 
-def test_new_upgrade_waits_for_previous_owner_health(signed_installer, tmp_path, monkeypatch):
-    target, install = signed_installer
+def test_new_upgrade_waits_for_previous_owner_health(verified_installer, tmp_path, monkeypatch):
+    target, install = verified_installer
     first, second = tmp_path / "first", tmp_path / "second"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
@@ -104,8 +93,8 @@ def test_new_upgrade_waits_for_previous_owner_health(signed_installer, tmp_path,
     assert state.read(target)["to_build"] == build + 1
 
 
-def test_forged_owner_declaration_never_causes_foreign_file_probe(signed_installer, tmp_path, monkeypatch):
-    target, install = signed_installer
+def test_forged_owner_declaration_never_causes_foreign_file_probe(verified_installer, tmp_path, monkeypatch):
+    target, install = verified_installer
     first = tmp_path / "first"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
@@ -126,12 +115,12 @@ def test_forged_owner_declaration_never_causes_foreign_file_probe(signed_install
 
 
 @pytest.mark.parametrize("phase", ["upgrade_aborted", "rollback_aborted", "rollback_applied"])
-def test_other_data_directory_cannot_supersede_owned_history(signed_installer, tmp_path, monkeypatch, caplog, phase):
+def test_other_data_directory_cannot_supersede_owned_history(verified_installer, tmp_path, monkeypatch, caplog, phase):
     # Other startup tests initialize the application's logger with propagation
     # disabled. Enable it only here so caplog observes the real warning in any
     # suite order without changing the application logging policy.
     monkeypatch.setattr(logging.getLogger("opskit"), "propagate", True)
-    target, install = signed_installer
+    target, install = verified_installer
     first, second = tmp_path / "first", tmp_path / "second"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
@@ -160,9 +149,9 @@ def test_other_data_directory_cannot_supersede_owned_history(signed_installer, t
 
 @pytest.mark.parametrize("fault", ["missing_health", "wrong_backup", "bad_receipt", "changed_backup", "wrong_job"])
 def test_new_upgrade_retains_previous_evidence_when_confirmation_is_unproven(
-    signed_installer, tmp_path, monkeypatch, fault,
+    verified_installer, tmp_path, monkeypatch, fault,
 ):
-    target, install = signed_installer
+    target, install = verified_installer
     first, second = tmp_path / "first", tmp_path / "second"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
@@ -199,8 +188,8 @@ def test_new_upgrade_retains_previous_evidence_when_confirmation_is_unproven(
 
 
 @pytest.mark.parametrize("job_state", ["scheduled", "retired"])
-def test_previous_confirmed_job_can_be_superseded(signed_installer, tmp_path, monkeypatch, job_state):
-    target, install = signed_installer
+def test_previous_confirmed_job_can_be_superseded(verified_installer, tmp_path, monkeypatch, job_state):
+    target, install = verified_installer
     first = tmp_path / "first"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
@@ -296,8 +285,8 @@ def test_owner_location_is_case_insensitive_on_windows(tmp_path):
     state.require_owner(record, directory.parent / directory.name.upper())
 
 
-def test_rollback_version_guard_spans_data_dirs_and_allows_later_release(signed_installer, tmp_path):
-    target, install = signed_installer
+def test_rollback_version_guard_spans_data_dirs_and_allows_later_release(verified_installer, tmp_path):
+    target, install = verified_installer
     build = updater.APP_VERSION
     install(tmp_path / "first", build + 1, b"B")
     assert updater.rollback()
