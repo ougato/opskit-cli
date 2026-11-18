@@ -1,6 +1,5 @@
 """Installed tools are read as data, never executed or changed on the host."""
 from pathlib import Path
-import pytest
 from core import local_toolchain as tools
 
 

@@ -1,5 +1,4 @@
 """New native plugin UI must use the same bilingual catalogues as OpsKit."""
-from types import SimpleNamespace
 
 import pytest
 

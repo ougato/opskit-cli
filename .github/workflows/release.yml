@@ -50,6 +50,15 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      - name: create isolated test environment
+        shell: python
+        run: |
+          import os, pathlib, venv
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'opskit-release-tests'
+          venv.EnvBuilder(with_pip=True).create(root)
+          with open(os.environ['GITHUB_PATH'], 'a', encoding='utf-8') as stream:
+              stream.write(str(root / ('Scripts' if os.name == 'nt' else 'bin')) + '\n')
+
       - name: install locked installer
         run: >-
           python -I -m pip --isolated --disable-pip-version-check install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-installer.txt

@@ -434,8 +434,6 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
 def test_long_workspace_interpreter_probe_uses_verified_alias(sdk_runtime, tmp_path, monkeypatch):
-    from contextlib import contextmanager
-    from core import native_interpreter
     from core.native_interpreter import probe
     from core.native_short_path import _short_path
     from core.native_runtime import absolute_path

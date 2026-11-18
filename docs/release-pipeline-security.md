@@ -69,6 +69,8 @@ uv export --locked --no-default-groups --no-emit-project --no-annotate --no-head
 
 测试验证导出包的完整传递依赖闭包、版本及所有文件哈希与uv.lock一致。更新锁后重新验证各声明构建平台；不把签名专用锁当作应用运行时或构建锁。
 
+平台回归和发布前测试均先在 runner 临时目录创建全新虚拟环境，再通过 `GITHUB_PATH` 供后续步骤使用。锁定安装器、项目依赖、`pip check` 和测试都使用该环境，避免 runner 预装包参与依赖校验；不通过卸载 runner 包或放宽依赖校验解决冲突。
+
 CI与发布前测试已改用requirements-ci.txt，仅wheel、哈希校验和禁止依赖解析。CI锁包含应用、dev测试及构建后端依赖，排除不参与wheel打包的Nuitka。editable安装禁止依赖解析与构建隔离下载；wheel使用已锁构建后端且--no-isolation，独立安装环境先按requirements-runtime.txt安装依赖，再以--no-deps安装本地产物。引导pip仍来自受选Python解释器/ensurepip；不是声称所有工具及操作系统依赖均已固定。Windows3.12/Linux3.10真实全新环境安装与pip check通过，Windows另验证editable安装及第二次pip check；macOS Intel的既有wheel缺口仍保留。
 
 ## 证据

@@ -1,0 +1,5 @@
+# Invalid synthetic OpenSSH fixture containing base64 QUJD (ABC), not a usable key
+# Keep this exception bound to the reviewed historical commit, file, rule and line
+3e80a4ea522de862e8fb2f2df72c315a68b1f4b2:tests/test_plugin_fetch_source.py:generic-api-key:160
+a25fa93adf14bb3365e2ff557cbeec512d859fc9:tests/test_plugin_fetch_source.py:generic-api-key:160
+67125d26312450173da0be1f86aa7f6762b2f43f:tests/test_plugin_fetch_source.py:generic-api-key:160

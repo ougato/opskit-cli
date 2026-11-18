@@ -6,7 +6,6 @@ and its hashed wheel lock are handled separately; this module binds the final by
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import stat
 

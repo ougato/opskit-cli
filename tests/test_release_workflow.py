@@ -148,6 +148,38 @@ def test_ci_dependency_installations_cannot_resolve_unlocked_packages():
     assert "'--no-deps', str(next(" in wheel
 
 
+def test_test_jobs_use_fresh_environments_before_installing_dependencies():
+    release = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    regression = yaml.safe_load((WORKFLOW.parent / "test.yml").read_text(encoding="utf-8"))
+    for job in (release["jobs"]["test"], regression["jobs"]["regression"]):
+        steps = job["steps"]
+        isolation = next(step for step in steps if "venv.EnvBuilder" in step.get("run", ""))
+        installer = next(step for step in steps if "requirements-installer.txt" in step.get("run", ""))
+        assert steps.index(isolation) < steps.index(installer)
+        assert isolation["shell"] == "python"
+        assert "with_pip=True" in isolation["run"]
+        assert "system_site_packages=True" not in isolation["run"]
+        assert "GITHUB_PATH" in isolation["run"]
+        assert "RUNNER_TEMP" in isolation["run"]
+
+
+def test_secret_scan_exception_is_limited_to_reviewed_historical_fixture():
+    root = WORKFLOW.parents[2]
+    exceptions = [line for line in (root / ".gitleaksignore").read_text().splitlines()
+                  if line and not line.startswith("#")]
+    assert exceptions == [
+        "3e80a4ea522de862e8fb2f2df72c315a68b1f4b2:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "a25fa93adf14bb3365e2ff557cbeec512d859fc9:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "67125d26312450173da0be1f86aa7f6762b2f43f:tests/test_plugin_fetch_source.py:generic-api-key:160",
+    ]
+    workflow = yaml.safe_load((WORKFLOW.parent / "test.yml").read_text(encoding="utf-8"))
+    scan = next(step["run"] for step in workflow["jobs"]["secrets"]["steps"]
+                if "--log-opts" in step.get("run", ""))
+    assert "--gitleaks-ignore-path .gitleaksignore" in scan
+    assert "--ignore-gitleaks-allow" in scan
+    assert "--all -m --full-history" in scan
+
+
 def test_frozen_artifact_gate_precedes_upload():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["build"]["steps"]

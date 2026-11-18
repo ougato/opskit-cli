@@ -60,7 +60,7 @@ try:
     from typer._click.globals import get_current_context as _typer_current_context
     from typer._click.exceptions import ClickException as _TyperClickException
 except ImportError:
-    from click import get_current_context as _typer_current_context
+    from click import get_current_context as _typer_current_context  # noqa: F401 - Typer fallback
     from click import ClickException as _TyperClickException
 
 if _TyperClickException is click.ClickException:
@@ -69,11 +69,11 @@ else:
     class _StartupClickException(_TyperClickException, click.ClickException):
         """A startup error recognized by both Typer and Click callers."""
 
-from core.config import ensure_config
-from core.i18n import init as i18n_init, t, switch as i18n_switch
-from core.theme import init as theme_init, get_icon, switch_theme, list_themes, print_info
-from core.loader import discover_modules
-from core.prompt import select, console, UserCancel, UserExit, set_auto_yes
+from core.config import ensure_config as ensure_config
+from core.i18n import init as i18n_init, t as t, switch as i18n_switch
+from core.theme import init as theme_init, get_icon as get_icon, switch_theme, list_themes as list_themes, print_info as print_info
+from core.loader import discover_modules as discover_modules
+from core.prompt import select as select, console, UserCancel as UserCancel, UserExit as UserExit, set_auto_yes
 
 
 # ── 预启动 locale 加载器（typer 帮助文本在 import 时求值，早于 _boot）────────
@@ -336,10 +336,10 @@ def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
 
 # Software CLI implementations are registered without importing this entry module.
 from software.lifecycle_cli import (
-    _resolve_deps_or_exit, _check_disk_or_exit,
-    _install_direct, _uninstall_direct, _upgrade_direct, _switch_direct,
+    _resolve_deps_or_exit as _resolve_deps_or_exit, _check_disk_or_exit as _check_disk_or_exit,
+    _install_direct as _install_direct, _uninstall_direct as _uninstall_direct, _upgrade_direct as _upgrade_direct, _switch_direct as _switch_direct,
 )
-from software.direct_cli import register as _register_software_cli, _EXIT_RUNTIME, _EXIT_USAGE
+from software.direct_cli import register as _register_software_cli, _EXIT_RUNTIME, _EXIT_USAGE as _EXIT_USAGE
 
 (
     sw_list,

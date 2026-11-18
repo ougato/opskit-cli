@@ -1,6 +1,5 @@
 """Windows 8.3 paths are an optional, pinned execution optimization."""
 import os
-from pathlib import Path
 
 import pytest
 

@@ -1,9 +1,6 @@
 """Real Windows Git object acquisition inside AppContainer, no Docker."""
 import os
-from pathlib import Path
-import shutil
 import subprocess
-import sys
 import time
 
 import pytest
@@ -67,6 +64,9 @@ def test_real_smart_protocol_pack_is_indexed_only_in_appcontainer(tools, tmp_pat
         assert {item.path for item in result.files} == {"plugin.yaml", "binary.dat"}
 
 
+# This covers broker requests, tool preparation, install and update in one flow
+# Each production operation retains its own deadline; the test needs their sum
+@pytest.mark.timeout(300)
 def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch):
     import datetime
     import ipaddress

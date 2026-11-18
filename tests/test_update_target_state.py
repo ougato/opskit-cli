@@ -201,7 +201,7 @@ def test_new_upgrade_retains_previous_evidence_when_confirmation_is_unproven(
 @pytest.mark.parametrize("job_state", ["scheduled", "retired"])
 def test_previous_confirmed_job_can_be_superseded(signed_installer, tmp_path, monkeypatch, job_state):
     target, install = signed_installer
-    first, second = tmp_path / "first", tmp_path / "second"
+    first = tmp_path / "first"
     build = updater.APP_VERSION + 1
     install(first, build, b"H")
     monkeypatch.setattr(updater, "APP_VERSION", build)

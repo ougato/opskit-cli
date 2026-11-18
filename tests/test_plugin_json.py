@@ -193,7 +193,6 @@ def wire_client(tmp_path, monkeypatch):
     from core.native_protocol import exchange, join_io
     from core.native_sandbox import NativeSandboxError
     import subprocess
-    import time
     monkeypatch.setattr(RuntimeCatalog, "load", lambda *a, **k: (tmp_path, {}))
     from contextlib import nullcontext
     monkeypatch.setattr(RuntimeCatalog, "acquire", lambda *a, **k: nullcontext((tmp_path, {})))

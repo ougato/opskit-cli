@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from core import update_jobs, update_target_state, updater
+from core import update_jobs, update_target_state
 
 POWERSHELL = Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
 pytestmark = pytest.mark.skipif(os.name != "nt" or not POWERSHELL.is_file(), reason="Windows helper experiment")

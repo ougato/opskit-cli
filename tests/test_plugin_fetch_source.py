@@ -157,7 +157,10 @@ def test_ssh_user_and_path_semantics_are_part_of_profile_binding():
 def test_private_key_bundle_rejected_and_explicit_ca_bundle_scoped():
     url = "git@example.com:org/repo.git"
     with pytest.raises(ValueError):
-        authentication(remote_source(url), profile(url, kind="ssh_key", private_key=KEY + KEY, host_keys=[host_key()]))
+        authentication(remote_source(url), profile(
+            url, kind="ssh_key", private_key=KEY + KEY,
+            host_keys=[host_key()],
+        ))
     ca = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n"
     source = remote_source("https://example.com/org/repo.git")
     auth = authentication(source, profile(source.url, kind="anonymous", ca_pem=ca + ca))

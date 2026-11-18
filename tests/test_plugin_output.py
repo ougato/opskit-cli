@@ -1,7 +1,5 @@
 """A successful exit cannot substitute for a fresh, bounded build output."""
 import os
-from pathlib import Path
-import time
 
 import pytest
 

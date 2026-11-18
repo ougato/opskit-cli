@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from core.cli import configure
-from core.plugin_trust import is_trusted, trusted_record
+from core.plugin_trust import trusted_record
 
 runner = CliRunner()
 
