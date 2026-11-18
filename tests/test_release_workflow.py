@@ -162,3 +162,8 @@ def test_frozen_artifact_gate_precedes_upload():
     assert "subprocess.check_call" in command
     assert '"${{ matrix.artifact }}"' in command
     assert '"--build"' in command and '"--output"' in command
+    diagnostic = next(step for step in steps if step.get("name") == "save frozen CLI diagnostics")
+    assert diagnostic["if"] == "always()"
+    assert diagnostic["with"]["name"] == "frozen-check-${{ matrix.artifact }}"
+    assert all(suffix in diagnostic["with"]["path"] for suffix in ("*.stdout", "*.stderr", "*.status.json"))
+    assert "if" not in steps[upload]  # Broken executables never become release assets.

@@ -189,6 +189,18 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/
 
+      - name: save frozen CLI diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frozen-check-${{ matrix.artifact }}
+          path: |
+            ${{ runner.temp }}/opskit-frozen-acceptance/*.stdout
+            ${{ runner.temp }}/opskit-frozen-acceptance/*.stderr
+            ${{ runner.temp }}/opskit-frozen-acceptance/*.status.json
+            ${{ runner.temp }}/opskit-frozen-acceptance/verification.json
+          if-no-files-found: ignore
+
   release:
     needs: [build]
     runs-on: ubuntu-latest
