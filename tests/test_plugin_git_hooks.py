@@ -14,7 +14,6 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
     origin = tmp_path / 'origin'
     origin.mkdir()
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(tmp_path / 'plugins'))
-    monkeypatch.setenv('OPSKIT_DATA_DIR', str(tmp_path / 'state'))
     # Isolate the test from the developer's actual Git configuration/templates.
     config = tmp_path / 'gitconfig'
     config.write_text('')
@@ -41,7 +40,7 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
         config.write_text('[init]\n\ttemplateDir = "' + template.as_posix() + '"\n')
     else:
         manifest, error = commands.install(str(origin), branch='main', alias='demo')
-        assert manifest is not None and not error
+        assert manifest is not None and not error, error
         if hook_source == 'repo-default':
             hook(origin / '.git' / 'hooks' / 'post-merge')
         else:
@@ -57,7 +56,7 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
         git('commit', '-qam', 'next')
     if operation == 'install':
         manifest, error = commands.install(str(origin), branch='main', alias='demo')
-        assert manifest is not None and not error
+        assert manifest is not None and not error, error
     else:
         ok, error = commands.update(manifest)
         assert ok and error == 'updated'

@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from tests.http_server_fixture import LoopbackHTTPServer
+
 from core.native_fetch import local_candidate
 from core.native_runtime import inventory
 from core.plugin_fetch_candidate import validated_archive
@@ -72,7 +74,7 @@ def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch
     monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import datetime
     import ipaddress
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
     import ssl
     import threading
     from cryptography import x509
@@ -117,7 +119,7 @@ def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackHTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(tmp_path / "cert.pem", tmp_path / "key.pem")
     server.socket = context.wrap_socket(server.socket, server_side=True)
