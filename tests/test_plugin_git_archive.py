@@ -1,4 +1,6 @@
 """Shared Git archive validation is independent of backend and checkout hooks."""
+from types import SimpleNamespace
+
 import pytest
 
 from core import plugin_git_archive as worker, plugin_runtime_inventory as inventory
@@ -61,7 +63,7 @@ def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_for
     import subprocess
     import shutil
     from core import native_fetch_worker as native
-    monkeypatch.setattr(native.sys, "platform", "win32")
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
 
     git = shutil.which("git")
     if git is None:
@@ -103,7 +105,7 @@ def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, obj
     import subprocess
     import shutil
     from core import native_fetch_worker as native
-    monkeypatch.setattr(native.sys, "platform", "win32")
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
 
     git = shutil.which("git")
     if git is None:

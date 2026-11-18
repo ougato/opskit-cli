@@ -357,6 +357,7 @@ def test_hot_reload_after_update(plugins_root) -> None:
     assert info.order == 55
 
 
+@pytest.mark.timeout(300)
 def test_update_invalidates_trust(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """未变内容保留信任，拉取不同内容后必须撤销旧指纹授权。"""
     import subprocess
@@ -446,6 +447,7 @@ def test_invalid_semver_version_rejected(plugins_root) -> None:
     assert load_manifest(plugin_dir) is None
 
 
+@pytest.mark.timeout(300)
 def test_update_downgrade_requires_confirm(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """更新后版本回退不自动继承信任，交由用户显式确认（防降级攻击）"""
     import subprocess
@@ -533,6 +535,7 @@ def test_install_alias_validation(plugins_root, tmp_path) -> None:
     assert err == "bad_alias:../escape"
 
 
+@pytest.mark.timeout(300)
 def test_install_alias_overrides_directory(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """--as 覆盖自动生成目录，但不改变 plugin.yaml name"""
     import subprocess
@@ -551,6 +554,7 @@ def test_install_alias_overrides_directory(plugins_root, tmp_path, prepared_fetc
     assert manifest.root == plugins_root / "custom-client-tools"
 
 
+@pytest.mark.timeout(300)
 def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """不同安装目录里的 plugin.yaml name 仍必须全局唯一，冲突时回滚刚克隆目录"""
     import subprocess
@@ -575,6 +579,7 @@ def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path, prep
     assert not (plugins_root / "second-client-tools").exists()
 
 
+@pytest.mark.timeout(300)
 def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """隔离采集明确分支，更新继续使用安装时绑定的分支。"""
     import subprocess

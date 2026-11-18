@@ -81,8 +81,9 @@ def native_lifecycle_tools(tmp_path_factory):
 
 
 @pytest.fixture
-def prepared_fetch_tools(isolated_data_dir, native_lifecycle_tools):
-    """Real per-test tool catalog; never borrow or modify user preparation."""
+def prepared_fetch_tools(isolated_data_dir, native_lifecycle_tools, monkeypatch):
+    """Real acquisition catalog; SDK preparation has separate invocation coverage."""
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     from core.native_fetch_catalog import FetchCatalog
     python, _, _ = native_lifecycle_tools
     FetchCatalog().prepare(python)

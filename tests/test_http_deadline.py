@@ -13,7 +13,10 @@ from network import http_measure
 
 
 @pytest.fixture
-def http_server():
+def http_server(monkeypatch):
+    # Loopback HTTP fixtures do not require reverse DNS from the hosted runner.
+    import socket
+    monkeypatch.setattr(socket, "getfqdn", lambda host: host)
     stop = threading.Event()
     started = threading.Event()
 
