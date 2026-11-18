@@ -103,8 +103,13 @@ def test_database_locked_does_not_wait_beyond_budget(tmp_path):
     with sqlite3.connect(path) as writer:
         writer.execute("begin exclusive")
         start = time.monotonic()
-        with pytest.raises(TimeoutError, match="XUI database"):
-            diagnostics._inbound_configured(path, 443, timeout=.05)
+        try:
+            healthy = diagnostics._inbound_configured(path, 443, timeout=.05)
+        except TimeoutError as error:
+            assert "XUI database" in str(error)
+        else:
+            # SQLite can report SQLITE_BUSY just before the supervisor expires.
+            assert healthy is False
         assert time.monotonic() - start < 3
         writer.rollback()
 
