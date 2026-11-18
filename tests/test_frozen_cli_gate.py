@@ -31,7 +31,8 @@ def test_gate_rejects_broken_artifacts(tmp_path, monkeypatch, failure):
         code = (2 if "repair-state" in command else
                 1 if "inspect-native-profiles" in command and gate.os.name != "nt" else 0)
         payload = {"schema_version": 1, "ok": code == 0, "data": {},
-                   "error": None if code == 0 else {"code": code, "message": "invalid input"}}
+                   "error": None if code == 0 else {"code": code, "message":
+                       "The AppContainer sandbox requires Windows." if code == 1 else "invalid input"}}
         if "--version" in command:
             payload["data"] = {"version": 99 if failure == "version" else 7}
         if command[-2:] == ["update", "reconcile"]:
