@@ -40,6 +40,11 @@ def test_host_read_requires_exact_authorized_scope(tmp_path, monkeypatch):
     reply = read_file("demo", "a" * 64, str(root), "config.json",
                       authority=authority, check_identity=lambda *a: True)
     assert base64.b64decode(reply["content"]) == b'{"version":1}'
+    assert read_file("demo", "a" * 64, str(root), "artifacts/index.json", missing_ok=True,
+                     authority=authority, check_identity=lambda *a: True) is None
+    with pytest.raises(FileNotFoundError):
+        read_file("demo", "a" * 64, str(root), "artifacts/index.json",
+                  authority=authority, check_identity=lambda *a: True)
     assert prompts[0].operation == "directory.read"
     assert prompts[0].resource == str(root)
     authority.close()

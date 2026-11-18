@@ -88,7 +88,7 @@ Both operations share the same scoped grant; once consent is reused within the i
 
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
-- `read_host_file(directory, relative)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。
+- `read_host_file(directory, relative, *, missing_ok=False)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。仅在指定 `missing_ok=True` 且文件缺失时返回 `None`。
 - `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。可使用显式目录读写授权；否则写入授权绑定文件路径及原、新内容摘要。独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
 - `create_host_file(directory, relative, content)`：经目录读写授权或精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
 - `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
@@ -115,7 +115,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
 - `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
-- `upload_file(directory, relative, url, sha256, headers=None)`：单文件 HTTPS PUT，最多 512MiB；
+- `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
 宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。默认命令授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。

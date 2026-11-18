@@ -455,7 +455,7 @@ def _broker(manifest, request: dict):
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.
     if method == "host.upload_file":
-        if "network" not in manifest.permissions or kwargs or len(args) != 5:
+        if "network" not in manifest.permissions or kwargs or len(args) not in (5, 6):
             raise SandboxError("network capability not granted")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -583,7 +583,8 @@ def _broker(manifest, request: dict):
             return operation(manifest.name, fingerprint, *args, authority=authority,
                              check_identity=identity, checkpoint=checkpoint)
     if method in {"host.read_file", "host.file_status"}:
-        if kwargs or len(args) != 2:
+        allowed = {"missing_ok"} if method == "host.read_file" else set()
+        if set(kwargs) - allowed or len(args) != 2:
             raise SandboxError("invalid host file arguments")
         from core.plugin_host_files import read_file, file_status
         authority = getattr(_invocations, "capability_authority", None)
@@ -595,7 +596,7 @@ def _broker(manifest, request: dict):
         with guard_input(lambda: (_remaining(), _check_live_authorizations())):
             operation = read_file if method == "host.read_file" else file_status
             return operation(manifest.name, fingerprint, *args,
-                             authority=authority, check_identity=identity)
+                             authority=authority, check_identity=identity, **kwargs)
     ui = {"select", "select_input", "multi_select", "confirm", "text_input", "pause", "clear_screen", "print_header"}
     if method in ui:
         from core import prompt
