@@ -120,7 +120,8 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
         (output / f"{index:03d}.stdout").write_text(result.stdout, encoding="utf-8")
         (output / f"{index:03d}.stderr").write_text(result.stderr, encoding="utf-8")
         if result.returncode != expected:
-            raise RuntimeError("installed CLI failed: " + " ".join(arguments))
+            raise RuntimeError("installed CLI failed: " + " ".join(arguments)
+                               + f" (expected {expected}, got {result.returncode}; case {index:03d})")
         if structured:
             payload = json.loads(result.stdout)
             if (not isinstance(payload, dict)

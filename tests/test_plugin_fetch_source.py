@@ -158,7 +158,9 @@ def test_private_key_bundle_rejected_and_explicit_ca_bundle_scoped():
     url = "git@example.com:org/repo.git"
     with pytest.raises(ValueError):
         authentication(remote_source(url), profile(
-            url, kind="ssh_key", private_key=KEY + KEY,
+            url,
+            kind="ssh_key",
+            private_key=KEY + KEY,
             host_keys=[host_key()],
         ))
     ca = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n"

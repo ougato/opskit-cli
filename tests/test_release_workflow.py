@@ -171,6 +171,7 @@ def test_secret_scan_exception_is_limited_to_reviewed_historical_fixture():
         "3e80a4ea522de862e8fb2f2df72c315a68b1f4b2:tests/test_plugin_fetch_source.py:generic-api-key:160",
         "a25fa93adf14bb3365e2ff557cbeec512d859fc9:tests/test_plugin_fetch_source.py:generic-api-key:160",
         "67125d26312450173da0be1f86aa7f6762b2f43f:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "0506b194acf315dc488dc596cb4bb2d1df980263:tests/test_plugin_fetch_source.py:generic-api-key:161",
     ]
     workflow = yaml.safe_load((WORKFLOW.parent / "test.yml").read_text(encoding="utf-8"))
     scan = next(step["run"] for step in workflow["jobs"]["secrets"]["steps"]

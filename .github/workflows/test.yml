@@ -123,5 +123,7 @@ jobs:
           path: |
             cache/ci-results.xml
             cache/installed-cli/verification.json
+            cache/installed-cli/*.stdout
+            cache/installed-cli/*.stderr
           if-no-files-found: ignore
           retention-days: 7
