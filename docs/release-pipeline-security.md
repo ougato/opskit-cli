@@ -1,5 +1,14 @@
 # 发布流水线安全验收
 
+## 当前回归与发布检查
+
+回归和发布测试均先创建独立虚拟环境，再安装哈希锁定依赖，避免依赖宿主预装包
+普通回归测试使用 20 秒预算，真实原生集成测试单独声明有界预算，保留实际隔离与授权校验
+测试夹具按职责模拟终端、平台句柄和准备目录，真实 Windows 集成测试仍使用实际 AppContainer
+测试输出通过 `pipefail` 和 `tee` 同时保留退出码与日志，即使超时未生成 XML 也可下载诊断
+回归产物保存 `ci-tests.log`、XML 和独立安装 CLI 输出，发布产物保存 `release-tests.log` 与 XML
+发布仍由 GitHub 的 `v*` 标签推送触发，签名校验和密钥配置要求保持不变
+
 ## Windows GCC 预置（2026-11-03）
 
 `scripts/install_windows_compiler.py CACHE [--archive ZIP] [--source release|api]` 为锁定的 Nuitka 4.3

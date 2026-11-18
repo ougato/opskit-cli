@@ -31,7 +31,11 @@ def git(root, *args):
     subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-C", str(root), *args], check=True, capture_output=True)
 
 
-def test_install_without_prepared_native_tools_does_not_publish_or_trust(isolated):
+def test_install_preparation_failure_does_not_publish_or_trust(isolated, monkeypatch):
+    from core.native_sandbox import NativeSandboxError
+    def unavailable(*args, **kwargs):
+        raise NativeSandboxError("fetch_setup_failed")
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_fetch", unavailable)
     origin = isolated / "origin"
     origin.mkdir()
     manifest = origin / "plugin.yaml"

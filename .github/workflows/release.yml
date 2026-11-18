@@ -70,7 +70,21 @@ jobs:
         run: python scripts/release_bump.py "${GITHUB_REF_NAME}"
 
       - name: run tests
-        run: python -m pytest tests/ -v --tb=short --timeout=30
+        shell: bash
+        run: |
+          mkdir -p cache
+          set -o pipefail
+          python -m pytest tests/ -v --tb=short --timeout=30 --junitxml=cache/release-tests.xml 2>&1 | tee cache/release-tests.log
+
+      - name: save release test report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-tests
+          path: |
+            cache/release-tests.xml
+            cache/release-tests.log
+          if-no-files-found: ignore
 
   build:
     needs: test
