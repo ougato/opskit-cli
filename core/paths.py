@@ -15,6 +15,16 @@ import sys
 from pathlib import Path
 
 
+def absolute_path(path: str | Path) -> Path:
+    """Use extended Windows paths without a machine-wide registry setting."""
+    result = Path(path).absolute()
+    value = str(result)
+    if os.name == "nt" and not value.startswith("\\\\?\\"):
+        value = "\\\\?\\UNC\\" + value[2:] if value.startswith("\\\\") else "\\\\?\\" + value
+        return Path(value)
+    return result
+
+
 # ─── 懒加载 platformdirs（打包环境已内置，开发环境按需 import）────────────────
 def _get_platformdirs():
     try:
@@ -26,6 +36,13 @@ def _get_platformdirs():
 
 def _is_frozen() -> bool:
     return getattr(sys, "frozen", False) or "__compiled__" in globals()
+
+
+def _source_root() -> Path | None:
+    root = Path(__file__).resolve().parent.parent
+    if not _is_frozen() and (root / "pyproject.toml").is_file() and (root / "main.py").is_file():
+        return root
+    return None
 
 
 def _is_root() -> bool:
@@ -60,8 +77,9 @@ def data_dir() -> Path:
     if env:
         return Path(env)
 
-    if not _is_frozen():
-        return Path(__file__).resolve().parent.parent
+    project_root = _source_root()
+    if project_root is not None:
+        return project_root
 
     if sys.platform == "linux" and _is_root():
         return Path("/var/lib/opskit")
@@ -81,11 +99,6 @@ def data_dir() -> Path:
 
 def config_dir() -> Path:
     """配置文件目录（config/common.yaml 所在）"""
-    env = os.environ.get("OPSKIT_DATA_DIR")
-    if env:
-        return Path(env) / "config"
-    if not _is_frozen():
-        return Path(__file__).resolve().parent.parent / "config"
     return data_dir() / "config"
 
 
@@ -94,8 +107,9 @@ def cache_dir() -> Path:
     env = os.environ.get("OPSKIT_DATA_DIR")
     if env:
         return Path(env) / "cache"
-    if not _is_frozen():
-        return Path(__file__).resolve().parent.parent / "cache"
+    project_root = _source_root()
+    if project_root is not None:
+        return project_root / "cache"
 
     pd = _get_platformdirs()
     if pd and not (sys.platform == "linux" and _is_root()):
@@ -115,8 +129,8 @@ def plugins_dir() -> Path:
 def plugin_data_dir(namespace: str) -> Path:
     """插件数据目录（配置 / 构建产物等一律落盘于此，禁止写入插件目录自身）
 
-    namespace 由插件开发者声明（如 "insight-flow"），多个插件传同一命名空间即共享。
-    仅允许小写字母 / 数字 / 连字符，目录自动创建。
+    宿主侧的旧路径辅助。沙箱 worker 将 SDK 绑定到认证插件自身的 /data/state，
+    不把这里的 namespace 当作跨插件授权机制。仅允许小写字母 / 数字 / 连字符。
     """
     if not re.match(r"^[a-z][a-z0-9-]*$", namespace):
         raise ValueError(f"invalid plugin data namespace: {namespace!r}")

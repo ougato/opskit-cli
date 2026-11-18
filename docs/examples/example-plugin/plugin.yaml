@@ -1,0 +1,15 @@
+name: example
+version: 1.0.0
+api_version: 4
+kind: python
+entry: example_plugin
+platforms: [windows]
+permissions: []
+uses:
+  - service: storage
+    provider: storage_hub
+    api_version: 2
+    methods: [open_menu]
+label:
+  zh: 示例工具
+  en: Example tool

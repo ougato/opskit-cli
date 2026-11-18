@@ -1,6 +1,8 @@
 """主题引擎 — 加载、切换、查询 API"""
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +37,30 @@ def _resolve(data: dict[str, Any], token: str) -> Any:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    # Open the already-resolved file without following a replaced final link.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    with os.fdopen(fd, "r", encoding="utf-8") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise ValueError("theme is not a regular file")
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError("theme must be a mapping")
+    return data
+
+
+def _theme_path(name: object) -> Path | None:
+    """Resolve a single theme name only within the configured resource directory."""
+    if (not isinstance(name, str) or not name or name in {".", ".."}
+            or name.endswith((" ", ".")) or any(ord(c) < 32 or c in "/\\:" for c in name)):
+        return None
+    try:
+        root = _get_themes_dir().resolve(strict=True)
+        target = (root / f"{name}.yaml").resolve(strict=True)
+        if target.parent != root or not target.is_file():
+            return None
+        return target
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -64,17 +88,20 @@ def init(theme_name: str | None = None) -> None:
         cfg = load_config()
         theme_name = cfg.get("theme", "catppuccin")
 
-    theme_file = _get_themes_dir() / f"{theme_name}.yaml"
-    if not theme_file.exists():
-        theme_file = _get_themes_dir() / "catppuccin.yaml"
+    theme_file = _theme_path(theme_name)
+    if theme_file is None:
+        theme_file = _theme_path("catppuccin")
+        if theme_file is None:
+            raise FileNotFoundError("default theme is unavailable")
         theme_name = "catppuccin"
 
     data = _load_yaml(theme_file)
 
-    parent_name = data.get("meta", {}).get("extends")
+    meta = data.get("meta", {})
+    parent_name = meta.get("extends") if isinstance(meta, dict) else None
     if parent_name:
-        parent_file = _get_themes_dir() / f"{parent_name}.yaml"
-        if parent_file.exists():
+        parent_file = _theme_path(parent_name)
+        if parent_file is not None:
             parent_data = _load_yaml(parent_file)
             data = _deep_merge(parent_data, data)
 
@@ -129,7 +156,7 @@ def list_themes() -> list[str]:
     if not d.exists():
         return ["catppuccin"]
     return sorted(
-        p.stem for p in d.glob("*.yaml") if not p.stem.startswith("_")
+        p.stem for p in d.glob("*.yaml") if not p.stem.startswith("_") and _theme_path(p.stem) is not None
     )
 
 
@@ -174,11 +201,11 @@ def print_warning(msg: str) -> None:
     console.print(f"[{color}]{icon} {escape(msg)}[/{color}]")
 
 
-def print_info(msg: str) -> None:
+def print_info(msg: str, *, show_icon: bool = True) -> None:
     color = get_color("info")
-    icon = get_icon("info")
+    icon = get_icon("info") + " " if show_icon else ""
     console.print()
-    console.print(f"[{color}]{icon} {escape(msg)}[/{color}]")
+    console.print(f"[{color}]{icon}{escape(msg)}[/{color}]")
 
 
 def print_action_title(breadcrumb: list[str], trailing_blank: bool = True) -> None:

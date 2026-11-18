@@ -26,6 +26,21 @@ module:
   plugin:
     desc: "插件管理与已安装插件入口"
 
+startup:
+  modules_failed: "部分内置模块加载失败：{modules}。请查看日志，其他功能仍可使用。"
+  registry: "内置模块注册表"
+
+platform:
+  no_pkg_manager: "未检测到支持的包管理器"
+  no_pkg_manager_suggestion: "部分软件安装功能可能不可用"
+  non_root: "当前非 root / 管理员权限"
+  non_root_suggestion: "部分功能需要提权后使用"
+  disk_unknown: "无法读取数据目录的磁盘剩余空间"
+  disk_unknown_suggestion: "请检查数据目录及其磁盘状态"
+  low_disk: "数据目录的磁盘剩余空间不足（{free_mb}MB）"
+  low_disk_suggestion: "清理数据目录所在磁盘后重试"
+  install_disk_unknown: "无法确定安装目标的磁盘剩余空间，安装可能失败。"
+
 plugin:
   manage: "插件管理"
   install: "安装插件"
@@ -35,44 +50,35 @@ plugin:
   col_name: "名称"
   col_version: "版本"
   col_kind: "形态"
+  col_source: "来源"
+  col_branch: "分支"
+  col_fingerprint: "指纹"
   select: "选择插件"
   cloning: "正在克隆…"
   cloning_branch: "正在克隆分支 {branch}…"
   install_prompt: "Git 仓库地址"
-  install_hint: "如 https://git.example.com/opskit-plugin-xxx.git（可加 -b 分支）"
+  install_hint: "如 https://git.example.com/org/opskit-plugin-xxx.git（可加 -b 分支、--as 本地目录名）"
   install_exists: "目录已存在：{name}"
+  install_bad_alias: "安装目录别名无效：{name}（仅允许小写字母、数字、连字符，且以字母开头）"
+  install_manifest_name_exists: "插件标识已存在：{name}（已安装目录：{dir}），请修改 plugin.yaml name 后重试"
   install_success: "插件 {name} 已安装并信任"
   install_failed: "安装失败（{error}）"
   install_no_manifest: "缺 plugin.yaml 或清单非法，已回滚"
   update_all: "更新全部"
-  update_all_downgrade: "{name} 版本回退，已跳过（请单独更新确认）"
+  update_trusted: "已信任 {name} {version}"
+  update_cancelled: "已取消更新 {name}"
   update_success: "插件 {name} 已更新到 {version}"
   update_latest: "{name} 已是最新版本"
   update_failed: "更新失败（{error}）"
   update_not_git: "{name} 非 git 仓库，无法更新"
-  git_auth_failed: "SSH 认证失败，检查密钥或仓库访问权限"
-  git_repo_not_found: "仓库不存在或无访问权限"
-  git_network_failed: "网络连接失败，检查网络后重试"
-  git_exit: "git 退出码 {code}"
-  git_dubious_ownership: "插件目录属主与当前用户不一致，执行 git config --global --add safe.directory <插件目录> 后重试"
-  git_too_old: "git 不支持所需参数，请升级 git 版本"
-  remove_confirm: "卸载 {name}，删除其目录？"
   remove_success: "插件 {name} 已卸载"
-  exec_failed: "插件 {name} 运行失败（{error}）"
   entry_failed: "插件 {name} 异常退出（{error}）"
   col_perms: "权限"
   perm_none: "未声明"
-  trust_confirm: "信任并启用 {name}？插件代码将以当前权限运行"
-  trust_granted: "插件 {name} 已信任"
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
   source_warning: "来源不在可信来源白名单，代码未经审查"
   update_tampered: "插件 {name} 内容与发布清单 CHECKSUMS.yaml 不符，可能被篡改，已拒绝加载"
-  downgrade_confirm: "版本回退 {old} → {new}，确认信任并加载？"
-  fingerprint_written: "已生成 {path}"
-  fingerprint_ok: "校验通过，内容与 CHECKSUMS.yaml 一致"
-  fingerprint_missing: "未找到 CHECKSUMS.yaml，先生成（不带 --check）"
-  fingerprint_mismatch: "校验失败，内容与 CHECKSUMS.yaml 不符（可能被篡改或未重新生成）"
 
 install:
   progress: "[{step}/{total}] {desc}..."
@@ -81,13 +87,9 @@ install:
   retry: "网络异常，第 {n}/{max} 次重试..."
   already: "{name} 已安装（{version}）"
   checking: "检测 {name}..."
-  confirm: "确认安装 {name} {version}？"
 
 uninstall:
   failed: "{name} 卸载失败：{error}"
-  confirm: "卸载 {name}，无法恢复？"
-  confirm_version: "卸载 {name} {version}，无法恢复？"
-  confirm_all: "卸载全部 {name}，无法恢复？"
   success: "{name} 卸载成功"
   not_found: "{name} 未安装"
 
@@ -122,6 +124,17 @@ prompt:
   next_page: "下一页"
 
 error:
+  config_unreadable: "配置无效、无法读取或超过大小限制；原配置已保留。"
+  config_publication: "无法安全创建配置，请检查配置目录权限和文件系统支持。"
+  config_io: "无法访问或创建配置，请检查配置目录权限和文件系统。"
+  config_busy: "配置正被其他操作使用，请稍后重试。"
+  config_lock_identity: "无法确认配置锁文件的身份，请检查配置目录和文件系统。"
+  update_health_write: "无法保存更新健康状态，已停止启动并保留恢复数据。请检查数据目录权限和可用空间后重试。"
+  config_field: "配置字段 {field} 无效：应为{expected}；原配置已保留。"
+  config_expected_string: "字符串"
+  config_expected_boolean: "布尔值"
+  config_expected_mapping: "映射"
+  config_expected_module_mapping: "模块配置映射"
   permission: "权限不足，请以 root / 管理员身份运行"
   disk_space: "磁盘空间不足（需要 {required}，剩余 {free}）"
   network: "网络连接失败"
@@ -169,7 +182,6 @@ software:
   select_version: "选择版本"
   recommended: "推荐"
   current: "当前"
-  reinstall_confirm: "已安装，是否重新安装？"
   switch: "切换"
   switch_success: "已切换到 {name} {version}"
   already_latest: "当前已是最新版本 {version}，无可升级版本"
@@ -240,6 +252,14 @@ software:
     extract_failed: "MongoDB {version} 解压失败：{error}"
     bad_structure: "MongoDB {version} 安装目录结构异常，未找到 {file}"
     download_failed: "MongoDB {version} 下载失败：{error}"
+  clickhouse: "ClickHouse"
+  clickhouse_error:
+    platform_not_supported: "ClickHouse 当前平台（{platform}）暂不支持，支持平台：linux / darwin"
+    verify_failed: "安装后 clickhouse --version 检测失败"
+    not_installed: "ClickHouse {version} 未安装，请先安装后再切换"
+    download_failed: "ClickHouse {version} 下载失败：{error}"
+    extract_failed: "ClickHouse {version} 解压失败：{error}"
+    bad_structure: "ClickHouse {version} 安装包结构异常，未找到 usr/bin/clickhouse"
   redis: "Redis"
   redis_error:
     platform_not_supported: "Redis 当前平台（{platform}）暂不支持，支持平台：linux / darwin / windows"
@@ -333,7 +353,6 @@ deps:
   conflict_title: "版本冲突"
   conflict_desc: "{dep} 当前 {current}，需要 >={required}"
   conflict_hint: "升级可能影响系统中依赖此版本的其他程序，新版将通过 apt/pyenv 并行安装（不替换系统默认版本）"
-  confirm_upgrade: "是否继续安装 {dep} {required}（隔离安装）？"
   user_cancel: "用户取消：依赖 '{dep}' 版本不满足（需 >={required}，当前 {current}）"
   version_mismatch: "依赖 '{dep}' 版本不满足（需 >={required}，当前 {current}），安装已取消"
   installing: "安装依赖 {dep} {target}..."
@@ -365,21 +384,17 @@ rustdesk:
     hbbr: "\u4e2d\u7ee7\u670d\u52a1 active\uff1a{active}"
 xui:
   input:
-    panel_port: "面板端口（默认 {default}）"
-    panel_user: "面板用户（默认 {default}）"
+    panel_port: "面板端口"
+    panel_user: "面板用户"
     panel_password: "面板密码（默认自动生成）"
     panel_base_path: "面板路径（默认空）"
-    host: "公网主机或 IP（默认 {default}）"
-    vless_port: "VLESS 端口（默认 {default}）"
-    sni: "REALITY SNI（默认 {default}）"
-    dest: "REALITY dest（默认 {default}）"
-  confirm:
-    install: "确认安装并创建 X-UI 节点？"
+    host: "公网主机或 IP"
+    vless_port: "VLESS 端口"
+    sni: "REALITY SNI"
+    dest: "REALITY dest"
   wsl:
-    enable_confirm: "WSL 无 systemd，自动开启并重启？"
     restarting: "已开启 systemd，正在重启 WSL\n↳ 重启后重开终端重新安装即可"
     enabled: "已开启 systemd\n↳ 在 Windows 执行 wsl --shutdown 重启 WSL 后重新安装"
-    continue_confirm: "不开启服务无法启动，仍要继续？"
   step:
     check_os: "检查系统"
     install_deps: "安装依赖"
@@ -396,8 +411,15 @@ xui:
     unsupported_os: "仅支持 Linux"
     package_manager_missing: "未找到支持的包管理器"
     panel_config_failed: "面板配置失败"
+    port_conflict: "面板端口与 VLESS 端口不能相同，请分别设置。"
+    inbound_config_failed: "VLESS 入站创建失败；配置已保存供排查，未完成安装。"
+    startup_verify_failed: "X-UI 启动验证失败：请检查服务日志以及面板 {panel_port}、VLESS {vless_port} 的 TCP 监听。"
     reality_key_failed: "REALITY 密钥生成失败"
     panel_api_failed: "面板 API 调用失败：{error}"
+    install_script_exit: "3x-ui 安装脚本退出，退出码 {code}"
+    install_script_timeout: "3x-ui 安装脚本在 {seconds} 秒后超时"
+    link_format_conflict: "--raw 和 --mihomo 只能选一个"
+    invalid_link: "已保存的 VLESS REALITY 链接格式无效"
     download_script_fail: "X-UI 安装脚本下载失败，请检查网络：{url}"
   output:
     install_done: "X-UI 配置完成"
@@ -454,7 +476,6 @@ xui:
     down: "↓"
 
 ohmyzsh:
-  confirm_p10k: "是否同时安装 Powerlevel10k 主题？"
   installed_mark: "已安装"
   step:
     check_env: "检查 zsh 环境..."
@@ -498,7 +519,9 @@ tailscale:
     exit_node: "配置出口节点"
     login: "登录"
   error:
-    unsupported_os: "仅支持 Linux"
+    unsupported_os: "仅支持 Linux / macOS"
+    brew_missing: "未检测到 Homebrew，请先安装 Homebrew（https://brew.sh）后重试。"
+    brew_timeout: "brew 安装超时（{seconds}s），请检查网络或先手动执行 brew install tailscale 后重试。"
     download_failed: "下载 Tailscale 安装脚本失败，请检查网络后重试。"
   output:
     install_done: "Tailscale 已安装"
@@ -589,7 +612,6 @@ wireguard:
   check_port_fail: "无法连接 {ip}:{port}（TCP），请检查云厂商安全组是否已开放该端口"
   check_port_continue: "端口不可达，是否忽略警告继续安装？"
   port_443_other_occupied: "⚠️  严重警告：443 端口当前被 {proc} 占用！本程序必须独占 443 端口运行 nginx TLS，继续安装将强制终止该进程，可能造成服务中断或数据丢失"
-  port_443_other_confirm: "确认强制继续安装并释放 443 端口？此操作不可逆 [y/N]"
   port_443_other_abort: "已取消安装，请先手动释放 443 端口后重试"
   port_443_nginx_auto: "检测到 nginx 已运行并监听 443，将自动追加本程序配置，不修改你的任何现有站点"
   server_ip_required: "公网服务端 IP 不能为空"
@@ -761,10 +783,13 @@ monitor:
 
 cli:
   desc: "OpsKit — 跨平台运维工具箱"
+  interaction_required: "此操作需要交互输入，请提供所需参数。"
   yes_help: "非交互模式：跳过所有确认弹窗（类似 apt -y）"
   version_help: "显示版本号"
   theme_help: "指定主题（覆盖配置文件）"
   lang_help: "指定语言（zh / en，覆盖配置文件）"
+  output_help: "输出格式：text 或 json"
+  non_interactive_help: "拒绝交互提示和菜单"
   help_text: "显示帮助信息"
   software: "软件管理"
   monitor: "系统监控"
@@ -846,4 +871,259 @@ network:
   local_ip: "本地 IP"
   public_ip_failed: "获取公网 IP 失败"
 
+plugin_native:
+  back: "返回"
+  run_help: "运行插件自己的命令：plugin run 名称 -- 参数"
+  maintenance: 插件维护
+  disk:
+    menu: 空间设置
+    minimum: 最低剩余空间（MiB，256..1048576）
+    saved: 空间阈值已保存。
+    failed: 空间设置被拒绝，请检查配置和剩余容量。
+    details: 最低剩余：{minimum} MiB；不提供磁盘硬配额。
+    invalid: 最低剩余空间必须为 256..1048576 MiB 的整数。
+    low_space: '{path} 剩余空间不足：至少需要 {required} MiB，当前 {available} MiB。这是空间检查，不是磁盘硬配额。'
+    help: 查看或设置插件框架最低剩余空间，不提供文件系统硬配额。
+  cache_cleanup:
+    menu: 缓存清理
+    catalog: "缓存分类"
+    hint: "运行缓存：插件的隔离运行时及依赖。\n采集缓存：隔离采集仓库所用的 Git 工具。\n准备残留：中断的运行时或采集工具准备目录。仅清理有归属记录、闲置且未被引用的对象。"
+    runtime: "运行缓存"
+    fetch: "采集缓存"
+    prepare: "准备残留"
+    uncertain: "无效归属记录已保留；不会接管没有记录的对象。"
+    empty: "未发现有归属记录且未被当前版本引用的缓存对象。"
+    select: "选择缓存"
+    details: "缓存：{catalog}\n对象：{object}\n归属记录 SHA256：{digest}"
+    completed: "已删除所选闲置缓存对象。"
+  workspace_recovery:
+    menu: 临时清理
+    empty: "未发现已确认归属的临时目录记录；不会接管没有记录的目录。"
+    uncertain: "无效的临时目录记录已保留，需人工检查。"
+    select: "选择目录"
+    details: "目录：{directory}\n事务：{transaction}\n记录 SHA256：{digest}"
+    completed: "已删除记录中的原生沙盒临时目录及其恢复记录。"
+  profile_recovery:
+    menu: 沙盒清理
+    empty: "未发现已确认创建的原生沙盒配置记录。"
+    uncertain: "未确认或无效的配置记录已保留，需人工检查，不能作为删除依据。"
+    select: "选择沙盒"
+    details: "配置：{profile}\n事务：{transaction}\n记录 SHA256：{digest}"
+    completed: "记录中的闲置原生沙盒配置已删除。"
+    completed_removed: "已清理删除完成后的残留记录。"
+  update_recovery:
+    menu: 更新回滚
+    empty: "未发现有效的中断更新记录。"
+    invalid: "部分更新目录的记录缺失或无效，已保留，需人工检查。"
+    select: "选择更新"
+    details: "插件：{plugin}\n目录：{directory}\n事务：{transaction}\n记录 SHA256：{digest}"
+    completed: "旧版本已恢复，信任仍为撤销状态，全部恢复证据已保留。"
+  task:
+    cancelled: "正在取消任务并回收进程；已产生的宿主文件或已发送的数据不会自动撤回。"
+  upload:
+    starting: "正在准备并上传文件到 {host}…"
+    completed: "文件上传完成（{bytes} 字节）。"
+  bootstrap:
+    tools: "正在检查安装环境…"
+    repair: "正在准备隔离 Python 环境…"
+    runtime: "正在准备插件运行环境…"
+  fetch_credentials_hint: "本机认证不可用或服务器身份未验证。请提供绑定此仓库、包含已核实服务器密钥的凭据文件；留空取消。"
+  fetch_profile_prompt: "仓库凭据文件路径"
+  fetch_profile_help: "私有凭据文件：绑定完整仓库地址，不保存或复用"
+  allow_private_help: "仅本次允许连接该仓库地址解析出的私网 IP；更新时需重新指定"
+  prepare_fetch_help: "使用已审核的离线 Python 目录准备原生隔离采集工具"
+  python_runtime_help: "将复制到原生沙盒内的独立 Python 目录"
+  plugin_path_help: "待准备的本地插件目录；准备不会授予信任"
+  dependency_help: "核对审核锁中的精确 package==version；多个包可重复指定"
+  wheels_help: "已审核的离线 wheel 目录；不允许源码包或联网安装"
+  lock_file_help: "已审核且包含 SHA256 哈希的完整依赖锁文件"
+  no_grants: "尚未保存任何永久宿主权限。"
+  select_grant: "选择权限"
+  revoked: "权限已撤销，正在使用的单次授权也已失效。"
+  prepare_help: "使用私有 Python 目录和锁定的离线 wheel 准备原生沙盒运行时"
+  permissions: "插件权限"
+  request: "授权请求"
+  once: "本次授权"
+  always: "永久授权"
+  permissions_help: "查看和撤销插件的永久宿主权限"
+  list_help: "列出已保存的永久权限"
+  permissions_plugin_help: "仅列出指定插件的永久权限"
+  permissions_show_help: "按权限 ID 查看永久权限详情"
+  revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
+  id_help: "permissions list 显示的完整权限 ID"
+  permission_line: "权限：{permission}"
+  directory_manage_warning: "允许执行项目工具；工具可能访问项目外文件"
+  directory_read_scope: "包含所有子目录"
+  resource_line: "资源：{resource}"
+  fingerprint_line: "插件指纹：{fingerprint}"
+  tool_warning: "宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离"
+  tool_scope_warning: "允许插件使用任意参数运行此工具，可读写当前用户的文件"
+  operations:
+    directory:
+      read: "读取"
+      write: "写入"
+      read_write: "读取 | 写入"
+      manage: "读取 | 写入 | 执行"
+    tool:
+      execute: "执行工具"
+  provider:
+    install: 安装并授权
+    approve: 确认授权
+    scope: "{caller} → {provider} 调用 {service} 的 {methods}"
+    trust: 确认后信任以上指纹并授予所列服务调用权限
+  errors:
+    provider_interaction_required: "仅可在交互菜单中确认插件安装或授权"
+    provider_request_denied: "未声明该服务依赖或框架未登记安装来源"
+    provider_incompatible: "服务提供方不可用，请在插件管理检查启用状态、版本和服务契约"
+    provider_install_failed: "安装服务插件失败，请检查仓库连接或插件日志"
+    sdk_required: "插件 SDK 版本不兼容；当前要求 SDK 4，旧插件须升级清单和代码。"
+    fetch_prepare_invalid: "隔离 Python 运行目录无效，请提供可用的 Python 安装目录。"
+    fetch_profile_invalid: "无法安全读取仓库凭据。请检查私有文件权限、格式及绑定的完整仓库地址。"
+    fetch_ssh_connection_failed: "SSH 连接在服务器身份校验前中断，请检查仓库服务器的 SSH 服务、端口及代理/TUN 设置。"
+    fetch_http_auth_failed: "仓库拒绝访问，请检查凭据和仓库权限。"
+    fetch_private_denied: "仓库地址解析到了私网或保留 IP。确认目标可信后，可在本次命令添加 --allow-private。"
+    fetch_tls_failed: "仓库 TLS 验证失败。请检查证书；使用自签证书时，在仓库凭据文件中提供 ca_pem。"
+    fetch_protocol_failed: "仓库响应不符合受限 Git 协议或超过限额。请检查仓库地址、访问凭据及仓库大小。"
+    fetch_transfer_failed: "仓库下载失败，请检查网络后重试。候选内容未发布。"
+    fetch_ssh_host_failed: "SSH 主机身份验证失败。请向仓库管理员核实主机密钥后更新私有凭据文件；不会自动接受新密钥。"
+    fetch_ssh_auth_failed: "SSH 私钥验证失败。请检查私钥、口令及仓库访问权限；不会尝试本机 SSH 代理或其他密钥。"
+    fetch_prepare_failed: "隔离 Python 准备或验证失败。"
+    fetch_python_failed: "Python 无法在隔离环境中启动，未继续安装。请检查系统运行库或安全软件拦截。"
+    fetch_dependency_missing: "当前 OpsKit Python 环境缺少传输依赖。请使用项目虚拟环境，或安装项目声明的依赖后重试。"
+    fetch_setup_failed: "采集工具准备失败，请检查网络、可用空间及目录权限后重试安装。已校验的下载会自动复用。"
+    runtime_setup_failed: "插件运行环境准备失败，本次未完成安装。请检查网络、可用空间及目录权限后重试。"
+    fetch_tools_missing: "请先运行 plugin prepare-fetch --python-runtime PATH 准备原生隔离采集工具。"
+    fetch_tools_invalid: "已准备的原生隔离采集工具已过期或损坏，请重新运行 plugin prepare-fetch。"
+    acquisition_failed: "插件安装失败，请查看数据目录中的 logs/opskit.log。"
+    workspace_failed: "插件隔离工作区处理失败，请检查数据目录路径、权限及可用空间。"
+    workspace_full: "临时工作区已满，请稍后重试或在插件维护中选择临时清理。"
+    workspace_busy: "临时工作区正忙，请稍后重试。"
+    update_failed: "插件更新失败，请查看 OpsKit 日志后重试"
+    candidate_checksums: "候选版本与 CHECKSUMS.yaml 不匹配，请等待发布方修正后再更新"
+    update_modified: "安装内容已修改或缺少原生安装凭据。请先备份修改再重新安装，本次未替换任何文件。"
+    prepare_invalid: "插件、私有 Python 运行时、离线 wheel 或依赖锁无效。"
+    prepare_failed: "原生插件运行时准备失败。"
+    runtime_missing: "尚未准备原生运行时，请先运行 plugin prepare。"
+    runtime_invalid: "原生运行时已过期或损坏，请重新准备。"
+    broker_denied: "插件操作被拒绝或执行失败。"
+    interaction_required: "此权限需要交互授权；非交互模式不会自动批准。"
+    store_invalid: "插件权限存储损坏或无法安全读取。"
+    identity_revoked: "插件身份已失效或授权已撤销。"
+    denied: "用户拒绝了权限申请。"
+    changed_during_prompt: "等待确认期间权限已变更，请重新申请。"
+    grant_limit: "插件权限数量已达到上限。"
+    missing_or_revoked: "所需权限尚未授予或已被撤销。"
+    invalid_id: "权限 ID 格式不正确。"
+    grant_not_found: "未找到指定权限。"
+    platform_pending: "{platform} 原生插件沙盒尚未实现；不会降级为无隔离执行。"
+    platform_unsupported: "当前系统不支持原生插件沙盒。"
+    windows_required: "AppContainer 沙盒需要 Windows。"
+    windows_api_missing: "当前系统无法使用 Windows AppContainer 接口。"
+    attributes_invalid: "原生沙盒进程属性分配失败。"
+    system_directory_missing: "无法确定 Windows 系统目录。"
+    token_not_isolated: "子进程没有 AppContainer 隔离令牌，已拒绝执行。"
+    profile_create_failed: "创建 AppContainer 配置失败（{status}）。"
+    profile_sid_missing: "AppContainer 配置没有返回安全标识。"
+    profile_cleanup_failed: "清理 AppContainer 配置失败（{status}）。"
+    execution_timeout: "原生插件执行超时。"
+    protocol_failed: "原生插件消息无效或通信失败。"
+    output_limit: "原生插件输出超过限额。"
+    worker_failed: "原生插件执行失败或未返回有效结果。"
+    transport_cleanup_failed: "原生插件通信资源未能完成回收。"
+  lifecycle:
+    plugin_busy: "插件正在其他任务或进程中运行，请等待其结束后重试。"
+    list_help: "列出已安装插件及兼容状态"
+    show_help: "查看插件身份、权限、服务和信任状态"
+    install_help: "从仓库安装插件，安装前检查来源"
+    repository_help: "插件 Git 仓库地址或本地仓库路径"
+    branch_help: "来源分支，默认使用远端默认分支"
+    alias_help: "本机安装目录名，插件名称仍以清单为准"
+    limit_help: "最多返回的记录数"
+    transaction_help: "对应检查命令返回的 transaction"
+    record_digest_help: "对应检查命令返回的 record_sha256"
+    catalog_help: "缓存类型：runtime、fetch 或 prepare"
+    cache_object_help: "缓存检查命令返回的 object"
+    update_help: "从已记录的来源更新单个插件或全部插件"
+    update_name_help: "插件名称，通过 plugin list 查看"
+    update_all_help: "依次更新所有已安装插件并列出每项结果"
+    update_target_required: "请指定插件名称或 --all，两者只能选一个"
+    update_batch_failed: "{count} 个插件更新需要处理"
+    update_named_source_required: "凭据和私网连接授权需要指定插件名称"
+    remove_help: "移除插件并保留状态数据"
+    enable_help: "启用已安装插件"
+    disable_help: "停用已安装插件"
+    trust_help: "按完整指纹信任当前插件内容"
+    revoke_help: "撤销插件执行信任"
+    inspect_profiles_help: "只读检查 Windows 原生沙盒配置恢复记录"
+    recover_profile_help: "核对完整记录 SHA256 后，删除一项已确认创建且未被使用的 Windows 沙盒配置"
+    profile_recovery_failed: "原生沙盒配置恢复被拒绝或未能确认完成；活动、已变化或归属不确定的资源均保留。"
+    inspect_native_workspaces_help: "只读查看已确认归属的原生沙盒临时目录恢复记录。"
+    recover_workspace_help: "使用完整记录 SHA256 删除已记录且无活动任务占用的原生沙盒临时目录。"
+    workspace_recovery_failed: "临时目录恢复被拒绝或未能确认完成；活动、已变化或归属未知的目录均保留。"
+    inspect_cache_help: "查看原生归属记录；catalog 为 runtime、fetch 或 prepare（准备临时目录）。"
+    clean_cache_help: "使用完整归属记录 SHA256 清理闲置对象；catalog 为 runtime、fetch 或 prepare。"
+    cache_cleanup_failed: "缓存清理被拒绝或未能确认完成；活动、被引用、已变化或归属未知的对象均保留。"
+    inspect_updates_help: "检查中断更新的恢复记录，不修改文件"
+    recover_update_help: "恢复记录中的旧版本，撤销信任并保留全部恢复证据"
+    update_recovery_failed: "无法确认更新恢复完成；文件和证据已保留，请重新检查该事务。"
+    not_found: "未找到插件，或插件名称不唯一"
+    state_invalid: "插件、调用方或记录 SHA256 无效"
+    state_failed: "状态操作未确认，请检查后再重试"
+    inspect_state_help: "查看事务元数据；省略调用方表示自身，指定调用方表示对应服务分区"
+    repair_state_help: "按已观察到的 SHA256 修复不完整事务尾部，并保留原始记录"
+    inspect_workspaces_help: "限量查看工作目录条目，不读取内容；查看结果不代表归属确认或删除授权"
+    workspaces_failed: "工作目录检查未确认，未执行清理"
+    path_invalid: "插件路径必须是普通目录"
+    fingerprint_help: "生成或验证插件 CHECKSUMS.yaml 校验清单"
+    checksum_failed: "插件校验未通过"
+    checksum_operation_failed: "插件校验操作失败"
+    repository_invalid: "仓库或分支无效"
+    remove_cancelled: "已取消移除插件"
+    fingerprint_mismatch: "指纹与当前插件内容不匹配"
+    checksum_mismatch: "插件校验和不匹配"
+    changed: "授权期间插件内容发生变化"
+    authorize_service_help: "批准调用方声明的指定服务契约"
+    revoke_service_help: "撤销一项服务调用授权，保留插件自身的信任授权"
+    update_downgrade_pending: "{name} 已装入较低版本，请检查并确认信任"
 
+confirm_ui:
+  uninstall: 卸载插件
+  plugin_delete: 插件目录将被删除，状态数据保留。
+  trust: 信任插件
+  trust_detail: 插件运行于沙盒，授权的宿主工具以当前用户权限运行。
+  private_connection: 允许连接
+  private_detail: 仓库地址指向内网或保留地址，仅允许本次连接。
+  revoke: 撤销权限
+  install: 确认安装
+  reinstall: 重新安装
+  remove: 确认卸载
+  remove_all: 卸载全部
+  irreversible: 此操作无法恢复。
+  upgrade: 确认升级
+  dependency: 安装依赖
+  save: 保存设置
+  disk_detail: 这是剩余空间检查，不是磁盘硬配额。
+  cache: 清理缓存
+  cache_detail: 活动读取、当前版本引用或身份变化都会阻止删除。
+  workspace: 清理目录
+  workspace_detail: 仅在无活动任务占用、记录的父目录和目录身份仍匹配时删除。
+  profile: 清理沙盒
+  profile_detail: 仅在无活动任务占用、记录的身份和目录仍匹配时删除。
+  profile_record: 清理记录
+  profile_record_detail: 配置已删除，仅清理残留记录，不会再次删除配置。
+  rollback: 更新回滚
+  rollback_detail: 恢复旧版本将撤销信任，并保留全部恢复证据。
+  connect_wsl: 开启服务
+  connect_wsl_detail: WSL 无 systemd，将自动开启并重启。
+  continue: 继续操作
+  continue_detail: 不开启 systemd，服务无法启动。
+  xui: 安装节点
+  xui_detail: 安装 X-UI 并创建节点。
+  release_port: 强制安装
+  release_port_detail: 将强制终止占用 443 端口的进程，可能造成服务中断或数据丢失；此操作不可逆。
+  theme: 安装主题
+  apply_update: 应用更新
+  tunnel: 删除隧道
+  peer: 删除节点
+  downgrade_detail: "版本回退：{old} → {new}。"
+  port_process: "占用进程：{process}"

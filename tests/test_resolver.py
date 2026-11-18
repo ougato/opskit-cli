@@ -68,6 +68,16 @@ class TestResolverParseDep:
 
 
 class TestResolverDeps:
+    @pytest.fixture(autouse=True)
+    def chinese_error_messages(self, monkeypatch):
+        # These assertions specify Chinese wording, independently of OS locale.
+        # Do not call switch(): it persists a user configuration change.
+        from core import i18n
+        catalog = i18n._flatten(i18n._load_lang("zh"))
+        monkeypatch.setattr(i18n, "_lang", "zh")
+        monkeypatch.setattr(i18n, "_current", catalog)
+        monkeypatch.setattr(i18n, "_core_keys", set(catalog))
+
     """resolve_deps 主逻辑测试"""
 
     def test_no_deps(self):

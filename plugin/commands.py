@@ -2,30 +2,66 @@
 from __future__ import annotations
 
 import re
+import logging
+import hmac
 import shutil
-import subprocess
+import stat
+import tempfile
+import uuid
+from dataclasses import dataclass, fields
 from pathlib import Path
 from urllib.parse import urlparse
 
 from core.config import load_config, set_config_value
+from core.constants import PLUGIN_API_VERSION
+from core.directory_publish import publish_new_directory
+from core.plugin_install_receipt import content_receipt
+from core.resource_lock import ResourceLock
 from core.i18n import t
 from core.loader import builtin_module_keys
 from core.module import ModuleInfo
 from core.paths import plugins_dir
 from core.plugin import (
     PluginManifest,
+    PluginInventoryError,
     list_manifests,
     load_manifest,
     load_plugin,
-    unload_plugin,
+    _module_info,
 )
-from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
-from core.plugin_services import invalidate_service_cache
-from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record
-from core.runner import run
+from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke, trusted_record, invalidate
 
-# git URL 末段提取插件目录名：去掉 .git 后缀
-_URL_NAME_PATTERN = re.compile(r"([^/]+?)(?:\.git)?/?$")
+# 插件安装目录名：URL 路径分段转小写连字符，避免不同仓库同 basename 冲突
+_URL_NAME_PATTERN = re.compile(r"([^/\\]+?)(?:\.git)?[/\\]?$")
+_SCP_URL_PATTERN = re.compile(r"^[^@\s]+@[^:\s]+:(?P<path>.+)$")
+_INSTALL_DIR_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
+_REMOTE_URL_SCHEMES = {"http", "https", "ssh", "git", "file"}
+
+
+def _log_install_failure(phase: str, exc: Exception) -> None:
+    """Record useful diagnostics without logging source URLs or exception data."""
+    category = next((kind.__name__ for kind in (PermissionError, FileNotFoundError,
+                    TimeoutError, OSError, ValueError, TypeError, RuntimeError)
+                     if isinstance(exc, kind)), "unexpected")
+    location = "unknown"
+    traceback = exc.__traceback__
+    while traceback is not None:
+        module = traceback.tb_frame.f_globals.get("__name__", "")
+        if module.startswith(("core.", "plugin.")):
+            location = f"{module}:{traceback.tb_lineno}"
+        traceback = traceback.tb_next
+    logging.getLogger("opskit.plugin.install").warning(
+        "Plugin installation failed: phase=%s category=%s location=%s", phase, category, location)
+
+_installation_lock = ResourceLock(lambda: plugins_dir() / ".installation.lock", label="plugin installation")
+
+
+@dataclass
+class _InstalledManifest(PluginManifest):
+    """Process-local receipt; discovery alone never authorizes install rollback."""
+    _installation_identity: tuple[int, int] = (0, 0)
+    _installation_parent_identity: tuple[int, int] = (0, 0)
+    _installation_content: str = ""
 
 # 信任状态
 TRUST_OK = "trusted"
@@ -48,29 +84,44 @@ def manifests() -> list[PluginManifest]:
 
 def loaded_plugins() -> list[tuple[PluginManifest, ModuleInfo]]:
     """实时扫描并加载全部已信任且启用的插件（热插拔：每次进插件工具菜单调用）"""
+    from core.plugin_sandbox import _read_inventory
+    return [(manifest, _module_info(manifest))
+            for manifest in _read_inventory(plugins_dir(), select="menu")]
+
+
+def _loaded_plugins(manifest_list) -> list[tuple[PluginManifest, ModuleInfo]]:
+    """Filter an already collected inventory without executing plugin code."""
+    if not manifest_list:
+        return []
+    from core.plugin_trust import authorization_snapshot
     builtin = builtin_module_keys()
     pairs: list[tuple[PluginManifest, ModuleInfo]] = []
     seen: set[str] = set()
-    for manifest in manifests():
-        if manifest.name in builtin or manifest.name in seen or not is_enabled(manifest.name):
-            continue
-        info = load_plugin(manifest)
-        if info is None:
-            continue
-        seen.add(manifest.name)
-        pairs.append((manifest, info))
+    config = None
+    # These snapshots only control display; invocation rechecks live authority.
+    with authorization_snapshot():
+        for manifest in manifest_list:
+            if manifest.name in builtin or manifest.name in seen:
+                continue
+            if config is None:
+                config = load_config()
+            if not _enabled_in_config(config, manifest.name):
+                continue
+            info = load_plugin(manifest)
+            if info is None:
+                continue
+            seen.add(manifest.name)
+            pairs.append((manifest, info))
     pairs.sort(key=lambda p: p[1].order)
     return pairs
 
 
-def reload(manifest: PluginManifest) -> None:
-    """清除插件旧模块缓存，下次扫描时重新 import 新代码"""
-    unload_plugin(manifest)
-
-
 def is_enabled(key: str) -> bool:
-    cfg = load_config()
-    return bool(cfg.get("modules", {}).get(key, {}).get("enabled", True))
+    return _enabled_in_config(load_config(), key)
+
+
+def _enabled_in_config(config: dict, key: str) -> bool:
+    return bool(config.get("modules", {}).get(key, {}).get("enabled", True))
 
 
 def set_enabled(key: str, enabled: bool) -> None:
@@ -78,20 +129,59 @@ def set_enabled(key: str, enabled: bool) -> None:
     set_config_value(cfg, f"modules.{key}.enabled", enabled)
 
 
+def _strip_git_suffix(value: str) -> str:
+    return value[:-4] if value.endswith(".git") else value
+
+
+def _slug_part(value: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value.lower())).strip("-")
+
+
+def valid_install_dir_name(name: str | None) -> bool:
+    """安装目录别名是否合法。目录名仅作为本地容器，不等同于 plugin.yaml name。"""
+    return bool(name and _INSTALL_DIR_PATTERN.match(name))
+
+
 def dir_name_from_url(url: str) -> str | None:
-    """从 git URL 提取插件目录名"""
-    m = _URL_NAME_PATTERN.search(url.strip())
-    return m.group(1) if m else None
+    """从 git URL 生成稳定安装目录名。
+
+    远端 URL 使用仓库路径分段生成目录，例如 org/team/tool.git -> org-team-tool。
+    本地路径保留历史行为，仅使用路径末段，方便测试和本地开发。
+    """
+    raw = url.strip().rstrip("/\\")
+    if not raw:
+        return None
+
+    path_text: str | None = None
+    scp_match = _SCP_URL_PATTERN.match(raw) if "://" not in raw else None
+    if scp_match:
+        path_text = scp_match.group("path")
+    else:
+        parsed = urlparse(raw)
+        if parsed.scheme in _REMOTE_URL_SCHEMES and parsed.path:
+            path_text = parsed.path
+
+    if path_text:
+        parts = [_slug_part(_strip_git_suffix(part)) for part in path_text.replace("\\", "/").split("/")]
+        name = "-".join(part for part in parts if part)
+        return name if valid_install_dir_name(name) else None
+
+    m = _URL_NAME_PATTERN.search(raw)
+    if not m:
+        return None
+    name = _slug_part(_strip_git_suffix(m.group(1)))
+    return name if valid_install_dir_name(name) else None
 
 
-def parse_install_input(raw: str) -> tuple[str, str | None]:
-    """解析安装输入，支持 git 风格的分支参数：`<url> -b <branch>` / `--branch <branch>` / `--branch=<branch>`。
+def parse_install_input(raw: str) -> tuple[str, str | None, str | None]:
+    """解析安装输入，支持 `-b/--branch` 指定分支、`--as` 指定本地安装目录。
 
-    返回 (仓库地址, 分支或 None)。分支省略时按远端默认分支克隆。
+    返回 (仓库地址, 分支或 None, 安装目录别名或 None)。分支省略时按远端默认分支克隆。
     """
     tokens = raw.split()
     url = ""
     branch: str | None = None
+    alias: str | None = None
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -99,16 +189,22 @@ def parse_install_input(raw: str) -> tuple[str, str | None]:
             branch = tokens[i + 1]
             i += 2
             continue
+        if tok == "--as" and i + 1 < len(tokens):
+            alias = tokens[i + 1]
+            i += 2
+            continue
         if tok.startswith("--branch="):
             branch = tok.split("=", 1)[1]
+        elif tok.startswith("--as="):
+            alias = tok.split("=", 1)[1]
         elif not url:
             url = tok
         i += 1
-    return url, (branch or None)
+    return url, (branch or None), (alias or None)
 
 
 def plugin_branch(name: str) -> str | None:
-    """插件安装时记录的分支（更新时据此 pull），未记录返回 None"""
+    """插件安装时记录的分支，更新时据此重新采集；未记录返回 None。"""
     record = trusted_record(name)
     return record.get("branch") if record else None
 
@@ -122,12 +218,22 @@ def trust_status(manifest: PluginManifest) -> str:
     return TRUST_NONE
 
 
-def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None) -> None:
+def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None = None, *,
+                expected_fingerprint: str | None = None) -> None:
     """记录用户对插件当前内容的信任（branch 为 None 时沿用已存分支）"""
+    if manifest.api_version != PLUGIN_API_VERSION:
+        raise ValueError(t("plugin_native.errors.sdk_required"))
     record = trusted_record(manifest.name)
     if not source and record is not None:
         source = str(record.get("source", ""))
-    grant(manifest.name, compute_fingerprint(manifest.root), manifest.version, source, branch)
+    fingerprint = compute_fingerprint(manifest.root)
+    if (not fingerprint or expected_fingerprint is not None
+            and not hmac.compare_digest(fingerprint, expected_fingerprint)):
+        raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
+    grant(manifest.name, fingerprint, manifest.version, source, branch)
+    if expected_fingerprint is not None and compute_fingerprint(manifest.root) != fingerprint:
+        invalidate(manifest.name)
+        raise ValueError(t("plugin_native.lifecycle.changed"))
 
 
 def is_trusted_source(url: str) -> bool:
@@ -140,114 +246,305 @@ def is_trusted_source(url: str) -> bool:
     return bool(host) and host in [str(s) for s in sources]
 
 
-# git stderr 常见模式 → 可读原因的文案 key
-_GIT_ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("permission denied", "authentication failed", "could not read username", "could not read password"), "plugin.git_auth_failed"),
-    (("repository not found", "does not appear to be a git repository"), "plugin.git_repo_not_found"),
-    (("could not resolve", "connection reset", "connection refused", "timed out", "unable to access", "network is unreachable"), "plugin.git_network_failed"),
-    (("dubious ownership",), "plugin.git_dubious_ownership"),
-    (("usage: git",), "plugin.git_too_old"),
-)
+def _manifest_name_conflict(manifest: PluginManifest) -> PluginManifest | None:
+    target = Path(manifest.root).resolve()
+    for installed in list_manifests():
+        if Path(installed.root).resolve() == target:
+            continue
+        if installed.name == manifest.name:
+            return installed
+    return None
 
 
-def git_error_reason(result: subprocess.CompletedProcess) -> str:
-    """git 非 0 退出转可读原因：识别常见 stderr 模式，未识别取 stderr 末行"""
-    stderr = (result.stderr or "").strip()
-    low = stderr.lower()
-    for keywords, key in _GIT_ERROR_PATTERNS:
-        if any(k in low for k in keywords):
-            return t(key)
-    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
-    return lines[-1] if lines else t("plugin.git_exit", code=result.returncode)
+def _remove_tree(path: Path) -> None:
+    """移除调用方拥有的暂存树，兼容 Windows 旧安装中的只读文件。"""
+    if not path.exists():
+        return
+
+    def _clear_readonly(func, target, _exc_info):
+        Path(target).chmod(stat.S_IWRITE)
+        func(target)
+
+    try:
+        shutil.rmtree(path, onerror=_clear_readonly)
+    except FileNotFoundError:
+        pass
 
 
-def install(url: str, branch: str | None = None) -> tuple[PluginManifest | None, str]:
-    """git clone 到插件目录并校验清单。指定 branch 时克隆该分支（git clone --branch）。
+def install(url: str, branch: str | None = None, alias: str | None = None, *,
+            fetch_profile: str | None = None, allow_private: bool = False, fetch_interaction=None,
+            automatic: bool = False, progress=None, review_candidate=None) -> tuple[PluginManifest | None, str]:
+    """原生隔离采集已提交内容，审核后发布；不执行宿主 Git。
     返回 (清单, 错误串)；信任确认由菜单层负责"""
-    name = dir_name_from_url(url)
+    if alias is not None and not valid_install_dir_name(alias):
+        return None, f"bad_alias:{alias}"
+    name = alias or dir_name_from_url(url)
     if not name:
         return None, "invalid url"
     dest = plugins_dir() / name
-    if dest.exists():
+    if dest.exists() or dest.is_symlink():
         return None, f"exists:{name}"
+    for parent in (dest.parent, *dest.parent.parents):
+        if parent.is_symlink() or (hasattr(parent, "is_junction") and parent.is_junction()):
+            return None, "plugin installation parent must not be a link"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone", "--depth", "1"]
-    if branch:
-        cmd += ["--branch", branch]
-    cmd += [url, str(dest)]
+    work = Path(tempfile.mkdtemp(prefix=".opskit-install-", dir=dest.parent))
+    owned = work.lstat()
+    staging = work / "payload"
+    phase = "preparation"
     try:
-        result = run(cmd, capture=True, check=False)
-    except Exception as e:
-        shutil.rmtree(dest, ignore_errors=True)
-        return None, str(e)
-    if result.returncode != 0:
-        shutil.rmtree(dest, ignore_errors=True)
-        return None, git_error_reason(result)
-    manifest = load_manifest(dest)
-    if manifest is None:
-        shutil.rmtree(dest, ignore_errors=True)
-        return None, "no_manifest"
-    invalidate_service_cache()
-    return manifest, ""
+        from core.native_acquisition import populate
+        from core.native_sandbox import NativeSandboxError
+        if automatic:
+            from core.plugin_bootstrap import ensure_fetch
+            try:
+                ensure_fetch(progress or (lambda *args: None))
+            except NativeSandboxError:
+                raise
+            except Exception:
+                raise NativeSandboxError("fetch_setup_failed") from None
+        if progress:
+            progress("fetch", branch or "")
+        phase = "acquisition"
+        acquired = populate(url, staging, branch=branch, fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
+        phase = "validation"
+        manifest = load_manifest(staging)
+        if manifest is None:
+            return None, "no_manifest"
+        if manifest.name in builtin_module_keys():
+            return None, "official_name_conflict"
+        if review_candidate is not None:
+            if (content_receipt(staging) != acquired.receipt
+                    or compute_fingerprint(staging) != acquired.fingerprint):
+                raise ValueError("installation candidate changed before review")
+            if not review_candidate(manifest, acquired.fingerprint):
+                return None, "declined"
+        # Acquire independently; serialize identity validation and publication.
+        # Discovery never sees a partial or unreviewed candidate.
+        with _installation_lock.hold():
+            try:
+                conflict = _manifest_name_conflict(manifest)
+            except PluginInventoryError:
+                return None, "plugin inventory scan failed"
+            if conflict is not None:
+                return None, f"manifest_name_exists:{manifest.name}:{conflict.root.name}"
+            if (content_receipt(staging) != acquired.receipt
+                    or compute_fingerprint(staging) != acquired.fingerprint):
+                raise ValueError("installation candidate changed before publication")
+            if automatic:
+                from core.plugin_bootstrap import ensure_runtime
+                try:
+                    ensure_runtime(manifest, progress or (lambda *args: None))
+                except NativeSandboxError:
+                    raise
+                except Exception:
+                    raise NativeSandboxError("runtime_setup_failed") from None
+            # Fail closed before making content discoverable, including stale trust
+            # from an earlier installation of the same name. This grants nothing.
+            phase = "publication"
+            grant(manifest.name, "", manifest.version, acquired.source, branch,
+                  installation_receipt=acquired.receipt, source_commit=acquired.commit)
+            payload_identity = staging.lstat()
+            parent_identity = dest.parent.lstat()
+            payload_content = content_receipt(staging)
+            if payload_content != acquired.receipt:
+                raise ValueError("installation candidate changed during trust invalidation")
+            publish_new_directory(staging, dest)
+        values = {field.name: getattr(manifest, field.name) for field in fields(PluginManifest)}
+        values["root"] = dest
+        return _InstalledManifest(**values,
+            _installation_identity=(payload_identity.st_dev, payload_identity.st_ino),
+            _installation_parent_identity=(parent_identity.st_dev, parent_identity.st_ino),
+            _installation_content=payload_content), ""
+    except FileExistsError:
+        return None, f"exists:{name}"
+    except Exception as exc:
+        from core.plugin_capabilities import CapabilityDenied
+        from core.prompt import UserCancel
+        if isinstance(exc, (UserCancel, CapabilityDenied)):
+            raise
+        from core.native_sandbox import NativeSandboxError
+        if isinstance(exc, NativeSandboxError):
+            return None, str(exc)
+        _log_install_failure(phase, exc)
+        from core.plugin_sandbox import WorkspaceError
+        if isinstance(exc, WorkspaceError):
+            if exc.reason == "capacity":
+                return None, t("plugin_native.errors.workspace_full")
+            if exc.reason == "busy":
+                return None, t("plugin_native.errors.workspace_busy")
+            return None, t("plugin_native.errors.workspace_failed")
+        return None, t("plugin_native.errors.acquisition_failed")
+    finally:
+        # Never roll back dest: it may belong to a concurrent writer. The private
+        # wrapper is our only cleanup target; replacement means retain and report.
+        current = work.lstat()
+        if ((current.st_dev, current.st_ino) != (owned.st_dev, owned.st_ino)
+                or not stat.S_ISDIR(current.st_mode)
+                or getattr(current, "st_file_attributes", 0) & 0x400):
+            raise RuntimeError("plugin installation staging identity changed; cleanup refused")
+        _remove_tree(work)
 
 
 def rollback_install(manifest: PluginManifest) -> None:
-    """用户拒绝信任时回滚删除刚安装的插件目录"""
-    root = Path(manifest.root).resolve()
-    if root.parent == plugins_dir().resolve():
-        shutil.rmtree(root, ignore_errors=True)
+    """Withdraw only the directory bound to this successful install receipt."""
+    if not isinstance(manifest, _InstalledManifest):
+        raise ValueError("installation receipt required; rollback refused")
+    root = Path(manifest.root).absolute()
+    if root.parent != plugins_dir().absolute():
+        raise ValueError("plugin installation root changed; rollback refused")
+    with _installation_lock.hold():
+        parent = root.parent.lstat()
+        current = root.lstat()
+        if ((parent.st_dev, parent.st_ino) != manifest._installation_parent_identity
+                or (current.st_dev, current.st_ino) != manifest._installation_identity
+                or not stat.S_ISDIR(current.st_mode)
+                or getattr(current, "st_file_attributes", 0) & 0x400):
+            raise ValueError("plugin installation identity changed; rollback refused")
+        if content_receipt(root) != manifest._installation_content:
+            raise ValueError("plugin installation content changed; rollback refused")
+        wrapper = Path(tempfile.mkdtemp(prefix=".opskit-rollback-", dir=root.parent))
+        withdrawn = wrapper / "payload"
+        try:
+            # Bind the object actually moved, not merely the prior path lookup.
+            publish_new_directory(root, withdrawn)
+            moved = withdrawn.lstat()
+            identity_matches = ((moved.st_dev, moved.st_ino) == manifest._installation_identity
+                                and stat.S_ISDIR(moved.st_mode)
+                                and not getattr(moved, "st_file_attributes", 0) & 0x400)
+            try:
+                content_matches = identity_matches and content_receipt(withdrawn) == manifest._installation_content
+            except (OSError, ValueError, RuntimeError):
+                content_matches = False
+            if not identity_matches or not content_matches:
+                try:
+                    publish_new_directory(withdrawn, root)
+                except OSError as exc:
+                    raise RuntimeError("rollback identity changed; moved object retained at " + str(withdrawn)) from exc
+                raise ValueError("plugin installation identity changed; replacement restored")
+            _remove_tree(withdrawn)
+        finally:
+            # An unexpected object or failed cleanup remains available for recovery.
+            if not any(wrapper.iterdir()):
+                wrapper.rmdir()
 
 
-def update(manifest: PluginManifest) -> tuple[bool, str]:
-    """git pull 更新插件目录（安装时指定过分支则固定 pull 该分支）。
-
-    已信任插件经平台更新流程拉取的新内容自动继承信任（首次确认后
-    更新不再重复询问）；以下情况不继承，交回菜单层处置：
-      - tampered：内容与 CHECKSUMS.yaml 发布清单不符（可能被篡改）
-      - downgrade：版本回退（防降级攻击，需用户显式确认）
-    返回 (是否成功, "updated" / "unchanged" / "tampered" / "downgrade" / 错误串)。
-    """
-    root = Path(manifest.root)
-    if not (root / ".git").exists():
-        return False, "not_git"
-    was_trusted = trust_status(manifest) == TRUST_OK
-    branch = plugin_branch(manifest.name)
-    pull_cmd = ["git", "pull", "--ff-only"]
-    if branch:
-        pull_cmd += ["origin", branch]
+def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
+           allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
+    """Exclude active invocations before reading or changing plugin sources."""
+    from core.plugin_invocation_lock import hold
     try:
-        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
-        if head.returncode != 0:
-            return False, git_error_reason(head)
-        before = head.stdout.strip()
-        pulled = run(pull_cmd, cwd=root, capture=True, check=False)
-        if pulled.returncode != 0:
-            return False, git_error_reason(pulled)
-        head = run(["git", "rev-parse", "HEAD"], cwd=root, capture=True, check=False)
-        if head.returncode != 0:
-            return False, git_error_reason(head)
-        after = head.stdout.strip()
-    except Exception as e:
-        return False, str(e)
-    if before == after:
-        return True, "unchanged"
-    refreshed = load_manifest(root)
-    if refreshed is None:
-        return True, "updated"
-    if verify_checksums(root) == CHECK_MISMATCH:
-        return True, "tampered"
-    old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
-    if old_key is not None and new_key is not None and new_key < old_key:
-        return True, "downgrade"
-    if was_trusted:
-        grant_trust(refreshed)
-    invalidate_service_cache()
-    return True, "updated"
+        with hold(plugin=manifest.name, timeout=30):
+            return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
+                                  fetch_interaction=fetch_interaction, automatic=automatic)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
+def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
+                   allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
+    """Acquire a fresh reviewed tree, revoke trust, then replace with rollback."""
+    from core.native_acquisition import populate
+    from core.native_sandbox import NativeSandboxError
+    from core.plugin_state import _directory
+    from core.plugin_trust import authorization_transaction, authorization_snapshot
+    root = Path(manifest.root).absolute()
+    if root.parent != plugins_dir().absolute():
+        raise ValueError("update must target a direct installed plugin")
+    initial = _directory(root)
+    for parent in root.parents:
+        _directory(parent)
+    record = trusted_record(manifest.name)
+    if not record or not record.get("source"):
+        return False, "not_git"
+    before = content_receipt(root)
+    if record.get("installation_receipt") != before:
+        return False, t("plugin_native.errors.update_modified")
+    work = root.parent / (".opskit-update-" + uuid.uuid4().hex)
+    work.mkdir(mode=0o700)
+    owned = _directory(work)
+    payload, previous = work / "payload", work / "previous"
+    try:
+        acquired = populate(record["source"], payload, branch=record.get("branch"),
+                            fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
+        refreshed = load_manifest(payload)
+        if refreshed is None or refreshed.name != manifest.name:
+            raise ValueError("update plugin identity changed")
+        if _directory(root) != initial or content_receipt(root) != before:
+            raise ValueError("installed plugin changed during acquisition")
+        if before == acquired.receipt:
+            if automatic:
+                from core.plugin_runtime_manager import prepare_update
+                prepare_update(manifest, before)
+            return True, "unchanged"
+        replacement = _directory(payload)
+        with _installation_lock.hold(), authorization_transaction():
+            with authorization_snapshot():
+                if trusted_record(manifest.name) != record:
+                    raise ValueError("installation authority changed during acquisition")
+            if (_directory(root) != initial or content_receipt(root) != before
+                    or content_receipt(payload) != acquired.receipt):
+                raise ValueError("update content changed before publication")
+            # Revoke before exposing any new bytes. Rollback does not regrant.
+            from core.plugin_update_recovery import record as record_recovery
+            record_recovery(work, plugin=manifest.name, root=root, old=initial, candidate=replacement,
+                            old_receipt=before, candidate_receipt=acquired.receipt, installation=record)
+            invalidate(manifest.name)
+            published = False
+            try:
+                publish_new_directory(root, previous)
+                if _directory(previous) != initial or content_receipt(previous) != before:
+                    raise ValueError("update withdrawal identity changed")
+                publish_new_directory(payload, root)
+                published = True
+                if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
+                    raise ValueError("update publication identity changed")
+                if automatic:
+                    from core.plugin_runtime_manager import prepare_update
+                    installed = load_manifest(root)
+                    if installed is None or installed.name != manifest.name:
+                        raise ValueError("updated plugin manifest is invalid")
+                    prepare_update(installed, acquired.receipt)
+                grant(manifest.name, "", refreshed.version, acquired.source, record.get("branch"),
+                      installation_receipt=acquired.receipt, source_commit=acquired.commit)
+            except BaseException:
+                # Only withdraw the exact newly published object. Never overwrite
+                # an independent writer, and retain old bytes if restoration fails.
+                if published:
+                    if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
+                        raise RuntimeError("changed update retained for recovery") from None
+                    publish_new_directory(root, work / "failed-candidate")
+                if previous.exists():
+                    if _directory(previous) != initial or content_receipt(previous) != before:
+                        raise RuntimeError("changed update backup retained for recovery") from None
+                    publish_new_directory(previous, root)
+                raise
+        _remove_tree(previous)
+        old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
+        return True, "downgrade" if old_key is not None and new_key is not None and new_key < old_key else "updated"
+    except Exception as exc:
+        if not isinstance(exc, NativeSandboxError):
+            _log_install_failure("update", exc)
+        return False, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.update_failed")
+    finally:
+        if _directory(work) != owned:
+            raise RuntimeError("update staging identity changed; cleanup refused")
+        # A failed restoration leaves its backup and evidence for recovery.
+        if not previous.exists():
+            _remove_tree(work)
 
 
 def remove(manifest: PluginManifest) -> None:
+    """Exclude active invocations through source removal and trust revocation."""
+    from core.plugin_invocation_lock import hold
+    with hold(plugin=manifest.name, timeout=30):
+        _remove_locked(manifest)
+
+
+def _remove_locked(manifest: PluginManifest) -> None:
     """删除插件目录、移除信任记录并清除进程内残留（立即生效）"""
-    unload_plugin(manifest)
-    shutil.rmtree(manifest.root, ignore_errors=True)
+    root = Path(manifest.root)
+    if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()) or root.resolve().parent != plugins_dir().resolve():
+        raise ValueError("plugin removal must target a direct directory inside plugins")
+    _remove_tree(manifest.root)
     revoke(manifest.name)
-    invalidate_service_cache()

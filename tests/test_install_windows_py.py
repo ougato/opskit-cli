@@ -1,14 +1,9 @@
 """Windows 安装验收测试 — 纯 Python 实现，覆盖 PowerShell + CMD 双模式"""
 from __future__ import annotations
 
-import hashlib
 import os
-import platform
-import shutil
-import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -16,37 +11,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "opskit"
-INSTALL_BIN = INSTALL_DIR / "opskit.exe"
 
 
-# ─── 辅助 ─────────────────────────────────────────────────────────────────────
-
-def _cleanup_install():
-    """清理已有安装（不删除目录，只移除二进制）"""
-    if INSTALL_BIN.exists():
-        INSTALL_BIN.unlink(missing_ok=True)
-
-
-def _current_opskit_bin() -> Path | None:
-    """查找当前系统上已有的 opskit 可执行文件（用于模拟安装）"""
-    candidates = [
-        INSTALL_BIN,
-        Path(r"C:\Windows\System32\cmd.exe"),  # 仅用于体积校验
-    ]
-    for p in candidates:
-        if p.exists() and p.stat().st_size > 1024 * 10:
-            return p
-    return None
-
-
-def _install_mock_binary():
-    """将 cmd.exe 复制到安装目录模拟安装（供热更新测试用）"""
-    src = Path(r"C:\Windows\System32\cmd.exe")
-    if not src.exists():
-        pytest.skip("找不到 cmd.exe，无法模拟安装")
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, INSTALL_BIN)
-    return INSTALL_BIN
+@pytest.fixture(autouse=True)
+def isolated_install_location(tmp_path, monkeypatch):
+    """Installation checks must never create or replace a real user install."""
+    local = tmp_path / "localappdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(sys.modules[__name__], "INSTALL_DIR", local / "opskit")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -148,13 +120,11 @@ class TestWindowsInstallDir:
 
 class TestWindowsPendingUpdate:
     def test_pending_path_is_under_data_dir(self):
-        sys.path.insert(0, str(REPO_ROOT))
         from core.updater import _get_pending_path
         pending = _get_pending_path()
         assert "opskit.pending" in pending.name
 
     def test_verify_binary_rejects_small_file(self):
-        sys.path.insert(0, str(REPO_ROOT))
         from core.updater import _verify_binary
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             f.write(b"MZ" + b"\x00" * 10)  # 太小
@@ -165,32 +135,14 @@ class TestWindowsPendingUpdate:
             tmp.unlink(missing_ok=True)
 
     def test_verify_binary_accepts_valid_exe(self):
-        sys.path.insert(0, str(REPO_ROOT))
         from core.updater import _verify_binary
         cmd_exe = Path(r"C:\Windows\System32\cmd.exe")
         if not cmd_exe.exists():
             pytest.skip("cmd.exe 不存在")
         assert _verify_binary(cmd_exe), "cmd.exe 应通过校验"
 
-    def test_sha256_mismatch_rejected(self):
-        """SHA256 校验失败时 pending 应被清除"""
-        sys.path.insert(0, str(REPO_ROOT))
-        from core.updater import _get_pending_path, _sha256_file
-
-        pending = _get_pending_path()
-        pending.parent.mkdir(parents=True, exist_ok=True)
-        pending.write_bytes(b"bad content for test")
-
-        actual = _sha256_file(pending)
-        bad_sha = "0" * 64
-        assert actual != bad_sha, "校验值不应相等（SHA256 mismatch 逻辑正确）"
-
-        # 清理
-        pending.unlink(missing_ok=True)
-
     def test_apply_pending_skips_when_no_pending(self):
         """无 pending 文件时 apply_pending_update 应静默跳过"""
-        sys.path.insert(0, str(REPO_ROOT))
         from core.updater import _get_pending_path, apply_pending_update
 
         pending = _get_pending_path()
@@ -198,48 +150,6 @@ class TestWindowsPendingUpdate:
 
         # 不应抛出异常
         apply_pending_update()
-
-    def test_apply_pending_uses_powershell_on_windows(self):
-        """Windows 平台下 apply_pending_update 应生成 PS1 脚本"""
-        sys.path.insert(0, str(REPO_ROOT))
-        from core.updater import _get_pending_path, _save_check_cache, _get_backup_path
-        from core.constants import APP_VERSION
-
-        if sys.platform != "win32":
-            pytest.skip("仅 Windows 平台执行")
-
-        pending = _get_pending_path()
-        pending.parent.mkdir(parents=True, exist_ok=True)
-
-        # 用 cmd.exe 模拟 pending
-        cmd_exe = Path(r"C:\Windows\System32\cmd.exe")
-        if not cmd_exe.exists():
-            pytest.skip("cmd.exe 不存在")
-
-        shutil.copy2(cmd_exe, pending)
-        _save_check_cache({"last_check": time.time(), "pending_version": 999})
-
-        ps1_path = pending.parent / "opskit_update.ps1"
-        ps1_path.unlink(missing_ok=True)
-
-        with patch("core.updater._self_path", return_value=pending.parent / "fake_self.exe"), \
-             patch("core.updater._get_backup_path", return_value=pending.parent / "fake.bak"), \
-             patch("shutil.copy2"), \
-             patch("core.updater._sha256_file", return_value="aabbcc"):
-            from core.updater import _apply_windows
-            _apply_windows(pending, pending.parent / "fake_self.exe", 999)
-
-        if ps1_path.exists():
-            content = ps1_path.read_text(encoding="utf-8")
-            assert "Copy-Item" in content, "PS1 脚本应包含 Copy-Item"
-            ps1_path.unlink(missing_ok=True)
-            assert True
-        else:
-            # PS1 可能因权限或路径问题未生成，此时仅记录
-            pytest.xfail("PS1 脚本未生成（可能因路径或权限）")
-
-        # 清理
-        pending.unlink(missing_ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

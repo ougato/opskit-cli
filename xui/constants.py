@@ -27,7 +27,8 @@ XUI_STATE_FILE = XUI_CONFIG_DIR / "opskit-state.json"
 XUI_PENDING_INBOUNDS_FILE = XUI_CONFIG_DIR / "opskit-inbounds.json"
 XUI_TRAFFIC_HISTORY_FILE = XUI_CONFIG_DIR / "opskit-traffic.db"
 XUI_INSTALL_DIR = Path("/usr/local/x-ui")
-XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR, XUI_CONFIG_DIR]
+# Configuration, panel database and traffic history survive program uninstall.
+XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR]
 XUI_ARTIFACT_FILES = [
     Path("/etc/systemd/system/x-ui.service"),
     Path("/usr/bin/x-ui"),
@@ -112,6 +113,8 @@ TRAFFIC_BYTE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 TRAFFIC_BYTE_STEP = 1024.0
 
 SS_COMMAND = "ss"
+IPROUTE_APT_PACKAGE = "iproute2"
+IPROUTE_YUM_PACKAGE = "iproute"
 SS_TCP_LISTEN_ARGS = "-tln"
 JOURNALCTL_COMMAND = "journalctl"
 JOURNAL_NO_PAGER_ARG = "--no-pager"
@@ -135,13 +138,10 @@ DEFAULT_PANEL_USER = "opskit"
 
 SHORT_ID_BYTES = 8
 PASSWORD_BYTES = 18
-CLIENT_TOTAL_GB = 1024**4
-CLIENT_EXPIRY_DAYS = 365
-SECONDS_PER_DAY = 86400
+CLIENT_TOTAL_GB = 0  # 3x-ui: zero means unlimited traffic.
 
 XUI_API_LOGIN_PATH = "/login"
 XUI_API_CSRF_PATH = "/csrf-token"
-XUI_API_ADD_INBOUND_PATH = "/panel/api/inbounds/add"
 
 HTTP_STATUS_OK = 200
 HTTP_STATUS_REDIRECT_MIN = 300
@@ -168,11 +168,12 @@ SYSCTL_WRITE_ARG = "-w"
 MODPROBE_COMMAND = "modprobe"
 BBR_KERNEL_MODULE = "tcp_bbr"
 BBR_SYSPARAMS = {
-    "net.core.default_qdisc": "fq",
     "net.ipv4.tcp_congestion_control": "bbr",
+    "net.ipv4.tcp_mtu_probing": "1",
 }
 BBR_SYSCTL_FILE = Path("/etc/sysctl.d/99-xui-bbr.conf")
 BBR_SYSCTL_FILE_CONTENT = "".join(f"{key} = {value}\n" for key, value in BBR_SYSPARAMS.items())
+BBR_MODULES_FILE = Path("/etc/modules-load.d/opskit-xui-bbr.conf")
 
 SENSITIVE_STATE_KEYS = frozenset(
     {

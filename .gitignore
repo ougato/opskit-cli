@@ -1,5 +1,5 @@
 # ── 构建自动生成 ───────────────────────────────────────────────────────────────
-_registry.py
+/_registry.py
 
 # ── 外部插件目录（开发模式本地安装，不入仓） ──────────────────────────────────
 plugins/
@@ -34,13 +34,20 @@ MANIFEST
 *.onefile-build/
 opskit.bin
 opskit.exe
+/nuitka-crash-report.xml
 
 # ── 测试 / 覆盖率 ─────────────────────────────────────────────────────────────
 .pytest_cache/
 .coverage
 htmlcov/
 coverage.xml
-*.coveragerc
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.tox/
+.nox/
+.hypothesis/
 
 # ── 用户数据 / 配置（运行时生成，不入库）──────────────────────────────────────
 config/common.yaml
@@ -52,8 +59,6 @@ tests/_probe_*.py
 tests/_child_*.py
 tests/_ctrlc_result.txt
 tests/**/token.txt
-
-# ── Windsurf ──────────────────────────────────────────────────────────────────
 
 # ── IDE / 编辑器 ──────────────────────────────────────────────────────────────
 .idea/
@@ -70,3 +75,37 @@ ehthumbs.db
 # 运行时临时文件（自更新下载的二进制等）
 cache/opskit.pending
 cache/*.pending
+
+# Local runtime and editor data
+.opskit-update-locks/
+/cache/
+/backups/
+/plugin-data/
+/plugin_trust.yaml
+/.config.lock
+/.plugin-trust.lock
+/plugin-runtimes/
+/plugin-resources/
+.env
+.env.*
+!.env.example
+!.env.*.example
+/.cursor/
+/.windsurf/
+/.windsurfrules
+/CURSOR.md
+
+# Immutable native plugin catalogs and recovery records
+/native-fetch-tools/
+/native-plugin-runtimes/
+/native-fetch-staging/
+/native-preparations/
+/native-profile-leases/
+/native-workspace-leases/
+/plugin-artifact-locks/
+/plugin-artifacts/
+/plugin-capabilities.yaml
+/plugin-capabilities.lock
+
+# Local test scratch directories
+/opskit-test-*/

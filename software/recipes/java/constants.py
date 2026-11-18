@@ -66,7 +66,7 @@ JAVA_VERSIONS_FALLBACK = [
     "21.0.11+10", "17.0.19+10", "11.0.27+6", "8.0.452+9",
 ]
 
-# ─── Windows .cmd shim 模板（读快照路由到正确版本 bin） ───────────────────────
+# ─── 历史 Windows shim 模板：仅用于精确迁移旧文件，不再生成 ──────────────────
 # {cmd}: 命令名，如 java / javac
 SHIM_JAVA_CMD_TEMPLATE = (
     "@echo off\r\n"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from software.registry import all_recipes, get
 from xui.utils import redact_state, write_secret_json
 
@@ -118,16 +120,18 @@ def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> Non
     history = tmp_path / "opskit-traffic.db"
     monkeypatch.setattr(utils, "TRAFFIC_SERVICE_UNIT_FILE", service_unit)
     monkeypatch.setattr(utils, "TRAFFIC_TIMER_UNIT_FILE", timer_unit)
-    monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history)
+    monkeypatch.setattr(utils, "XUI_TRAFFIC_HISTORY_FILE", history, raising=False)
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
 
     class _R:
         returncode = 0
+        stdout = "loaded\n"
 
     def fake_root(cmd, **kwargs):
         if cmd and cmd[0] == "rm":
             from pathlib import Path
             for target in cmd[2:]:
+                assert Path(target) in {service_unit, timer_unit, history}
                 Path(target).unlink(missing_ok=True)
         return _R()
 
@@ -141,7 +145,7 @@ def test_traffic_timer_install_uninstall_symmetric(monkeypatch, tmp_path) -> Non
     utils.uninstall_traffic_timer()
     assert not service_unit.exists()
     assert not timer_unit.exists()
-    assert not history.exists()
+    assert history.read_text(encoding="utf-8") == "x"
 
 
 def test_xui_recipe_is_registered_without_submenu() -> None:
@@ -164,7 +168,13 @@ def test_xui_state_redacts_sensitive_fields_and_uses_0600(tmp_path) -> None:
         "vless": {"private_key": "reality-private", "public_key": "pub"},
     }
     write_secret_json(target, state)
-    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    import os
+    if os.name != "nt":
+        assert oct(target.stat().st_mode & 0o777) == "0o600"
+    else:
+        import subprocess
+        acl = subprocess.check_output(["icacls", str(target)], text=True)
+        assert "(I)" not in acl and "(F)" in acl
     redacted = redact_state(state)
     assert isinstance(redacted, dict)
     assert redacted["panel_password"] == "<redacted>"
@@ -187,6 +197,10 @@ def test_generate_reality_keypair_uses_3x_ui_xray_binary(tmp_path, monkeypatch) 
     from xui import utils
 
     monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", [str(xray)])
+    import os
+    if os.name == "nt":
+        import pytest
+        pytest.skip("Linux xray shell binary requires a Linux test host")
     assert utils.generate_reality_keypair() == ("private-key", "public-key")
 
 
@@ -244,48 +258,10 @@ def test_extract_csrf_token_from_login_page() -> None:
     assert _extract_csrf_token(html) == "token-value"
 
 
-def test_enable_inbound_clients_updates_traffic_tables(tmp_path, monkeypatch) -> None:
-    import json
-    import sqlite3
+def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeypatch) -> None:
+    from xui import constants, utils
 
-    from xui import utils
-
-    db = tmp_path / "x-ui.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("create table inbounds (id integer primary key, remark text, settings text)")
-        conn.execute("create table clients (email text, enable numeric, total_gb integer, expiry_time integer)")
-        conn.execute(
-            "create table client_traffics (inbound_id integer, email text, enable numeric, total integer, expiry_time integer)"
-        )
-        conn.execute(
-            "insert into inbounds values (1, ?, ?)",
-            (
-                "opskit-vless-reality-tcp",
-                json.dumps({"clients": [{"email": "opskit-vless-reality-tcp", "enable": False}]}),
-            ),
-        )
-        conn.execute("insert into clients values (?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
-        conn.execute("insert into client_traffics values (1, ?, 0, 0, 0)", ("opskit-vless-reality-tcp",))
-
-    monkeypatch.setattr(utils, "XUI_DATABASE_FILE", db)
-    utils.enable_inbound_clients(["opskit-vless-reality-tcp"])
-
-    with sqlite3.connect(db) as conn:
-        settings = json.loads(conn.execute("select settings from inbounds where id = 1").fetchone()[0])
-        client = conn.execute("select enable, total_gb, expiry_time from clients").fetchone()
-        traffic = conn.execute("select enable, total, expiry_time from client_traffics").fetchone()
-    assert settings["clients"][0]["enable"] is True
-    assert settings["clients"][0]["totalGB"] > 0
-    assert client[0] == 1
-    assert client[1] > 0
-    assert client[2] > 0
-    assert traffic[0] == 1
-    assert traffic[1] > 0
-    assert traffic[2] > 0
-
-
-def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -> None:
-    from xui import utils
+    assert constants.XUI_CONFIG_DIR not in constants.XUI_ARTIFACT_DIRS
 
     install_dir = tmp_path / "usr-local-x-ui"
     config_dir = tmp_path / "etc-x-ui"
@@ -293,6 +269,8 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
     command_link = tmp_path / "x-ui"
     install_dir.mkdir()
     config_dir.mkdir()
+    database = config_dir / "x-ui.db"
+    database.write_bytes(b"user database")
     service_file.write_text("service", encoding="utf-8")
     command_link.write_text("cmd", encoding="utf-8")
     calls: list[list[str]] = []
@@ -315,14 +293,35 @@ def test_remove_xui_artifacts_removes_service_and_state(tmp_path, monkeypatch) -
 
         return Result()
 
-    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
+    monkeypatch.setattr(utils, "systemd_available", lambda: True)
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
     monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     utils.remove_xui_artifacts()
 
     assert not install_dir.exists()
-    assert not config_dir.exists()
+    assert database.read_bytes() == b"user database"
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]
+
+
+@pytest.mark.parametrize("label", ["Public key", "Password (PublicKey)", "Password"])
+def test_reality_keypair_output_formats(monkeypatch, label):
+    from types import SimpleNamespace
+    from xui import utils
+    monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", ["xray"])
+    monkeypatch.setattr(utils, "command_exists", lambda name: True)
+    monkeypatch.setattr(utils.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=f"PrivateKey: private-key\n{label}: public-key\nHash32: ignored\n"))
+    assert utils.generate_reality_keypair() == ("private-key", "public-key")
+
+
+@pytest.mark.parametrize("address,expected", [("0.0.0.0:443", True), ("[::]:443", True), ("0.0.0.0:4430", False)])
+def test_listener_matches_exact_port(monkeypatch, address, expected):
+    from types import SimpleNamespace
+    from xui import utils
+    monkeypatch.setattr(utils.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=f"State Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0 4096 {address} 0.0.0.0:*\n"))
+    assert utils.is_port_listening(443) is expected

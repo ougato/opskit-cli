@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -76,7 +77,7 @@ class TestNormalPath:
         assert fake_pending.exists()
 
     def test_T02_ps_script_contains_rename_and_pid(self, tmp_data, monkeypatch):
-        """T02: 生成的 PS 脚本含 Rename-Item 和实际 PID"""
+        """T02: 独立 PS 任务绑定摘要和实际 PID"""
         import core.updater as upd
 
         fake_pending = tmp_data / "cache" / "opskit.pending"
@@ -100,8 +101,8 @@ class TestNormalPath:
         assert len(ps_launched) == 1
         ps_path = Path(ps_launched[0][-1])
         ps_content = ps_path.read_text(encoding="utf-8")
-        assert "Rename-Item" in ps_content
-        assert "Copy-Item" not in ps_content or ps_content.index("Rename-Item") < ps_content.index("Copy-Item")
+        assert "MoveFileEx($stage, $target, 9)" in ps_content
+        assert "Copy-Item" not in ps_content and "Rename-Item" not in ps_content
         assert f"$pid_to_wait = {os.getpid()}" in ps_content
 
     def test_T03_pending_version_restored_from_cache(self, tmp_data, monkeypatch):
@@ -142,18 +143,19 @@ class TestDownloadExceptions:
         def raise_connect(*a, **kw):
             raise httpx.ConnectError("network failure")
 
-        with patch("httpx.stream", side_effect=raise_connect), \
+        with patch("httpx.stream", side_effect=raise_connect) as transport, \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""):
-            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "")
+             patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater.time.sleep"):
+            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "a" * 64)
 
         assert result is None
         assert not fake_pending.exists()
+        assert transport.call_count == 5
 
     def test_T05_resume_download_range_request(self, tmp_data, monkeypatch):
         """T05: tmp 已有部分数据时，发送 Range 请求追加写入"""
         import core.updater as upd
-        import httpx
 
         fake_pending = tmp_data / "cache" / "opskit.pending"
         fake_tmp = tmp_data / "cache" / "opskit.pending.tmp"
@@ -165,6 +167,8 @@ class TestDownloadExceptions:
 
         initial_data = b"MZ" + b"\x00" * (256 * 1024 - 2)
         fake_tmp.write_bytes(initial_data)
+        expected = initial_data + b"\x00" * (256 * 1024)
+        digest = hashlib.sha256(expected).hexdigest()
 
         range_headers_sent = []
 
@@ -182,13 +186,15 @@ class TestDownloadExceptions:
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", "")
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update("https://github.com/ougato/opskit-cli/releases/download/v2/opskit", digest)
 
-        assert any("Range" in h for h in range_headers_sent), "Range header should be sent"
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert not fake_tmp.exists()
+        assert len(range_headers_sent) == 1
         assert range_headers_sent[0].get("Range") == f"bytes={len(initial_data)}-"
+        retry_wait.assert_not_called()
 
     def test_T05b_stale_partial_discarded_on_version_change(self, tmp_data, monkeypatch):
         """T05b: 残留 .tmp 属于旧版本(v2)、目标已是 v4 时，丢弃旧半包从头下载，不发 Range"""
@@ -207,6 +213,8 @@ class TestDownloadExceptions:
             json.dump({"download_version": 2, "etag": '"old"'}, f)
 
         range_headers_sent = []
+        expected = b"MZ" + b"\x00" * (512 * 1024 - 2)
+        digest = hashlib.sha256(expected).hexdigest()
 
         class FakeResp:
             status_code = 200
@@ -214,7 +222,7 @@ class TestDownloadExceptions:
             def __enter__(self): return self
             def __exit__(self, *a): pass
             def iter_bytes(self, chunk_size):
-                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+                yield expected
 
         def fake_stream(method, url, timeout, follow_redirects, headers=None):
             range_headers_sent.append(headers or {})
@@ -222,15 +230,18 @@ class TestDownloadExceptions:
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update(
-                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", "", 4)
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update(
+                "https://github.com/ougato/opskit-cli/releases/download/v4/opskit", digest, 4)
 
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert not fake_tmp.exists()
+        assert len(range_headers_sent) == 1
         assert all("Range" not in h for h in range_headers_sent), "旧版本残包应被丢弃，不应发 Range"
         assert all("If-None-Match" not in h for h in range_headers_sent), "版本变化后应清空 ETag"
         assert upd._load_check_cache().get("download_version") == 4
+        retry_wait.assert_not_called()
 
     def test_T06_stall_timeout_uses_read_timeout(self, tmp_data, monkeypatch):
         """T06: 下载使用 TIMEOUT_DOWNLOAD_READ 而非 read=None"""
@@ -256,7 +267,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            upd._download_update("https://example.com/opskit", "")
+            upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert timeout_used, "httpx.stream should have been called"
         t = timeout_used[0]
@@ -289,8 +300,9 @@ class TestDownloadExceptions:
         with patch("httpx.stream", return_value=FakeResp()), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
+             patch("core.updater._sha256_file", return_value="a" * 64), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result == fake_pending
 
@@ -345,55 +357,23 @@ class TestDownloadExceptions:
         with patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=10 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert not fake_tmp.exists()
 
-    def test_T10_tmp_dir_fallback_to_tempdir(self, tmp_data, monkeypatch):
-        """T10: tmp 目录无写权限时降级到系统 tempdir"""
+    def test_T10_unwritable_staging_refused_without_shared_temp_fallback(self, tmp_data, monkeypatch):
+        """An unwritable private staging directory must never use shared temp."""
         import core.updater as upd
+        def denied(*args, **kwargs):
+            raise PermissionError("synthetic failure")
+        monkeypatch.setattr(tempfile, "mkstemp", denied)
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: pytest.fail("shared temp fallback must not run"))
+        monkeypatch.setattr("httpx.stream", lambda *a, **k: pytest.fail("unwritable staging reached network"))
+        with pytest.raises(RuntimeError, match="staging directory is not writable"):
+            upd._download_update("https://example.com/opskit", "a" * 64)
+        assert not upd._get_pending_path().exists()
 
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        cache_path = tmp_data / "cache" / "update_check.json"
-
-        monkeypatch.setattr("core.updater._get_pending_path", lambda: fake_pending)
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
-
-        sys_tmp = Path(tempfile.gettempdir()) / "opskit.pending.tmp"
-        sys_tmp.unlink(missing_ok=True)
-
-        def mock_tmp_path():
-            read_only = tmp_data / "readonly_dir" / "opskit.pending.tmp"
-            return read_only
-
-        monkeypatch.setattr("core.updater._get_pending_tmp_path", mock_tmp_path)
-
-        downloaded_paths = []
-
-        class FakeResp:
-            status_code = 200
-            headers = {"ETag": ""}
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def iter_bytes(self, cs):
-                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
-
-        original_open = Path.open
-
-        def tracking_open(self, mode="r", **kw):
-            if "w" in mode or "a" in mode or "b" in mode:
-                downloaded_paths.append(str(self))
-            return original_open(self, mode, **kw)
-
-        with patch("httpx.stream", return_value=FakeResp()), \
-             patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            result = upd._download_update("https://example.com/opskit", "")
-
-        sys_tmp.unlink(missing_ok=True)
 
     def test_T11_sha256_mismatch_retries(self, tmp_data, monkeypatch):
         """T11: SHA256 校验失败时删除 tmp 并重试"""
@@ -421,10 +401,10 @@ class TestDownloadExceptions:
         with patch("httpx.stream", return_value=FakeResp()), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
              patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value="wronghash"), \
+             patch("core.updater._sha256_file", return_value="b" * 64), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            result = upd._download_update("https://example.com/opskit", "correcthash")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert len(attempt_count) == 5, f"Expected 5 attempts (MAX_RETRY_DOWNLOAD), got {len(attempt_count)}"
@@ -452,7 +432,7 @@ class TestDownloadExceptions:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep", side_effect=mock_sleep):
-            upd._download_update("https://example.com/opskit", "")
+            upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert sleep_calls == [1, 2, 4, 8], f"Expected [1,2,4,8], got {sleep_calls}"
 
@@ -577,124 +557,22 @@ class TestPoisonedMirrorFallback:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestWindowsReplacement:
-    def test_T13_ps_script_uses_rename_not_copy(self, tmp_data, monkeypatch):
-        """T13: PS 脚本使用 Rename-Item 而非 Copy-Item 作为主路径"""
+    def test_T16_launch_failure_keeps_program_and_records_retry(self, tmp_data, monkeypatch):
+        """A blocked launcher must not register an unchecked reboot replacement."""
         import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
-
-        ps_files = []
-
-        def fake_popen(args, **kwargs):
-            ps_files.append(Path(args[-1]))
-            return MagicMock()
-
-        with patch("subprocess.Popen", side_effect=fake_popen), \
-             patch("core.updater._save_check_cache"):
-            upd._apply_windows(fake_pending, fake_self, 2)
-
-        assert ps_files, "PS 脚本应被启动"
-        content = ps_files[0].read_text(encoding="utf-8")
-        assert "Rename-Item" in content
-        lines = content.splitlines()
-        first_rename = next((i for i, l in enumerate(lines) if "Rename-Item" in l), None)
-        first_copy = next((i for i, l in enumerate(lines) if "Copy-Item -Path $pending" in l), None)
-        assert first_rename is not None
-        if first_copy is not None:
-            assert first_rename < first_copy, "Rename-Item 应在 Copy-Item 之前（主路径优先）"
-
-    def test_T14_ps_script_contains_wait_process_with_pid(self, tmp_data, monkeypatch):
-        """T14: PS 脚本包含 Wait-Process 且注入了实际 PID"""
-        import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
-
-        ps_files = []
-
-        def fake_popen(args, **kwargs):
-            ps_files.append(Path(args[-1]))
-            return MagicMock()
-
-        with patch("subprocess.Popen", side_effect=fake_popen), \
-             patch("core.updater._save_check_cache"):
-            upd._apply_windows(fake_pending, fake_self, 2)
-
-        content = ps_files[0].read_text(encoding="utf-8")
-        assert "Wait-Process" in content
-        assert f"$pid_to_wait = {os.getpid()}" in content
-
-    def test_T15_cross_drive_rename_falls_back_to_copy(self, tmp_data, monkeypatch):
-        """T15: PS 脚本跨驱动器 rename 失败时包含 Copy-Item 兜底逻辑"""
-        import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
-
-        ps_files = []
-
-        def fake_popen(args, **kwargs):
-            ps_files.append(Path(args[-1]))
-            return MagicMock()
-
-        with patch("subprocess.Popen", side_effect=fake_popen), \
-             patch("core.updater._save_check_cache"):
-            upd._apply_windows(fake_pending, fake_self, 2)
-
-        content = ps_files[0].read_text(encoding="utf-8")
-        assert "Copy-Item" in content, "PS 脚本应包含 Copy-Item 作为跨驱动器降级兜底"
-
-    def test_T16_movefileex_called_when_ps_fails(self, tmp_data, monkeypatch):
-        """T16: PS 脚本启动失败时，调用 MoveFileEx ctypes 兜底"""
-        if sys.platform != "win32":
-            pytest.skip("仅 Windows 平台运行")
-
-        import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
-
-        movefileex_calls = []
-
-        import ctypes
-
-        class FakeKernel32:
-            def MoveFileExW(self, src, dst, flags):
-                movefileex_calls.append((src, dst, flags))
-                return 1
-
-        fake_ctypes = MagicMock()
-        fake_ctypes.windll.kernel32 = FakeKernel32()
-        fake_ctypes.GetLastError = ctypes.GetLastError
-
-        with patch("subprocess.Popen", side_effect=OSError("GPO blocked")), \
-             patch("core.updater._save_check_cache"), \
-             patch("core.updater.json.dump"), \
-             patch("builtins.open", MagicMock()), \
-             patch("ctypes.windll", fake_ctypes.windll):
-            try:
-                upd._apply_windows(fake_pending, fake_self, 2)
-            except RuntimeError:
-                pass
-
-        assert movefileex_calls, "MoveFileEx 应被调用作为 PS 失败后的兜底"
+        pending = tmp_data / "cache" / "opskit.pending"
+        target = tmp_data / "opskit.exe"
+        _make_fake_exe(pending)
+        target.write_bytes(b"old-program")
+        monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
+        with patch("subprocess.Popen", side_effect=OSError("launcher blocked")):
+            with pytest.raises(RuntimeError, match="could not be scheduled"):
+                upd._apply_windows(pending, target, upd.APP_VERSION + 1)
+        assert target.read_bytes() == b"old-program" and pending.exists()
+        results = list((pending.parent / "update-jobs").glob("*/result.json"))
+        assert len(results) == 1
+        assert json.loads(results[0].read_text())["state"] == "launch_failed"
+        assert (pending.parent / "update_pending_path.json").is_file()
 
     def test_T17_update_pending_path_json_written_as_final_fallback(self, tmp_data, monkeypatch):
         """T17: 所有策略失败后写入 update_pending_path.json 兜底标记"""
@@ -708,13 +586,7 @@ class TestWindowsReplacement:
         monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        fake_windll = MagicMock()
-        fake_windll.kernel32.MoveFileExW.return_value = 0
-
-        with patch("subprocess.Popen", side_effect=OSError("blocked")), \
-             patch("sys.platform", "win32"), \
-             patch("shutil.which", return_value=None), \
-             patch("ctypes.windll", fake_windll, create=True):
+        with patch("subprocess.Popen", side_effect=OSError("blocked")):
             try:
                 upd._apply_windows(fake_pending, fake_self, 2)
             except RuntimeError:
@@ -734,46 +606,44 @@ class TestWindowsReplacement:
         fake_self = tmp_data / "opskit.exe"
         _make_fake_exe(fake_pending)
         _make_fake_exe(fake_self)
+        # Different builds must represent different executable bytes.
+        fake_self.write_bytes(fake_self.read_bytes() + b"old-build")
 
         cache_path = tmp_data / "cache" / "update_check.json"
         marker = tmp_data / "cache" / "update_pending_path.json"
         with marker.open("w") as f:
-            json.dump({"pending": str(fake_pending), "target": str(fake_self), "version": 2}, f)
+            json.dump({"pending": str(fake_pending), "target": str(fake_self), "version": upd.APP_VERSION + 1}, f)
 
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
+        # Validate a real signature, not a mocked security gate.
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        from core.release_signature import payload, file_digest
+        key = Ed25519PrivateKey.generate()
+        public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+        build = upd.APP_VERSION + 1
+        digest = file_digest(fake_pending)
+        filename = upd._asset_filename()
+        envelope = {"build": build, "filename": filename, "sha256": digest,
+                    "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
+        fake_pending.with_name(fake_pending.name + ".sig.json").write_text(json.dumps(envelope))
+        monkeypatch.setattr("core.config.load_config", lambda: {"update": {"signing_public_key": public}})
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        monkeypatch.setattr(upd, "_get_pending_path", lambda: fake_pending)
+
+        monkeypatch.setattr(upd, "_is_frozen", lambda: True)
+        from update_marker_fixtures import bind_marker
+        bind_marker(fake_self, fake_pending, build)
         result = upd._apply_update_pending_path()
         assert result is True
         assert not marker.exists(), "标记文件应被清除"
         assert fake_self.exists(), "目标 exe 应存在（rename 完成）"
 
-    def test_T19_ps_script_contains_icacls(self, tmp_data, monkeypatch):
-        """T19: PS 脚本包含 icacls 确保新 exe 有执行权限（防 Syncthing #3907）"""
-        import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._get_cache_path", lambda: tmp_data / "cache" / "update_check.json")
-
-        ps_files = []
-
-        def fake_popen(args, **kwargs):
-            ps_files.append(Path(args[-1]))
-            return MagicMock()
-
-        with patch("subprocess.Popen", side_effect=fake_popen), \
-             patch("core.updater._save_check_cache"):
-            upd._apply_windows(fake_pending, fake_self, 2)
-
-        content = ps_files[0].read_text(encoding="utf-8")
-        assert "icacls" in content.lower() or "icacls" in content
-
-    def test_T20_old_exe_cleaned_on_startup(self, tmp_data, monkeypatch):
-        """T20: 启动时清理同目录下的 .old.exe 残留"""
+    def test_T20_unowned_old_exe_preserved_on_startup(self, tmp_data, monkeypatch):
+        """A matching legacy filename alone does not prove ownership."""
         import core.updater as upd
 
         fake_self = tmp_data / "opskit.exe"
@@ -782,8 +652,9 @@ class TestWindowsReplacement:
         _make_fake_exe(old_exe)
 
         assert old_exe.exists()
-        upd._cleanup_old_exe(fake_self)
-        assert not old_exe.exists(), ".old.exe 应被清理"
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        assert upd.check_and_apply_pending() is False
+        assert old_exe.exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -896,8 +767,8 @@ class TestPostUpdateExceptions:
             assert upd._check_health() is False
             rb.assert_not_called()
 
-    def test_T26_old_exe_cleaned_on_check_and_apply_pending(self, tmp_data, monkeypatch):
-        """T26: check_and_apply_pending 调用时清理 .old.exe 残留"""
+    def test_T26_old_exe_preserved_on_check_and_apply_pending(self, tmp_data, monkeypatch):
+        """T26: 未证明归属的同名 .old.exe 保留"""
         import core.updater as upd
 
         fake_self = tmp_data / "opskit.exe"
@@ -916,10 +787,10 @@ class TestPostUpdateExceptions:
         with patch("sys.argv", []):
             upd.check_and_apply_pending()
 
-        assert not old_exe.exists(), ".old.exe 应在 check_and_apply_pending 调用时被清理"
+        assert old_exe.exists()
 
-    def test_T27_pending_deleted_cache_cleared(self, tmp_data, monkeypatch):
-        """T27: pending 文件被手动删除后，cache 中 pending_version 被清除"""
+    def test_T27_pending_missing_preserves_cache(self, tmp_data, monkeypatch):
+        """T27: 候选缺失可能属于未完成事务，保留索引证据。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -940,7 +811,7 @@ class TestPostUpdateExceptions:
 
         assert result is False
         cache = upd._load_check_cache()
-        assert cache.get("pending_version") is None, "cache 中 pending_version 应被清除"
+        assert cache.get("pending_version") == 2
 
     def test_T28_backoff_until_skips_check(self, tmp_data, monkeypatch):
         """T28: 限流退避期内 _update_allowed 返回 False，过期后恢复"""
@@ -971,10 +842,10 @@ class TestPostUpdateExceptions:
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
         with patch("sys.argv", ["main.py", "--post-update"]):
-            result = upd.check_and_apply_pending()
+            result = upd.check_and_apply_pending(post_update=True)
 
         assert result is False
-        assert not fake_pending.exists(), "--post-update 时 pending 文件应被清理"
+        assert fake_pending.exists(), "--post-update 时应保留无归属证明的 pending"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1015,7 +886,7 @@ class TestEnvironment:
              patch("core.updater._get_sha256_from_url", return_value=""), \
              patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
              patch("time.sleep"):
-            result = upd._download_update("https://example.com/opskit", "")
+            result = upd._download_update("https://example.com/opskit", "a" * 64)
 
         assert result is None
         assert not fake_pending.exists()
@@ -1065,28 +936,6 @@ class TestHelpers:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestGapCoverage:
-    def test_B8_backup_failure_aborts_apply(self, tmp_data, monkeypatch):
-        """B8: backup 目录写入失败时 _do_apply 返回 False，pending 保留"""
-        import core.updater as upd
-
-        fake_pending = tmp_data / "cache" / "opskit.pending"
-        fake_self = tmp_data / "opskit.exe"
-        _make_fake_exe(fake_pending)
-        _make_fake_exe(fake_self)
-
-        monkeypatch.setattr("core.updater._self_path", lambda: fake_self)
-        monkeypatch.setattr("core.updater._get_cache_path",
-                            lambda: tmp_data / "cache" / "update_check.json")
-        monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
-
-        def fail_copy(src, dst):
-            raise OSError("backup disk full")
-
-        with patch("shutil.copy2", side_effect=fail_copy):
-            result = upd._do_apply(fake_pending, 2)
-
-        assert result is False, "_do_apply 应在 backup 失败时返回 False"
-        assert fake_pending.exists(), "backup 失败时 pending 文件不应被删除"
 
     def test_B9_path_with_spaces_and_chinese_quoted_in_ps(self, tmp_data, monkeypatch):
         """B9: 路径含中文/空格时，PS 脚本中路径被引号包裹"""
@@ -1114,11 +963,14 @@ class TestGapCoverage:
             upd._apply_windows(fake_pending, fake_self, 2)
 
         assert ps_files, "PS 脚本应被启动"
-        content = ps_files[0].read_text(encoding="utf-8")
-        # 验证含空格/中文的路径被单引号包裹
-        assert "'" in content, "PS 脚本中路径应使用单引号包裹"
-        assert str(fake_pending) in content or "更新" in content
-        assert str(fake_self) in content or "程序" in content
+        content = ps_files[0].read_text(encoding="utf-8-sig")
+        # Helper consumes its own snapshot, independent of pending location.
+        job = ps_files[0].parent
+        assert job.parent == tmp_data / "cache" / "update-jobs"
+        assert (job / "artifact.exe").read_bytes() == fake_pending.read_bytes()
+        assert "$artifact = '" + str(job / "artifact.exe") + "'" in content
+        assert "$target = '" + str(fake_self) + "'" in content
+        assert str(fake_pending) not in content
 
     def test_C4_app_version_comparison_safe(self, tmp_data, monkeypatch):
         """C4: _parse_version 对非整数版本号不崩溃，静默处理"""
@@ -1212,22 +1064,23 @@ class TestGapCoverage:
         monkeypatch.setattr("core.updater._self_path", lambda: fake_self)
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        # 第一次：--post-update 启动，清理 pending
+        # 第一次：--post-update 启动，保留未证明归属的 pending
         fake_pending = tmp_data / "cache" / "opskit.pending"
         _make_fake_exe(fake_pending)
 
         with patch("sys.argv", ["main.py", "--post-update"]):
-            result1 = upd.check_and_apply_pending()
+            result1 = upd.check_and_apply_pending(post_update=True)
         assert result1 is False
-        assert not fake_pending.exists()
+        assert fake_pending.exists()
 
-        # 第二次：正常启动，无 pending，应正常通过（返回 False 但不崩溃）
+        # 第二次：正常启动仍不将未证明归属的 pending 当作更新应用
         with patch("sys.argv", ["main.py"]):
             result2 = upd.check_and_apply_pending()
-        assert result2 is False, "无 pending 时应正常返回 False"
+        assert result2 is False
+        assert fake_pending.exists()
 
-    def test_D4_pending_invalid_binary_removed_and_cache_cleared(self, tmp_data, monkeypatch):
-        """D4: pending 文件非 MZ 头（如被杀毒删内容）时删除并清 cache"""
+    def test_D4_pending_invalid_binary_and_cache_preserved(self, tmp_data, monkeypatch):
+        """D4: 未证明归属的无效 pending 和索引均保留。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -1253,12 +1106,12 @@ class TestGapCoverage:
             result = upd.check_and_apply_pending()
 
         assert result is False
-        assert not fake_pending.exists(), "损坏的 pending 文件应被删除"
+        assert fake_pending.read_bytes() == b"\x00" * 1024
         cache = upd._load_check_cache()
-        assert cache.get("pending_version") is None, "损坏 pending 后 cache 中 pending_version 应被清除"
+        assert cache.get("pending_version") == 2
 
     def test_A5_httpx_reads_https_proxy_env(self, tmp_data, monkeypatch):
-        """A5: HTTPS_PROXY 环境变量被 httpx 读取（验证 httpx 代理透传机制）"""
+        """A5: 下载请求保留代理环境并委托httpx；不模拟真实代理服务器。"""
         import core.updater as upd
 
         cache_path = tmp_data / "cache" / "update_check.json"
@@ -1273,6 +1126,8 @@ class TestGapCoverage:
         monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
 
         stream_kwargs_captured = []
+        expected = b"MZ" + b"\x00" * (512 * 1024 - 2)
+        digest = hashlib.sha256(expected).hexdigest()
 
         class FakeResp:
             status_code = 200
@@ -1280,22 +1135,22 @@ class TestGapCoverage:
             def __enter__(self): return self
             def __exit__(self, *a): pass
             def iter_bytes(self, cs):
-                yield b"MZ" + b"\x00" * (512 * 1024 - 2)
+                yield expected
 
         def fake_stream(method, url, **kwargs):
+            assert os.environ["HTTPS_PROXY"] == "http://proxy.example.com:8080"
             stream_kwargs_captured.append(kwargs)
             return FakeResp()
 
         with patch("httpx.stream", side_effect=fake_stream), \
              patch("core.mirror.get_sources", return_value=["https://github.com/ougato"]), \
-             patch("core.updater._get_sha256_from_url", return_value=""), \
-             patch("core.updater._sha256_file", return_value=""), \
-             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)):
-            upd._download_update("https://example.com/opskit", "")
+             patch("shutil.disk_usage", return_value=MagicMock(free=500 * 1024 * 1024)), \
+             patch("core.updater.time.sleep") as retry_wait:
+            result = upd._download_update("https://example.com/opskit", digest)
 
-        # httpx 默认从环境变量读取代理，无需额外配置
-        # 验证：httpx.stream 被调用（不因代理而提前 crash）
-        assert stream_kwargs_captured, "设置 HTTPS_PROXY 后 httpx.stream 应正常被调用"
+        assert result == fake_pending and fake_pending.read_bytes() == expected
+        assert len(stream_kwargs_captured) == 1
+        retry_wait.assert_not_called()
 
     def test_sha256_file_correct_hash(self, tmp_data):
         """SHA256 计算正确性验证"""
@@ -1325,22 +1180,21 @@ class TestGapCoverage:
         assert result["pending_version"] == 2, "merge 写入不应丢失 pending_version"
         assert result["etag"] == '"abc"', "新字段应被写入"
 
-    def test_cleanup_multiple_old_exes(self, tmp_data):
-        """多个 .old.exe 残留时全部被清理"""
+    def test_preserve_all_unproven_old_exes(self, tmp_data, monkeypatch):
+        """Even the exact historical filename is not proof of ownership."""
         import core.updater as upd
-
         fake_self = tmp_data / "opskit.exe"
         _make_fake_exe(fake_self)
         for name in ["opskit.old.exe", "opskit_v1.old.exe", "app.old.exe"]:
             _make_fake_exe(tmp_data / name)
-
-        upd._cleanup_old_exe(fake_self)
-
+        monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
+        assert not upd.check_and_apply_pending()
         for name in ["opskit.old.exe", "opskit_v1.old.exe", "app.old.exe"]:
-            assert not (tmp_data / name).exists(), f"{name} 应被清理"
+            assert (tmp_data / name).exists()
 
-    def test_apply_update_pending_path_missing_pending_clears_marker(self, tmp_data, monkeypatch):
-        """update_pending_path.json 存在但 pending 文件已丢失时，清理标记"""
+
+    def test_apply_update_pending_path_missing_pending_retains_unbound_marker(self, tmp_data, monkeypatch):
+        """旧标记缺少事务权威时保留证据，不因候选文件丢失而删除。"""
         import core.updater as upd
 
         marker = tmp_data / "cache" / "update_pending_path.json"
@@ -1348,14 +1202,17 @@ class TestGapCoverage:
             json.dump({
                 "pending": str(tmp_data / "nonexistent.pending"),
                 "target": str(tmp_data / "opskit.exe"),
-                "version": 2,
+                "version": upd.APP_VERSION + 1,
             }, f)
 
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
+        monkeypatch.setattr(upd, "_is_frozen", lambda: True)
+        original = marker.read_bytes()
         result = upd._apply_update_pending_path()
         assert result is False
-        assert not marker.exists(), "pending 不存在时标记文件应被清除"
+        assert marker.read_bytes() == original
+        assert not (tmp_data / "opskit.exe").exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1368,7 +1225,7 @@ class TestGapCoverage:
 )
 class TestE2EAcceptance:
     def test_T32_real_network_download_and_ps_script(self, tmp_data, monkeypatch, caplog):
-        """T32: 真实网络下 v1 → v2 下载 pending 并生成含 Rename-Item 的 PS 脚本"""
+        """T32: 真实网络下 下载签名产物并生成独立原子替换任务"""
         import logging
         import core.updater as upd
         from core.constants import APP_VERSION
@@ -1408,7 +1265,7 @@ class TestE2EAcceptance:
                 header = f.read(2)
             assert header == b"MZ", "pending 文件应为合法 Windows PE（MZ 头）"
 
-            ps_files = list((tmp_data / "cache").glob("opskit_update.ps1"))
+            ps_files = list((tmp_data / "cache" / "update-jobs").glob("*/apply.ps1"))
             if not ps_files:
                 fake_bak = tmp_data / "backups"
                 fake_bak.mkdir(exist_ok=True)
@@ -1419,7 +1276,7 @@ class TestE2EAcceptance:
                     upd.check_and_apply_pending()
                 if ps_launched:
                     content = ps_launched[0].read_text(encoding="utf-8")
-                    assert "Rename-Item" in content
+                    assert "MoveFileEx($stage, $target, 9)" in content
                     assert f"$pid_to_wait = {os.getpid()}" in content
         else:
             pytest.skip("未能下载 pending 文件（可能网络受限），跳过 PE 验证")

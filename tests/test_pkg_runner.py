@@ -113,7 +113,7 @@ class TestApkRunner:
 
     def test_needs_root_flags(self):
         from core.pkg_runner import (
-            PacmanRunner, ZypperRunner, MsiRunner, WingetRunner,
+            ZypperRunner, MsiRunner, WingetRunner,
         )
         assert AptRunner.needs_root is True
         assert YumRunner.needs_root is True

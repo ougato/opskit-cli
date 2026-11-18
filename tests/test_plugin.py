@@ -12,8 +12,9 @@ import pytest
 
 from core.loader import discover_modules
 from core.module import ModuleInfo
-from core.plugin import discover_plugins, list_manifests, load_manifest, load_plugin, unload_plugin
+from core.plugin import list_manifests, load_manifest, load_plugin
 from core.plugin_trust import compute_fingerprint, grant, is_trusted, revoke
+
 
 
 def _write_manifest(plugin_dir: Path, content: str) -> None:
@@ -21,7 +22,7 @@ def _write_manifest(plugin_dir: Path, content: str) -> None:
     (plugin_dir / "plugin.yaml").write_text(textwrap.dedent(content), encoding="utf-8")
 
 
-def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 1) -> Path:
+def _make_python_plugin(root: Path, name: str = "demo", api_version: int = 4) -> Path:
     plugin_dir = root / name
     _write_manifest(plugin_dir, f"""\
         name: {name}
@@ -57,7 +58,7 @@ def _make_exec_plugin(root: Path, name: str = "extool") -> Path:
     _write_manifest(plugin_dir, f"""\
         name: {name}
         version: 0.1.0
-        api_version: 1
+        api_version: 4
         kind: exec
         entry: bin/run.sh
         label:
@@ -69,6 +70,12 @@ def _make_exec_plugin(root: Path, name: str = "extool") -> Path:
     script.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     return plugin_dir
+
+
+def _menu_modules():
+    """Exercise the same supervised discovery used by the plugin menu."""
+    from plugin.commands import loaded_plugins
+    return [info for _, info in loaded_plugins()]
 
 
 def _trust(plugin_dir: Path) -> None:
@@ -91,7 +98,7 @@ def plugins_root(tmp_path, monkeypatch):
 
 def test_python_plugin_discovered(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root))
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     m = modules[0]
     assert isinstance(m, ModuleInfo)
@@ -103,7 +110,7 @@ def test_python_plugin_discovered(plugins_root) -> None:
 
 def test_exec_plugin_discovered(plugins_root) -> None:
     _trust(_make_exec_plugin(plugins_root))
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     assert modules[0].key == "extool"
     assert modules[0].label == "Exec Tool"
@@ -115,28 +122,28 @@ def test_invalid_manifest_skipped(plugins_root) -> None:
         name: bad
         kind: python
     """)  # 缺 version / api_version / entry
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_incompatible_api_version_skipped(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root, name="future", api_version=999))
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_invalid_name_skipped(plugins_root) -> None:
     _write_manifest(plugins_root / "badname", """\
         name: Bad-Name
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: pkg
     """)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_builtin_key_conflict_skipped(plugins_root) -> None:
     _trust(_make_python_plugin(plugins_root, name="software"))
-    assert discover_plugins(builtin_keys={"software"}) == []
+    assert _menu_modules() == []
 
 
 def test_broken_plugin_does_not_break_others(plugins_root) -> None:
@@ -145,7 +152,7 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     _write_manifest(broken, """\
         name: broken
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: broken_pkg
     """)
@@ -153,8 +160,9 @@ def test_broken_plugin_does_not_break_others(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
     _trust(broken)
-    modules = discover_plugins()
-    assert [m.key for m in modules] == ["good"]
+    modules = _menu_modules()
+    assert [m.key for m in modules] == ["broken", "good"]
+    assert "broken_pkg" not in sys.modules
 
 
 def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
@@ -163,7 +171,7 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     _write_manifest(exiting, """\
         name: exiting
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: exiting_pkg
     """)
@@ -171,7 +179,8 @@ def test_plugin_sys_exit_on_import_isolated(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
     _trust(exiting)
-    assert discover_plugins() == []
+    assert len(_menu_modules()) == 1
+    assert "exiting_pkg" not in sys.modules
 
 
 def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> None:
@@ -192,10 +201,13 @@ def test_plugin_entry_sys_exit_guarded(plugins_root, monkeypatch, capsys) -> Non
             )
     """), encoding="utf-8")
     _trust(plugin_dir)
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     monkeypatch.setattr("core.prompt.pause", lambda *a, **k: None)
-    modules[0].entry()  # 不得抛出 SystemExit
+    def fail(*args, **kwargs):
+        raise RuntimeError("sandbox worker exited")
+    monkeypatch.setattr("core.plugin_sandbox.invoke", fail)
+    modules[0].entry()  # worker failure returns to the menu
 
 
 def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
@@ -220,9 +232,12 @@ def test_plugin_entry_user_exit_propagates(plugins_root, monkeypatch) -> None:
             )
     """), encoding="utf-8")
     _trust(plugin_dir)
-    modules = discover_plugins()
+    modules = _menu_modules()
     assert len(modules) == 1
     from core.prompt import UserExit
+    def cancel(*args, **kwargs):
+        raise UserExit()
+    monkeypatch.setattr("core.plugin_sandbox.invoke", cancel)
     with pytest.raises(UserExit):
         modules[0].entry()
 
@@ -233,7 +248,7 @@ def test_entry_shadowing_core_rejected(plugins_root) -> None:
     _write_manifest(shadow, """\
         name: shadow
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: core
     """)
@@ -241,22 +256,22 @@ def test_entry_shadowing_core_rejected(plugins_root) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     _trust(shadow)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_untrusted_plugin_not_loaded(plugins_root) -> None:
     _make_python_plugin(plugins_root)
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_changed_plugin_requires_retrust(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
     (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
-    assert discover_plugins() == []  # 内容变化后信任失效
+    assert _menu_modules() == []  # 内容变化后信任失效
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
 
 
 def test_trust_revoke(plugins_root) -> None:
@@ -268,16 +283,23 @@ def test_trust_revoke(plugins_root) -> None:
     assert not is_trusted("demo", fp)
 
 
+def test_revoked_plugin_disappears_from_next_menu_scan(plugins_root) -> None:
+    _trust(_make_python_plugin(plugins_root))
+    assert [module.key for module in _menu_modules()] == ["demo"]
+    revoke("demo")
+    assert _menu_modules() == []
+
+
 def test_exec_entry_escape_rejected(plugins_root) -> None:
     _write_manifest(plugins_root / "escape", """\
         name: escape
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: exec
         entry: ../../outside.sh
     """)
     _trust(plugins_root / "escape")
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_discover_modules_excludes_plugins(plugins_root) -> None:
@@ -307,19 +329,18 @@ def test_load_plugin_single(plugins_root) -> None:
     assert info is not None and info.key == "demo"
 
 
-def test_unload_plugin_purges_modules(plugins_root) -> None:
+def test_discovery_does_not_import_plugin_modules(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
     manifest = load_manifest(plugin_dir)
     assert load_plugin(manifest) is not None
-    assert "demo_pkg" in sys.modules
-    unload_plugin(manifest)
+    assert "demo_pkg" not in sys.modules
     assert "demo_pkg" not in sys.modules
     assert str(plugin_dir.resolve()) not in sys.path
 
 
 def test_hot_reload_after_update(plugins_root) -> None:
-    """更新后 unload + 重新加载，新代码当场生效"""
+    """更新后再次加载，新代码当场生效。"""
     plugin_dir = _make_python_plugin(plugins_root)
     _trust(plugin_dir)
     manifest = load_manifest(plugin_dir)
@@ -330,14 +351,14 @@ def test_hot_reload_after_update(plugins_root) -> None:
     os.utime(pkg_init, (now + 10, now + 10))  # 确保 mtime 变化，避免命中旧 .pyc
     assert load_plugin(manifest) is None  # 内容变化后信任失效
     _trust(plugin_dir)
-    unload_plugin(manifest)
     info = load_plugin(manifest)
     assert info is not None
-    assert sys.modules["demo_pkg"].register().order == 77
+    assert "demo_pkg" not in sys.modules
+    assert info.order == 55
 
 
-def test_update_inherits_trust(plugins_root, tmp_path) -> None:
-    """已信任插件经平台更新流程拉取新内容后自动继承信任，不再重复确认"""
+def test_update_invalidates_trust(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """未变内容保留信任，拉取不同内容后必须撤销旧指纹授权。"""
     import subprocess
 
     from plugin import commands
@@ -348,10 +369,11 @@ def test_update_inherits_trust(plugins_root, tmp_path) -> None:
     subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
 
-    dest = plugins_root / "demo"
-    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
-    _trust(dest)
-    manifest = load_manifest(dest)
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert error == "" and manifest is not None
+    dest = manifest.root
+    assert not (dest / ".git").exists()
+    commands.grant_trust(manifest)
     assert commands.trust_status(manifest) == commands.TRUST_OK
 
     ok, msg = commands.update(manifest)
@@ -364,7 +386,7 @@ def test_update_inherits_trust(plugins_root, tmp_path) -> None:
     ok, msg = commands.update(manifest)
     assert (ok, msg) == (True, "updated")
     refreshed = load_manifest(dest)
-    assert commands.trust_status(refreshed) == commands.TRUST_OK  # 更新后自动继承信任
+    assert commands.trust_status(refreshed) == commands.TRUST_CHANGED
 
 
 def test_checksums_write_and_verify(plugins_root) -> None:
@@ -378,6 +400,29 @@ def test_checksums_write_and_verify(plugins_root) -> None:
     assert verify_checksums(plugin_dir) == CHECK_MISMATCH
 
 
+def test_checksums_ignore_eol_differences(plugins_root) -> None:
+    """跨平台换行差异（Windows git autocrlf 检出 CRLF vs Unix LF）不得误报「内容不符」"""
+    from core.plugin_integrity import CHECK_OK, verify_checksums, write_checksums
+
+    plugin_dir = _make_python_plugin(plugins_root)
+    src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_text(src.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+    write_checksums(plugin_dir)
+    assert verify_checksums(plugin_dir) == CHECK_OK
+    src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))  # 模拟 Windows CRLF 检出
+    assert verify_checksums(plugin_dir) == CHECK_OK
+
+
+def test_fingerprint_ignores_eol_differences(plugins_root) -> None:
+    """信任指纹对 CRLF/LF 不敏感：同一份代码在 Windows 检出后不应被判为「内容已变化」"""
+    plugin_dir = _make_python_plugin(plugins_root)
+    src = plugin_dir / "demo_pkg" / "__init__.py"
+    src.write_text(src.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+    fp_lf = compute_fingerprint(plugin_dir)
+    src.write_bytes(src.read_bytes().replace(b"\n", b"\r\n"))
+    assert compute_fingerprint(plugin_dir) == fp_lf
+
+
 def test_checksums_mismatch_blocks_load(plugins_root) -> None:
     """内容与 CHECKSUMS.yaml 不符（可能被篡改）时即使已信任也拒绝加载"""
     from core.plugin_integrity import write_checksums
@@ -385,10 +430,10 @@ def test_checksums_mismatch_blocks_load(plugins_root) -> None:
     plugin_dir = _make_python_plugin(plugins_root)
     write_checksums(plugin_dir)
     _trust(plugin_dir)
-    assert len(discover_plugins()) == 1
+    assert len(_menu_modules()) == 1
     (plugin_dir / "demo_pkg" / "extra.py").write_text("x = 1\n", encoding="utf-8")
     _trust(plugin_dir)  # 即便用户重新信任，清单不符仍拒绝
-    assert discover_plugins() == []
+    assert _menu_modules() == []
 
 
 def test_invalid_semver_version_rejected(plugins_root) -> None:
@@ -401,7 +446,7 @@ def test_invalid_semver_version_rejected(plugins_root) -> None:
     assert load_manifest(plugin_dir) is None
 
 
-def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
+def test_update_downgrade_requires_confirm(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     """更新后版本回退不自动继承信任，交由用户显式确认（防降级攻击）"""
     import subprocess
 
@@ -413,10 +458,11 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
     subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
 
-    dest = plugins_root / "demo"
-    subprocess.run(["git", "clone", "-q", str(origin), str(dest)], check=True)
-    _trust(dest)
-    manifest = load_manifest(dest)
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert error == "" and manifest is not None
+    dest = manifest.root
+    assert not (dest / ".git").exists()
+    commands.grant_trust(manifest)
 
     manifest_path = origin / "plugin.yaml"
     manifest_path.write_text(
@@ -432,43 +478,105 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path) -> None:
     assert commands.trust_status(refreshed) != commands.TRUST_OK
 
 
-def test_git_error_reason_maps_common_failures() -> None:
-    """git 失败转可读原因：认证 / 仓库不存在 / 网络，未识别取 stderr 末行"""
-    import subprocess
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_native_git_errors_use_fixed_localized_categories(monkeypatch, language) -> None:
+    """Native acquisition must not render arbitrary Git stderr as a platform error."""
+    from core import i18n
+    from core.native_git_https import TRANSFER_ERRORS
+    from core.native_sandbox import NativeSandboxError
 
-    from core.i18n import t
-    from plugin import commands
-
-    def _result(stderr: str, code: int = 128) -> subprocess.CompletedProcess:
-        return subprocess.CompletedProcess(args=["git"], returncode=code, stdout="", stderr=stderr)
-
-    assert commands.git_error_reason(
-        _result("git@host: Permission denied (publickey).\nfatal: Could not read from remote repository.")
-    ) == t("plugin.git_auth_failed")
-    assert commands.git_error_reason(
-        _result("ERROR: Repository not found.\nfatal: Could not read from remote repository.")
-    ) == t("plugin.git_repo_not_found")
-    assert commands.git_error_reason(
-        _result("ssh: connect to host git.example.com port 22: Connection reset by peer\nfatal: ...")
-    ) == t("plugin.git_network_failed")
-    assert commands.git_error_reason(_result("fatal: some unknown failure")) == "fatal: some unknown failure"
-    assert commands.git_error_reason(_result("", code=130)) == t("plugin.git_exit", code=130)
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    monkeypatch.setattr(i18n, "_lang", language)
+    for code in TRANSFER_ERRORS:
+        error = NativeSandboxError(code)
+        assert error.code == code
+        assert str(error) == i18n.t("plugin_native.errors." + code)
+        assert "plugin_native." not in str(error)
 
 
 def test_parse_install_input_branch_forms() -> None:
     """安装输入解析：支持 git 风格 -b / --branch / --branch= 指定分支"""
     from plugin import commands
 
-    assert commands.parse_install_input("https://x/y.git") == ("https://x/y.git", None)
-    assert commands.parse_install_input("https://x/y.git -b develop") == ("https://x/y.git", "develop")
-    assert commands.parse_install_input("-b develop git@h:g/y.git") == ("git@h:g/y.git", "develop")
-    assert commands.parse_install_input("https://x/y.git --branch main") == ("https://x/y.git", "main")
-    assert commands.parse_install_input("https://x/y.git --branch=f/x") == ("https://x/y.git", "f/x")
-    assert commands.parse_install_input("") == ("", None)
+    assert commands.parse_install_input("https://x/y.git") == ("https://x/y.git", None, None)
+    assert commands.parse_install_input("https://x/y.git -b develop") == ("https://x/y.git", "develop", None)
+    assert commands.parse_install_input("-b develop git@h:g/y.git") == ("git@h:g/y.git", "develop", None)
+    assert commands.parse_install_input("https://x/y.git --branch main") == ("https://x/y.git", "main", None)
+    assert commands.parse_install_input("https://x/y.git --branch=f/x") == ("https://x/y.git", "f/x", None)
+    assert commands.parse_install_input("https://x/y.git --as client-tools") == ("https://x/y.git", None, "client-tools")
+    assert commands.parse_install_input("https://x/y.git --as=client-tools -b develop") == ("https://x/y.git", "develop", "client-tools")
+    assert commands.parse_install_input("") == ("", None, None)
 
 
-def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> None:
-    """-b 指定分支安装：clone 该分支，之后更新固定 pull 安装时的分支"""
+def test_plugin_install_dir_from_source_path() -> None:
+    """远端仓库安装目录使用仓库路径分段，避免不同项目同 basename 冲突"""
+    from plugin import commands
+
+    assert commands.dir_name_from_url(
+        "git@git.icerror.top:mydea/insight-flow/client-tools.git"
+    ) == "mydea-insight-flow-client-tools"
+    assert commands.dir_name_from_url(
+        "https://git.icerror.top/mydea/ghost/client-tools.git"
+    ) == "mydea-ghost-client-tools"
+    assert commands.dir_name_from_url("https://git.icerror.top/client-tools.git") == "client-tools"
+    assert commands.dir_name_from_url("ssh://git@127.0.0.1:2222/team/repo.git") == "team-repo"
+    assert commands.dir_name_from_url("ssh://git@example.com/team/repo.git") == "team-repo"
+    assert commands.dir_name_from_url("git@example.com:team/repo.git") == "team-repo"
+
+
+def test_install_alias_validation(plugins_root, tmp_path) -> None:
+    """--as 只允许安全的本地目录名，拒绝路径逃逸和特殊字符"""
+    from plugin import commands
+
+    manifest, err = commands.install(str(tmp_path / "repo.git"), alias="../escape")
+    assert manifest is None
+    assert err == "bad_alias:../escape"
+
+
+def test_install_alias_overrides_directory(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """--as 覆盖自动生成目录，但不改变 plugin.yaml name"""
+    import subprocess
+
+    from plugin import commands
+
+    origin = _make_python_plugin(tmp_path / "origin_root", name="aliased")
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+    subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+
+    manifest, err = commands.install(str(origin), alias="custom-client-tools")
+    assert err == "" and manifest is not None
+    assert manifest.name == "aliased"
+    assert manifest.root == plugins_root / "custom-client-tools"
+
+
+def test_install_duplicate_manifest_name_rolls_back(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """不同安装目录里的 plugin.yaml name 仍必须全局唯一，冲突时回滚刚克隆目录"""
+    import subprocess
+
+    from plugin import commands
+
+    git_env = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    origins = []
+    for repo in ("origin1", "origin2"):
+        origin = _make_python_plugin(tmp_path / repo, name="same_plugin")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+        subprocess.run(["git", "-C", str(origin), "add", "-A"], check=True)
+        subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "v1"], check=True)
+        origins.append(origin)
+
+    manifest, err = commands.install(str(origins[0]), alias="first-client-tools")
+    assert err == "" and manifest is not None
+
+    manifest, err = commands.install(str(origins[1]), alias="second-client-tools")
+    assert manifest is None
+    assert err == "manifest_name_exists:same_plugin:first-client-tools"
+    assert not (plugins_root / "second-client-tools").exists()
+
+
+def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """隔离采集明确分支，更新继续使用安装时绑定的分支。"""
     import subprocess
 
     from plugin import commands
@@ -503,7 +611,7 @@ def test_install_branch_and_update_pulls_same_branch(plugins_root, tmp_path) -> 
 
     ok, msg = commands.update(manifest)
     assert (ok, msg) == (True, "updated")
-    refreshed = load_manifest(plugins_root / manifest.name)
+    refreshed = load_manifest(manifest.root)
     assert refreshed.version == "1.2.0"  # 更新拉的仍是 develop
     assert commands.plugin_branch(manifest.name) == "develop"  # 再授信后分支不丢
 
@@ -546,7 +654,7 @@ def test_manifest_group_fields(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: grouped
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: grouped_pkg
         group: insight-flow
@@ -567,7 +675,7 @@ def test_manifest_invalid_group_ignored(plugins_root) -> None:
     _write_manifest(plugin_dir, """\
         name: badgroup
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: badgroup_pkg
         group: "Bad Group!"

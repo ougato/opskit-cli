@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 from rich.console import Console
 
@@ -14,19 +15,15 @@ from core.i18n import t
 from core.privilege import run_as_root, write_root_file
 from core.progress import MultiStepProgress
 from core.prompt import UserCancel, clear_screen, confirm, pause, select, text_input
-from core.theme import get_icon, print_action_title, print_error, print_success, print_warning
+from core.theme import get_icon, print_action_title, print_success, print_warning
 from software.base import InstallError, UninstallError
 from xui.constants import (
     APT_ASSUME_YES_ARG,
     APT_INSTALL_COMMAND,
     APT_UPDATE_COMMAND,
-    BBR_KERNEL_MODULE,
+    BBR_MODULES_FILE,
     BBR_SYSCTL_FILE,
-    BBR_SYSCTL_FILE_CONTENT,
     BBR_SYSPARAMS,
-    MODPROBE_COMMAND,
-    SYSCTL_COMMAND,
-    SYSCTL_WRITE_ARG,
     SYSTEMCTL_COMMAND,
     XUI_SERVER_RECIPE_KEY,
     DEBIAN_FRONTEND_ENV,
@@ -48,6 +45,9 @@ from xui.constants import (
     TRAFFIC_PERIOD_MONTH,
     TRAFFIC_PERIOD_TODAY,
     TRAFFIC_PERIOD_WEEK,
+    SS_COMMAND,
+    IPROUTE_APT_PACKAGE,
+    IPROUTE_YUM_PACKAGE,
     SQLITE3_COMMAND,
     SQLITE_YUM_PACKAGE,
     YUM_COMMAND,
@@ -65,22 +65,23 @@ from xui.constants import (
     WSL_SYSTEMD_LINE_PATTERN,
     WSL_EXE_COMMAND,
     WSL_SHUTDOWN_ARG,
+    SERVICE_RESTART_TIMEOUT,
 )
 from xui.links import build_vless_link
-from xui.templates import to_xui_api_payload, vless_reality_tcp_inbound
+from xui.templates import vless_reality_tcp_inbound
+from xui.inbounds import ensure_inbound, connection_values
 from xui.utils import (
-    add_inbound,
     command_exists,
     configure_panel_settings,
     detect_public_host,
     detect_xui_version,
     get_panel_settings,
-    enable_inbound_clients,
     generate_reality_keypair,
     gen_password,
     gen_short_id,
     gen_uuid,
     is_port_listening,
+    installation_listeners_ready,
     is_service_active,
     load_state,
     redact_state,
@@ -100,10 +101,11 @@ from xui.traffic import compute_stats, human_bytes
 console = Console()
 
 
-def _read_text(breadcrumb: list[str], key: str, default: str) -> str:
+def _read_text(breadcrumb: list[str], key: str, default: str, *, secret: bool = False) -> str:
     value = text_input(
         breadcrumb=breadcrumb,
-        prompt=t(key, default=default),
+        prompt=t(key),
+        secret=secret,
         default=default,
         theme_key="software",
     )
@@ -118,7 +120,7 @@ def _read_int(breadcrumb: list[str], key: str, default: int) -> int:
         except ValueError:
             print_warning(t("xui.error.invalid_port"))
             continue
-        if value > 0:
+        if 1 <= value <= 65535:
             return value
         print_warning(t("xui.error.invalid_port"))
 
@@ -129,7 +131,7 @@ def _ensure_linux() -> None:
 
 
 def _install_base_packages() -> None:
-    if command_exists(CURL_COMMAND) and command_exists(SQLITE3_COMMAND):
+    if all(command_exists(command) for command in (CURL_COMMAND, SQLITE3_COMMAND, SS_COMMAND)):
         return
     env = {**os.environ, DEBIAN_FRONTEND_ENV: DEBIAN_FRONTEND_NONINTERACTIVE}
     if command_exists(APT_GET_COMMAND):
@@ -143,7 +145,7 @@ def _install_base_packages() -> None:
             env=env,
         )
         run_as_root(
-            [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND],
+            [APT_GET_COMMAND, APT_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE3_COMMAND, IPROUTE_APT_PACKAGE],
             check=True,
             capture_output=True,
             text=True,
@@ -154,7 +156,7 @@ def _install_base_packages() -> None:
         return
     if command_exists(YUM_COMMAND):
         run_as_root(
-            [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE],
+            [YUM_COMMAND, YUM_INSTALL_COMMAND, APT_ASSUME_YES_ARG, CURL_COMMAND, SQLITE_YUM_PACKAGE, IPROUTE_YUM_PACKAGE],
             check=True,
             capture_output=True,
             text=True,
@@ -167,23 +169,15 @@ def _install_base_packages() -> None:
 
 
 def _enable_bbr() -> None:
-    run_as_root(
-        [MODPROBE_COMMAND, BBR_KERNEL_MODULE],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    for param, value in BBR_SYSPARAMS.items():
-        run_as_root(
-            [SYSCTL_COMMAND, SYSCTL_WRITE_ARG, f"{param}={value}"],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-    write_root_file(BBR_SYSCTL_FILE, BBR_SYSCTL_FILE_CONTENT, "0644")
+    from xui.network_tuning import enable
+    enable()
 
 
 def _save_pending_inbounds(inbounds: list[dict[str, object]]) -> None:
     write_root_file(
         XUI_PENDING_INBOUNDS_FILE,
         json.dumps(inbounds, indent=2, ensure_ascii=False),
-        "0644",
+        "0600",
     )
 
 
@@ -195,16 +189,25 @@ def _create_inbounds(
     panel_base_path: str,
     inbounds: list[dict[str, object]],
 ) -> bool:
-    ok = True
-    payloads = [to_xui_api_payload(inbound) for inbound in inbounds]
-    for payload in payloads:
-        if not add_inbound(panel_port, panel_user, panel_password, panel_base_path, payload):
-            ok = False
-    if not ok:
+    try:
+        for inbound in inbounds:
+            saved = ensure_inbound(panel_port, panel_user, panel_password, panel_base_path, inbound)
+            inbound.clear()
+            inbound.update(saved)
+    except InstallError:
         _save_pending_inbounds(inbounds)
-    else:
-        enable_inbound_clients([str(inbound["remark"]) for inbound in inbounds])
-    return ok
+        raise
+    return True
+
+
+def _verify_installation(panel_port: int, vless_port: int) -> None:
+    # systemctl restart can return before the panel has started its Xray child.
+    for attempt in range(10):
+        if is_service_active() and installation_listeners_ready(panel_port, vless_port):
+            return
+        if attempt < 9:
+            time.sleep(1)
+    raise InstallError(t("xui.error.startup_verify_failed", panel_port=panel_port, vless_port=vless_port))
 
 
 def _enable_wsl_systemd() -> None:
@@ -240,8 +243,8 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
         return True
     print_warning(t("xui.output.no_systemd"))
     if not is_wsl():
-        return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
-    if confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.enable_confirm")):
+        return confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.continue"), info_lines=[t("confirm_ui.continue_detail")])
+    if confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.connect_wsl"), info_lines=[t("confirm_ui.connect_wsl_detail")]):
         _enable_wsl_systemd()
         if shutil.which(WSL_EXE_COMMAND):
             print_success(t("xui.wsl.restarting"))
@@ -250,24 +253,37 @@ def _precheck_systemd(breadcrumb: list[str]) -> bool:
             print_success(t("xui.wsl.enabled"))
             pause()
         return False
-    return confirm(breadcrumb=breadcrumb, prompt=t("xui.wsl.continue_confirm"))
+    return confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.continue"), info_lines=[t("confirm_ui.continue_detail")])
 
 
-def install_server() -> None:
+def install_server(options: dict | None = None) -> dict | None:
     breadcrumb = ["OpsKit", t("menu.software"), t("software.xui"), t("software.install")]
-    panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
-    panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
-    panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password())
-    panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
-    host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
-    vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
-    sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
-    dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
+    if options is None:
+        panel_port = _read_int(breadcrumb, "xui.input.panel_port", DEFAULT_PANEL_PORT)
+        panel_user = _read_text(breadcrumb, "xui.input.panel_user", DEFAULT_PANEL_USER)
+        panel_password = _read_text(breadcrumb, "xui.input.panel_password", gen_password(), secret=True)
+        panel_base_path = _read_text(breadcrumb, "xui.input.panel_base_path", DEFAULT_PANEL_BASE_PATH)
+        host = _read_text(breadcrumb, "xui.input.host", detect_public_host())
+        vless_port = _read_int(breadcrumb, "xui.input.vless_port", DEFAULT_VLESS_PORT)
+        sni = _read_text(breadcrumb, "xui.input.sni", DEFAULT_REALITY_SNI)
+        dest = _read_text(breadcrumb, "xui.input.dest", f"{sni}:{DEFAULT_VLESS_PORT}")
+    else:
+        panel_port, panel_user, panel_password = options["panel_port"], options["panel_user"], options["panel_password"]
+        panel_base_path, host = options["panel_base_path"], options["host"]
+        vless_port, sni, dest = options["vless_port"], options["sni"], options["dest"]
+        _ensure_linux()
+        if not systemd_available():
+            raise InstallError("scripted XUI installation requires systemd")
 
-    if not confirm(breadcrumb=breadcrumb, prompt=t("xui.confirm.install")):
+    if any(type(port) is not int or not 1 <= port <= 65535 for port in (panel_port, vless_port)):
+        raise InstallError(t("xui.error.invalid_port"))
+    if panel_port == vless_port:
+        raise InstallError(t("xui.error.port_conflict"))
+
+    if options is None and not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.xui"), info_lines=[t("confirm_ui.xui_detail")]):
         return
 
-    if not _precheck_systemd(breadcrumb):
+    if options is None and not _precheck_systemd(breadcrumb):
         return
 
     step_keys = [
@@ -300,7 +316,7 @@ def install_server() -> None:
 
         sp.step(t("xui.step.install_xui"))
         if not command_exists(XUI_COMMAND):
-            install_xui_script()
+            install_xui_script(checkpoint=sp.check_interrupt)
 
         sp.step(t("xui.step.generate_credentials"))
         private_key, public_key = generate_reality_keypair()
@@ -317,10 +333,7 @@ def install_server() -> None:
             base_path=panel_base_path,
         ):
             raise InstallError(t("xui.error.panel_config_failed"))
-        try:
-            restart_service()
-        except Exception:
-            pass
+        restart_service()
         effective = get_panel_settings()
         if isinstance(effective.get("port"), int):
             panel_port = int(effective["port"])
@@ -335,15 +348,6 @@ def install_server() -> None:
             dest=dest,
             remark=DEFAULT_VLESS_REMARK,
         )
-        vless_link = build_vless_link(
-            uuid=uuid,
-            host=host,
-            port=vless_port,
-            public_key=public_key,
-            sni=sni,
-            short_id=short_id,
-            remark=DEFAULT_VLESS_REMARK,
-        )
         inbounds = [vless]
 
         sp.step(t("xui.step.create_vless_tcp"))
@@ -355,16 +359,32 @@ def install_server() -> None:
             panel_base_path=panel_base_path,
             inbounds=inbounds,
         )
+        if not api_ok:
+            raise InstallError(t("xui.error.inbound_config_failed"))
+
+        values = connection_values(vless)
+        if values["private_key"] != private_key:
+            from xui.utils import reality_public_key
+            public_key = reality_public_key(values["private_key"])
+        private_key, uuid, short_id = values["private_key"], values["uuid"], values["short_id"]
+        sni, dest = values["sni"], values["dest"]
+        vless_link = build_vless_link(
+            uuid=uuid,
+            host=host,
+            port=vless_port,
+            public_key=public_key,
+            sni=sni,
+            short_id=short_id,
+            remark=DEFAULT_VLESS_REMARK,
+        )
 
         sp.step(t("xui.step.start_service"))
-        try:
-            enable_service()
-            restart_service()
-        except Exception:
-            pass
+        enable_service()
+        restart_service()
         install_traffic_timer()
 
         sp.step(t("xui.step.verify"))
+        _verify_installation(panel_port, vless_port)
         state: dict[str, object] = {
             "status": XUI_VERSION_LATEST,
             "panel_port": panel_port,
@@ -390,21 +410,27 @@ def install_server() -> None:
 
         sp.step(t("xui.step.print_links"))
 
+    if options is not None:
+        from core.cli_secrets import export_secret
+        if options.get("credentials_output_file"):
+            export_secret(options["credentials_output_file"], {"panel_user": panel_user, "panel_password": panel_password, "vless_link": vless_link})
+        return {"installed": True, "api_configured": api_ok, "panel_port": panel_port, "vless_port": vless_port}
     print_success(t("xui.output.install_done"))
     if not systemd_available():
         print_warning(t("xui.output.no_systemd"))
-    if not api_ok:
-        print_warning(t("xui.output.pending_inbounds", path=str(XUI_PENDING_INBOUNDS_FILE)))
     panel_url = HTTP_URL_TEMPLATE.format(host=host or LOOPBACK_HOST, port=panel_port, base_path=panel_base_path)
     console.print(f"{t('xui.output.panel')}: {panel_url}")
     console.print(f"{t('xui.output.panel_user')}: {panel_user}")
-    console.print(f"{t('xui.output.panel_password')}: {panel_password}")
-    console.print(f"{t('xui.output.vless_link')}: {vless_link}")
+    console.print(f"{t('xui.output.panel_password')}: ********")
+    _print_vless_link(vless_link)
     pause()
 
 
 def uninstall_server() -> None:
     from core.progress import MultiStepProgress
+
+    if not systemd_available():
+        raise UninstallError("XUI uninstall requires systemd service management; files retained")
 
     print_action_title(["OpsKit", t("menu.software"), t("software.xui"), t("software.uninstall")])
     descs = [
@@ -420,7 +446,8 @@ def uninstall_server() -> None:
             sp.step(descs[1])
             uninstall_traffic_timer()
             remove_xui_artifacts()
-            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE)], check=False, capture_output=True)
+            run_as_root(["rm", "-f", str(BBR_SYSCTL_FILE), str(BBR_MODULES_FILE)], check=True, capture_output=True,
+                        timeout=SERVICE_RESTART_TIMEOUT)
 
             sp.step(descs[2])
             from core.sysconfig import SysConfigManager
@@ -530,12 +557,18 @@ def diagnose_server() -> None:
     pause()
 
 
+def _print_vless_link(link: str) -> None:
+    console.print(t("xui.output.vless_link"))
+    # Write the URI directly so Rich cannot insert line breaks or crop it.
+    print(link, file=console.file, flush=True)
+
+
 def _print_links(state: dict[str, object]) -> None:
     vless_state = state.get("vless")
     if isinstance(vless_state, dict):
         link = vless_state.get("link")
         if isinstance(link, str):
-            console.print(f"{t('xui.output.vless_link')}: {link}")
+            _print_vless_link(link)
 
 
 def _show_traffic() -> None:

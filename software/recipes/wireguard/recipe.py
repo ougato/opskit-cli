@@ -113,6 +113,10 @@ class WgServerRecipe(Recipe):
         from wireguard.server import diagnose_server
         diagnose_server()
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        from wireguard.diagnostics import server_report
+        return server_report(timeout=timeout)
+
     def manage(self) -> None:
         from wireguard.server import manage_peers
         manage_peers()
@@ -194,6 +198,10 @@ class WgClientRecipe(Recipe):
     def diagnose(self) -> None:
         from wireguard.client import diagnose_client
         diagnose_client()
+
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        from wireguard.diagnostics import client_report
+        return client_report(timeout=timeout)
 
     def manage(self) -> None:
         from wireguard.client import manage_client

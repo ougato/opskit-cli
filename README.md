@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/ougato/opskit-cli)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![License](https://img.shields.io/badge/license-MIT-green)
 [![Download](https://img.shields.io/badge/download-GitHub%20Releases-blue)](https://github.com/ougato/opskit-cli/releases/latest)
 
 **OpsKit** is a lightweight, single-file server operations panel with a beautiful TUI (Terminal UI).
@@ -19,7 +19,8 @@ No web UI, no agent, no daemon. Just run it and go.
 
 | 模块 | 功能 | Platforms |
 |---|---|---|
-| 📦 **软件管理** | Docker / Nginx / MySQL / Redis / PostgreSQL / MongoDB / Go / Python / Java / Node.js / WireGuard / Tailscale / RustDesk / x-ui 一键安装 / 卸载 / 升级，多版本共存切换，搜索 + 分类浏览 | Linux, macOS, Windows |
+| 📦 **软件管理** | Docker / Nginx / MySQL / Redis / PostgreSQL / MongoDB / ClickHouse / Go / Python / Java / Node.js / WireGuard / Tailscale / RustDesk / x-ui 一键安装 / 卸载 / 升级，多版本共存切换，搜索 + 分类浏览 | Linux, macOS, Windows |
+| 🧩 **插件工具** | 外部插件安装 / 更新 / 卸载，可信来源提醒，信任确认与校验，热插拔入口 | 依插件声明 |
 | 📊 **系统监控** | CPU / 内存 / 磁盘 / 网络实时面板，进程列表（Top 15），实时刷新 | All |
 | 🌐 **网络工具** | Ping / Traceroute / DNS 正反解析 / 端口扫描 / 下载测速 / 公网 IP | All |
 
@@ -59,6 +60,8 @@ opskit.exe
 ---
 
 ### 方式二：直接运行（开发模式）
+
+macOS 预编译资产目前面向 Apple Silicon。Intel macOS 的开发安装仍有依赖验收缺口：锁定的 cryptography 50.0.2 没有官方 x86_64 wheel，需另行验证安全的源码构建工具链；不能用有已知漏洞的旧版 wheel 降级替代。现有 Intel 机器的源码测试通过不代表全新安装通过，详见[验收台账](docs/validation-status-20261015.md)。
 
 ```bash
 git clone https://github.com/ougato/opskit-cli.git
@@ -182,6 +185,7 @@ opskit software install mysql --version 8.0.36
 opskit software install redis --version 7.2.4
 opskit software install postgresql --version 16.2
 opskit software install mongodb --version 7.0.8
+opskit software install clickhouse --version 26.7.3.19
 opskit software install golang --version 1.22.2
 opskit software install python --version 3.12.3
 opskit software install java --version 21.0.3
@@ -232,9 +236,10 @@ opskit software upgrade nodejs --version 20.12.2
 ```bash
 opskit software switch python --version 3.12.3
 opskit software switch nodejs --version 20.12.2
+opskit software switch clickhouse --version 26.7.3.19
 ```
 
-> 支持版本切换的软件：mysql / redis / postgresql / mongodb / golang / python / java / nodejs
+> 支持版本切换的软件：mysql / redis / postgresql / mongodb / clickhouse / golang / python / java / nodejs
 
 #### 诊断 `opskit software diagnose <NAME>`
 
@@ -296,6 +301,7 @@ opskit software manage xui            # x-ui 面板管理
 | `redis` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `postgresql` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `mongodb` | DevOps | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
+| `clickhouse` | DevOps | Linux / macOS | ✅ | ✅ | ✅ | ✅ | — | — |
 | `wireguard` | DevOps | Linux | ✅ 子菜单 | ✅ | — | — | — | — |
 | `wg_server` | DevOps | Linux | ✅ 交互向导 | ✅ | — | — | ✅ | ✅ |
 | `wg_client` | DevOps | Linux | ✅ 向导 / `--token` | ✅ | — | — | ✅ | ✅ |
@@ -303,7 +309,7 @@ opskit software manage xui            # x-ui 面板管理
 | `python` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `java` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
 | `nodejs` | DevTools | Linux / macOS / Win | ✅ | ✅ | ✅ | ✅ | — | — |
-| `tailscale` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
+| `tailscale` | DevOps | Linux / macOS | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
 | `rustdesk` | DevOps | Linux | ✅ | ✅ | — | — | ✅ | — |
 | `xui` | DevOps | Linux | ✅ 向导 | ✅ | — | — | ✅ | ✅ |
 
@@ -328,7 +334,7 @@ opskit monitor network                # 查看网络接口实时流量
 opskit monitor processes              # 查看进程列表（Top 15）
 ```
 
-> `monitor disk` 是一次性输出，适合脚本化调用；`dashboard` / `cpu` / `memory` / `network` / `processes` 是实时 TUI，不适合作为一次性非交互命令。
+> 六种监控命令均支持 `--once`、`--watch`、`--count` 和 `--interval`。脚本可使用 `opskit --output json monitor dashboard --once`；非交互默认采样一次。交互终端中，除 `disk` 外，无采样选项和过滤条件时进入实时 TUI。磁盘采集在受管进程中运行，默认单次期限为 10 秒，超时明确报错。
 
 ### 🌐 网络工具 `opskit network <command> [HOST]`
 
@@ -337,7 +343,7 @@ opskit monitor processes              # 查看进程列表（Top 15）
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `opskit network ping [HOST]` | 可选 | Ping 测试（显示延迟 / 丢包率） |
-| `opskit network traceroute [HOST]` | 可选 | 路由追踪（逐跳显示路径） |
+| `opskit network traceroute [HOST]` | 可选 | 路由追踪（逐行输出，最后报告是否到达目标） |
 | `opskit network dns [HOST]` | 可选 | DNS 查询（域名→正查，IP→反查，自动判断） |
 | `opskit network port-scan [HOST]` | 可选 | 端口扫描（扫描常用端口状态） |
 | `opskit network speed-test` | 无 | 下载测速（天然非交互） |
@@ -363,6 +369,49 @@ opskit network speed-test             # 下载测速
 opskit network public-ip              # 查询公网 IP
 ```
 
+显式 `network traceroute HOST` 的 `--timeout` 包含 DNS 和命令执行。JSON 输出保留逐行记录，最后一条 `data.event=complete` 给出 `status`：`reached`、`not_reached`、`failed`、`timeout` 或 `cancelled`。仅实际数字跳地址匹配目标且命令退出成功时返回 0；未到达、失败和超时返回 1，取消返回 130。部分路径输出不代表已经到达目标。
+
+### 🧩 插件工具
+
+外部插件通过交互式菜单管理：`OpsKit → 插件工具 → 插件管理`。插件安装、更新或卸载后会立即重新扫描，无需重启 OpsKit。
+
+| 操作 | 菜单路径 | 说明 |
+|---|---|---|
+| 安装 | `插件管理 → 安装插件` | 输入 Git 仓库地址；可在地址后追加 `-b <分支>` 指定分支，或追加 `--as <本地目录名>` 指定安装目录 |
+| 更新 | `插件管理 → 更新插件` | 可更新单个插件或依次更新全部插件，当轮确认待授信版本，按任意键处理下一项 |
+| 卸载 | `插件管理 → 卸载插件` | 确认后删除插件目录与对应的信任记录，不删除插件运行数据 |
+| 权限 | `插件管理 → 插件权限` | 查看和撤销永久宿主权限，CLI 使用 `plugin permissions list/show/revoke` |
+| 维护 | `插件管理 → 插件维护` | 更新恢复、沙盒清理、临时清理、缓存清理及磁盘策略 |
+
+安装时会显示来源不在可信白名单的提醒，并要求确认信任。插件代码在 Windows 原生沙盒中运行；经授权的宿主工具按当前用户权限运行，并可能执行项目脚本。未被信任、内容发生变化，或 `CHECKSUMS.yaml` 校验不通过的插件都不会被加载。Linux/macOS 插件沙盒后端尚未实现。
+
+```bash
+# 安装指定开发分支，并使用自定义本地目录名
+# 在“安装插件”的输入框中填写这一整行
+git@git.example.com:team/client-tools.git -b develop --as insight-client-tools
+
+# 查看插件名称，再更新单个或全部插件
+opskit plugin list
+opskit plugin update cocos
+opskit --output json plugin update --all
+
+# 核对待授信版本和指纹，确认后使用显示的 SHA256
+opskit plugin show cocos
+opskit plugin trust cocos --fingerprint SHA256
+
+# 插件开发/发布：生成文件指纹清单
+opskit plugin fingerprint ./my-plugin
+
+# 发布前校验当前内容是否与指纹清单一致
+opskit plugin fingerprint ./my-plugin --check
+```
+
+完整的插件管理命令、批量结果及退出码见[插件 CLI 契约](docs/cli-contract.md#插件生命周期)。
+
+> 安装目录与插件身份是两回事：`--as` 只决定本机目录，用来避免同名仓库目录冲突；`plugin.yaml` 中的 `name` 才是全局插件身份，必须与内置模块及其他插件保持唯一。开发规则、交互菜单和完整 SDK 目录见[插件开发指南](docs/plugin-development.md)，安全细节见[插件规范](docs/plugin-spec.md)。
+
+项目启动、菜单和功能调用关系见[项目架构与功能流程](docs/项目架构与功能流程.md)；[启动至首屏审查与待办](docs/启动至首屏审查与待办.md)列出启动文件及待办；其他清理项与框架能力候选见[框架规划与清理清单](docs/框架规划与清理清单.md)。
+
 ### 查看帮助
 
 ```bash
@@ -370,6 +419,7 @@ opskit --help                         # 查看所有可用命令
 opskit software --help                # 查看软件管理所有子命令
 opskit monitor --help                 # 查看系统监控所有子命令
 opskit network --help                 # 查看网络工具所有子命令
+opskit plugin fingerprint --help      # 查看插件指纹命令参数说明
 opskit software install --help        # 查看 install 命令参数说明
 ```
 
@@ -388,6 +438,7 @@ $env:OPSKIT_YES="1"; opskit software install docker  # PowerShell
 opskit -y software install mysql --version 8.0.36
 opskit -y software install python --version 3.12.3
 opskit -y software install nodejs --version 20.12.2
+opskit -y software install clickhouse --version 26.7.3.19
 
 # ── WireGuard 客户端（令牌直装，零交互）──────────────────────────────
 opskit -y software install wg_client --token "eJy0VE1v2zAM..."
@@ -422,6 +473,7 @@ psutil >= 5.9          # 系统监控
 httpx >= 0.27          # HTTP 客户端（更新 / 测速）
 platformdirs >= 4.0    # 跨平台数据目录（XDG / Win / macOS 规范）
 sentry-sdk >= 2.0,<3   # 错误上报（遥测，可关闭）
+cryptography >= 50.0.2 # 发布签名校验；安装使用哈希锁
 ```
 
 ---
@@ -473,12 +525,23 @@ make clean  # 清理
 
 **构建依赖：**
 
+正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。正式发布还需配置自己的签名公钥，流程见 [发布验收](docs/release-pipeline-security.md)。
+
+Windows x64 还需 MSVC 14.3 或更新版本，以及预先核验的 Dependency Walker。编译器和辅助工具缺失时构建会失败，不自动下载。辅助工具使用独立的新缓存目录：
+
+```powershell
+$env:NUITKA_CACHE_DIR = Join-Path (Get-Location) 'build/nuitka-cache'
+$env:NUITKA_CACHE_DIR_DOWNLOADS = Join-Path $env:NUITKA_CACHE_DIR 'downloads'
+& .\build\release-environment\Scripts\python.exe -I scripts/install_windows_build_tools.py $env:NUITKA_CACHE_DIR
+& .\build\release-environment\Scripts\python.exe build.py build --backend nuitka --jobs 2
+```
+
+可选开发后端和压缩工具：
+
 ```bash
-pip install nuitka zstandard   # 首选（C 编译，防逆向强）
-# 或
 pip install pyinstaller        # 备选（快速打包）
 
-# UPX 压缩（推荐，减小体积）
+# UPX 压缩（可选，需另外验收产物）
 # Linux:   sudo apt install upx-ucl
 # macOS:   brew install upx
 # Windows: choco install upx
@@ -600,8 +663,9 @@ opskit-cli/
 │       ├── redis/            # Redis 多版本（Linux / macOS / Windows）
 │       ├── postgresql/       # PostgreSQL 多版本（Linux / macOS / Windows）
 │       ├── mongodb/          # MongoDB 多版本（Linux / macOS / Windows）
+│       ├── clickhouse/       # ClickHouse 多版本（Linux / macOS）
 │       ├── wireguard/        # WireGuard VPN（Linux，含服务端 / 客户端子菜单）
-│       ├── tailscale/        # Tailscale 组网（Linux）
+│       ├── tailscale/        # Tailscale 组网（Linux / macOS）
 │       ├── rustdesk/         # RustDesk 远程桌面服务（Linux）
 │       └── xui/              # x-ui / 3x-ui VLESS REALITY 面板（Linux）
 ├── monitor/                  # 📊 系统监控模块
@@ -634,7 +698,7 @@ opskit-cli/
 
 ## 📄 许可证 / License
 
-MIT License — 详见 [LICENSE](LICENSE)
+项目元数据声明使用 MIT License；本仓库当前没有独立的 LICENSE 文件。
 
 ---
 
@@ -648,4 +712,4 @@ MIT License — 详见 [LICENSE](LICENSE)
 
 新增软件安装配方：参考 `software/recipes/docker/recipe.py`，实现 `Recipe` 抽象类，使用 `@register` 装饰器注册即可自动发现。
 
-新增插件模块：在项目根目录新建包（含 `__init__.py`），实现 `register() -> ModuleInfo` 函数，`loader.py` 启动时自动扫描发现，无需修改任何现有代码。
+新增外部插件：参考 [docs/plugin-spec.md](docs/plugin-spec.md)。菜单安装时默认用仓库路径生成本地目录名（如 `mydea/insight-flow/client-tools.git` → `mydea-insight-flow-client-tools`），也可追加 `--as <目录名>` 指定；`plugin.yaml` 的 `name` 是插件全局身份，必须与内置模块和其它已安装插件都不冲突。

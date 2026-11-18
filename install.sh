@@ -54,18 +54,19 @@ download_file() {
 # -- SHA256 verification -------------------------------------------------------
 verify_sha256() {
     local file="$1" expected="$2"
-    if [ -z "$expected" ]; then
-        _warn "No SHA256 checksum found, skipping verification"
-        return 0
+    if [ "${#expected}" -ne 64 ] || ! printf '%s' "$expected" | LC_ALL=C grep -Eq '^[0-9a-fA-F]{64}$'; then
+        _err "Missing or invalid SHA256 checksum; refusing installation"
+        return 1
     fi
+    expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
     local actual
     if command -v sha256sum >/dev/null 2>&1; then
         actual="$(sha256sum "$file" | awk '{print $1}')"
     elif command -v shasum >/dev/null 2>&1; then
         actual="$(shasum -a 256 "$file" | awk '{print $1}')"
     else
-        _warn "Neither sha256sum nor shasum found, skipping verification"
-        return 0
+        _err "SHA256 verification tool required; refusing installation"
+        return 1
     fi
     if [ "$actual" != "$expected" ]; then
         _err "SHA256 mismatch"
@@ -74,6 +75,30 @@ verify_sha256() {
         return 1
     fi
     _ok "SHA256 verified"
+}
+
+# Public trust root is embedded by the release owner, never fetched with assets.
+RELEASE_PUBLIC_KEY=""
+verify_release_signature() {
+    local url="$1" filename="$2" digest="$3" temp="$4"
+    if [ -z "$RELEASE_PUBLIC_KEY" ] || ! command -v openssl >/dev/null 2>&1; then
+        _err "Pinned release key and OpenSSL 3 required; refusing installation"
+        return 1
+    fi
+    download_file "${url}.signed" "$temp/release.signed" || return 1
+    download_file "${url}.sig" "$temp/release.sig" || return 1
+    [ "$(wc -c < "$temp/release.signed")" -le 4096 ] || return 1
+    [ "$(wc -c < "$temp/release.sig")" -eq 64 ] || return 1
+    local actual_name actual_digest
+    actual_name="$(sed -n 's/.*"filename":"\([^"]*\)".*/\1/p' "$temp/release.signed")"
+    actual_digest="$(sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p' "$temp/release.signed")"
+    [ "$actual_name" = "$filename" ] && [ "$actual_digest" = "$digest" ] || return 1
+    printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00' > "$temp/key.der"
+    printf '%s' "$RELEASE_PUBLIC_KEY" | openssl base64 -d -A >> "$temp/key.der" || return 1
+    [ "$(wc -c < "$temp/key.der")" -eq 44 ] || return 1
+    openssl pkeyutl -verify -pubin -keyform DER -inkey "$temp/key.der" -rawin \
+        -in "$temp/release.signed" -sigfile "$temp/release.sig" >/dev/null 2>&1 || return 1
+    _ok "Release signature verified"
 }
 
 # -- resolve install dir -------------------------------------------------------
@@ -153,6 +178,11 @@ main() {
     fi
 
     verify_sha256 "$tmp_bin" "$expected_sha" || exit 1
+    expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
+    verify_release_signature "$download_url" "$filename" "$expected_sha" "$tmp_dir" || {
+        _err "Missing or invalid release signature; refusing installation"
+        exit 1
+    }
 
     mkdir -p "$install_dir"
     chmod +x "$tmp_bin"

@@ -10,6 +10,7 @@ from typing import ClassVar
 
 from core.i18n import t
 from software.base import InstallError, InstallStep, Recipe
+from software._shared.mutation import versioned_mutation
 from software.registry import register
 from .common import (
     load_snapshot,
@@ -37,6 +38,15 @@ class PostgreSQLRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        from software.disk import known_path_or_none
+        if sys.platform == "linux":
+            download_dir = known_path_or_none(lambda: Path(tempfile.gettempdir()))
+        else:
+            from core.paths import cache_dir
+            download_dir = known_path_or_none(lambda: cache_dir() / "work")
+        return (known_path_or_none(pgsql_versions_dir), download_dir)
+
     def detect(self) -> str | None:
         return get_driver().detect()
 
@@ -53,7 +63,9 @@ class PostgreSQLRecipe(Recipe):
                 continue
             ver = name[len("postgresql"):]
             if ver and ver[0].isdigit():
-                versions.append(ver)
+                bin_name = "psql.exe" if sys.platform == "win32" else "psql"
+                if (entry / "bin" / bin_name).exists():
+                    versions.append(ver)
         versions.sort(
             key=lambda v: [int(x) for x in v.split(".") if x.isdigit()],
             reverse=True,
@@ -118,6 +130,7 @@ class PostgreSQLRecipe(Recipe):
             InstallStep("software.step.verify"),
         ]
 
+    @versioned_mutation
     def install(self, version: str) -> None:
         from core.platform import get_platform
         from core.progress import MultiStepProgress
@@ -161,8 +174,14 @@ class PostgreSQLRecipe(Recipe):
                     _bin = download_pgsql_tarball(version, Path("/dev/null"))
                     bin_dir = str(_bin)
                 else:
+                    from core.paths import cache_dir
+
+                    work_base = cache_dir() / "work"
+                    work_base.mkdir(parents=True, exist_ok=True)
                     with tempfile.TemporaryDirectory(
-                        prefix="opskit-pgsql-", ignore_cleanup_errors=True
+                        prefix="opskit-pgsql-",
+                        dir=str(work_base),
+                        ignore_cleanup_errors=True,
                     ) as tmpdir:
                         tarball = Path(tmpdir) / f"postgresql-{version}{ext}"
                         download_pgsql_tarball(version, tarball)
@@ -190,22 +209,18 @@ class PostgreSQLRecipe(Recipe):
 
             sp.step(t("software.step.verify"))
             fallback = shutil.which("psql") or "psql"
-            try:
-                driver.install_shim(fallback)
-            except Exception:
-                pass
-            try:
-                driver.apply_version_link(bin_dir)
-            except Exception:
-                pass
+            driver.install_shim(fallback)
+            driver.apply_version_link(bin_dir)
 
             if not self.detect():
                 raise InstallError(t("software.postgresql_error.verify_fail"))
             sp.complete()
 
+    @versioned_mutation
     def upgrade(self, version: str) -> None:
         self.install(version)
 
+    @versioned_mutation
     def switch(self, version: str) -> None:
         installed = self.installed_versions()
         if version not in installed:
@@ -214,14 +229,18 @@ class PostgreSQLRecipe(Recipe):
             )
         bin_dir = str(pgsql_bin_dir(version))
         snap = load_snapshot()
-        snap["active_version"] = version
-        snap["psql_bin_dir"] = bin_dir
-        save_snapshot(snap)
-        try:
-            get_driver().apply_version_link(bin_dir)
-        except Exception:
-            pass
+        previous_bin = snap.get("psql_bin_dir")
+        if not previous_bin and snap.get("active_version"):
+            previous_bin = str(pgsql_bin_dir(snap["active_version"]))
+        driver = get_driver()
+        from software._shared.activation import activate_version, verify_command_version
+        activate_version(snap, {"active_version": version, "psql_bin_dir": bin_dir},
+                         save=save_snapshot,
+                         apply=lambda: driver.apply_version_link(bin_dir),
+                         restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(),
+                         verify=lambda: verify_command_version("psql", version))
 
+    @versioned_mutation
     def uninstall(self, version: str | None = None) -> None:
         import shutil as _shutil
         from core.progress import MultiStepProgress

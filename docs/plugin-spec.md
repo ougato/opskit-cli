@@ -1,450 +1,234 @@
-# OpsKit 插件开发规范
+# OpsKit 插件规范（SDK 4，原生沙盒）
 
-OpsKit 支持外部插件：无需改动 OpsKit 源码、无需重新打包，把插件仓库 `git clone`
-进插件目录（或用菜单「🧩 插件工具 → 插件管理 → 安装插件」）即可扩展「插件工具」菜单，
-安装 / 更新 / 卸载热插拔立即生效，无需重启。
+## 平台与边界
 
-本文是插件开发的唯一权威规范。按「10 分钟上手」一节即可跑通第一个插件，
-其余章节按需查阅。
+插件独立开发，放在 `plugins/<repository>`；平台的 `plugin/` 是官方生命周期模块，不是第三方插件目录。插件不得要求修改平台入口、注册表或共享依赖。
 
-## 目录
+Windows 使用 AppContainer 与 Job Object。插件在隔离验证完成后才执行，无直接宿主网络能力。Linux/macOS 共用后端契约，当前未实现，明确拒绝执行；不得降级为普通宿主进程。插件系统不再使用 Docker 或 WSL，独立 Docker 软件管理不受影响。
 
-1. [10 分钟上手](#10-分钟上手)
-2. [插件目录](#插件目录)
-3. [清单规范（plugin.yaml）](#清单规范pluginyaml)
-4. [形态一：python 插件](#形态一python-插件进程内加载)
-5. [形态二：exec 插件](#形态二exec-插件子进程执行语言无关)
-6. [SDK API](#sdk-apiapi_version--1)
-7. [信任模型与安全边界](#信任模型与安全边界)
-8. [开发调试与排错](#开发调试与排错)
-9. [必须遵守的约束（红线）](#必须遵守的约束红线)
-10. [发布约定](#发布约定)
-11. [发布前自查清单](#发布前自查清单)
+当前迁移状态和未完成验收见 [原生沙盒迁移](plugin-native-sandbox-migration.md)。本文描述当前接口，不代表冻结包、崩溃恢复、硬资源预算、Creator 或 S3 发布链路已全部验收。
 
-## 10 分钟上手
+开发规则、菜单示例和 SDK 完整导出目录见[插件开发指南](plugin-development.md)；旧插件迁移步骤见[原生升级指南](plugin-native-upgrade-guide.md)。
+For migration steps and bilingual SDK examples, see the native upgrade guide.
 
-以开发模式（源码运行 OpsKit）为例，创建一个最小 python 插件：
+## 清单与入口
 
-```bash
-# 1. 在插件目录下建插件
-mkdir -p plugins/hello/hello_pkg
-
-# 2. 写清单
-cat > plugins/hello/plugin.yaml <<'EOF'
+```yaml
 name: hello
-version: 0.1.0
-api_version: 1
+version: 1.0.0
+api_version: 4
 kind: python
 entry: hello_pkg
-icon: "👋"
-label:
-  zh: 你好插件
-  en: Hello Plugin
-EOF
-
-# 3. 写入口包
-cat > plugins/hello/hello_pkg/__init__.py <<'EOF'
-from core.sdk import ModuleInfo
-
-
-def register() -> ModuleInfo:
-    from hello_pkg.menu import entry
-    return ModuleInfo(
-        key="hello",
-        description_key="hello.desc",
-        order=50,
-        entry=entry,
-        platforms=["linux", "darwin", "windows"],
-    )
-EOF
-
-cat > plugins/hello/hello_pkg/menu.py <<'EOF'
-from core.sdk import pause, print_success, register_locale, t
-
-register_locale({
-    "zh": {"hello": {"desc": "示例插件", "done": "你好，OpsKit！"}},
-    "en": {"hello": {"desc": "Demo plugin", "done": "Hello, OpsKit!"}},
-})
-
-
-def entry() -> None:
-    print_success(t("hello.done"))
-    pause()
-EOF
-
-# 4. 运行 OpsKit，在「插件工具 → 插件管理 → 更新插件」中选中 hello 确认信任，
-#    立即出现在「插件工具」菜单（无需重启）
-python3 main.py
+permissions: []
 ```
 
-要点：**新插件必须先经用户确认信任，否则不会加载**；手动 clone 的插件在
-「更新插件」中选中即弹信任确认（见
-[信任模型](#信任模型与安全边界)）。
+身份以小写字母开头，后续为小写字母、数字或下划线；核心身份保留。入口必须属于插件自身，拒绝链接和越界路径。清单可声明 `filesystem`、`network`，这些标签不会自动开放宿主目录、工具或 root 权限。
 
-## 插件目录
-
-| 场景 | 路径 |
-|---|---|
-| 环境变量覆盖 | `OPSKIT_PLUGINS_DIR` |
-| 开发模式（源码运行） | `<项目根>/plugins/` |
-| 打包模式 Linux root | `/var/lib/opskit/plugins/` |
-| 打包模式 Linux 非 root | `~/.local/share/opskit/plugins/` |
-| 打包模式 macOS | `~/Library/Application Support/opskit/plugins/` |
-| 打包模式 Windows | `%LOCALAPPDATA%\opskit\plugins\` |
-
-每个插件是插件目录下的**一个子目录**，根部必须有 `plugin.yaml` 清单。
-以 `.` 或 `_` 开头的目录被忽略。
-
-## 清单规范（plugin.yaml）
-
-```yaml
-name: myplugin           # 必填。唯一标识，^[a-z][a-z0-9_]*$，与内置模块 key 不得冲突
-version: 1.0.0           # 必填。插件自身版本，必须是合法 semver（x.y.z，允许 -/+ 后缀），非法拒绝加载
-api_version: 1           # 必填。依赖的 SDK API 大版本，必须等于当前 OpsKit 的 SDK_API_VERSION
-kind: python             # 必填。python | exec
-entry: myplugin_pkg      # 必填。python: 插件目录内的包名; exec: 相对可执行文件路径
-order: 50                # 可选。插件工具菜单排序权重（建议 50+）
-platforms: [linux, darwin, windows]   # 可选。默认三平台
-icon: "🚀"               # 可选。菜单图标（emoji）
-label:                   # 可选。菜单显示名（按语言，缺省回退 en → 任意）
-  zh: 我的插件
-  en: My Plugin
-description:
-  zh: 插件描述
-  en: Plugin description
-permissions:             # 可选。权限声明（声明式，不强制），信任确认时展示给用户
-  - network              # 建议值：network / filesystem / exec / root
-  - exec
-group: insight-flow      # 可选。分组 id（^[a-z][a-z0-9-]*$），同 group 的插件在
-                         # 「插件工具」中聚合为一个入口，进入后再选具体插件；
-                         # 插件管理（更新 / 卸载）的选择列表采用同样的分组结构，
-                         # 组内按插件显示名（label）列出
-group_icon: "📊"        # 可选。分组入口图标
-group_label:             # 可选。分组入口显示名（按语言）
-  zh: Insight Flow
-  en: Insight Flow
-```
-
-`exec` 的 `entry` 支持按平台映射：
-
-```yaml
-kind: exec
-entry:
-  linux: bin/run.sh
-  darwin: bin/run.sh
-  windows: bin/run.exe
-```
-
-校验失败（缺字段 / name 非法 / version 非 semver / kind 非法 / api_version 不匹配 /
-entry 不存在）时插件被跳过并写入日志（`logs/opskit.log`），不影响主程序与其他插件。
-
-## 形态一：python 插件（进程内加载）
-
-目录结构（推荐三层结构，与内置模块一致）：
-
-```
-myplugin/
-├── plugin.yaml
-└── myplugin_pkg/            # entry 指向的包
-    ├── __init__.py          # 必须暴露 register() -> ModuleInfo
-    ├── menu.py              # UI 层：菜单渲染与交互
-    ├── commands.py          # 逻辑层：业务实现（可被单测）
-    └── constants.py         # 常量层：URL / 路径 / 超时等
-```
-
-`__init__.py`：
+Python 插件导出 `cli(argv)`，返回 0..255 的整数或 None（0）；适配 argparse 的 SystemExit。菜单入口导出 `register() -> core.sdk.ModuleInfo`。exec 入口可为插件相对路径，或以 windows/linux/darwin 为键的平台映射；Windows 选择 windows。路径使用正斜杠，拒绝绝对路径、父目录与反斜杠，目标须能在对应平台隔离执行。
 
 ```python
-from core.sdk import ModuleInfo
+# hello_pkg/__init__.py
+import argparse
 
-
-def register() -> ModuleInfo:
-    from myplugin_pkg.menu import entry
-    return ModuleInfo(
-        key="myplugin",              # 会被清单 name 覆盖，保持一致即可
-        description_key="myplugin.desc",
-        order=50,
-        entry=entry,
-        platforms=["linux", "darwin", "windows"],
-    )
+def cli(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="opskit plugin run hello --")
+    parser.add_argument("--name", default="world")
+    args = parser.parse_args(argv)
+    print(f"Hello {args.name}")
+    return 0
 ```
 
-`menu.py` 示例（含子菜单循环 + 自带文案）：
+`opskit plugin run hello -- --name Alice` 中，`--` 后的参数、帮助和业务退出码由插件定义。平台不导入插件来生成全局帮助，不保存第三方 CLI schema。
+
+## 采集、审核与更新
+
+Windows x64 的安装入口自动准备独立采集工具和 SDK 运行环境，无需先手动执行准备命令：
+
+```text
+opskit plugin install https://git.example.com/team/hello.git --branch main
+```
+
+菜单流程为：输入来源 → 自动准备采集工具 → 受限传输及隔离审核 → 自动准备并校验运行环境 → 展示版本、权限并确认信任 → 安装成功。拒绝信任或在确认时取消，按本次安装凭据撤回目录；不能证明目录归属时保留并报告。命令行安装同样自动准备，但保留显式授信语义，输出的 trust 状态不会被自动改成已授权。
+
+自动准备优先复制本机可用的 CPython 3.10+ Windows x64 与 Git 工具，在 AppContainer 中探测后才发布采集 catalog；本机安装目录不会被修改，也不会直接执行宿主包装脚本。采集 Python 与插件执行运行时分开：插件运行时使用锁定的 CPython 3.14 Windows x64，以匹配 SDK wheel ABI。只对缺少、不兼容或自检失败的组件使用随发行包固定的 `core/plugin-bootstrap.json` 补齐，固定 Python、MinGit 和 SDK wheel 的来源、版本、大小与 SHA256；运行时不查询 GitHub releases API、不运行宿主 pip、安装脚本或仓库代码。下载缓存先校验。传输 pack 在隔离 Git 中校验与导出。首次下载失败可重新安装，已完成且校验通过的组件会复用；失败不会发布半成品插件。正常界面只报告检查环境、必要补齐、获取仓库和准备运行环境，不逐项打印压缩包或依赖文件名。
+
+SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。安装菜单中用户亲自输入的仓库地址允许本次连接该主机和端口的私网地址；更新已有来源时须明确确认，命令行须指定 `--allow-private`。许可均不持久保存。
+
+`opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml；它是内容校验，不是发布者签名。安装后核对来源、权限、指纹并授信。内容更新撤销旧信任与相关授权，不自动继承。更新必须保留用户本地修改，无法安全替换时拒绝；不能强行覆盖以完成更新。
+
+## 高级离线准备
+
+自动安装包含 SDK 基础依赖。具有额外依赖的插件仍需维护者提供经过审核的完整离线 wheel 和哈希锁；不会执行仓库的 requirements、setup.py 或自动安装任意依赖。以下命令保留给高级离线准备和维护使用，普通安装不需要手动执行。
+
+```text
+opskit plugin prepare-fetch --python-runtime C:\tools\python
+```
+
+```text
+opskit plugin prepare plugins/hello --python-runtime C:\tools\python --wheels C:\reviewed\wheels --lock-file C:\reviewed\requirements.lock
+```
+
+源码等价入口是 `python scripts/build_plugin_runtime.py`，其余参数相同。旧 `--base-image` 和 WSL 设置不再适用。
+
+准备使用独立解释器快照、离线 wheel 和完整哈希锁。可用 `--dependency package==version` 核对明确选择；它不会追加未审核依赖。拒绝源码包、任意依赖 URL 和依赖覆盖平台 SDK。解释器兼容标签在原生隔离中探测。准备不授信插件。
+
+catalog 绑定插件指纹、锁、SDK 与全量文件内容；执行前重新验证。SDK 文件和语言资源由 `core/plugin_runtime_inventory.py` 明确列出，不递归复制整个平台 core。SDK 内容变化后须重新 prepare。冻结包通过同一明确库存提供运行时源码，其实际发行产物仍需独立验收。
+
+## 宿主能力与多语言
+
+SDK `artifact_info(directory, relative) -> {bytes, sha256}` 在精确目录读取授权下
+由宿主监督进程计算普通文件摘要；最大 512MiB，拒绝链接、重解析路径、硬链接及
+读取期间变化，支持期限/撤权。结果不包含文件内容。
+将该 SHA256 传给 `upload_file`，上传快照会再次核对；文件变化不静默接受新摘要。
+同一调用、同一精确目录的一次授权可复用，不重复询问。
+
+`artifact_info` returns only host-computed file size and SHA256 under explicit directory
+consent (ordinary files, up to 512MiB). Upload verifies its snapshot against that digest.
+Both operations share the same scoped grant; once consent is reused within the invocation.
+
+插件通过 SDK 请求能力，不直接扩大隔离目录：
+
+- `read_host_file(directory, relative)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。
+- `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。可使用显式目录读写授权；否则写入授权绑定文件路径及原、新内容摘要。独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
+- `create_host_file(directory, relative, content)`：经目录读写授权或精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
+- `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
+- `host_path_info(path, directory=False, write=False, execute=False)`：授权后验证绝对普通路径与目录身份。仅目录可传 `write=True` 显式申请包含子目录的读写授权；同时传 `execute=True` 可显式申请该目录树的读写和工具执行授权。该授权允许工作目录在目录树内的工具以当前用户权限运行，工具能够访问目录外文件；撤权、指纹及宿主身份检查仍有效。旧的读写授权不会升级为执行授权。
+- `host_find_executable(name, preferred="")`：Windows 上依次查找可选已配置路径、宿主 PATH、相邻的 `cmd`/`bin` 目录和常见安装目录中的同名 `.exe`；仅接受简单可执行文件名，跳过相对路径、链接、硬链接、超出执行大小限制及无效路径，不执行程序。返回绝对路径前请求目录读取授权并复核身份；找不到时返回空字符串，拒绝授权和取消不会自动继续搜索。执行仍需独立授权。
 
 ```python
-from core.sdk import (
-    UserCancel,
-    get_icon,
-    pause,
-    print_success,
-    register_locale,
-    select,
-    t,
-)
+from core.sdk import host_find_executable
 
-register_locale({
-    "zh": {"myplugin": {"desc": "我的插件", "deploy": "部署", "done": "部署完成"}},
-    "en": {"myplugin": {"desc": "My plugin", "deploy": "Deploy", "done": "Deployed"}},
-})
-
-
-def entry() -> None:
-    while True:
-        try:
-            key = select(
-                breadcrumb=["OpsKit", t("myplugin.desc")],
-                subtitle=t("prompt.select"),
-                choices=[{"key": "1", "label": f"🚀 {t('myplugin.deploy')}"}],
-                back_label=f"{get_icon('back')} {t('menu.back')}",
-            )
-        except UserCancel:
-            break
-        if key is None:
-            break
-        if key == "1":
-            print_success(t("myplugin.done"))
-            pause()
+previous_git_path = ""  # Or a previously saved absolute path.
+git = host_find_executable("git.exe", previous_git_path)
+if not git:
+    # Ask the user for a path in an interactive workflow.
+    pass
 ```
 
-**entry 包名规范**：
+The Windows host finds an ordinary executable in the preferred location, PATH or conventional install directories. Directory consent is required before returning a match; execution requires its own authorization. An empty string means no candidate was found.
+- `host_file_version(path)`：在 Windows 经所在目录读取授权后检查普通可执行文件的固定版本信息，返回四位文件版本和产品版本；接口不运行可执行文件。
+- `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
+- `list_host_files(directory, *, missing_ok=False)`：经目录读取授权后，递归返回排序后的普通文件相对路径，路径使用 `/`。启用 `missing_ok` 时，尚未创建的目录返回空列表。拒绝链接、重解析点、硬链接和特殊文件。最多遍历 65,536 项、64 层，返回的路径 UTF-8 总长度最多 1 MiB。文件内容和摘要分别通过各自的 SDK 接口读取。
+- `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell，不解释业务成功码。返回原始 `returncode`。
+  options 支持 `output_parent`、布尔值 `capture_output`、`capture_after`、`tool_dependencies`、`stdin_base64`、`config_base64`、`timeout_seconds`、`output_header`。`output_header` 是可选的简短面包屑字符串列表，仅交互终端在授权完成并启动工具前清屏显示标题；重定向和非交互输出不清屏，且它不改变授权范围。`output_parent` 创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。执行授权记录原始参数模板和输出父目录，而不是每次生成的随机目录名；模板以外的参数变化仍需要重新授权。`capture_output=true` 将合并的标准输出和标准错误作为 `captured_output` 返回插件（最多 16KiB，超限失败），不再流式显示；该选项纳入执行授权范围。`capture_after` 是最多 128 字符的单行标记，正常流式显示仍保留，且仅当标记恰好出现一次并有下一行时，将下一行作为 `captured_after` 返回（最多 16KiB，否则为 null）；标记纳入执行授权范围。`stdin_base64` 可提供最多 16KiB 的标准输入，执行授权绑定输入内容的长度及 SHA-256，默认不开放输入。`config_base64` 可提供至多 16KiB 的临时工具配置；必须在参数中使用 `{config_file}`，宿主在本次执行期间建立临时文件，正常退出时清理，执行授权绑定内容长度和摘要，参数模板保持稳定。宿主被强制终止时临时文件可能残留，调用方不可将秘密写入此配置。`timeout_seconds` 是 1..3600 的整数，默认为 300，显式值纳入授权范围。外部进程在独立的有限期限内运行时不消耗插件计算期限，但仍持续检查插件授权、工具授权和资源身份；超时或撤权会回收进程树。`tool_dependencies` 是至多 8 个普通绝对 `.exe` 路径，其父目录加入工具的 PATH；授权包含可执行文件路径、摘要和搜索目录，并在启动前重验文件。目录内其他程序也可能通过 PATH 被调用，故授权展示完整搜索目录。默认仍流式显示，不向插件返回内容，也不额外添加搜索目录。
+- `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
+  `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
+  显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
+- `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
+- `upload_file(directory, relative, url, sha256, headers=None)`：单文件 HTTPS PUT，最多 512MiB；
+  同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
-- 必须匹配 `^[a-z][a-z0-9_]*$`；
-- **必须带插件特征后缀**（如 `myplugin_pkg`），禁止使用 `core` / `rich` / `yaml` /
-  `utils` 等通用名——与主程序或其依赖重名的包会被拒绝加载；
-- 两个插件的 entry 包名也不得相同（后加载者被拒绝）。
+宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。默认命令授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
 
-**文案（i18n）**：所有用户可见文字用 `t()` 输出，插件自己的文案在包 import 时通过
-`register_locale()` 注册，key 用 `<name>.` 前缀命名空间（如 `myplugin.deploy`），
-不得占用主程序已有 key（冲突时插件 key 被忽略）。
+插件可通过 `authorization_scope: "tool"` 请求更宽的工具授权：绑定插件指纹、工具路径和摘要，允许任意参数及工作目录，须经宿主明确展示并由用户授权；不支持 `output_parent`、`config_base64` 和 `tool_dependencies`。默认仍按具体命令授权，原有授权不会自动扩大。
 
-**第三方依赖**：python 插件运行在 OpsKit 进程内，**不能** `pip install` 额外依赖
-（打包后的单文件程序没有 pip 环境）。只能使用标准库 + SDK 导出。需要重依赖的场景
-请改用 exec 形态自带运行时。
+授权菜单由框架统一提供，显示本次授权、永久授权和返回；返回或按 Esc 取消本次请求，不保存拒绝记录，下次申请可再次提示。插件只提交要执行的操作与目标，不能决定或写入授权选项。永久授权绑定内容身份与所展示的范围，可通过菜单或 `plugin permissions list` / `plugin permissions revoke ID` 查看和撤销。非交互模式没有授权时明确拒绝。
 
-## 形态二：exec 插件（子进程执行，语言无关）
+目录读取授权覆盖所选目录及其全部子目录，原有同插件、同指纹的目录读取授权也按此规则复用；按路径组件识别范围，不包括同名前缀的兄弟目录。目录读取不会自动授予写入；显式申请的目录读写授权覆盖同一目录树内的受控读取、文件写入及产物操作，但不包含工具执行。显式的目录读写及执行授权也覆盖该目录树中启动的宿主工具，工具可访问项目外文件；旧读写和逐文件授权不会自动扩大。宿主继续拒绝越界路径、链接和重解析点。撤销父目录授权后，子目录若无其他有效授权将立即失效。
 
-适合 Go / Rust / Shell 编写的工具，或需要第三方依赖的场景。菜单项被选中后 OpsKit
-以继承 stdio 的子进程运行 `entry` 可执行文件（工作目录为插件根目录），退出后按
-任意键回到主菜单。
+框架选择、确认和输入界面复用逐行信息模板：`select`、`select_input`、`confirm` 和 `text_input` 都接受 `info_lines`，多行内容逐行显示；`description` 也使用同一行样式。其中选择及输入行按纯文本显示，`confirm` 保留 Rich markup 语义，动态内容需转义。插件业务界面的面包屑应保留实际入口、已选对象和当前功能上下文；字段名称由输入提示展示，不能用通用根标题替代当前功能。插件可用 SDK 的同名参数呈现业务信息，但只有宿主能力调用才会触发框架持有的权限决策；显示相似菜单不能获得授权。目录授权提示仅展示权限、资源和授权选项，多个权限用 ` | ` 分隔。单独申请执行宿主工具时仍展示用户权限及目录非隔离边界。描述和说明行末尾不加标点，动态内容按原样展示。权限管理详情保留完整指纹和权限 ID。扩展交互须同步宿主实现、SDK、沙盒转发和取消、非交互、中英文测试，不以展示接口代替授权接口。
 
-```
-mytool/
-├── plugin.yaml              # kind: exec, entry: bin/mytool
-└── bin/
-    └── mytool               # 可执行文件（chmod +x；Windows 用 .exe/.bat）
-```
+仅需选择选项时使用 SDK `select` 或 `paged_select`：数字单键立即选择，分页默认使用 `p` / `n` 及框架统一的“上一页”“下一页”；`select` 的快捷键占用翻页键时自动选择其他按键。需要完整文本时使用 `select_input` 或 `text_input`，以回车确认；单键菜单不得提示回车选择。`paged_select` 可用从零开始的 `initial_page` 定位初始页面，不自动确认选项。等待操作使用 SDK `waiting`：宿主统一显示临时彩色点阵，授权和交互时暂停，作用域结束、异常或取消时清除；非交互或重定向时不输出动画。取消和权限监督不受显示方式影响。
 
-约定：
+中英文是必验项。菜单、授权、进度、结果、错误、帮助及平台未实现提示遵循程序当前语言；新增文案同时加入 zh/en，键和插值参数一致。插件使用 SDK 的 t/current_lang/register_locale 接入自身语言资源。机器错误码、命令、配置和协议字段不随语言改变。第三方工具原始日志可保留原文，但平台提供本地化结果摘要。
 
-- `entry` 必须位于插件目录内（相对路径逃逸会被拒绝）；
-- 子进程直接使用用户的终端（stdio 继承），可以自由做交互式 UI；
-- 退出码不影响 OpsKit，启动失败只显示短错误并回菜单；
-- 菜单显示名 / 图标 / 描述全部来自清单的 `label` / `icon` / `description`。
+## 状态、期限与清理
 
-## SDK API（api_version = 1）
+`plugin_data_dir` 只能访问自身隔离状态。自身状态分区为 `<data>/plugin-data/<name>/self`，服务分区为 `<data>/plugin-data/<provider>/callers/<authenticated-caller>`；调用方由平台绑定，不接受插件伪造。插件不能读取其他分区。
 
-`core/sdk.py` 是 python 插件唯一允许的依赖面，导出：
+执行使用私有快照和工作区。成功返回不立即提交：先确认进程及工作区清理，再重新检查期限、内容指纹和授权链，最后提交状态。执行、清理、撤权或期限检查失败均不提交。状态上限 16MiB、4096 条目、64 层；扫描额度不等于硬磁盘配额。
 
-| 分类 | 导出 |
-|---|---|
-| 协议 | `ModuleInfo` |
-| i18n | `t` / `current_lang` / `register_locale` |
-| 主题 | `get_color` / `get_icon` / `print_success` / `print_error` / `print_warning` / `print_info` |
-| 交互 | `select` / `multi_select` / `paged_select` / `confirm` / `text_input` / `pause` / `clear_screen` / `print_header` / `UserCancel` / `console`（`text_input` 支持 `info_lines` 插入 ├─ 信息行；`multi_select` ↑↓ 移动、空格勾选、回车确认，默认全不选，样式见下「多选交互规范」；`paged_select` 分页单选，每页最多 9 项、n/p 翻页） |
-| 执行 | `run` / `run_lines` / `which` / `cmd_ok` |
-| 路径 | `data_dir` / `cache_dir` / `log_dir` / `plugins_dir` / `plugin_data_dir` |
-| YAML | `load_yaml` / `save_yaml`（插件配置 / 构建记录读写，禁止直接 import yaml） |
-| 日志 | `get_logger` |
-| 软件安装 | `ensure_software(key)`（复用平台软件配方检测 + 按需安装推荐版本，如 golang / docker / nodejs；仅限注册表内配方，插件禁止自行实现安装器） |
-| Python 依赖 | `ensure_python_package(package, import_name="")`（已可导入静默返回 True，否则用应用 venv 的 pip 安装，失败返回 False；供插件按需声明重依赖，如 boto3） |
-| 插件间服务 | `get_service(name)` / `open_service_menu(name, breadcrumb, context, source)`（见下「插件间服务」章节） |
+嵌套调用共享父期限，不能重新获得完整 timeout。并发状态事务冲突明确失败。`plugin inspect-workspaces` 仅观察，不根据目录名称推断所有权或授权删除。旧容器 reconcile/锁退休命令已经移除；原生恢复只能处理可证明身份与归属的记录，不能用删除任意遗留目录替代。
 
-### 多选交互规范（multi_select）
+Windows 原生进程树默认 Job 预算为 256MiB 内存、16 个进程、整机 CPU 总容量的 25% 硬上限。宿主通过公共 `NativeLimits` 契约传入预算，插件不能修改；后续平台后端沿用此契约。所有限制必须在挂起进程恢复前成功设置，设置失败不执行插件。CPU 上限控制速率，整体执行期限另行限制持续时间；目录扫描仍不能代替磁盘硬配额。
 
-所有插件的多选场景**必须**直接使用 SDK 的 `multi_select`，禁止自绘勾选列表，
-保证全平台样式一致。统一样式：
+## SDK 服务契约
 
-- 勾选框三态均为单列宽字符，光标移动不产生列跳动：
-  - 未选中：`[ ]`
-  - 光标悬停（未选中）：`[•]`（亮青加粗）
-  - 已选中：`[✔]`（绿色；被光标悬停时亮青加粗）
-- 不使用行首箭头（❯）或 `[x]` 标记；光标行文案加粗
-- 键位：↑↓ 移动、空格勾选/取消、回车确认（返回勾选下标列表，可为空）、
-  0 返回 None、ESC 抛 `UserCancel`
-- 提供「全部」快捷项时放在第一项并传 `all_index=0`：勾选它全选、取消它全不选；
-  其余项全部勾上时自动连带勾上全部项，任一项取消时自动连带取消
+只依赖 `core.sdk` 稳定接口。SDK api_version=4、RPC 传输版本和业务服务版本相互独立。
 
-```
- ├─  选择服务（空格勾选，回车确认）
- ├─   [ ] 全部
- ├─   [✔] 主服务
- ├─   [•] Cookie Worker 服务
- ├─   (0) 🔙 返回
+提供方声明 provides 及 service_contracts，每个契约包含严格整数 api_version（1..65535）及 1..64 个不重复公开 methods，并导出 provide_service(name)。调用方 uses 必须明确 service/provider/api_version/methods；拒绝通配、私有、重复方法和未知授权字段。旧 uses 不自动取得全部方法权限。
+
+操作方核对 `plugin show CALLER` 和 `plugin show PROVIDER` 后，使用：
+
+```text
+opskit plugin authorize-service CALLER SERVICE --caller-fingerprint CALLER_SHA256 --provider-fingerprint PROVIDER_SHA256
+opskit plugin revoke-service CALLER SERVICE
 ```
 
-### 按键交互规范（全插件强制）
+SHA256 必须换为核实后的实际指纹。批准精确绑定调用方、提供方、服务版本与方法集，不执行插件。独立运行授信不等于批准调用边；提供方替换、双方更新或撤权不会继承旧边。调用和状态提交检查整条授权链，嵌套返回后仍保留其授权依赖，避免提交依赖已撤销服务的结果。
 
-所有插件的按键行为**必须**与平台一致，且只能通过 SDK 交互原语（`select` /
-`multi_select` / `paged_select` / `confirm` / `text_input` / `pause`）实现，
-**禁止**自行调用 `msvcrt` / `termios` / `input()` 读键，避免行为不一致：
+`request_plugin_install(provider: str) -> bool` 是服务提供方唯一面向插件的安装入口。宿主从当前运行身份读取 `uses`，使用宿主登记的来源、分支和最低版本，并在隔离区核对候选指纹、权限和服务契约。用户在同一确认页批准安装、候选授信及指定服务调用边。有效授权直接复用。SDK 调用成功后可在当前操作中获取服务。
 
-- **ESC 是唯一的取消 / 返回键**：菜单抛 `UserCancel`，由调用方决定返回上层还是退出
-- **Ctrl+C / Ctrl+D 是唯一的终止键**：抛 `UserExit` 正常退出程序
-- **导航键必须被忽略**：方向键 / Home / End / PgUp / PgDn / Delete 等
-  ESC 前缀序列（`ESC [ ...` / `ESC O ...`）与 Windows 双字符序列
-  （`\x00` / `\xe0` 前缀）不得触发取消、返回或写入输入缓冲——
-  SDK 原语已统一吞掉整个序列，插件不得绕过
-- **数字键 0 返回上一级**，与菜单序号规范一致
+get_service 返回 JSON RPC 代理，参数与结果必须可序列化；函数、回调和共享对象不跨边界。循环调用及超过四层嵌套拒绝。宿主先校验授权，worker 在执行点核对快照契约、实际业务版本和公开方法，不在宿主导入提供方。
 
-### 敏感输入规范（全插件强制）
+RPC 版本严格为整数 1。身份由平台绑定，信封未知字段、重复 JSON 键、非有限数字、超额结构或结果后继续调用均拒绝。业务版本不能覆盖传输版本。协议预算见实现与测试，不以合法 JSON 等同于获批能力。
 
-Token / SecretKey / 密码等敏感字段**必须**用 `text_input(..., secret=True)`：
+## 网络
 
-- 输入回显为 `*`
-- 已保存的默认值在提示中自动脱敏（只露首尾各 4 位，如 `abcd****wxyz`）
-- 禁止在界面、日志、报错信息中输出敏感字段明文
+AppContainer 不开放直接网络；第三方 HTTP(S)_PROXY 与容器出口代理已移除。插件必须调用受限 SDK HTTPS API，不能假定 requests、socket 或 Git 自动取得网络。
 
-不兼容变更（删除导出 / 改签名语义）才递增 `SDK_API_VERSION`；新增导出不递增。
-`api_version` 不匹配的插件会被静默跳过（写日志），OpsKit 升级大版本后插件需适配
-并更新清单。
+当前 HTTPS RPC 仅 HTTPS/443，受限请求头，32KiB 请求和响应，无重定向、无环境代理。平台检查全部 DNS 地址，连接已检查的数字地址并保留 TLS SNI 与证书验证。默认拒绝私有、回环、链路本地与保留目标。精确私网设置为 `plugin.sandbox.private_targets.<plugin>`，不接受通配；具体端口仍受该 API 策略限制，配置许可不能扩大 API。
 
-## 插件间服务（provides / uses）
+运行中私网撤权进入调用授权复核，提交前继续复查；新增许可不扩大正在执行的作用域。网络权限意味着插件可向批准网络发送自身已获得的数据，不能把隔离当作数据不会外发的承诺。S3 工具链仍需独立真实验收，不能把普通 HTTPS 成功当作 S3 已验收。
 
-插件可以向其他插件提供可复用能力（如通用云存储），调用方无需依赖提供方包名。
+### 文件上传 / File uploads
 
-**提供方**（仅限 python 插件）：
-
-1. 清单声明 `provides: [storage]`
-2. entry 包模块级暴露 `provide_service(name: str) -> object | None`
-3. 服务对象携带 `service_api_version: int`；带交互界面的服务实现
-   `open_menu(breadcrumb: list[str], context: dict) -> None`
-
-**调用方**：
-
-```yaml
-uses:
-  - service: storage
-    source: git@example.com:org/storage-hub.git   # 提供方建议安装来源（可选）
-```
+`upload_file` 面向预签名 HTTPS PUT。调用示例：
 
 ```python
-from core.sdk import get_service, open_service_menu
-
-# 菜单项一行接入：未安装时按 source 自动 clone 安装（仅信任确认一次交互）
-open_service_menu(
-    "storage",
-    breadcrumb=[...],
-    context={"caller": "myplugin"},
-    source="git@example.com:org/storage-hub.git",
-)
-
-# 程序化使用：提供方未安装 / 未信任时返回 None
-svc = get_service("storage")
+from core.sdk import upload_file
+result = upload_file(project, "build/web-mobile/index.html", presigned_url, expected_sha256)
 ```
 
-安全模型与插件加载一致：提供方必须已通过信任确认与 CHECKSUMS 完整性校验才会
-被加载；未安装时直接自动 clone，安装后展示概要并等待用户确认信任，拒绝则回滚删除。插件
-安装 / 更新 / 卸载后服务缓存自动失效。服务 API 变更时递增 `service_api_version`，
-调用方自行校验兼容性。
+宿主先在独立工作目录复制快照并核对完整 SHA256，再分块发送，不把文件塞进 JSON RPC。
+使用 HTTPS/443、检查后的数字地址、TLS 证书校验和原查询参数；不重定向、不使用环境代理。
+自动发送 Content-Length 和 Content-MD5；签发预签名 URL 时须兼容这两个实际请求头。
+只返回 status、bytes、sha256，不回传服务器正文、签名 URL 或凭据。
+权限在等待、发送、清理后继续复核，撤权/超时/取消回收本次 worker；已经抵达服务器的
+字节不能撤回，失败后应通过对象存储状态核查再决定重试，不自动重试 PUT。
+HTTP 2xx 不等同于独立验证了远端存储的 SHA256；返回摘要表示经本地核对的发送内容。
+目前不支持分片上传、跨文件事务、自动签发 URL 或上传整个目录；插件逐个调用固定接口。
+开始和完成摘要支持中英文，只展示目标主机，不输出签名查询参数。
 
-## 信任模型与安全边界
+`upload_file` targets presigned HTTPS PUT. The host copies a private snapshot and validates
+the complete expected SHA256 before streaming chunks; payloads never enter JSON RPC.
+HTTPS/443, checked numeric addresses, TLS verification and the original query are preserved;
+redirects and ambient proxies are refused. Content-Length and Content-MD5 are supplied by
+the host, so the presigner must allow those exact request headers. Results contain only
+status, bytes and sha256, never response bodies or signed URLs. Revocation, cancellation
+and deadlines stop the owned worker; bytes already delivered cannot be recalled. Inspect
+remote object state before retrying an ambiguous failure; PUT is not automatically retried.
+A 2xx result is not independent verification of the stored object's SHA256. The returned
+digest describes locally verified outgoing content. Multipart uploads, cross-file transactions,
+URL signing and directory uploads are not included. Plugins invoke the bounded file API
+per object. Bilingual progress summaries display only the destination hostname.
 
-插件代码加载前必须经用户明确信任（同 Homebrew tap 模型）：
+SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能安装和执行。旧版插件不进入管理列表，旧目录和数据不会自动删除。
+工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，
+仍不是文件系统磁盘硬配额。上传快照持有实际 worker 租约，清理与恢复使用同一身份记录。
 
-- 首次信任：菜单安装时展示名称/版本/形态/权限声明，用户确认后记录插件目录内容指纹
-  （全部文件 sha256 汇总，跳过 .git / __pycache__）到 `<data_dir>/plugin_trust.yaml`；
-  手动 `git clone` 的插件在「更新插件」中选中即弹信任确认，确认后才会加载
-- 平台更新自动继承：已信任插件经「插件管理 → 更新插件」拉取的新内容自动继承信任，
-  首次确认后更新不再重复询问；例外：版本回退（防降级攻击）需用户显式确认，
-  内容与 CHECKSUMS.yaml 不符直接拒绝加载
-- 变化重确认：插件内容被平台更新流程之外的途径改动（如手动 `git pull` / 改文件）
-  时指纹失效，重新信任前不加载，防止「先发好版本、后续更新投毒」
-- 产物指纹清单：插件根目录存在 `CHECKSUMS.yaml`（文件级 sha256 清单，由
-  `opskit plugin fingerprint` 生成）时，平台在每次加载前校验目录实际内容与清单
-  一致，不一致即拒绝加载并告警（可能被篡改）；无清单的存量插件回落 TOFU 模型
-- 来源警告：安装时 URL 主机不在配置 `plugin.trusted_sources` 白名单时显示警告，
-  真正的安全闸门是 clone 后的信任确认
-- 防崩隔离：插件 import / register / 菜单入口的任何异常（含 `sys.exit()`）只写日志 +
-  短提示，不终止主程序；entry 包名与已有模块（core / rich 等）重名时拒绝加载
+The SDK source digest changed; existing plugins must prepare their runtimes again. Existing
+SDK 1/2/3 plugins must migrate to SDK 4, be reinstalled and prepare their runtime again. Older plugins are excluded from management; their directories and data are not automatically deleted. Workspace logical reservation is now 512MiB per workspace,
+up to eight workspaces / 4GiB, including retained workspaces. This is not a filesystem hard
+quota. Upload snapshots hold a worker lease and share identity-bound cleanup/recovery.
 
-⚠ 安全边界：`permissions` 只是声明式透明度机制，**不是沙箱**。python 插件与主程序
-同进程、exec 插件继承当前用户权限，被信任的插件拥有与 OpsKit 同等的系统权限；
-请只信任来源可靠的插件，并避免以 root 运行 OpsKit（除非确实需要）。
+## 迁移与验收
 
-## 开发调试与排错
+更新中断恢复：在“插件管理 → 恢复中断更新”选择记录并确认，或执行：
 
-开发工作流：
+```text
+opskit plugin inspect-updates
+opskit plugin recover-update TRANSACTION --record-sha256 REVIEWED_RECORD_SHA256
+```
 
-1. 源码运行 OpsKit：`python3 main.py`，插件放 `<项目根>/plugins/<name>/`
-   （或 `export OPSKIT_PLUGINS_DIR=/path/to/dev-plugins` 指向任意目录）；
-2. 每次改动插件文件后内容指纹变化，需重新信任——进「插件工具 → 插件管理 → 更新插件」
-   选中该插件重新确认，确认后立即生效；开发目录若存在 CHECKSUMS.yaml，改动后需
-   重新运行 `opskit plugin fingerprint`（或临时删除该文件），否则校验不符拒绝加载；
-3. 插件被跳过 / 不显示时，先看日志：`logs/opskit.log`（grep 插件名）。
+检查命令不修改文件，也不创建不存在的插件目录。使用检查输出的完整事务 ID 和记录 SHA256；恢复会排除活动插件与安装发布，核对父目录、工作目录、旧版本及候选目录身份和内容摘要。仅恢复记录中的旧版本，独立写入者或已修改的备份不会被覆盖。原安装来源/版本/提交基线恢复，但执行信任和服务授权不恢复，需要重新审核授信。所有恢复证据与撤下的候选保留；重复恢复是幂等的。未知、损坏或没有身份记录的历史目录需人工核查，不按名称自动删除。该协议针对进程退出中断，不宣称 Windows 目录元数据在断电后的持久性。
 
-常见问题速查：
+Interrupted updates can be reviewed under **Plugin management → Recover interrupted update**, or with the commands above. Review the exact transaction and record SHA256 first. Recovery restores only the identity- and content-bound previous version, retains all evidence, and never overwrites an independent writer. It restores acquisition metadata but leaves execution trust and service grants revoked. Unknown or damaged directories require manual inspection. This is process-crash recovery, not a power-loss durability guarantee.
 
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| 插件工具不出现插件 | 未信任 / 内容变化后未重新信任 | 插件管理 → 更新插件 → 选中确认信任 |
-| 日志 `manifest missing fields` | plugin.yaml 缺必填字段 | 补齐 name/version/api_version/kind/entry |
-| 日志 `invalid version` | version 非 semver | 改为 x.y.z 格式 |
-| 日志 `integrity check failed` | 内容与 CHECKSUMS.yaml 不符 | 重新生成清单；若非自己改动警惕篡改 |
-| 日志 `api_version ... incompatible` | 与当前 SDK 大版本不符 | 适配后更新清单 api_version |
-| 日志 `entry ... shadows an existing module` | entry 包名与已有模块重名 | 改带后缀的包名（如 `xxx_pkg`） |
-| 日志 `entry package has no register()` | `__init__.py` 未暴露 register | 按模板补 register() |
-| 日志 `exec entry not found` | entry 路径不存在 / 未随仓库提交 | 检查相对路径与可执行位 |
-| 菜单显示原始 key（如 `myplugin.desc`） | 文案未注册 | 包 import 时调用 `register_locale()` |
-| 运行中报「插件 X 异常退出」 | entry 抛异常 / sys.exit() | 看日志定位；主程序不受影响 |
+旧插件将 CLI 放回自身包；数据改用自身状态目录；共享 pip 改为离线运行时准备；对象共享改为获批 JSON RPC；宿主文件和命令改为固定能力请求。备份后人工迁移自己的必要状态，不自动注入旧宿主数据，不把凭据和运行数据放入 Git。
 
-## 必须遵守的约束（红线）
+Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、更新、取消/超时、状态回滚、宿主访问拒绝、真实构建与上传。Linux/macOS 后端未实现期间必须明确拒绝。源码测试、冻结包、实际 Creator 和 S3 是不同证据，不能互相替代。完整未完成清单见迁移文档。
 
-- 只准 `from core.sdk import ...`，**禁止** import core 其他内部模块
-  （内部模块随时重构，不保证兼容）；
-- 禁止修改 `sys.path`、`sys.modules`、全局钩子等进程级状态；
-- 插件的配置、缓存、构建产物一律落盘 `plugin_data_dir(<命名空间>)`
-  （`<data-dir>/plugin-data/<命名空间>/`），**禁止写入插件目录自身**（会破坏
-  信任指纹导致下次加载失效），也禁止污染其他任意路径；命名空间由开发者声明，
-  多个插件传同一命名空间即共享目录；
-- 界面一律用 SDK 交互组件（select / confirm / text_input / pause / print_*），
-  禁止自造菜单渲染与交互流程；每个执行阶段必须 `clear_screen()` +
-  `print_header(面包屑)` 保持标题常驻，与主程序风格一致；
-- 菜单列表每页最多展示 9 项：选项可能超过 9 个的列表必须用 `paged_select`
-  分页（n 下一页 / p 上一页，翻页文案缺省用平台通用「上一页 / 下一页」），
-  禁止一页堆超过 9 个序号选项；
-- 禁止调用 `sys.exit()` / `os._exit()`（会被守卫拦截，但属于违规行为）；
-- 用户可见文字一律走 `t()` + `register_locale()`，不硬编码单一语言；
-- 长时间操作要有进度提示，错误信息保持简短（详细内容写日志 `get_logger()`）；
-- 环境依赖安装一律走 `ensure_software(key)` 复用平台软件配方（安装进度与反馈
-  同软件菜单一致），插件禁止自行下载 / 脚本安装系统软件；
-- 文件读写使用 `data_dir()` / `cache_dir()` 下的自有子目录，不污染其他路径；
-- `permissions` 如实声明（network / filesystem / exec / root），获取用户信任。
+### SDK 4 迁移
 
-## 发布约定
-
-- 仓库命名建议：`opskit-plugin-<name>`
-- 安装：菜单「插件工具 → 插件管理 → 安装插件」输入 URL，或 `git clone <repo> <plugins_dir>/<name>`
-- 更新：菜单「插件管理 → 更新插件」，已信任插件自动继承信任并热重载；手动 `git pull`
-  属平台外改动，需重新信任
-- 卸载：菜单「插件管理 → 卸载插件」，删除目录 + 移除信任记录，列表即刻消失
-- 信任：安装/手动 clone 后需在菜单确认信任，否则插件不加载
-- 版本：清单 `version` 是唯一权威版本来源，semver，每次发布必须递增（版本回退会触发
-  用户降级确认）；建议 git tag 与 version 对应（`v1.0.5`），并在仓库 README 标注兼容的
-  `api_version`
-- 产物指纹：发布前在插件目录运行 `opskit plugin fingerprint <目录>` 生成
-  `CHECKSUMS.yaml` 并随仓库提交；`opskit plugin fingerprint <目录> --check` 可本地验证；
-  平台加载前校验不符即拒绝加载，防发布后篡改
-- 运行时数据禁止写入插件目录（会破坏指纹与 CHECKSUMS 校验），一律落盘
-  `plugin_data_dir(<命名空间>)`
-
-## 发布前自查清单
-
-- [ ] `plugin.yaml` 五个必填字段齐全，name 合法且不与内置模块冲突
-- [ ] `api_version` 与目标 OpsKit 的 SDK 版本一致
-- [ ] python 插件：entry 包名带特征后缀；只 import `core.sdk`；无第三方依赖
-- [ ] exec 插件：可执行文件在插件目录内且有可执行位；`platforms` 与提供的产物一致
-- [ ] `label` / `description` 提供 zh + en；自有文案通过 `register_locale()` 注册
-- [ ] `permissions` 如实声明
-- [ ] `version` 已递增，并运行 `opskit plugin fingerprint` 重新生成 CHECKSUMS.yaml
-- [ ] 在干净环境 clone → 信任 → 验证「插件工具」菜单立即出现、功能可用
-- [ ] 菜单入口内抛异常只显示短错误、能正常返回主菜单（不会杀死 OpsKit）
+见[插件开发指南](plugin-development.md)和[原生升级指南](plugin-native-upgrade-guide.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。[SDK 3 业务分离记录](sdk3-business-separation.md)仅供历史迁移参考。

@@ -6,10 +6,6 @@ PYTHON_EOL_API         = "https://endoflife.date/api/python.json"
 # ─── pip bootstrap ───────────────────────────────────────────────────────────
 GET_PIP_URL            = "https://bootstrap.pypa.io/get-pip.py"
 
-# ─── uv 工具链（Linux/macOS 安装脚本） ───────────────────────────────────────
-UV_INSTALL_SH          = "https://astral.sh/uv/install.sh"
-UV_INSTALL_SH_GHPROXY  = "https://mirror.ghproxy.com/https://astral.sh/uv/install.sh"
-
 # ─── uv 路径（相对 HOME） ─────────────────────────────────────────────────────
 UV_BIN_SUBDIR          = ".opskit/bin"
 UV_PYTHON_SUBDIR       = ".opskit/python"
@@ -35,12 +31,6 @@ PYTHON_BUILD_TIMEOUT   = 1800
 # ─── opskit 要求的最低 Python 版本 ───────────────────────────────────────────
 PYTHON_MIN_VERSION     = "3.10"
 
-# ─── uv Windows 安装源 ────────────────────────────────────────────────────────
-UV_INSTALL_PS1          = "https://astral.sh/uv/install.ps1"
-UV_INSTALL_PS1_GHPROXY  = "https://mirror.ghproxy.com/https://astral.sh/uv/install.ps1"
-UV_WIN_ZIP_URL          = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
-UV_WIN_ZIP_GHPROXY      = "https://mirror.ghproxy.com/https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
-
 # ─── cmd_autorun bat 存放路径（相对 HOME） ────────────────────────────────────
 CMD_AUTORUN_SUBPATH     = ".opskit/cmd_autorun.bat"
 
@@ -62,7 +52,7 @@ PYTHON_VERSIONS_FALLBACK = [
 # ─── /etc/profile.d shim 文件名 ───────────────────────────────────────────────
 PROFILE_D_SHIM_FILE     = "/etc/profile.d/opskit-python.sh"
 
-# ─── Windows .cmd shim 模板 ───────────────────────────────────────────────────
+# ─── 历史 Windows shim，仅用于完整模板的精确迁移识别 ──────────────────────────
 SHIM_CMD_TEMPLATE = (
     "@echo off\r\n"
     "rem opskit python shim - auto version routing, no restart needed\r\n"
@@ -89,8 +79,8 @@ SHIM_CMD_TEMPLATE = (
     "echo Python not found & exit /b 1\r\n"
 )
 
-# ─── Linux/macOS sh shim 模板 ─────────────────────────────────────────────────
-SHIM_SH_TEMPLATE = """\
+# ─── 历史 Linux/macOS shim，仅用于精确迁移识别 ─────────────────────────────────
+LEGACY_SHIM_SH_TEMPLATE = """\
 #!/bin/sh
 # opskit python shim — 自动感知版本切换，无需 hash -r
 _snap="$HOME/.opskit/snapshots/python.json"

@@ -1,10 +1,11 @@
 """Redis Windows 平台驱动：tporadowski/redis zip 解压 + shim cmd + 注册表 PATH 注入"""
 from __future__ import annotations
 
+from core.archive_reader import open_zip
+
 import os
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 from software.base import InstallError
@@ -27,41 +28,39 @@ class WindowsDriver(PlatformDriver):
     def install_binary(self, version: str, src: Path) -> str:
         """
         将 redis-windows/redis-windows zip 解压到版本专属目录：~/.opskit/redis/redis{version}/
-        返回 bin 目录路径字符串（exe 位于 zip 内顶层子目录下，rglob 自动定位）。
+        返回 bin 目录路径字符串；包内必须只有一个服务端入口，拒绝覆盖既有版本。
         """
         from .common import redis_version_dir, redis_bin_dir
+        from core.archive import extract_zip
+        from software._shared.archive_install import staged_directory
         dest = redis_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(dest):
+            raise InstallError("Redis version directory already exists; refusing to overwrite")
         try:
-            with zipfile.ZipFile(str(src), "r") as zf:
-                for member in zf.infolist():
-                    name = member.filename
-                    parts = name.split("/", 1)
-                    rel = parts[1] if len(parts) > 1 and parts[1] else parts[0]
-                    target = dest / rel.replace("/", os.sep)
-                    if name.endswith("/"):
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src_f, open(target, "wb") as out:
-                            shutil.copyfileobj(src_f, out)
+            with staged_directory(dest, prefix=".opskit-redis-") as staging:
+                with open_zip(str(src), "r") as zf:
+                    extract_zip(zf, staging)
+                candidates = list(staging.rglob("redis-server.exe"))
+                if len(candidates) != 1 or not candidates[0].is_file():
+                    raise InstallError(t("software.redis_error.win_bad_structure", version=version))
+                bin_d = staging / "bin"
+                source_dir = candidates[0].parent
+                bin_d.mkdir(exist_ok=True)
+                if source_dir != bin_d:
+                    # Move co-located DLLs/configs with the binary; do not duplicate payload bytes.
+                    for item in source_dir.iterdir():
+                        if item.is_file():
+                            target = bin_d / item.name
+                            if target.exists():
+                                raise InstallError("Redis package has conflicting bin files")
+                            item.rename(target)
+        except FileExistsError as e:
+            raise InstallError("Redis version directory already exists; refusing to overwrite") from e
         except Exception as e:
+            if isinstance(e, InstallError):
+                raise
             raise InstallError(t("software.redis_error.win_extract_failed", version=version, error=e)) from e
-
-        bin_d = redis_bin_dir(version)
-        bin_d.mkdir(parents=True, exist_ok=True)
-        redis_exe = bin_d / "redis-server.exe"
-        if not redis_exe.exists():
-            for candidate in dest.rglob("redis-server.exe"):
-                src_dir = candidate.parent
-                # 将 exe 同级目录下所有文件（含 msys-*.dll 运行时）复制到 bin/
-                for f in src_dir.iterdir():
-                    if f.is_file():
-                        shutil.copy2(str(f), str(bin_d / f.name))
-                break
-        if not redis_exe.exists():
-            raise InstallError(t("software.redis_error.win_bad_structure", version=version))
-        return str(bin_d)
+        return str(redis_bin_dir(version))
 
     # ─── shim ─────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,10 @@
+schema_version: 1
+host: example.invalid
+panel_port: 2053
+panel_user: admin
+panel_base_path: ""
+vless_port: 443
+sni: example.invalid
+dest: example.invalid:443
+# A new file relative to this config; generated credentials are never printed.
+credentials_output_file: xui-credentials.json

@@ -26,7 +26,9 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -111,7 +113,52 @@ def _available_backends() -> list[str]:
 
 # ─── 构建函数 ─────────────────────────────────────────────────────────────────
 
-def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None) -> Path | None:
+def _plugin_runtime_bundle() -> Path:
+    """Ship the raw guest SDK needed to bind/prepare frozen runtimes."""
+    from core.plugin_runtime_inventory import BUNDLE_NAME, bundle_snapshot
+    files = bundle_snapshot(ROOT / "core")
+    target = BUILD_DIR / BUNDLE_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(target, "w") as archive:
+        for name, content in sorted(files.items()):
+            member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            member.compress_type = zipfile.ZIP_DEFLATED
+            member.external_attr = 0o100644 << 16
+            archive.writestr(member, content)
+    return target
+
+
+def _native_probe_bundle() -> Path:
+    """Ship ordinary packaging sources for the isolated interpreter probe."""
+    import packaging
+    from core.native_runtime import inventory
+    source = Path(packaging.__file__).parent
+    files = inventory(source)
+    selected = {name: digest for name, digest in files.items()
+                if name.endswith(".py") or name == "py.typed"}
+    if not selected or len(selected) > 128:
+        raise ValueError("invalid native probe source inventory")
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    target = Path(tempfile.mkdtemp(prefix="native-probe-", dir=BUILD_DIR))
+    package = target / "packaging"
+    package.mkdir()
+    total = 0
+    for name, digest in sorted(selected.items()):
+        with (source / name).open("rb") as stream:
+            content = stream.read(2 * 1024**2 + 1)
+        total += len(content)
+        if total > 2 * 1024**2 or hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError("native probe sources changed or exceed size limit")
+        destination = package / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    if inventory(package) != selected or inventory(source) != files:
+        raise ValueError("native probe source snapshot mismatch")
+    return target
+
+
+def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
+                 jobs: int | None = None) -> Path | None:
     """使用 Nuitka 编译单文件可执行程序"""
     nuitka = _find_tool("nuitka") or _find_tool("nuitka3")
     if not nuitka:
@@ -120,6 +167,8 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    runtime_bundle = _plugin_runtime_bundle()
+    probe_bundle = _native_probe_bundle()
 
     # onefile 固定解压目录：默认每次启动都把整包解压到随机 /tmp/onefile_<pid>_xxx，
     # 低配机/慢盘上这步要数秒且每次重来。按版本号固定到用户缓存目录后，
@@ -140,15 +189,20 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
         "--include-data-dir=core/themes=core/themes",
         "--include-data-dir=core/locale=core/locale",
         "--include-data-dir=core/mirrors=core/mirrors",
+        "--include-data-files=core/plugin-bootstrap.json=core/plugin-bootstrap.json",
+        f"--include-data-files={runtime_bundle}=core/{runtime_bundle.name}",
+        f"--include-data-dir={probe_bundle}=core/native-probe-packaging",
         "--include-package=rich._unicode_data",
         "--include-module=_registry",
     ]
     for pkg in (packages or []):
         cmd.append(f"--include-package={pkg}")
+    if jobs is not None:
+        cmd.append(f"--jobs={jobs}")
     cmd += [
         "--noinclude-pytest-mode=nofollow",
         "--noinclude-unittest-mode=nofollow",
-        "--assume-yes-for-downloads",
+        "--update-check=never",
         "--no-deployment-flag=self-execution",
         "--no-deployment-flag=original-argv0",
     ]
@@ -165,7 +219,9 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None)
         cmd.append("--windows-console-mode=force")
 
     cmd.append("main.py")
-    rc = _run(cmd, cwd=ROOT)
+    # Nuitka documents EOF on stdin as the way to refuse auxiliary downloads.
+    # A missing compiler/helper must fail instead of fetching unreviewed code.
+    rc = _run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL)
     if rc != 0:
         print(f"[build] Nuitka failed (exit {rc})")
         return None
@@ -181,8 +237,11 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         return None
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
-    spec_out = BUILD_DIR / "opskit"
+    # PyInstaller cleans workpath/name; keep the spec outside that subtree.
+    spec_out = BUILD_DIR / "spec"
     spec_out.mkdir(parents=True, exist_ok=True)
+    runtime_bundle = _plugin_runtime_bundle()
+    probe_bundle = _native_probe_bundle()
 
     # Windows 路径分隔符用 ; Unix 用 :
     sep = ";" if sys.platform == "win32" else ":"
@@ -190,7 +249,6 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
-        "--clean",
         f"--name={output_name.replace('.exe', '')}",
         f"--distpath={DIST_DIR}",
         f"--workpath={BUILD_DIR}",
@@ -198,10 +256,12 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         f"--add-data={ROOT / 'core' / 'themes'}{sep}core/themes",
         f"--add-data={ROOT / 'core' / 'locale'}{sep}core/locale",
         f"--add-data={ROOT / 'core' / 'mirrors'}{sep}core/mirrors",
+        f"--add-data={ROOT / 'core' / 'plugin-bootstrap.json'}{sep}core",
+        f"--add-data={runtime_bundle}{sep}core",
+        f"--add-data={probe_bundle}{sep}core/native-probe-packaging",
         "--hidden-import=_registry",
         "--hidden-import=software",
         "--hidden-import=software.menu",
-        "--hidden-import=software.commands",
         "--hidden-import=software.base",
         "--hidden-import=software.registry",
         "--hidden-import=software.recipes",
@@ -215,6 +275,14 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--hidden-import=network",
         "--hidden-import=network.menu",
         "--hidden-import=network.commands",
+        # Registries and native workers import official modules dynamically.
+        # Hidden-importing only each package __init__ omits recipe drivers and
+        # host broker modules from the frozen executable.
+        "--collect-submodules=core",
+        "--collect-submodules=plugin",
+        "--collect-submodules=software",
+        "--collect-submodules=monitor",
+        "--collect-submodules=network",
         "--exclude-module=tkinter",
         "--exclude-module=matplotlib",
         "--exclude-module=numpy",
@@ -226,13 +294,11 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--exclude-module=xmlrpc",
         "--exclude-module=pydoc",
         "--exclude-module=doctest",
-        "--exclude-module=distutils",
         "--exclude-module=lib2to3",
         "--exclude-module=ensurepip",
         "--exclude-module=idlelib",
         "--exclude-module=turtle",
         "--exclude-module=turtledemo",
-        "--exclude-module=sqlite3",
     ]
 
     if upx:
@@ -241,12 +307,15 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
             cmd += ["--upx-dir", str(Path(upx_bin).parent)]
         else:
             print("[build] UPX not found, skipping compression")
+            cmd.append("--noupx")
+    else:
+        cmd.append("--noupx")
 
     if sys.platform != "win32":
         cmd.append("--strip")
 
     cmd.append("main.py")
-    rc = _run(cmd, cwd=ROOT)
+    rc = _run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL)
     if rc != 0:
         print(f"[build] PyInstaller failed (exit {rc})")
         return None
@@ -292,7 +361,7 @@ def write_manifest(bin_path: Path, checksum: str, backend: str, elapsed: float) 
 def print_report(bin_path: Path, elapsed: float) -> None:
     size_mb = bin_path.stat().st_size / 1024 / 1024
     print(f"\n{'=' * 60}")
-    print(f"[build] 构建完成")
+    print("[build] 构建完成")
     print(f"[build] 输出: {bin_path}")
     print(f"[build] 大小: {size_mb:.2f} MB")
     print(f"[build] 耗时: {elapsed:.1f}s")
@@ -319,26 +388,13 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
-_SKIP_PKG = frozenset({
-    "core", "tests", "build", "dist", "__pycache__",
-    ".git", ".windsurf", "venv", ".venv", "env", "plugins",
-})
-
 _REGISTRY_FILE = ROOT / "_registry.py"
 
 
 def write_registry() -> list[str]:
-    """扫描插件包并生成 _registry.py（打包模式静态注册表），返回包名列表"""
-    entries: list[tuple[str, str]] = []
-    for path in sorted(ROOT.iterdir()):
-        if not path.is_dir():
-            continue
-        name = path.name
-        if name in _SKIP_PKG or name.startswith(".") or name.startswith("_"):
-            continue
-        if not (path / "__init__.py").exists():
-            continue
-        entries.append((name, name))
+    """生成官方模块静态注册表，不扫描第三方插件目录。"""
+    from core.builtins import MODULES
+    entries = list(MODULES)
     lines = ["MODULE_LIST = ["]
     for key, pkg in entries:
         lines.append(f"    ({key!r}, {pkg!r}),")
@@ -368,7 +424,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     used_backend = args.backend
 
     if args.backend in ("nuitka", "auto"):
-        bin_path = build_nuitka(output_name, args.upx, packages)
+        bin_path = build_nuitka(output_name, args.upx, packages, args.jobs)
         if bin_path:
             used_backend = "nuitka"
 
@@ -412,6 +468,13 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 # ─── 入口 ────────────────────────────────────────────────────────────────────
 
+def positive_jobs(value: str) -> int:
+    jobs = int(value)
+    if jobs < 1:
+        raise argparse.ArgumentTypeError("jobs must be positive")
+    return jobs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="OpsKit 构建脚本",
@@ -435,6 +498,7 @@ def main() -> None:
             default="auto", help="打包后端（默认 auto：Nuitka → PyInstaller 回退）",
         )
         p.add_argument("--upx", action="store_true", help="启用 UPX 压缩")
+        p.add_argument("--jobs", type=positive_jobs, default=None, help="Nuitka并行编译进程数（默认由Nuitka决定）")
 
     args = parser.parse_args()
 
