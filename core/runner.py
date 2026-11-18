@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,93 +9,54 @@ from typing import Sequence
 
 from rich.console import Console
 
-from core.constants import TIMEOUT_HTTP
 
 console = Console()
 
 
-def run(
-    cmd: Sequence[str],
-    *,
-    cwd: Path | str | None = None,
-    env: dict | None = None,
-    timeout: int | None = None,
-    capture: bool = False,
-    check: bool = True,
-) -> subprocess.CompletedProcess:
-    """
-    执行命令，实时打印输出，返回 CompletedProcess。
-
-    capture=True  → 不打印到终端，结果在 .stdout / .stderr
-    check=True    → 非 0 退出码抛出 CalledProcessError
-    timeout=None  → 不限时
-    """
+def run(cmd: Sequence[str], *, cwd: Path | str | None = None, env: dict | None = None,
+        timeout: float | None = None, capture: bool = False, check: bool = True,
+        output_limit: int = 1024 * 1024) -> subprocess.CompletedProcess:
+    """Run with a real deadline; retain at most output_limit characters of output."""
+    from collections import deque
+    from core.process import stream
+    if output_limit < 1:
+        raise ValueError("output_limit must be positive")
     start = time.monotonic()
-    kwargs: dict = {
-        "cwd": str(cwd) if cwd else None,
-        "env": env,
-    }
-    if capture:
-        kwargs["capture_output"] = True
-        kwargs["text"] = True
-        result = subprocess.run(list(cmd), timeout=timeout, **kwargs)
-    else:
-        kwargs["stdout"] = subprocess.PIPE
-        kwargs["stderr"] = subprocess.STDOUT
-        kwargs["text"] = True
-        process = subprocess.Popen(list(cmd), **kwargs)
-        stdout_lines: list[str] = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            line = line.rstrip("\n")
-            stdout_lines.append(line)
-            console.print(line)
-        process.wait(timeout=timeout)
-        result = subprocess.CompletedProcess(
-            args=list(cmd),
-            returncode=process.returncode,
-            stdout="\n".join(stdout_lines),
-            stderr="",
-        )
-
-    elapsed = time.monotonic() - start
-    result.__dict__["elapsed"] = elapsed
-
-    if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode, list(cmd), result.stdout if capture else None
-        )
+    chunks = deque()
+    size = 0
+    iterator = stream(cmd, cwd=cwd, env=env, timeout=timeout)
+    try:
+        while True:
+            try:
+                line = next(iterator)
+            except StopIteration as done:
+                code = done.value
+                break
+            if not capture:
+                console.print(line, markup=False, highlight=False)
+            chunks.append(line + "\n")
+            size += len(line) + 1
+            while size > output_limit and chunks:
+                excess = size - output_limit
+                chunk = chunks.popleft()
+                if len(chunk) > excess:
+                    chunks.appendleft(chunk[excess:])
+                    size -= excess
+                else:
+                    size -= len(chunk)
+    finally:
+        iterator.close()
+    result = subprocess.CompletedProcess(list(cmd), code, "".join(chunks).rstrip("\n"), "")
+    result.elapsed = time.monotonic() - start
+    if check and code:
+        raise subprocess.CalledProcessError(code, list(cmd), result.stdout)
     return result
 
 
-def run_lines(
-    cmd: Sequence[str],
-    *,
-    cwd: Path | str | None = None,
-    env: dict | None = None,
-    timeout: int | None = None,
-) -> Iterator[str]:
-    """
-    流式执行命令，逐行 yield 输出（生成器）。
-
-    适用于需要处理每一行输出的场景（进度解析等）。
-    """
-    kwargs: dict = {
-        "cwd": str(cwd) if cwd else None,
-        "env": env,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.STDOUT,
-        "text": True,
-    }
-    process = subprocess.Popen(list(cmd), **kwargs)
-    assert process.stdout is not None
-    deadline = time.monotonic() + timeout if timeout else None
-    for line in process.stdout:
-        if deadline and time.monotonic() > deadline:
-            process.kill()
-            break
-        yield line.rstrip("\n")
-    process.wait()
+def run_lines(cmd: Sequence[str], *, cwd: Path | str | None = None, env: dict | None = None,
+              timeout: float | None = None) -> Iterator[str]:
+    from core.process import stream
+    yield from stream(cmd, cwd=cwd, env=env, timeout=timeout)
 
 
 def which(name: str) -> str | None:

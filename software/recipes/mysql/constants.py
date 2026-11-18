@@ -7,7 +7,7 @@ MYSQL_VERSIONS_API_URL   = "https://endoflife.date/api/mysql.json"
 MYSQL_VERSIONS_FALLBACK  = ["9.7.0", "9.0.1", "8.4.9", "8.0.46"]
 
 # ─── Linux tarball 命名规则（静态映射，无需网络探针） ─────────────────────────
-# minimal tarball 包含 lib/private/ bundled 私有库（protobuf/ssl 等），无需系统依赖
+# minimal 包含 lib/private 私有库；仍需兼容glibc及ELF声明的系统库
 # 5.x 无 minimal，使用完整包（需系统 glibc2.12+）
 #
 # major >= 9   → glibc2.28-minimal.tar.xz（9.7.0 已验证）

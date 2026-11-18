@@ -12,6 +12,22 @@ def test_init_auto_loads(tmp_path) -> None:
     assert lang in ("zh", "en")
 
 
+@pytest.mark.parametrize("environment,expected", [
+    ({"LC_ALL": "en_US.UTF-8", "LANG": "zh_CN.UTF-8"}, "en"),
+    ({"LC_MESSAGES": "zh_CN.UTF-8", "LANG": "en_US.UTF-8"}, "zh"),
+    ({"LANG": "en_US.UTF-8", "LANGUAGE": "zh_CN:en"}, "en"),
+    ({"LANGUAGE": "zh_CN:en"}, "zh"),
+    ({"LANG": "C.UTF-8"}, "en"),
+])
+def test_unix_locale_first_nonempty_value_wins(monkeypatch, environment, expected):
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(i18n.sys, "platform", "linux")
+    assert i18n._detect_system_lang() == expected
+
+
 def test_t_returns_string(tmp_path) -> None:
     i18n.init()
     result = i18n.t("menu.exit")
@@ -85,3 +101,23 @@ def test_register_locale_refreshes_plugin_keys(tmp_path, _restore_lang) -> None:
     assert i18n.t("testplug2.build") == "编译"
     i18n.register_locale({"zh": {"testplug2": {"build": "编译构建"}}})
     assert i18n.t("testplug2.build") == "编译构建"
+
+
+def test_catalogue_cache_refreshes_when_file_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(i18n, "_get_locale_dir", lambda: tmp_path)
+    path = tmp_path / "en.yaml"
+    path.write_text("message: first\n", encoding="utf-8")
+    assert i18n._load_lang("en")["message"] == "first"
+    before = i18n._cached_lang.cache_info().hits
+    assert i18n._load_lang("en")["message"] == "first"
+    assert i18n._cached_lang.cache_info().hits == before + 1
+    path.write_text("message: changed-value\n", encoding="utf-8")
+    assert i18n._load_lang("en")["message"] == "changed-value"
+
+
+def test_catalogue_loader_rejects_python_tags(tmp_path, monkeypatch):
+    import yaml
+    monkeypatch.setattr(i18n, "_get_locale_dir", lambda: tmp_path)
+    (tmp_path / "en.yaml").write_text("!!python/object:builtins.object {}\n", encoding="utf-8")
+    with pytest.raises(yaml.constructor.ConstructorError):
+        i18n._load_lang("en")

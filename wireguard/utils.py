@@ -1,6 +1,8 @@
 """WireGuard 部署工具函数"""
 from __future__ import annotations
 
+from core.archive import extract_zip
+
 import secrets
 import subprocess
 import re
@@ -89,15 +91,13 @@ def is_port_listening(port: int, proto: str = "tcp") -> bool:
         return False
 
 
-def is_service_active(service: str) -> bool:
+def is_service_active(service: str, *, timeout: float = 10) -> bool:
     """检查 systemd 服务是否活跃"""
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service],
-            capture_output=True, text=True, check=False,
-        )
-        return result.stdout.strip() == "active"
-    except Exception:
+        from core.process import capture
+        result = capture(["systemctl", "is-active", service], timeout=timeout)
+        return result.returncode == 0 and result.stdout.strip() == "active"
+    except OSError:
         return False
 
 
@@ -281,7 +281,7 @@ def install_xray() -> None:
     github_direct = f"{GITHUB_BASE}/{github_rel_path}"
     url_template = f"{{mirror}}/{github_rel_path}"
 
-    from core.mirror import download as mirror_download, get_download_cache_path, _is_cached_valid
+    from core.mirror import download as mirror_download, get_download_cache_path
     cache_zip = get_download_cache_path("xray", ver, zip_name)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -332,7 +332,7 @@ def install_xray() -> None:
         extract_dir = Path(tmpdir) / "xray"
         extract_dir.mkdir()
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+            extract_zip(zf, extract_dir)
 
         src = extract_dir / "xray"
         if not src.exists():

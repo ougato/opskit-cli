@@ -1,0 +1,345 @@
+"""Framework menu boundary, localized four-character labels and theme icons."""
+import ast
+from pathlib import Path
+
+import pytest
+from rich.cells import cell_len
+
+from core import i18n, theme
+from plugin import menu
+
+
+@pytest.mark.parametrize("stage", ["before_update", "downgrade", "after_update"])
+def test_update_trust_failure_is_reported_without_escaping_menu(monkeypatch, stage):
+    from core.plugin import PluginManifest
+    original = PluginManifest(name="demo", version="2.0.0", api_version=4, kind="python", entry="demo")
+    refreshed = PluginManifest(name="demo", version="1.0.0", api_version=4, kind="python", entry="demo")
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "_pick", lambda *args, **kwargs: original)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu.commands, "manifests", lambda: [refreshed])
+    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
+                        menu.commands.TRUST_NONE if stage == "before_update" or manifest is refreshed
+                        else menu.commands.TRUST_OK)
+    updates, errors, pauses, successes = [], [], [], []
+    def update(*args, **kwargs):
+        updates.append(True)
+        return True, "downgrade" if stage == "downgrade" else "updated"
+    def fail_trust(*args, **kwargs):
+        raise ValueError("fingerprint changed")
+    monkeypatch.setattr(menu.commands, "update", update)
+    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
+    monkeypatch.setattr(menu, "print_error", errors.append)
+    monkeypatch.setattr(menu, "print_success", successes.append)
+    monkeypatch.setattr(menu, "pause", lambda: pauses.append(True))
+    menu._update()
+    assert len(errors) == 1 and "fingerprint changed" in errors[0]
+    assert len(pauses) == 1 and not successes
+    assert bool(updates) is (stage != "before_update")
+
+
+def test_update_all_continues_after_one_trust_failure(monkeypatch):
+    from core.plugin import PluginManifest
+    first = PluginManifest(name="first", version="1.0.0", api_version=4, kind="python", entry="first")
+    second = PluginManifest(name="second", version="1.0.0", api_version=4, kind="python", entry="second")
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu, "print_info", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
+    monkeypatch.setattr(menu.commands, "manifests", lambda: [first, second])
+    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
+                        menu.commands.TRUST_NONE if manifest is first else menu.commands.TRUST_OK)
+    def fail_trust(*args, **kwargs):
+        raise ValueError("fingerprint changed")
+    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
+    errors, updates = [], []
+    monkeypatch.setattr(menu, "print_error", errors.append)
+    monkeypatch.setattr(menu.commands, "update", lambda manifest, **kwargs:
+                        (updates.append(manifest.name) or True, "unchanged"))
+    menu._update_all()
+    assert len(errors) == 1 and "fingerprint changed" in errors[0]
+    assert updates == ["second"]
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_update_all_finishes_each_plugin_before_advancing(monkeypatch, approved):
+    from core.plugin import PluginManifest
+    def manifest(name, version):
+        return PluginManifest(name=name, version=version, api_version=4, kind="python", entry=name)
+
+    original = manifest("first", "1.0.0")
+    refreshed = manifest("first", "2.0.0")
+    pending = manifest("pending", "2.0.0")
+    latest = manifest("latest", "1.0.0")
+    installed = [original, pending, latest]
+    events = []
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda plugin: {})
+    monkeypatch.setattr(menu.commands, "manifests", lambda: list(installed))
+    monkeypatch.setattr(menu.commands, "trusted_record", lambda name: dict(source="repo", installation_receipt="receipt"))
+    monkeypatch.setattr(menu.commands, "trust_status", lambda plugin:
+                        menu.commands.TRUST_CHANGED if plugin in (refreshed, pending) else menu.commands.TRUST_OK)
+    monkeypatch.setattr(menu, "pause", lambda: events.append(("pause",)))
+    monkeypatch.setattr(menu, "print_info", lambda message: events.append(("info", message)))
+    monkeypatch.setattr(menu, "print_success", lambda message: events.append(("success", message)))
+    monkeypatch.setattr(menu, "print_warning", lambda message: events.append(("warning", message)))
+
+    def update(plugin, **kwargs):
+        events.append(("update", plugin.name, plugin.version))
+        if plugin is original:
+            installed[0] = refreshed
+            return True, "updated"
+        return True, "unchanged"
+
+    def confirm_trust(plugin, **kwargs):
+        events.append(("trust", plugin.name, plugin.version))
+        if plugin is refreshed and not approved:
+            raise menu.UserCancel()
+        return True
+
+    monkeypatch.setattr(menu.commands, "update", update)
+    monkeypatch.setattr(menu, "confirm_trust", confirm_trust)
+    menu._update_all()
+    first_result = ("success", i18n.t("plugin.update_success", name="first", version="2.0.0")) if approved else (
+        "warning", i18n.t("plugin.trust_declined", name="first"))
+    assert events == [
+        ("update", "first", "1.0.0"),
+        ("trust", "first", "2.0.0"),
+        first_result,
+        ("pause",),
+        ("update", "pending", "2.0.0"),
+        ("trust", "pending", "2.0.0"),
+        ("success", i18n.t("plugin.update_trusted", name="pending", version="2.0.0")),
+        ("pause",),
+        ("update", "latest", "1.0.0"),
+        ("info", i18n.t("plugin.update_latest", name="latest")),
+        ("pause",),
+    ]
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_management_and_maintenance_structure(monkeypatch, language):
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    theme.init()
+    captured = []
+    keys = iter(["5", None, None])
+    def select(**kwargs):
+        captured.append(kwargs)
+        return next(keys)
+    monkeypatch.setattr(menu, "select", select)
+    menu._manage()
+    assert len(captured[0]["choices"]) == 5
+    assert len(captured[1]["choices"]) == 5
+    assert captured[1]["breadcrumb"][-1] == i18n.t("plugin_native.maintenance")
+    for screen in captured:
+        assert screen["back_label"]
+        if language == "zh":
+            assert screen["back_label"] == theme.get_icon("back") + " 返回"
+        for item in screen["choices"]:
+            icon, label = item["label"].split(" ", 1)
+            assert icon != "•" and cell_len(icon) == 2
+            assert "Creator" not in label and "Cocos" not in label
+            if language == "zh":
+                assert len(label) == 4
+
+
+@pytest.mark.parametrize("number,module", [
+    ("1", "plugin.update_recovery_menu"), ("2", "plugin.native_profile_menu"),
+    ("3", "plugin.workspace_recovery_menu"), ("4", "plugin.cache_cleanup_menu"), ("5", "plugin.disk_menu"),
+])
+def test_maintenance_routes(number, module, monkeypatch):
+    import importlib
+    calls = []
+    monkeypatch.setattr(importlib.import_module(module), "entry", lambda: calls.append(module))
+    keys = iter([number, None])
+    monkeypatch.setattr(menu, "select", lambda **kwargs: next(keys))
+    menu._maintenance()
+    assert calls == [module]
+
+
+def test_old_sdk_versions_are_rejected_before_plugin_code(tmp_path):
+    from core.plugin import load_manifest
+    for version in (1, 2):
+        (tmp_path / "plugin.yaml").write_text(
+            f"name: old\nversion: 1.0.0\napi_version: {version}\nkind: python\nentry: old\n")
+        assert load_manifest(tmp_path) is None
+
+
+@pytest.mark.parametrize("action", ["trust", "private"])
+def test_yes_does_not_approve_security_confirmation(monkeypatch, action):
+    from core import plugin, prompt
+    from core.cli import non_interactive
+    monkeypatch.setattr(prompt, "_auto_yes", True)
+    monkeypatch.setattr(prompt.os, "system", lambda *_: 0)
+    monkeypatch.setattr(prompt, "_render_header", lambda *_: None)
+    monkeypatch.setattr(prompt, "_render_options", lambda *_, **__: None)
+    monkeypatch.setattr(prompt, "_read_key", lambda: "n")
+    grants = []
+    monkeypatch.setattr(menu.commands, "grant_trust", lambda *args, **kwargs: grants.append((args, kwargs)))
+    monkeypatch.setattr(menu.commands, "compute_fingerprint", lambda root: "a" * 64)
+    monkeypatch.setattr(menu.commands, "trusted_record", lambda name: None)
+    token = non_interactive.set(False)
+    try:
+        if action == "trust":
+            manifest = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
+                                             kind="python", entry="demo")
+            assert not menu.confirm_trust(manifest)
+        else:
+            assert not menu._fetch_interaction("git@example.com:team/repo", "fetch_private_denied")
+        assert not grants
+    finally:
+        non_interactive.reset(token)
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_trust_shows_source_and_fingerprint_and_rejects_changed_content(monkeypatch, tmp_path, language):
+    from core import plugin
+    root = tmp_path / "plugin"
+    root.mkdir()
+    content = root / "plugin.py"
+    content.write_text("original", encoding="utf-8")
+    manifest = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
+                                     kind="python", entry="demo", root=root)
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    original = menu.commands.compute_fingerprint(root)
+    def confirm(**kwargs):
+        assert kwargs["require_explicit"] is True
+        assert any("git@example.com:team/repo" in line for line in kwargs["info_lines"])
+        assert any("develop" in line for line in kwargs["info_lines"])
+        assert any(original in line for line in kwargs["info_lines"])
+        content.write_text("changed", encoding="utf-8")
+        return True
+    monkeypatch.setattr(menu, "confirm", confirm)
+    with pytest.raises(ValueError):
+        menu.confirm_trust(manifest, "git@example.com:team/repo", "develop")
+    assert menu.commands.trust_status(manifest) != menu.commands.TRUST_OK
+
+
+def test_content_changed_during_trust_write_is_not_left_trusted(monkeypatch, tmp_path):
+    from core import plugin
+    root = tmp_path / "plugin"
+    root.mkdir()
+    content = root / "plugin.py"
+    content.write_text("original", encoding="utf-8")
+    manifest = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
+                                     kind="python", entry="demo", root=root)
+    fingerprint = menu.commands.compute_fingerprint(root)
+    real_grant = menu.commands.grant
+    def grant_then_change(*args, **kwargs):
+        real_grant(*args, **kwargs)
+        content.write_text("changed", encoding="utf-8")
+    monkeypatch.setattr(menu.commands, "grant", grant_then_change)
+    with pytest.raises(ValueError):
+        menu.commands.grant_trust(manifest, expected_fingerprint=fingerprint)
+    assert menu.commands.trust_status(manifest) != menu.commands.TRUST_OK
+
+
+def test_downgrade_uses_same_explicit_trust_flow(monkeypatch):
+    from core import plugin
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    old = plugin.PluginManifest(name="demo", version="2.0.0", api_version=4,
+                                kind="python", entry="demo")
+    new = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
+                                kind="python", entry="demo")
+    monkeypatch.setattr(menu, "_pick", lambda *args, **kwargs: old)
+    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest: menu.commands.TRUST_OK)
+    monkeypatch.setattr(menu.commands, "update", lambda *args, **kwargs: (True, "downgrade"))
+    monkeypatch.setattr(menu.commands, "manifests", lambda: [new])
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "print_error", lambda *args: None)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu.commands, "grant_trust", lambda *args, **kwargs: pytest.fail("unexpected grant"))
+    prompts = []
+    monkeypatch.setattr(menu, "confirm_trust", lambda manifest, **kwargs: prompts.append(kwargs) or False)
+    menu._update()
+    assert len(prompts) == 1 and "2.0.0" in prompts[0]["additional_detail"]
+    assert "1.0.0" in prompts[0]["additional_detail"]
+
+
+def test_untrusted_plugin_menu_labels_are_plain_text():
+    from core import plugin
+    from rich.text import Text
+    manifest = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
+                                     kind="python", entry="demo", icon="[red]X",
+                                     label={"en": "[bold]Plugin"})
+    assert Text.from_markup(menu._manifest_item(manifest)).plain == "[red]X [bold]Plugin"
+
+
+def test_active_framework_has_no_business_implementation():
+    root = Path(__file__).resolve().parents[1]
+    for folder in ("core", "plugin"):
+        for path in (root / folder).glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            assert "creator" not in text.lower() and "cocos" not in text.lower(), path
+    for path in (root / "plugin").glob("*menu.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "select":
+                assert any(kw.arg == "back_label" for kw in node.keywords), (path, node.lineno)
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_permission_prompt_uses_icons_and_back_cancels(monkeypatch, language):
+    from core import plugin_capabilities as capabilities, prompt
+    from core.cli import non_interactive
+    from core.native_sandbox import CapabilityRequest
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    theme.init()
+    monkeypatch.setattr(capabilities, "_interactive_input", lambda: True)
+    captured = []
+    monkeypatch.setattr(prompt, "select", lambda *args, **kwargs: captured.append((args, kwargs)))
+    token = non_interactive.set(False)
+    try:
+        with pytest.raises(prompt.UserCancel):
+            capabilities.prompt_grant(CapabilityRequest("demo", "a" * 64, "directory.read", "E:/project"))
+    finally:
+        non_interactive.reset(token)
+    args, kwargs = captured[0]
+    assert [item["key"] for item in args[2]] == ["1", "2"]
+    labels = [item["label"] for item in args[2]]
+    assert kwargs["back_label"] == theme.get_icon("back") + " " + ("返回" if language == "zh" else "Back")
+    for label in labels:
+        icon, text = label.split(" ", 1)
+        assert cell_len(icon) == 2 and icon != "•"
+        if language == "zh":
+            assert len(text) == 4
+    assert kwargs["info_lines"] == [
+        i18n.t("plugin_native.permission_line", permission=i18n.t("plugin_native.operations.directory.read")),
+        i18n.t("plugin_native.resource_line", resource="E:/project"),
+    ]
+    assert "description" not in kwargs
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_remove_confirmation_renders_name_and_consequence(monkeypatch, language, answer):
+    from io import StringIO
+    from rich.console import Console
+    from core import plugin, prompt
+
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    manifest = plugin.PluginManifest(name="cocos", version="1.0.0", api_version=4,
+                                     kind="python", entry="cocos", label={"zh": "Cocos 工具", "en": "Cocos tools"})
+    monkeypatch.setattr(menu, "_pick", lambda *_: manifest)
+    monkeypatch.setattr(menu, "pause", lambda: None)
+    monkeypatch.setattr(menu, "print_success", lambda *_: None)
+    removed = []
+    monkeypatch.setattr(menu.commands, "remove", removed.append)
+    output = StringIO()
+    monkeypatch.setattr(prompt, "console", Console(file=output, width=240, force_terminal=False))
+    monkeypatch.setattr(prompt.os, "system", lambda _: 0)
+    monkeypatch.setattr(prompt, "_read_key", lambda: answer)
+    monkeypatch.setattr(prompt, "_auto_yes", False)
+    menu._remove()
+    rendered = output.getvalue()
+    assert i18n.t("confirm_ui.uninstall") in rendered
+    assert f" ├─ {menu._display_name(manifest)}\n" in rendered
+    assert f" ├─ {i18n.t('confirm_ui.plugin_delete')}\n" in rendered
+    assert removed == ([manifest] if answer == "y" else [])

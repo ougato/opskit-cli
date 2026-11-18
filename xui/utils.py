@@ -1,6 +1,7 @@
 """x-ui 自动化工具函数。"""
 from __future__ import annotations
 
+import ipaddress
 import http.cookiejar
 import json
 import os
@@ -8,11 +9,9 @@ import re
 import concurrent.futures
 import secrets
 import shutil
-import sqlite3
 import stat
 import subprocess
 import sys
-import time
 import tempfile
 import urllib.parse
 import urllib.request
@@ -22,13 +21,11 @@ from pathlib import Path
 from core.constants import PUBLIC_IP_APIS
 from core.http import get_bytes
 from core.i18n import t
-from core.privilege import run_as_root, write_root_file
+from core.privilege import root_command, run_as_root, write_root_file
 from software.base import InstallError
 from xui.constants import (
     HTTP_CONTENT_TYPE_FORM,
-    HTTP_CONTENT_TYPE_JSON,
     HTTP_HEADER_CONTENT_TYPE,
-    HTTP_HEADER_COOKIE,
     HTTP_HEADER_USER_AGENT,
     HTTP_HEADER_X_CSRF_TOKEN,
     HTTP_HEADER_X_REQUESTED_WITH,
@@ -40,11 +37,8 @@ from xui.constants import (
     LOOPBACK_HOST,
     INSTALL_SCRIPT_TIMEOUT,
     OPSKIT_USER_AGENT,
-    PANEL_API_RETRY_COUNT,
-    PANEL_API_RETRY_DELAY_SECONDS,
     PASSWORD_BYTES,
     REDACTED_VALUE,
-    SECONDS_PER_DAY,
     SENSITIVE_STATE_KEYS,
     SERVICE_RESTART_TIMEOUT,
     SHORT_ID_BYTES,
@@ -62,25 +56,20 @@ from xui.constants import (
     TRAFFIC_TIMER_UNIT,
     TRAFFIC_TIMER_UNIT_CONTENT,
     TRAFFIC_TIMER_UNIT_FILE,
-    XUI_TRAFFIC_HISTORY_FILE,
     WSL_DISTRO_NAME_ENV,
     WSL_MARKER,
     WSL_OSRELEASE_FILE,
     HTTP_URL_TEMPLATE,
     HTTP_VALUE_XMLHTTPREQUEST,
     BASH_COMMAND,
-    CLIENT_EXPIRY_DAYS,
-    CLIENT_TOTAL_GB,
     DEBIAN_FRONTEND_ENV,
     DEBIAN_FRONTEND_NONINTERACTIVE,
-    XUI_API_ADD_INBOUND_PATH,
     XUI_API_CSRF_PATH,
     XUI_API_LOGIN_PATH,
     XUI_BINARY_COMMAND,
     XUI_COMMAND,
     XUI_ARTIFACT_DIRS,
     XUI_ARTIFACT_FILES,
-    XUI_DATABASE_FILE,
     XUI_SETTING_PASSWORD_ARG,
     XUI_SETTING_PORT_ARG,
     XUI_SETTING_SUBCOMMAND,
@@ -118,12 +107,15 @@ def gen_password() -> str:
 
 
 def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
-    """并发探测公网 IP，取最快返回的非空结果；整体受 timeout 限制，避免逐个超时累加阻塞。"""
+    """并发探测公网 IP，取最快返回的有效 IP；整体受 timeout 限制，避免逐个超时累加阻塞。"""
     def _probe(url: str) -> str:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": OPSKIT_USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8").strip()
+                body = resp.read(129)
+                if len(body) > 128:
+                    return ""
+                return str(ipaddress.ip_address(body.decode("ascii").strip()))
         except Exception:
             return ""
 
@@ -138,21 +130,17 @@ def detect_public_host(timeout: float = PUBLIC_HOST_DETECT_TIMEOUT) -> str:
                 break
     except Exception:
         pass
-    pool.shutdown(wait=False)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return result
 
 
-def is_service_active(service: str = XUI_SERVICE) -> bool:
+def is_service_active(service: str = XUI_SERVICE, *, timeout: float = SERVICE_RESTART_TIMEOUT) -> bool:
     try:
-        result = subprocess.run(
-            [SYSTEMCTL_COMMAND, "is-active", service],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
-        return result.stdout.strip() == "active"
-    except Exception:
+        from core.process import capture
+        result = capture([SYSTEMCTL_COMMAND, "is-active", service], timeout=timeout)
+        return result.returncode == 0 and result.stdout.strip() == "active"
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -165,33 +153,70 @@ def is_port_listening(port: int) -> bool:
             check=False,
             timeout=HTTP_TIMEOUT_SECONDS,
         )
-        return f":{port}" in result.stdout
+        return result.returncode == 0 and any(
+            len(fields := line.split()) >= 4 and fields[3].rsplit(":", 1)[-1] == str(port)
+            for line in result.stdout.splitlines()
+        )
     except Exception:
         return False
 
 
-def detect_xui_version() -> str | None:
-    if is_service_active() or command_exists(XUI_COMMAND):
+def installation_listeners_ready(panel_port: int, vless_port: int) -> bool:
+    """An unrelated listener must not make a failed Xray start look healthy."""
+    import psutil
+    panel_exe = Path(XUI_BINARY_COMMAND).resolve()
+    xray_dir = panel_exe.parent / "bin"
+    matched = set()
+    owners = {}
+    try:
+        connections = psutil.net_connections(kind="tcp")
+    except (psutil.Error, OSError):
+        return False
+    for connection in connections:
+        if connection.status != psutil.CONN_LISTEN or not connection.laddr or connection.pid is None:
+            continue
+        port = connection.laddr.port
+        if port not in (panel_port, vless_port):
+            continue
+        if connection.pid not in owners:
+            try:
+                owners[connection.pid] = Path(psutil.Process(connection.pid).exe()).resolve()
+            except (psutil.Error, OSError):
+                owners[connection.pid] = None
+        executable = owners[connection.pid]
+        if executable is None:
+            continue
+        if port == panel_port and executable == panel_exe:
+            matched.add(port)
+        elif port == vless_port and executable.parent == xray_dir and executable.name.startswith("xray"):
+            matched.add(port)
+    return panel_port != vless_port and len(matched) == 2
+
+
+def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = False) -> str | None:
+    from core.deadline import Deadline
+    budget = Deadline(timeout, "XUI version")
+    if is_service_active(timeout=budget.remaining()) or command_exists(XUI_COMMAND):
         try:
-            result = subprocess.run(
-                [XUI_BINARY_COMMAND, "-v"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
+            from core.process import capture
+            result = capture([XUI_BINARY_COMMAND, "-v"], timeout=budget.remaining())
+            budget.remaining()
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
                 match = re.search(r"v?\d+\.\d+(?:\.\d+)?", output)
                 if match:
                     return match.group(0)
-        except Exception:
+        except (TimeoutError, subprocess.TimeoutExpired):
+            raise
+        except OSError:
             pass
-        return XUI_INSTALLED_VERSION
+        return None if strict else XUI_INSTALLED_VERSION
     return None
 
 
-def install_xui_script() -> None:
+def install_xui_script(*, checkpoint=None) -> None:
+    from core.process import stream
+
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as script:
         script_path = Path(script.name)
     try:
@@ -202,17 +227,22 @@ def install_xui_script() -> None:
         script_path.write_bytes(content)
         script_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         # env 前缀确保 DEBIAN_FRONTEND 透传（sudo 默认会清理环境变量）。
-        run_as_root(
-            ["env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
-             BASH_COMMAND, str(script_path)],
-            input=XUI_INSTALL_SCRIPT_INPUT,
-            text=True,
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=INSTALL_SCRIPT_TIMEOUT,
-        )
+        command = root_command([
+            "env", f"{DEBIAN_FRONTEND_ENV}={DEBIAN_FRONTEND_NONINTERACTIVE}",
+            BASH_COMMAND, str(script_path),
+        ])
+        output = stream(command, stdin_data=XUI_INSTALL_SCRIPT_INPUT.encode(),
+                        timeout=INSTALL_SCRIPT_TIMEOUT, checkpoint=checkpoint)
+        try:
+            while True:
+                next(output)
+        except StopIteration as done:
+            if done.value:
+                raise InstallError(t("xui.error.install_script_exit", code=done.value)) from None
+        except subprocess.TimeoutExpired:
+            raise InstallError(t("xui.error.install_script_timeout", seconds=INSTALL_SCRIPT_TIMEOUT)) from None
+        finally:
+            output.close()
     finally:
         script_path.unlink(missing_ok=True)
 
@@ -236,11 +266,23 @@ def generate_reality_keypair() -> tuple[str, str]:
             lower = line.lower()
             if "private" in lower:
                 private_key = line.split(":", 1)[-1].strip()
-            if "public" in lower:
+            if "public" in lower or lower.startswith("password:"):
                 public_key = line.split(":", 1)[-1].strip()
         if private_key and public_key:
             return private_key, public_key
     return "", ""
+
+
+def reality_public_key(private_key: str) -> str:
+    """Derive the share-link key from the authoritative existing private key."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    try:
+        raw = base64.urlsafe_b64decode(private_key + "=" * (-len(private_key) % 4))
+        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes_raw()
+    except (ValueError, TypeError):
+        raise InstallError("XUI existing Reality private key is invalid") from None
+    return base64.urlsafe_b64encode(public).decode("ascii").rstrip("=")
 
 
 def write_secret_json(path: Path, data: dict[str, object]) -> None:
@@ -268,7 +310,7 @@ def redact_state(value: object) -> object:
         redacted: dict[str, object] = {}
         for key, item in value.items():
             key_text = str(key)
-            if key_text in SENSITIVE_STATE_KEYS:
+            if key_text in SENSITIVE_STATE_KEYS or key_text in {"uuid", "link", "vless_link"}:
                 redacted[key_text] = REDACTED_VALUE
             else:
                 redacted[key_text] = redact_state(item)
@@ -318,7 +360,7 @@ def configure_panel_settings(
     return result.returncode == 0
 
 
-def get_panel_settings() -> dict[str, object]:
+def get_panel_settings(*, timeout: float = HTTP_TIMEOUT_SECONDS) -> dict[str, object]:
     """读取 x-ui 实际生效的面板设置（port / webBasePath）。
 
     3x-ui 会为面板生成随机 webBasePath；`x-ui setting -webBasePath ""`
@@ -326,15 +368,13 @@ def get_panel_settings() -> dict[str, object]:
     """
     if not command_exists(XUI_BINARY_COMMAND):
         return {}
-    result = run_as_root(
+    from core.privilege import capture_as_root
+    result = capture_as_root(
         [XUI_BINARY_COMMAND, XUI_SETTING_SUBCOMMAND, XUI_SETTING_SHOW_ARG],
-        capture_output=True,
-        text=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        timeout=HTTP_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
+    if result.returncode:
+        raise RuntimeError("XUI panel settings query failed")
     settings: dict[str, object] = {}
     for line in result.stdout.splitlines():
         if XUI_SETTING_KV_SEPARATOR not in line:
@@ -368,35 +408,10 @@ def _cookie_header(jar: http.cookiejar.CookieJar) -> str:
     return XUI_COOKIE_SEPARATOR.join(f"{cookie.name}={cookie.value}" for cookie in jar)
 
 
-def _post_json(url: str, payload: dict[str, object], cookie: str, csrf_token: str) -> bool:
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            HTTP_HEADER_CONTENT_TYPE: HTTP_CONTENT_TYPE_JSON,
-            HTTP_HEADER_COOKIE: cookie,
-            HTTP_HEADER_USER_AGENT: OPSKIT_USER_AGENT,
-            HTTP_HEADER_X_REQUESTED_WITH: HTTP_VALUE_XMLHTTPREQUEST,
-            HTTP_HEADER_X_CSRF_TOKEN: csrf_token,
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
-        text = resp.read().decode("utf-8", errors="ignore")
-        if resp.status != HTTP_STATUS_OK:
-            return False
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return True
-        return data.get("success") is True
-
-
 def login_panel(port: int, username: str, password: str, base_path: str) -> tuple[str, str]:
     base = panel_api_base(port, base_path)
     jar = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(jar))
     with opener.open(f"{base}/", timeout=HTTP_TIMEOUT_SECONDS) as resp:
         csrf_token = _extract_csrf_token(resp.read().decode("utf-8", errors="ignore"))
     if not csrf_token:
@@ -432,51 +447,6 @@ def login_panel(port: int, username: str, password: str, base_path: str) -> tupl
             if data.get("success") is True:
                 return _cookie_header(jar), csrf_token
     return "", ""
-
-
-def enable_inbound_clients(remarks: list[str]) -> None:
-    if not XUI_DATABASE_FILE.exists():
-        return
-    expiry_time = int((time.time() + CLIENT_EXPIRY_DAYS * SECONDS_PER_DAY) * 1000)
-    with sqlite3.connect(XUI_DATABASE_FILE) as conn:
-        for remark in remarks:
-            _enable_inbound_client(conn, remark, expiry_time)
-
-
-def _enable_inbound_client(conn: sqlite3.Connection, remark: str, expiry_time: int) -> None:
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("select id, settings from inbounds where remark = ?", (remark,)).fetchone()
-    if not row:
-        return
-    settings = json.loads(row["settings"])
-    for client in settings.get("clients") or []:
-        client["enable"] = True
-        client["totalGB"] = CLIENT_TOTAL_GB
-        client["expiryTime"] = expiry_time
-    conn.execute("update inbounds set settings = ? where id = ?", (json.dumps(settings, ensure_ascii=False), row["id"]))
-    conn.execute(
-        "update clients set enable = 1, total_gb = ?, expiry_time = ? where email = ?",
-        (CLIENT_TOTAL_GB, expiry_time, remark),
-    )
-    conn.execute(
-        "update client_traffics set enable = 1, total = ?, expiry_time = ? where inbound_id = ? and email = ?",
-        (CLIENT_TOTAL_GB, expiry_time, row["id"], remark),
-    )
-
-
-def add_inbound(port: int, username: str, password: str, base_path: str, payload: dict[str, object]) -> bool:
-    for attempt in range(PANEL_API_RETRY_COUNT):
-        try:
-            cookie, csrf_token = login_panel(port, username, password, base_path)
-            if cookie and csrf_token:
-                base = panel_api_base(port, base_path)
-                if _post_json(f"{base}{XUI_API_ADD_INBOUND_PATH}", payload, cookie, csrf_token):
-                    return True
-        except Exception:
-            pass
-        if attempt < PANEL_API_RETRY_COUNT - 1:
-            time.sleep(PANEL_API_RETRY_DELAY_SECONDS)
-    return False
 
 
 def systemd_available() -> bool:
@@ -528,7 +498,7 @@ def enable_service(service: str = XUI_SERVICE) -> None:
         return
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
@@ -553,30 +523,25 @@ def install_traffic_timer() -> None:
     write_root_file(TRAFFIC_TIMER_UNIT_FILE, TRAFFIC_TIMER_UNIT_CONTENT, "0644")
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
         [SYSTEMCTL_COMMAND, SYSTEMCTL_ENABLE_ARG, SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def uninstall_traffic_timer() -> None:
-    """停用并移除流量快照定时器、历史库；无 systemd 时仅清理文件。"""
-    if systemd_available():
-        run_as_root(
-            [SYSTEMCTL_COMMAND, "disable", SYSTEMCTL_ENABLE_NOW_ARG, TRAFFIC_TIMER_UNIT],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
-    run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE),
-                 str(XUI_TRAFFIC_HISTORY_FILE)], check=False, capture_output=True)
+    """停用并移除定时器单元，保留历史库；无 systemd 时仅清理单元文件。"""
+    stop_and_disable_service(TRAFFIC_TIMER_UNIT)
+    run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE)],
+                check=True, capture_output=True, timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
             [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=SERVICE_RESTART_TIMEOUT,
         )
 
@@ -584,26 +549,38 @@ def uninstall_traffic_timer() -> None:
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
     if not systemd_available():
         return
+    result = run_as_root(
+        [SYSTEMCTL_COMMAND, "show", "--property=LoadState", "--value", service],
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=SERVICE_RESTART_TIMEOUT,
+    )
+    state = result.stdout.strip()
+    if state == "not-found":
+        return
+    if state not in {"loaded", "masked"}:
+        raise RuntimeError("XUI service state unconfirmed; uninstall stopped")
     run_as_root(
         [SYSTEMCTL_COMMAND, "stop", service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
         [SYSTEMCTL_COMMAND, "disable", service],
-        check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
 
 
 def remove_xui_artifacts() -> None:
     for path in XUI_ARTIFACT_DIRS:
-        run_as_root(["rm", "-rf", str(path)], check=False, capture_output=True)
+        run_as_root(["rm", "-rf", str(path)], check=True, capture_output=True,
+                    timeout=SERVICE_RESTART_TIMEOUT)
     for path in XUI_ARTIFACT_FILES:
-        run_as_root(["rm", "-f", str(path)], check=False, capture_output=True)
+        run_as_root(["rm", "-f", str(path)], check=True, capture_output=True,
+                    timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
             [SYSTEMCTL_COMMAND, "daemon-reload"],
-            check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=SERVICE_RESTART_TIMEOUT,
         )

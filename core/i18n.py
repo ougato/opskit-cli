@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,15 @@ def _load_lang(lang: str) -> dict[str, Any]:
     path = _get_locale_dir() / f"{lang}.yaml"
     if not path.exists():
         path = _get_locale_dir() / "en.yaml"
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    metadata = path.stat()
+    return _cached_lang(path, metadata.st_mtime_ns, metadata.st_size)
+
+
+@lru_cache(maxsize=8)
+def _cached_lang(path: Path, modified_ns: int, size: int) -> dict[str, Any]:
+    """Bound immutable bundled catalogues; file changes invalidate their key."""
+    with path.open("r", encoding="utf-8") as source:
+        return yaml.load(source, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
 
 
 def _detect_system_lang() -> str:
@@ -40,7 +48,7 @@ def _detect_system_lang() -> str:
     检测系统语言，返回 'zh' 或 'en'。
 
     优先级：
-    1. Linux: LANG / LC_ALL 环境变量
+    1. Linux/macOS: 首个非空环境变量 LC_ALL / LC_MESSAGES / LANG / LANGUAGE
     2. Windows: ctypes.windll.kernel32.GetUserDefaultUILanguage()
     3. macOS: defaults read -g AppleLanguages（子进程）
     4. 兜底 → 'en'
@@ -50,10 +58,10 @@ def _detect_system_lang() -> str:
     platform = sys.platform
 
     if platform in ("linux", "linux2", "darwin"):
-        for var in ("LANG", "LC_ALL", "LC_MESSAGES", "LANGUAGE"):
-            val = os.environ.get(var, "")
-            if val.startswith("zh"):
-                return "zh"
+        for var in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+            val = os.environ.get(var, "").strip()
+            if val:
+                return "zh" if val.lower().startswith("zh") else "en"
         if platform == "darwin":
             try:
                 import subprocess
@@ -92,7 +100,7 @@ def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
-def init() -> None:
+def init(*, language: str | None = None) -> None:
     """
     语言决策优先级（从高到低）：
 
@@ -104,9 +112,16 @@ def init() -> None:
     """
     global _current, _lang
 
-    from core.config import load_config
-    cfg = load_config()
-    lang_cfg = cfg.get("language", "auto")
+    # Isolated workers inherit the host's resolved language without reading or
+    # modifying the host configuration. Ordinary startup keeps existing behavior.
+    if language is not None:
+        if language not in ("zh", "en"):
+            raise ValueError("unsupported explicit language")
+        lang_cfg = language
+    else:
+        from core.config import load_config
+        cfg = load_config()
+        lang_cfg = cfg.get("language", "auto")
 
     if lang_cfg in ("zh", "en"):
         _lang = lang_cfg

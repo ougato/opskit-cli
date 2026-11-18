@@ -36,6 +36,13 @@ class JavaRecipe(VersionedTarballRecipe):
     _tmpdir_prefix: ClassVar[str] = "opskit-java-"
     _dir_prefix: ClassVar[str] = "jdk"
     _tarball_stem: ClassVar[str] = "jdk-{version}"
+    _version_args: ClassVar[tuple[str, ...]] = ("-version",)
+
+    def _activation_version(self, version: str) -> str:
+        if version.startswith("8.0."):
+            patch, _, build = version[len("8.0."):].partition("+")
+            return "1.8.0_" + patch + ("-b" + build.zfill(2) if build else "")
+        return version
 
     def _get_driver(self):
         return get_driver()

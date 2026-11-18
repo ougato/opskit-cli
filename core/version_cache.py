@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("opskit.version_cache")
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
@@ -72,21 +72,17 @@ def _ensure_loaded() -> None:
 # ─── 对外接口 ─────────────────────────────────────────────────────────────────
 
 def get_cached_versions(recipe_key: str) -> list[str] | None:
-    """获取「本会话已刷新」的缓存版本列表，否则返回 None。
-
-    会话级新鲜策略（替代旧的 1h/24h 时间过期）：
-    - 本会话已成功刷新过该 recipe（前台或后台任一）→ 返回缓存，install /
-      upgrade 复用同一份，保证一致且不重复联网。
-    - 本会话尚未刷新 → 返回 None，由 ``resolve_versions`` 触发一次前台联网获取
-      （成功后即标记 session_refreshed，后续不再拉）。
-    """
+    """复用本会话刷新结果或一小时内的磁盘缓存，否则返回 None。"""
     _ensure_loaded()
-
-    if recipe_key not in _session_refreshed:
-        return None
 
     entry = _cache.get(recipe_key)
     if entry is None:
+        return None
+
+    from core.constants import VERSION_CACHE_TTL
+    if recipe_key not in _session_refreshed and not (
+        0 <= time.time() - entry.get("timestamp", 0) < VERSION_CACHE_TTL
+    ):
         return None
 
     versions = entry.get("versions", [])
@@ -232,13 +228,18 @@ def refresh_all_background() -> None:
     _ensure_loaded()
 
     from software.registry import all_recipes
+    from core.platform import get_platform
     recipes = all_recipes()
+    os_type = get_platform().os_type
 
     for cls in recipes:
         try:
             recipe_key = cls.key
-            # 本会话已刷新过（如前台 install/upgrade 抢先拉过）则跳过，避免重复联网。
-            if recipe_key in _session_refreshed:
+            platforms = getattr(cls, "platforms", [])
+            if platforms and os_type not in platforms:
+                continue
+            # 复用本会话结果和新鲜磁盘缓存，避免每次启动都联网。
+            if get_cached_versions(recipe_key):
                 continue
 
             instance = cls()

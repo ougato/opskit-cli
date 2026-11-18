@@ -284,15 +284,16 @@ class TestVersionCache:
             result = vc.get_cached_versions("nginx")
         assert result == ["1.27", "1.26"]
 
-    def test_not_session_refreshed_returns_none(self, tmp_path):
+    @pytest.mark.parametrize("age,expected", [(0, ["1.27"]), (100000, None)])
+    def test_non_session_cache_respects_ttl(self, tmp_path, age, expected):
         from core import version_cache as vc
         self._reset()
         with patch.object(vc, "_get_cache_path", return_value=tmp_path / "vc.yaml"):
             vc._ensure_loaded()
-            # 有缓存且刚写入，但本会话未刷新 → 返回 None，触发一次前台联网
-            vc._cache["nginx"] = {"versions": ["1.27"], "timestamp": time.time()}
+            # 本会话未刷新时，只复用 TTL 内的磁盘缓存。
+            vc._cache["nginx"] = {"versions": ["1.27"], "timestamp": time.time() - age}
             result = vc.get_cached_versions("nginx")
-        assert result is None
+        assert result == expected
 
     def test_cache_stale_fallback(self, tmp_path):
         from core import version_cache as vc
@@ -452,15 +453,26 @@ class TestUpdaterImprovements:
         from core.updater import _verify_binary
         p = tmp_path / "valid.exe"
         p.write_bytes(b"MZ" + b"\x00" * (1024 * 200))
-        if sys.platform == "win32":
-            assert _verify_binary(p) is True
+        assert _verify_binary(p) is (sys.platform == "win32")
 
     def test_verify_binary_valid_elf(self, tmp_path):
         from core.updater import _verify_binary
         p = tmp_path / "valid"
         p.write_bytes(b"\x7fELF" + b"\x00" * (1024 * 200))
-        if sys.platform != "win32":
-            assert _verify_binary(p) is True
+        assert _verify_binary(p) is (sys.platform not in ("win32", "darwin"))
+
+    @pytest.mark.parametrize("header", [
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
+    ], ids=["mach32-be", "mach32-le", "mach64-be", "mach64-le",
+            "fat32-be", "fat32-le", "fat64-be", "fat64-le"])
+    def test_verify_binary_macos_headers(self, tmp_path, header):
+        from core.updater import _verify_binary
+        path = tmp_path / "candidate"
+        path.write_bytes(header + b"\0" * (1024 * 200))
+        assert _verify_binary(path) is (sys.platform == "darwin")
 
     def test_check_and_apply_pending_no_file(self):
         from core.updater import check_and_apply_pending
@@ -476,14 +488,14 @@ class TestUpdaterImprovements:
                 mock_path.return_value = MagicMock()
                 mock_path.return_value.exists.return_value = False
                 mock_path.return_value.unlink = MagicMock()
-                result = check_and_apply_pending()
+                result = check_and_apply_pending(post_update=True)
             assert result is False
         finally:
             sys.argv = original_argv
 
-    def test_windows_update_script_uses_powershell(self, tmp_path):
+    def test_windows_update_script_uses_powershell(self, tmp_path, monkeypatch):
         from core.updater import _apply_windows
-        import os
+        monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
         pending = tmp_path / "opskit.pending"
         pending.write_bytes(b"MZ" + b"\x00" * 100)
         self_path = tmp_path / "opskit.exe"
@@ -491,13 +503,14 @@ class TestUpdaterImprovements:
 
         with patch("subprocess.Popen"):
             _apply_windows(pending, self_path, 2)
-        ps_path = tmp_path / "opskit_update.ps1"
-        assert ps_path.exists()
+        jobs = list((tmp_path / "cache" / "update-jobs").glob("*/apply.ps1"))
+        assert len(jobs) == 1
+        ps_path = jobs[0]
         content = ps_path.read_text(encoding="utf-8")
-        assert "Rename-Item" in content, "新策略应使用 Rename-Item（Rename-Then-Copy）"
-        assert "Wait-Process" in content, "新策略应包含 Wait-Process 等待父进程退出"
+        assert "MoveFileEx($stage, $target, 9)" in content
+        assert "WaitForExit" in content
         assert f"$pid_to_wait = {os.getpid()}" in content, "应注入当前 PID"
-        assert "Copy-Item" in content, "应包含 Copy-Item 作为跨驱动器降级兜底"
+        assert "Copy-Item" not in content and "Rename-Item" not in content
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -697,9 +710,9 @@ class TestHealthRollback:
         with self._patch_health(hpath), patch("core.updater.rollback", return_value=True) as rb:
             assert _check_health() is True
             rb.assert_called_once()
-        assert not hpath.exists()
+        assert hpath.exists(), "Rollback must retain its health/backup recovery evidence"
 
-    def test_stale_build_cleared(self, tmp_path):
+    def test_other_build_health_retained(self, tmp_path):
         from core.updater import _check_health
         from core.constants import APP_VERSION
         hpath = tmp_path / "update_health.json"
@@ -708,7 +721,7 @@ class TestHealthRollback:
         with self._patch_health(hpath), patch("core.updater.rollback") as rb:
             assert _check_health() is False
             rb.assert_not_called()
-        assert not hpath.exists()
+        assert hpath.exists(), "A different runtime cannot delete another build's health"
 
     def test_confirm_health_sets_flag(self, tmp_path):
         from core.updater import confirm_health, mark_update_applied

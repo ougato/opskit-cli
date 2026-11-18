@@ -6,12 +6,120 @@ import os
 import signal
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
+import time
 from typing import Any, Callable, Iterator
 
 from rich.console import Console
+from rich.cells import cell_len
 from rich.text import Text
 
 console = Console()
+
+_input_guard = ContextVar("prompt_input_guard", default=None)
+_input_wait_scope = ContextVar("prompt_input_wait_scope", default=None)
+
+
+@contextmanager
+def input_wait_scope(factory) -> Iterator[None]:
+    """Install the supervisor's budget scope for actual terminal waits."""
+    token = _input_wait_scope.set(factory)
+    try:
+        yield
+    finally:
+        _input_wait_scope.reset(token)
+
+
+@contextmanager
+def _waiting_for_input() -> Iterator[None]:
+    factory = _input_wait_scope.get()
+    if factory is None or _input_guard.get() is None:
+        yield
+    else:
+        with factory():
+            yield
+
+
+@contextmanager
+def guard_input(check: Callable[[], None]) -> Iterator[None]:
+    """Scope deadline/authorization checks to a host-mediated UI call."""
+    token = _input_guard.set(check)
+    try:
+        yield
+    finally:
+        _input_guard.reset(token)
+
+
+def _check_input() -> None:
+    check = _input_guard.get()
+    if check is not None:
+        check()
+        if not _stdin_is_tty():
+            raise PermissionError("sandbox UI requires terminal input")
+
+
+def _getwch() -> str:
+    from core.windows_console_input import read_control_keys
+
+    with read_control_keys():
+        return _read_windows_key()
+
+
+def _read_windows_key() -> str:
+    import msvcrt
+    from core.cleanup import (_begin_console_input, _console_interrupt_pending,
+                              _end_console_input)
+
+    active = _begin_console_input()
+    interrupted = False
+    try:
+        if active:
+            # Poll instead of injecting a synthetic key, which could remain in
+            # the console queue if a real key wins the race with Ctrl+C.
+            with _waiting_for_input():
+                while not _console_interrupt_pending():
+                    if _input_guard.get() is not None:
+                        from core.windows_console_input import key_available
+                        _check_input()
+                        if msvcrt.kbhit() or key_available():
+                            break
+                    elif msvcrt.kbhit():
+                        break
+                    time.sleep(0.05)
+            value = "\x03" if _console_interrupt_pending() else msvcrt.getwch()
+        elif _input_guard.get() is not None:
+            from core.windows_console_input import key_available
+            with _waiting_for_input():
+                while True:
+                    _check_input()
+                    if msvcrt.kbhit() or key_available():
+                        break
+                    time.sleep(0.05)
+            value = msvcrt.getwch()
+        else:
+            value = msvcrt.getwch()
+    finally:
+        if active:
+            interrupted = _end_console_input()
+    if interrupted:
+        value = "\x03"
+    if _input_guard.get() is not None and value in ("\x03", "\x04"):
+        raise KeyboardInterrupt
+    return value
+
+
+def _read_fd(fd: int, count: int) -> bytes:
+    if _input_guard.get() is not None:
+        import select as _select
+        with _waiting_for_input():
+            while True:
+                _check_input()
+                if _select.select([fd], [], [], 0.05)[0]:
+                    break
+    value = os.read(fd, count)
+    if _input_guard.get() is not None and value in (b"\x03", b"\x04"):
+        raise KeyboardInterrupt
+    return value
 
 
 # ─── 非交互模式全局标志 ─────────────────────────────────────────────────────
@@ -133,37 +241,6 @@ _CATPPUCCIN_MOCHA = {
     'pipe': '#6c7086',
 }
 
-_TOKYO_NIGHT = {
-    'name': 'Tokyo Night',
-    'header': [
-        Seg('bold #1a1b26', '#ff9e64'),
-        Seg('bold #1a1b26', '#9ece6a'),
-        Seg('bold #1a1b26', '#7aa2f7'),
-        Seg('bold #1a1b26', '#bb9af7'),
-    ],
-    'input': Seg('bold #1a1b26', '#e0af68'),
-    'pipe': '#565f89',
-}
-
-_DRACULA = {
-    'name': 'Dracula',
-    'header': [
-        Seg('bold #282a36', '#ffb86c'),
-        Seg('bold #282a36', '#50fa7b'),
-        Seg('bold #282a36', '#8be9fd'),
-        Seg('bold #282a36', '#ff79c6'),
-    ],
-    'input': Seg('bold #282a36', '#bd93f9'),
-    'pipe': '#6272a4',
-}
-
-_SCHEME_MAP = {
-    'catppuccin': _CATPPUCCIN_MOCHA,
-    'catppuccin_mocha': _CATPPUCCIN_MOCHA,
-    'tokyo_night': _TOKYO_NIGHT,
-    'dracula': _DRACULA,
-}
-
 _ACTIVE_SCHEME = _CATPPUCCIN_MOCHA
 _PALETTE: list[Seg] = _ACTIVE_SCHEME['header']
 _INPUT_SEG: Seg = _ACTIVE_SCHEME['input']
@@ -178,17 +255,6 @@ def _rebuild_ansi() -> str:
 _PIPE_COLOR_ANSI: str = _rebuild_ansi()
 
 
-def switch_scheme(name: str) -> None:
-    """按名称切换 Powerline 配色方案（供 theme 切换时调用）"""
-    global _ACTIVE_SCHEME, _PALETTE, _INPUT_SEG, _PIPE_COLOR, _PIPE_COLOR_ANSI
-    scheme = _SCHEME_MAP.get(name.lower().replace(' ', '_'), _CATPPUCCIN_MOCHA)
-    _ACTIVE_SCHEME = scheme
-    _PALETTE = scheme['header']
-    _INPUT_SEG = scheme['input']
-    _PIPE_COLOR = scheme['pipe']
-    _PIPE_COLOR_ANSI = _rebuild_ansi()
-
-
 # ─── 按键读取 ─────────────────────────────────────────────────────────────────
 
 def _stdin_is_tty() -> bool:
@@ -201,9 +267,14 @@ def _stdin_is_tty() -> bool:
 
 def _read_key() -> str:
     """读取单个按键（无需回车），跨平台"""
+    _check_input()
+    if not _stdin_is_tty():
+        try:
+            return sys.stdin.read(1)
+        except (OSError, EOFError):
+            return ""
     if os.name == 'nt':
-        import msvcrt
-        return msvcrt.getwch()
+        return _getwch()
     else:
         import tty
         import termios
@@ -220,7 +291,7 @@ def _read_key() -> str:
             tty.setraw(fd)
             # 直接读 fd：sys.stdin 是带缓冲的 TextIOWrapper，会把后续字节
             # （如方向键序列的 '[A'）预读进自己的缓冲区，导致 select 探不到
-            data = os.read(fd, 1)
+            data = _read_fd(fd, 1)
             ch = data.decode(errors='ignore')
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -244,10 +315,11 @@ def _drain_input() -> None:
     残留字节会留在缓冲区里，污染随后的"按任意键"等待，导致返回需要多按
     一次。这里在等待前先丢弃残留输入，保证只消费一次用户主动按键。
     """
+    _check_input()
     if os.name == 'nt':
         import msvcrt
         while msvcrt.kbhit():
-            msvcrt.getwch()
+            _getwch()
     else:
         import select as _select
         import termios
@@ -259,10 +331,12 @@ def _drain_input() -> None:
         try:
             tty.setraw(fd)
             while _select.select([sys.stdin], [], [], 0)[0]:
-                if not sys.stdin.read(1):
+                _check_input()
+                if not (_read_fd(fd, 1) if _input_guard.get() is not None else sys.stdin.read(1)):
                     break
         except Exception:
-            pass
+            if _input_guard.get() is not None:
+                raise
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, old)
 
@@ -270,7 +344,8 @@ def _drain_input() -> None:
 # ─── 渲染原语 ─────────────────────────────────────────────────────────────────
 
 def _seg_text(text: str, s: Seg) -> Text:
-    t = Text(f' {text} ')
+    label = text.strip().rstrip('。．.').rstrip()
+    t = Text(f' {label} ')
     t.stylize(s.style())
     return t
 
@@ -329,37 +404,30 @@ def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
     sys.stdout.flush()
 
 
+def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
+    """Render the common information rows used by interactive menus."""
+    for line in lines or []:
+        for part in line.splitlines() or ['']:
+            row = Text()
+            row.append(f' {_TEE} ', style=_PIPE_COLOR)
+            row.append_text(Text.from_markup(part) if markup else Text(part))
+            # Let the terminal wrap long paths naturally without moving the
+            # whole resource onto a new line after the row prefix.
+            console.print(row, soft_wrap=True)
+
+
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
 def clear_screen() -> None:
     """清除终端屏幕（跨平台）"""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    from core.cli import non_interactive
+    if not non_interactive.get():
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def print_header(breadcrumb: list[str]) -> None:
     """在清屏后渲染 Powerline 分段色块面包屑标题（复用 select 菜单的通用标题样式）"""
     _render_header(breadcrumb)
-
-
-def render_banner(title: str, subtitle: str) -> None:
-    """渲染 Powerline 风格渐变色 Banner（仅在主菜单调用一次）"""
-    from core.theme import get_banner_config
-    cfg = get_banner_config()
-    gradient: list[str] = cfg.get('gradient', [])
-
-    if gradient and title:
-        colored = Text()
-        for i, ch in enumerate(title):
-            color = gradient[i % len(gradient)]
-            colored.append(ch, style=f'bold {color}')
-        title_text = colored
-    else:
-        title_text = Text(title, style='bold bright_white')
-
-    sub_text = Text(f'  {subtitle}  ', style='dim white', justify='center')
-    console.print()
-    console.print(title_text, justify='left')
-    console.print(sub_text, justify='left')
 
 
 def select(
@@ -370,20 +438,31 @@ def select(
     show_shortcuts: list[tuple[str, str, str]] | None = None,
     back_label: str = '',
     on_ready=None,
+    description: str = '',
+    info_lines: list[str] | None = None,
 ) -> str | None:
     """
     Powerline 风格选择菜单（单键无回车）。
 
     choices 格式：[{"key": "1", "label": "📦 软件管理"}]
     show_shortcuts 格式：[("t", "🎨 切换主题", "theme"), ...]
+    info_lines：标题和选项之间逐行显示的信息。
     on_ready：菜单完全渲染、即将开始等待按键前回调一次（用于在首屏渲染
               完成后再启动联网/重型后台任务，保证"进菜单"接近瞬时）。
 
-    返回选中的 key 字符串；用户按 0 返回 None；Ctrl+C 抛 UserCancel。
+    连续数字选项超过 9 项时自动分页，并返回原始选项的 key。
+    返回选中的 key 字符串；用户按 0 返回 None；Esc 抛 UserCancel。
     """
+    from core.cli import require_interaction
+    require_interaction()
+    numbered = [c for c in choices if c['key'] != '0']
+    if len(numbered) > 9 and [c['key'] for c in numbered] == [str(i + 1) for i in range(len(numbered))]:
+        return _select_numbered_pages(breadcrumb, subtitle, numbered, theme_key, show_shortcuts,
+                                      back_label, on_ready, description, info_lines)
     os.system('cls' if os.name == 'nt' else 'clear')
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
+    _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
 
     numeric_items: list[tuple[str, str]] = [
         (c['key'], c['label']) for c in choices if c['key'] != '0'
@@ -404,8 +483,16 @@ def select(
     if on_ready is not None:
         try:
             on_ready()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Callback errors may contain secrets; keep the menu usable and
+            # log only the exception type, even if the log destination fails.
+            try:
+                import logging
+                logging.getLogger("opskit.startup").warning(
+                    "menu ready callback failed: error=%s", type(exc).__name__
+                )
+            except Exception:
+                pass
 
     while True:
         ch = _read_key_seq()
@@ -430,6 +517,53 @@ def select(
             return ch
 
 
+def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortcuts,
+                           back_label, on_ready, description, info_lines):
+    """Page standard numbered menus while preserving the caller's original keys."""
+    from core.i18n import t
+    from core.theme import get_icon
+
+    shortcuts = {key for key, _, _ in show_shortcuts or []}
+    available = (key for key in dict.fromkeys('pn<>[]abcdefghijklmnopqrstuvwxyz') if key not in shortcuts)
+    previous, following = next(available), next(available)
+    total_pages = (len(choices) + 8) // 9
+    page = 0
+    while True:
+        start = page * 9
+        page_items = choices[start:start + 9]
+        visible = [{**item, 'key': str(i + 1)} for i, item in enumerate(page_items)]
+        if page:
+            visible.append({'key': previous, 'label': f"{get_icon('back')} {t('prompt.prev_page')}"})
+        if page + 1 < total_pages:
+            visible.append({'key': following, 'label': f"{get_icon('next_page')} {t('prompt.next_page')}"})
+        key = select(breadcrumb, f'{subtitle} ({page + 1}/{total_pages})', visible, theme_key,
+                     show_shortcuts, back_label, on_ready, description, info_lines)
+        on_ready = None
+        if key is None:
+            return None
+        if key == previous and page:
+            page -= 1
+        elif key == following and page + 1 < total_pages:
+            page += 1
+        elif key.isdecimal() and 1 <= int(key) <= len(page_items):
+            return page_items[int(key) - 1]['key']
+        else:
+            return key
+
+
+def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict[str, Any]],
+                 back_label: str = '', description: str = '', default: str = '',
+                 info_lines: list[str] | None = None) -> str:
+    """Display the standard numbered menu and accept a full line of input."""
+    from core.cli import require_interaction
+    require_interaction()
+    os.system('cls' if os.name == 'nt' else 'clear')
+    _render_header([*breadcrumb, subtitle] if subtitle else breadcrumb)
+    _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
+    _render_options([(c['key'], c['label']) for c in choices if c['key'] != '0'], back_label=back_label)
+    return _read_line() or default
+
+
 def paged_select(
     *,
     breadcrumb: list[str],
@@ -441,6 +575,7 @@ def paged_select(
     theme_key: str = 'root',
     page_size: int = 9,
     on_select: Callable[[Any], None] | None = None,
+    initial_page: int = 0,
 ) -> Any | None:
     """分页单选 — 统一「列表分页 + p/n 翻页 + 选中」交互。
 
@@ -455,26 +590,39 @@ def paged_select(
             ``prompt.next_page`` 通用文案。
         on_select: 为 None → 选中即返回该 item（pick 模式）；否则对选中 item
             调用此回调并继续停留在列表（browse 模式，翻页状态保持）。
+        initial_page: 初始页的零起始下标；只定位页面，不自动选择。
 
     Returns:
         pick 模式返回选中 item；browse 模式或用户取消/返回时返回 None。
     """
-    if nav_labels is None:
-        from core.i18n import t
-        nav_labels = (t('prompt.prev_page'), t('prompt.next_page'))
-    prev_label, next_label = nav_labels
+    if type(page_size) is not int or not 1 <= page_size <= 9:
+        raise ValueError('page_size must be an integer between 1 and 9')
     total = len(items)
     total_pages = (total + page_size - 1) // page_size
-    page = 0
+    if type(initial_page) is not int or not 0 <= initial_page < max(total_pages, 1):
+        raise ValueError('initial_page must identify an existing page')
+    if nav_labels is None:
+        from core.i18n import t
+        from core.theme import get_icon
+        nav_labels = (f"{get_icon('back')} {t('prompt.prev_page')}",
+                      f"{get_icon('next_page')} {t('prompt.next_page')}")
+    prev_label, next_label = nav_labels
+    page = initial_page
 
     while True:
         start = page * page_size
         page_items = items[start:min(start + page_size, total)]
 
         choices: list[dict[str, Any]] = []
+        items_by_key: dict[str, Any] = {}
         for i, item in enumerate(page_items):
-            ch = choice_of(item, i)
+            ch = dict(choice_of(item, i))
             ch.setdefault('key', str(i + 1))
+            key = ch['key']
+            if (not isinstance(key, str) or len(key) != 1 or key in {'0', 'p', 'n'}
+                    or key in items_by_key):
+                raise ValueError('page choice keys must be unique single characters other than 0, p, or n')
+            items_by_key[key] = item
             choices.append(ch)
         if page > 0:
             choices.append({'key': 'p', 'label': prev_label})
@@ -500,7 +648,9 @@ def paged_select(
             page -= 1
             continue
 
-        selected = page_items[int(key) - 1]
+        if key not in items_by_key:
+            continue
+        selected = items_by_key[key]
         if on_select is None:
             return selected
         on_select(selected)
@@ -512,19 +662,19 @@ def _read_key_seq() -> str:
     Unix：ESC 后 50ms 内跟随 '[' 视为 ANSI 序列（方向键），否则视为 ESC。
     Windows：msvcrt 前缀 '\\x00' / '\\xe0' 后跟 'H'（上）/ 'P'（下）。
     """
+    _check_input()
+    if not _stdin_is_tty():
+        return _read_key()
     if os.name == 'nt':
-        import msvcrt
-        ch = msvcrt.getwch()
+        ch = _getwch()
         if ch in ('\x00', '\xe0'):
-            ch2 = msvcrt.getwch()
+            ch2 = _getwch()
             if ch2 == 'H':
                 return 'UP'
             if ch2 == 'P':
                 return 'DOWN'
             return ''
         return ch
-    if not _stdin_is_tty():
-        return _read_key()
     import select as _sel
     import termios
     import tty
@@ -534,18 +684,18 @@ def _read_key_seq() -> str:
         # 整个转义序列必须在同一个 raw 窗口内读完：恢复 canonical 模式后
         # 缓冲区里的后续字节（如 '[A'）没有换行不会被 select 报告可读
         tty.setraw(fd)
-        ch = os.read(fd, 1).decode(errors='ignore')
+        ch = _read_fd(fd, 1).decode(errors='ignore')
         if ch != '\x1b':
             return ch
         if not _sel.select([fd], [], [], 0.05)[0]:
             return ch
-        seq = os.read(fd, 1).decode(errors='ignore')
+        seq = _read_fd(fd, 1).decode(errors='ignore')
         if seq not in ('[', 'O'):  # 'O' = application mode 方向键（ESC O A 等）
             return ch
-        code = os.read(fd, 1).decode(errors='ignore')
+        code = _read_fd(fd, 1).decode(errors='ignore')
         # 吞掉序列剩余字节（如 Home/End/Delete 的 '~'）
         while _sel.select([fd], [], [], 0)[0]:
-            if not os.read(fd, 1):
+            if not _read_fd(fd, 1):
                 break
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -573,10 +723,10 @@ def multi_select(
 
     返回勾选项的下标列表（可为空）；用户按 0 返回 None；ESC 抛 UserCancel。
     """
-    if _auto_yes:
-        return []
     if not options:
         return []
+    from core.cli import require_interaction
+    require_interaction()
     cursor = 0
     checked: set[int] = set()
 
@@ -664,19 +814,21 @@ def confirm(
     prompt: str,
     theme_key: str = 'root',
     info_lines: list[str] | None = None,
+    require_explicit: bool = False,
 ) -> bool:
     """Powerline 风格确认（y/N 单键）。
 
     info_lines — 标题与选项之间的信息行（├─ 前缀，如插件概要）
     非交互模式（--yes）下直接返回 True。
     """
-    if _auto_yes:
+    from core.cli import require_interaction
+    if require_explicit or not _auto_yes:
+        require_interaction()
+    if _auto_yes and not require_explicit:
         return True
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header([*breadcrumb, prompt])
-    pipe = f'[{_PIPE_COLOR}]'
-    for line in info_lines or []:
-        console.print(f' {pipe}{_TEE}[/] {line}')
+    _render_info_lines(info_lines)
     from core.i18n import t as _t
     _render_options([('y', _t('prompt.yes')), ('n', _t('prompt.no'))], back_label=_t('menu.back'))
 
@@ -696,6 +848,17 @@ def confirm(
             raise UserExit
 
 
+def _erase_input_character(buf: list[str], secret: bool) -> None:
+    """Erase the same number of terminal cells as the echoed character."""
+    if not buf:
+        return
+    character = buf.pop()
+    width = 1 if secret else cell_len(character)
+    if width:
+        sys.stdout.write('\x08' * width + ' ' * width + '\x08' * width)
+        sys.stdout.flush()
+
+
 def _read_line(secret: bool = False) -> str:
     """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
@@ -703,14 +866,14 @@ def _read_line(secret: bool = False) -> str:
     Unix：termios raw 模式逐字符读取，行为与 Windows 对齐。
     两端均支持 ESC 抛 UserCancel、Ctrl+C 退出、退格删字符。
     """
+    _check_input()
     if os.name == 'nt':
-        import msvcrt
         buf: list[str] = []
         while True:
-            ch = msvcrt.getwch()
+            ch = _getwch()
             if ch in ('\x00', '\xe0'):
                 # 导航键（方向/Home/End/Del 等）为双字符序列：吞掉第二字符并忽略
-                msvcrt.getwch()
+                _getwch()
                 continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
@@ -720,11 +883,8 @@ def _read_line(secret: bool = False) -> str:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserExit
-            if ch == '\x08':
-                if buf:
-                    buf.pop()
-                    sys.stdout.write('\x08 \x08')
-                    sys.stdout.flush()
+            if ch in ('\x08', '\x7f'):
+                _erase_input_character(buf, secret)
                 continue
             if ch == CANCEL_KEY:
                 sys.stdout.write('\n')
@@ -746,7 +906,7 @@ def _read_line(secret: bool = False) -> str:
         def _read_char() -> str:
             # 直接读 fd（同 _read_key）：sys.stdin 缓冲会吞掉后续字节导致
             # select 探不到；首字节为多字节 UTF-8 前缀时补齐剩余字节
-            data = os.read(fd, 1)
+            data = _read_fd(fd, 1)
             if not data:
                 return ''
             first = data[0]
@@ -758,7 +918,7 @@ def _read_line(secret: bool = False) -> str:
             elif first >= 0xC0:
                 need = 1
             while need > 0 and _sel.select([fd], [], [], 0.05)[0]:
-                data += os.read(fd, 1)
+                data += _read_fd(fd, 1)
                 need -= 1
             return data.decode(errors='ignore')
 
@@ -775,10 +935,7 @@ def _read_line(secret: bool = False) -> str:
                     sys.stdout.flush()
                     raise UserExit
                 if ch in ('\x7f', '\x08'):
-                    if buf:
-                        buf.pop()
-                        sys.stdout.write('\x08 \x08')
-                        sys.stdout.flush()
+                    _erase_input_character(buf, secret)
                     continue
                 if ch == CANCEL_KEY:
                     # 与 _read_key_seq 对齐：ESC 后 50ms 内跟随 '[' / 'O' 视为
@@ -786,16 +943,16 @@ def _read_line(secret: bool = False) -> str:
                     # 按 CSI 语法读到终止字节（'@'~'~'）为止吞掉整个序列并忽略，
                     # 不多吞后续正常输入；只有单独的 ESC 才视为取消
                     if _sel.select([fd], [], [], 0.05)[0]:
-                        seq = os.read(fd, 1).decode(errors='ignore')
+                        seq = _read_fd(fd, 1).decode(errors='ignore')
                         if seq == '[':
                             while _sel.select([fd], [], [], 0.05)[0]:
-                                b = os.read(fd, 1).decode(errors='ignore')
+                                b = _read_fd(fd, 1).decode(errors='ignore')
                                 if not b or '@' <= b <= '~':
                                     break
                             continue
                         if seq == 'O':
                             if _sel.select([fd], [], [], 0.05)[0]:
-                                os.read(fd, 1)
+                                _read_fd(fd, 1)
                             continue
                         # ESC + 其他字符（如 Alt 组合键）：忽略该字符，视为取消
                     sys.stdout.write('\r\n')
@@ -835,6 +992,8 @@ def text_input(
     info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
     secret     — 敏感输入（如密码），回显 *
     """
+    from core.cli import require_interaction
+    require_interaction()
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
 
@@ -847,13 +1006,7 @@ def text_input(
     row2.append_text(_tail_text(_INPUT_SEG))
     console.print(row2)
 
-    for line in info_lines or []:
-        row = Text()
-        tee = Text(f' {_TEE} ')
-        tee.stylize(_PIPE_COLOR)
-        row.append_text(tee)
-        row.append(f' {line}')
-        console.print(row)
+    _render_info_lines(info_lines, markup=False)
 
     _hint = hint or (_mask_secret(default) if secret else default)
     hint_str = f'  ({_hint})' if _hint else ''
@@ -863,11 +1016,27 @@ def text_input(
     return raw if raw else default
 
 
+_pause_suppressed: ContextVar[bool] = ContextVar("prompt_pause_suppressed", default=False)
+
+
+@contextmanager
+def suppress_pause() -> Iterator[None]:
+    """Let an outer menu own the final pause while nested operations print results."""
+    token = _pause_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _pause_suppressed.reset(token)
+
+
 def pause(msg: str = '') -> None:
     """操作完成后等待用户按任意键（屏蔽 SIGINT 防止二次中断）。
 
     非交互模式（--yes）下直接返回，不等待按键。
     """
+    from core.cli import non_interactive
+    if _pause_suppressed.get() or non_interactive.get():
+        return
     if _auto_yes:
         return
     import signal
@@ -877,14 +1046,15 @@ def pause(msg: str = '') -> None:
 
     # Windows: 用 SetConsoleCtrlHandler 彻底屏蔽 Ctrl+C
     _handler_ref = None
-    if os.name == 'nt':
+    shield = _input_guard.get() is None
+    if shield and os.name == 'nt':
         import ctypes
         @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
         def _handler(event):
             return 1  # 吞掉所有控制台事件
         _handler_ref = _handler
         ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler_ref, True)
-    else:
+    elif shield:
         old_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
@@ -893,15 +1063,19 @@ def pause(msg: str = '') -> None:
         sys.stdout.write(f'\n\033[{_PIPE_COLOR_ANSI}m{msg}\033[0m ')
         sys.stdout.flush()
         try:
-            _read_key()
-        except (KeyboardInterrupt, EOFError, OSError):
+            if _read_key() in ('\x03', '\x04'):
+                raise UserExit
+        except KeyboardInterrupt:
+            if not shield:
+                raise
+        except (EOFError, OSError):
             pass
         console.print()
     finally:
-        if os.name == 'nt':
+        if shield and os.name == 'nt':
             import ctypes
             ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler_ref, False)
-        else:
+        elif shield:
             signal.signal(signal.SIGINT, old_handler)
 
 

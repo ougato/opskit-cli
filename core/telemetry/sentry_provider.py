@@ -9,8 +9,6 @@
 """
 from __future__ import annotations
 
-import sys
-
 from .base import TelemetryProvider
 
 
@@ -28,12 +26,27 @@ class SentryProvider(TelemetryProvider):
         try:
             import sentry_sdk
             from sentry_sdk.integrations.excepthook import ExcepthookIntegration
+            from core.secrets import before_send
+
+            def authorized_before_send(event, hint):
+                # SDK exception hooks outlive provider reconfiguration. Check
+                # current consent for every event before the transport sees it.
+                try:
+                    from . import _provider_is_authorized
+                    if not _provider_is_authorized(self):
+                        return None
+                    return before_send(event, hint)
+                except Exception:
+                    return None
+
             sentry_sdk.init(
                 dsn=self._dsn,
                 release=self._app_version,
                 default_integrations=False,
                 integrations=[ExcepthookIntegration(always_run=True)],
                 send_default_pii=False,
+                before_send=authorized_before_send,
+                include_local_variables=False,
                 traces_sample_rate=0.0,
                 server_name="",
             )

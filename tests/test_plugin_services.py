@@ -23,11 +23,15 @@ def _make_provider(root: Path, name: str = "storagey") -> Path:
     _write_manifest(plugin_dir, f"""\
         name: {name}
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: {name}_pkg
         provides:
           - storage
+        service_contracts:
+          storage:
+            api_version: 3
+            methods: [open_menu]
     """)
     pkg = plugin_dir / f"{name}_pkg"
     pkg.mkdir()
@@ -59,9 +63,7 @@ def plugins_root(tmp_path, monkeypatch):
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path / "plugins"))
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     (tmp_path / "plugins").mkdir()
-    services.invalidate_service_cache()
     yield tmp_path / "plugins"
-    services.invalidate_service_cache()
     sys.path[:] = [p for p in sys.path if not p.startswith(str(tmp_path))]
     for mod in list(sys.modules):
         if mod.endswith("_pkg"):
@@ -77,22 +79,26 @@ def test_manifest_parses_provides_and_uses(tmp_path) -> None:
     _write_manifest(plugin_dir, """\
         name: p
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: p_pkg
         provides:
           - storage
+        service_contracts:
+          storage:
+            api_version: 3
+            methods: [read]
         uses:
           - service: notify
-            source: git@example.com:x/notify.git
-          - metrics
+            provider: notifier
+            api_version: 1
+            methods: [send]
     """)
     manifest = load_manifest(plugin_dir)
     assert manifest is not None
     assert manifest.provides == ["storage"]
     assert manifest.uses == [
-        {"service": "notify", "source": "git@example.com:x/notify.git"},
-        {"service": "metrics", "source": ""},
+        {"service": "notify", "provider": "notifier", "api_version": 1, "methods": ["send"]},
     ]
 
 
@@ -101,7 +107,7 @@ def test_manifest_defaults_empty_provides_uses(tmp_path) -> None:
     _write_manifest(plugin_dir, """\
         name: p
         version: 1.0.0
-        api_version: 1
+        api_version: 4
         kind: python
         entry: p_pkg
     """)
@@ -111,36 +117,33 @@ def test_manifest_defaults_empty_provides_uses(tmp_path) -> None:
     assert manifest.uses == []
 
 
-def test_get_service_from_trusted_provider(plugins_root) -> None:
+def test_service_description_from_trusted_provider(plugins_root, monkeypatch) -> None:
     _trust(_make_provider(plugins_root))
-    svc = services.get_service("storage")
-    assert svc is not None
-    assert svc.service_api_version == 1
-    # 缓存命中同一对象
-    assert services.get_service("storage") is svc
+    monkeypatch.setattr("core.plugin_sandbox.invoke", lambda *a, **k: {"service_api_version": 1, "methods": ["open_menu"]})
+    assert services.describe_service("storage")["service_api_version"] == 1
 
 
-def test_get_service_untrusted_provider_none(plugins_root) -> None:
+def test_untrusted_provider_cannot_be_called(plugins_root) -> None:
+    from core.plugin_sandbox import SandboxError
     _make_provider(plugins_root)
-    assert services.get_service("storage") is None
+    with pytest.raises(SandboxError):
+        services.call_service("storage", "open_menu", [["OpsKit"], {}])
 
 
-def test_get_service_unknown_none(plugins_root) -> None:
-    assert services.get_service("nope") is None
+def test_unknown_service_is_unavailable(plugins_root) -> None:
+    from core.plugin_sandbox import SandboxError
+    with pytest.raises(SandboxError, match="unavailable"):
+        services.call_service("nope", "open_menu", [["OpsKit"], {}])
 
 
-def test_open_service_menu_calls_open_menu(plugins_root, monkeypatch) -> None:
+def test_open_service_menu_calls_rpc(plugins_root, monkeypatch) -> None:
     _trust(_make_provider(plugins_root))
-    ok = services.open_service_menu("storage", breadcrumb=["OpsKit", "X"], context={"k": "v"})
-    assert ok is True
-    svc = services.get_service("storage")
-    assert svc.opened == (["OpsKit", "X"], {"k": "v"})
-
-
-def test_open_service_menu_missing_no_source(plugins_root, monkeypatch) -> None:
-    monkeypatch.setattr("core.prompt.pause", lambda *a, **k: None)
-    ok = services.open_service_menu("storage", breadcrumb=["OpsKit"])
-    assert ok is False
+    calls = []
+    monkeypatch.setattr("core.plugin_sandbox.invoke", lambda manifest, action, **kw: calls.append((action, kw)))
+    services.call_service("storage", "open_menu", [["OpsKit", "X"], {"caller": "spoof", "k": "v"}])
+    assert calls[0][0] == "service.call"
+    assert calls[0][1]["caller"] == "platform"
+    assert calls[0][1]["args"][1] == {"caller": "platform", "k": "v"}
 
 
 # ─── multi_select ────────────────────────────────────────────────────────────

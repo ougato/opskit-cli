@@ -72,11 +72,12 @@ from software.recipes.ohmyzsh.p10k_preset import p10k_preset
 
 console = Console()
 
-_BREADCRUMB_BASE = ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh")]
+def _breadcrumb_base() -> list[str]:
+    return ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh")]
 
 
 def _breadcrumb(action_key: str) -> list[str]:
-    return ["OpsKit", t("menu.software"), t("software.category.systools"), t("software.ohmyzsh"), t(action_key)]
+    return [*_breadcrumb_base(), t(action_key)]
 
 
 def command_exists(command: str) -> bool:
@@ -348,15 +349,16 @@ def _switch_default_shell() -> bool:
 
 # ─── 对外主流程 ───────────────────────────────────────────────────────────────
 
-def install_ohmyzsh() -> None:
+def install_ohmyzsh(*, with_p10k: bool | None = None, switch_shell: bool = True) -> dict:
     _ensure_supported()
 
-    base = _BREADCRUMB_BASE
+    base = _breadcrumb_base()
     # 安装前询问是否安装 Powerlevel10k。
-    try:
-        with_p10k = confirm(breadcrumb=base, prompt=t("ohmyzsh.confirm_p10k"), theme_key="software")
-    except UserCancel:
-        return
+    if with_p10k is None:
+        try:
+            with_p10k = confirm(breadcrumb=base, prompt=t("confirm_ui.theme"), info_lines=["Powerlevel10k"], theme_key="software")
+        except UserCancel:
+            return {"installed": False}
 
     breadcrumb = _breadcrumb("software.install")
     clear_screen()
@@ -399,7 +401,9 @@ def install_ohmyzsh() -> None:
                 font_installed = _install_fonts()
 
             sp.step(t("ohmyzsh.step.switch_shell"))
-            shell_switched = _switch_default_shell()
+            shell_switched = _switch_default_shell() if switch_shell else False
+            if switch_shell and not shell_switched:
+                raise InstallError("requested shell change failed")
             sp.complete()
     except InstallError:
         raise
@@ -409,10 +413,11 @@ def install_ohmyzsh() -> None:
     console.print()
     _render_done_panel(with_p10k=with_p10k, shell_switched=shell_switched,
                        font_installed=font_installed)
+    return {"installed": True, "with_p10k": with_p10k, "shell_switched": shell_switched, "font_installed": font_installed}
 
 
 def uninstall_ohmyzsh() -> None:
-    base = _BREADCRUMB_BASE
+    base = _breadcrumb_base()
     if not omz_dir().exists():
         clear_screen()
         print_action_title(base, trailing_blank=False)
@@ -421,8 +426,8 @@ def uninstall_ohmyzsh() -> None:
         return
 
     try:
-        if not confirm(breadcrumb=base, prompt=t("uninstall.confirm", name=t("software.ohmyzsh")),
-                       theme_key="software"):
+        if not confirm(breadcrumb=base, prompt=t("confirm_ui.remove"),
+                       info_lines=[t("software.ohmyzsh"), t("confirm_ui.irreversible")], theme_key="software"):
             return
     except UserCancel:
         return

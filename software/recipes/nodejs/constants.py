@@ -68,7 +68,7 @@ NODEJS_VERSIONS_FALLBACK = [
 # ─── /etc/profile.d node 文件名 ───────────────────────────────────────────────
 PROFILE_D_NODE_FILE    = "/etc/profile.d/opskit-nodejs.sh"
 
-# ─── Windows .cmd shim 模板（读快照路由到正确版本 bin） ───────────────────────
+# ─── 历史 Windows shim 模板：仅用于精确迁移旧文件，不再生成 ──────────────────
 # {cmd}: 命令名，如 node / npm / npx
 SHIM_NODE_CMD_TEMPLATE = (
     "@echo off\r\n"

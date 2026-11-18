@@ -5,6 +5,7 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.base import InstallError
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MONGODB_FILE
 
 
@@ -12,18 +13,20 @@ from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_MONGODB_FILE
 
 def _mongo_arch() -> str:
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported mongodb CPU architecture: {m!r}")
 
 
 def _mongo_arch_darwin() -> str:
     m = platform.machine().lower()
-    if m in ("aarch64", "arm64"):
-        return "arm64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'arm64'
+    raise InstallError(f"Unsupported mongodb CPU architecture: {m!r}")
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────
@@ -87,6 +90,8 @@ def download_mongodb_tarball(version: str, dest: Path) -> Path:
     )
 
     if sys.platform == "win32":
+        from software._shared.architecture import require_windows_x64
+        require_windows_x64("MongoDB")
         url_templates = MONGO_DL_WINDOWS_URLS
         arch = "x86_64"
     elif sys.platform == "darwin":

@@ -1,11 +1,12 @@
 """全局常量定义 — 所有路径 / 超时 / 重试 / 网络配置统一管理"""
 from __future__ import annotations
 
-from pathlib import Path
-
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
 APP_VERSION = 7
+# Base64 raw Ed25519 public key supplied by the release owner, never by a download.
+UPDATE_SIGNING_PUBLIC_KEY = ""
+
 # ─── 目录名 ──────────────────────────────────────────────────────────────────
 DIR_CONFIG = "config"
 DIR_DATA = "data"
@@ -27,7 +28,7 @@ FILE_PLUGIN_TRUST = "plugin_trust.yaml"
 FILE_PLUGIN_CHECKSUMS = "CHECKSUMS.yaml"
 
 # ─── 插件 SDK API 版本（不兼容变更才递增，见 core/sdk.py 与 docs/plugin-spec.md） ──
-PLUGIN_API_VERSION = 1
+PLUGIN_API_VERSION = 4
 
 # ─── 默认配置模板（首次运行时写入） ─────────────────────────────────────────
 DEFAULT_CONFIG: dict = {
@@ -58,7 +59,7 @@ DEFAULT_CONFIG: dict = {
         "trusted_sources": [],
     },
     "telemetry": {
-        "enabled": True,
+        "enabled": False,
         "dsn": "https://f1b67ed44be18705828ccf6d6f44e37c@o4511342957297664.ingest.us.sentry.io/4511342960574464",
     },
 }
@@ -138,7 +139,7 @@ GHPROXY_BASE = "https://mirror.ghproxy.com"
 
 # ─── 公网 IP 探测 API ────────────────────────────────────────────────────────
 PUBLIC_IP_APIS = [
-    "https://ip.sb",
+    "https://api.ip.sb/ip",
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
     "https://icanhazip.com",

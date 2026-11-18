@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -34,6 +35,14 @@ class Recipe(ABC):
     has_switch: bool = False       # 是否支持版本切换（多版本共存，切换激活版本）
     hidden: bool = False           # 是否在分类/搜索列表中隐藏（仅通过父 recipe submenu 访问）
     requires_root: bool = False    # install/uninstall/upgrade 是否需要 root（系统级软件置 True，用户态软件保持 False）
+
+    def disk_check_path(self) -> Path | None:
+        """Return a known primary install target, or None when it is not known."""
+        return None
+
+    def disk_check_paths(self) -> tuple[Path | None, ...]:
+        """Return required filesystems; None denotes an unknown target."""
+        return (self.disk_check_path(),)
 
     @abstractmethod
     def detect(self) -> str | None:
@@ -96,6 +105,10 @@ class Recipe(ABC):
         """运行诊断检查（has_diagnose=True 时子类实现）"""
         pass
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        """只读结构化诊断；不调用菜单、不写配置、不导出连接信息。"""
+        raise NotImplementedError("read-only diagnostics are not supported")
+
     def manage(self) -> None:
         """运行管理界面（has_manage=True 时子类实现）"""
         pass
@@ -137,11 +150,11 @@ class Recipe(ABC):
         ]
 
 
-class InstallError(Exception):
+class InstallError(RuntimeError):
     """安装失败异常"""
     pass
 
 
-class UninstallError(Exception):
+class UninstallError(RuntimeError):
     """卸载失败异常"""
     pass

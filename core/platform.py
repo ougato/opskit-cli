@@ -6,10 +6,9 @@ import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 
 class IssueLevel(str, Enum):
@@ -35,7 +34,7 @@ class PlatformInfo:
     init_system: str      # 'systemd' / 'sysvinit' / 'openrc' / 'launchd' / 'windows' / ''
     is_root: bool         # 是否具有 root / admin 权限
     python_version: str   # '3.11.2'
-    disk_free_bytes: int  # 当前工作目录所在磁盘剩余空间
+    disk_free_bytes: int | None  # 检测时工作目录所在磁盘的快照；None 表示无法读取
 
 
 # ─── 缓存（进程生命周期内只检测一次）────────────────────────────────────────
@@ -168,12 +167,30 @@ def _is_root(os_type: str) -> bool:
     return os.geteuid() == 0
 
 
-def _disk_free() -> int:
+def _disk_free(path: Path | str | None = None) -> int | None:
+    """Read the filesystem of a target or its nearest existing ancestor."""
     try:
-        stat = shutil.disk_usage(Path.cwd())
-        return stat.free
-    except Exception:
-        return 0
+        target = Path.cwd() if path is None else Path(path).absolute()
+        while True:
+            try:
+                target.stat()
+                break
+            except FileNotFoundError:
+                # A dangling link is an existing path with an unresolved
+                # destination, not a missing child on this filesystem.
+                # Reporting its parent's free space would be misleading.
+                try:
+                    target.lstat()
+                except FileNotFoundError:
+                    pass
+                else:
+                    return None
+                if target.parent == target:
+                    return None
+                target = target.parent
+        return shutil.disk_usage(target).free
+    except (OSError, ValueError):
+        return None
 
 
 def _cmd_ok(cmd: list[str]) -> bool:
@@ -195,42 +212,56 @@ def preflight_check() -> list[Issue]:
     - 架构（x86_64 / aarch64 / armv7）
     - 包管理器是否可用
     - 权限级别（root / admin / 普通用户）
-    - 磁盘剩余空间
-    - 网络连通性（可选，快速超时）
+    - 数据目录所在磁盘的剩余空间
     """
     from core.constants import MIN_DISK_FREE_BYTES
+    from core.i18n import t
+    from core.config import get_data_dir
     info = get_platform()
     issues: list[Issue] = []
 
     if not info.pkg_manager:
         issues.append(Issue(
             level=IssueLevel.WARN,
-            message="未检测到支持的包管理器",
-            suggestion="部分软件安装功能可能不可用",
+            message=t("platform.no_pkg_manager"),
+            suggestion=t("platform.no_pkg_manager_suggestion"),
             code="no_pkg_manager",
         ))
 
     if not info.is_root:
         issues.append(Issue(
             level=IssueLevel.WARN,
-            message="当前非 root / 管理员权限",
-            suggestion="部分功能需要提权后使用",
+            message=t("platform.non_root"),
+            suggestion=t("platform.non_root_suggestion"),
             code="non_root",
         ))
 
-    if info.disk_free_bytes < MIN_DISK_FREE_BYTES:
-        free_mb = info.disk_free_bytes // 1024 // 1024
+    free_bytes = _disk_free(get_data_dir())
+    if free_bytes is None:
         issues.append(Issue(
             level=IssueLevel.WARN,
-            message=f"磁盘剩余空间不足（{free_mb}MB）",
-            suggestion="清理磁盘后再使用安装功能",
+            message=t("platform.disk_unknown"),
+            suggestion=t("platform.disk_unknown_suggestion"),
+            code="disk_unknown",
+        ))
+    elif free_bytes < MIN_DISK_FREE_BYTES:
+        free_mb = free_bytes // 1024 // 1024
+        issues.append(Issue(
+            level=IssueLevel.WARN,
+            message=t("platform.low_disk", free_mb=free_mb),
+            suggestion=t("platform.low_disk_suggestion"),
             code="low_disk",
         ))
 
     return issues
 
 
-def check_disk_space(required_bytes: int) -> bool:
-    """检查是否有足够磁盘空间（安装前调用）"""
-    info = get_platform()
-    return info.disk_free_bytes >= required_bytes
+def check_disk_space(required_bytes: int, path: Path | str | None = None) -> bool | None:
+    """Check a target now; return None when its available space is unknown.
+
+    Omitting the path retains the existing working-directory default.  Callers
+    that know the actual target should supply it rather than assume that it is
+    on the working-directory filesystem.
+    """
+    free = _disk_free(path)
+    return None if free is None else free >= required_bytes

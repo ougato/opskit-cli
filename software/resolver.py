@@ -1,6 +1,8 @@
 """依赖解析器 — 安装前自动检测并静默解决依赖链"""
 from __future__ import annotations
 
+from rich.markup import escape
+
 from software.base import InstallError
 from software.registry import get as registry_get
 from core.prompt import confirm, UserCancel
@@ -90,11 +92,10 @@ def _install_dep(
 ) -> None:
     """静默安装缺失的依赖"""
     from rich.console import Console
-    from core.theme import get_color, get_icon
+    from core.theme import get_color
     _con = Console()
     target = min_ver or "latest"
     muted = get_color("muted")
-    text = get_color("text")
     _con.print(f"  [{muted}]{t('deps.installing', dep=key, target=target)}[/{muted}]")
 
     # 先递归解依赖的依赖
@@ -121,8 +122,6 @@ def _upgrade_dep(
     _con = Console()
     warn = get_color("warning")
     muted = get_color("muted")
-    error_c = get_color("error")
-    success_c = get_color("success")
 
     _con.print(
         f"\n  [bold {warn}]{get_icon('warning')} {t('deps.conflict_title')}[/bold {warn}]  "
@@ -133,7 +132,11 @@ def _upgrade_dep(
     )
 
     try:
-        ok = confirm(breadcrumb=breadcrumb, prompt=t("deps.confirm_upgrade", dep=key, required=required))
+        ok = confirm(
+            breadcrumb=breadcrumb, prompt=t("confirm_ui.dependency"),
+            info_lines=[t("deps.conflict_desc", dep=escape(key), current=escape(current),
+                          required=escape(required)), t("deps.conflict_hint")],
+        )
     except UserCancel:
         raise InstallError(t("deps.user_cancel", dep=key, required=required, current=current))
 

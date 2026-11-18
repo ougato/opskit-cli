@@ -61,5 +61,9 @@ class XuiRecipe(Recipe):
     def diagnose(self) -> None:
         diagnose_server()
 
+    def diagnostic_report(self, *, timeout=30) -> dict:
+        from xui.diagnostics import report
+        return report(timeout=timeout)
+
     def manage(self) -> None:
         manage_nodes()

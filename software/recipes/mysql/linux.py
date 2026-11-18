@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+
+from core.deadline import Deadline
+from core.process import capture
 
 from software.base import InstallError
 from core.i18n import t
@@ -16,35 +20,42 @@ from .constants import (
 )
 
 
-def _sofile_exists(pattern: str) -> bool:
-    """检查 ldconfig 缓存中是否存在匹配 pattern 的 .so 文件（精确匹配 soname）。"""
-    import subprocess
-    try:
-        r = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=5)
-        return pattern in r.stdout
-    except Exception:
-        return False
+DEPENDENCY_TIMEOUT = 180
 
 
-def _ensure_linux_deps() -> None:
+def _installed_sonames(budget, machine) -> set[str]:
+    """Read one bounded linker-cache snapshot, matching complete sonames."""
+    from pathlib import Path
+    executable = shutil.which('ldconfig')
+    if executable is None:
+        executable = next((str(path) for path in (Path('/sbin/ldconfig'), Path('/usr/sbin/ldconfig'))
+                           if path.is_file()), None)
+    if executable is None:
+        raise InstallError('MySQL requires an available ldconfig dependency check')
+    result = budget.call(capture, [executable, '-p'], timeout=budget.remaining(5),
+                         max_bytes=1024**2, stdin=subprocess.DEVNULL)
+    if result.returncode:
+        raise InstallError('MySQL linker-cache dependency check failed')
+    architecture = 'x86-64' if machine == 62 else 'AArch64'
+    return {line.split()[0] for line in result.stdout.splitlines()
+            if '=>' in line and architecture in line.partition('=>')[0] and line.split()}
+
+
+def _ensure_linux_deps(root) -> None:
     """
-    静默确保 MySQL minimal tarball 所需的系统依赖可用。
-    - libaio.so.1     : 所有版本均需要
-    - libncurses.so.5 / libtinfo.so.5 : 8.0-8.3 glibc2.17-minimal 的 mysql client 依赖
-    用 ldconfig 精确检测 soname 版本，按发行版自动选择包管理器安装。
-    全程静默，不中断用户操作，安装失败仅记录日志。
-    支持：Debian/Ubuntu/RHEL/CentOS/Rocky/Alma/Fedora/openSUSE/Arch/Alpine。
+    从已提取的ELF元数据读取四种命令及私有库的实际依赖，不执行下载程序。
+    使用同架构ldconfig缓存精确检测soname；只安装已声明映射的缺失库。
+    使用一次缓存快照；安装和复核共享期限，失败阻止发布新版本目录。
+    包名映射仅是候选；包管理器成功但所需soname仍缺失也必须失败。
     """
-    import logging
-    import subprocess
-
-    logger = logging.getLogger(__name__)
-
     # (soname精确匹配串, apt包名, dnf/yum包名, zypper包名, pacman包名, apk包名)
     _DEPS = [
         ("libaio.so.1",      "libaio1",     "libaio",       "libaio1",     "libaio",    "libaio"),
+        ("libnuma.so.1",     "libnuma1",    "numactl-libs", "libnuma1",    "numactl",   "numactl"),
         ("libncurses.so.5",  "libncurses5", "ncurses-libs", "libncurses5", "ncurses",   "ncurses-libs"),
         ("libtinfo.so.5",    "libtinfo5",   "ncurses-libs", "libncurses5", "ncurses",   "ncurses-libs"),
+        ("libncurses.so.6",  "libncurses6", "ncurses-libs", "libncurses6", "ncurses",   "ncurses-libs"),
+        ("libtinfo.so.6",    "libtinfo6",   "ncurses-libs", "libncurses6", "ncurses",   "ncurses-libs"),
     ]
 
     _PM_ORDER = [
@@ -56,24 +67,47 @@ def _ensure_linux_deps() -> None:
         ("apk",     lambda pkgs: ["apk",     "add", "--no-cache"] + pkgs, 5),
     ]
 
-    missing_indices = [
-        i for i, (soname, *_) in enumerate(_DEPS)
-        if not _sofile_exists(soname)
-    ]
-    if not missing_indices:
-        return
-
-    for pm_bin, build_cmd, pm_idx in _PM_ORDER:
-        if not shutil.which(pm_bin):
-            continue
-        pkgs = list(dict.fromkeys(
-            _DEPS[i][pm_idx] for i in missing_indices
-        ))
-        try:
-            subprocess.run(build_cmd(pkgs), check=True, capture_output=True)
-        except Exception as exc:
-            logger.debug("deps install via %s failed: %s", pm_bin, exc)
-        break
+    budget = Deadline(DEPENDENCY_TIMEOUT, 'MySQL system dependencies')
+    try:
+        import platform
+        from .elf_dependencies import runtime_requirements
+        machine = {'x86_64': 62, 'amd64': 62, 'aarch64': 183, 'arm64': 183}.get(platform.machine().lower())
+        if machine is None:
+            raise InstallError('MySQL runtime architecture is unsupported')
+        required = runtime_requirements(root, budget, machine)
+        if not required:
+            return
+        installed = _installed_sonames(budget, machine)
+        missing = required - installed
+        if not missing:
+            return
+        unmapped = missing - {entry[0] for entry in _DEPS}
+        if unmapped:
+            raise InstallError('MySQL system libraries require manual provisioning: ' + ', '.join(sorted(unmapped)))
+        missing_indices = [i for i, (soname, *_) in enumerate(_DEPS) if soname in missing]
+        if not missing_indices:
+            return
+        for pm_bin, build_cmd, pm_idx in _PM_ORDER:
+            executable = shutil.which(pm_bin)
+            if executable is None:
+                continue
+            pkgs = list(dict.fromkeys(_DEPS[i][pm_idx] for i in missing_indices))
+            arguments = build_cmd(pkgs)
+            arguments[0] = executable
+            result = budget.call(capture, arguments, timeout=budget.remaining(),
+                                 max_bytes=256 * 1024, stdin=subprocess.DEVNULL)
+            if result.returncode:
+                raise InstallError('MySQL system dependency installation failed via ' + pm_bin)
+            installed = _installed_sonames(budget, machine)
+            missing = sorted(required - installed)
+            if missing:
+                raise InstallError('MySQL system libraries still missing: ' + ', '.join(missing))
+            return
+        raise InstallError('MySQL system libraries are missing and no supported package manager is available')
+    except InstallError:
+        raise
+    except (OSError, RuntimeError, ValueError, TimeoutError, subprocess.SubprocessError):
+        raise InstallError('MySQL system dependency operation failed or exceeded its deadline') from None
 
 
 class LinuxDriver(PlatformDriver):
@@ -86,15 +120,21 @@ class LinuxDriver(PlatformDriver):
         minimal tarball 自带 lib/private/ bundled 私有库，安装前静默安装系统依赖。
         """
         from .common import mysql_version_dir, mysql_bin_dir
-        _ensure_linux_deps()
-
+        from software._shared.archive_install import staged_directory
         dest = mysql_version_dir(version)
-        dest.mkdir(parents=True, exist_ok=True)
-        extract_tarball(tarball, dest, version)
-
+        try:
+            with staged_directory(dest, prefix=".opskit-mysql-") as staging:
+                extract_tarball(tarball, staging, version)
+                if not (staging / "bin/mysql").is_file():
+                    raise InstallError(t("software.mysql_error.linux_bad_structure", version=version))
+                _ensure_linux_deps(staging)
+        except FileExistsError as error:
+            raise InstallError("MySQL version directory already exists; refusing to overwrite") from error
+        except InstallError:
+            raise
+        except Exception as error:
+            raise InstallError(t("software.mysql_error.extract_failed", version=version, error=error)) from error
         bin_dir = mysql_bin_dir(version)
-        if not (bin_dir / "mysql").exists():
-            raise InstallError(t("software.mysql_error.linux_bad_structure", version=version))
         return str(bin_dir)
 
     # ─── shim ─────────────────────────────────────────────────────────────────
@@ -142,7 +182,8 @@ class LinuxDriver(PlatformDriver):
         root 时在 /usr/local/bin 创建/更新 mysql/mysqld symlink，立即全局生效。
         非 root 时依赖 shim，注入当前进程 PATH。
         """
-        shell_path.link_into_system_bin(bin_dir, ("mysql", "mysqld", "mysqladmin", "mysqldump"))
+        from .common import mysql_versions_dir
+        shell_path.link_into_system_bin(bin_dir, ("mysql", "mysqld", "mysqladmin", "mysqldump"), managed_root=mysql_versions_dir())
         from .common import shim_dir as _shim_dir
         shell_path.prepend_process_path(str(_shim_dir()))
 

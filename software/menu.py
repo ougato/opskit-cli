@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from rich import box as rich_box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, paged_select, confirm, pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 from core.feedback import capture as _report, report_failure
@@ -142,8 +143,6 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
     """从 recipes 列表中让用户选择一个，再进入操作子菜单"""
     from core.installed_cache import get_detected
 
-    muted = get_color("muted")
-    success_c = get_color("success")
 
     hints: dict[str, str] = {cls.key: get_detected(cls) for cls in recipes}
 
@@ -297,10 +296,23 @@ def show_actions(breadcrumb: list[str], cls: type) -> None:
             _do_manage(sub_breadcrumb, cls, instance)
 
 
+def _install_disk_check(instance) -> bool:
+    from core.constants import MIN_DISK_FREE_BYTES
+    from software.disk import check_recipe_disk_space
+    result = check_recipe_disk_space(instance, MIN_DISK_FREE_BYTES)
+    if result is False:
+        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
+        pause()
+        return False
+    if result is None:
+        print_warning(t("platform.install_disk_unknown"))
+        # Keep the warning visible before the next confirmation or clear.
+        pause()
+    return True
+
+
 def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     """执行安装流程"""
-    from core.platform import check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
     from software.resolver import resolve_deps
 
     _name = recipe_display_name(cls)
@@ -320,7 +332,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     if existing:
         print_warning(t("install.already", name=_name, version=existing))
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("software.reinstall_confirm")):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.reinstall"), info_lines=[escape(_name)]):
                 return
         except UserCancel:
             return
@@ -329,7 +341,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         try:
             instance.install("latest")
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, UserCancel):
             return
         except Exception as e:
             report_failure(e, fail_key="install.failed", name=_name, software=cls.key, action="install")
@@ -370,14 +382,12 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
     else:
         version = "latest"
 
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     if getattr(cls, "confirm_before_install", True):
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("install.confirm", name=_name, version=version)):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.install"), info_lines=[escape(f"{_name} {version}")]):
                 return
         except UserCancel:
             return
@@ -398,8 +408,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> None:
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
-    from core.platform import check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
     from core.progress import spinner
 
     _name = recipe_display_name(cls)
@@ -447,14 +455,12 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
     # 已安装版本选中时弹确认
     if version in installed_set:
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("software.reinstall_confirm")):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.reinstall"), info_lines=[escape(_name)]):
                 return
         except UserCancel:
             return
 
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space", required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB", free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     clear_screen()
@@ -470,7 +476,6 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
 
 def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     """执行卸载流程：支持多版本选择卸载"""
-    from core.progress import spinner
 
     _uname = recipe_display_name(cls)
 
@@ -507,13 +512,15 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         key_int = int(ver_key)
         if key_int == len(installed) + 1:
             version_to_remove = None  # 卸载全部
-            confirm_text = t("uninstall.confirm_all", name=_uname)
+            confirm_text = t("confirm_ui.remove_all")
+            confirm_details = [escape(_uname), t("confirm_ui.irreversible")]
         else:
             version_to_remove = installed[key_int - 1]
-            confirm_text = t("uninstall.confirm_version", name=_uname, version=version_to_remove)
+            confirm_text = t("confirm_ui.remove")
+            confirm_details = [escape(f"{_uname} {version_to_remove}"), t("confirm_ui.irreversible")]
 
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=confirm_text):
+            if not confirm(breadcrumb=breadcrumb, prompt=confirm_text, info_lines=confirm_details):
                 return
         except UserCancel:
             return
@@ -521,7 +528,8 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
-        r = execute_uninstall(instance, version_to_remove)
+        with suppress_pause():
+            r = execute_uninstall(instance, version_to_remove)
         if r.ok:
             print_success(t("uninstall.success", name=_uname))
         else:
@@ -538,7 +546,7 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
 
     if not getattr(cls, "has_wizard", False) and getattr(cls, "confirm_before_uninstall", True):
         try:
-            if not confirm(breadcrumb=breadcrumb, prompt=t("uninstall.confirm", name=_uname)):
+            if not confirm(breadcrumb=breadcrumb, prompt=t("confirm_ui.remove"), info_lines=[escape(_uname), t("confirm_ui.irreversible")]):
                 return
         except UserCancel:
             return
@@ -548,21 +556,20 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
         print_header([*breadcrumb, t("software.uninstall")])
         base_console.print()
     try:
-        r = execute_uninstall(instance)
+        with suppress_pause():
+            r = execute_uninstall(instance)
     except KeyboardInterrupt:
         return
     if not r.ok:
         report_failure(r.error, fail_key="uninstall.failed", name=_uname, software=cls.key, action="uninstall")
-        pause()
-    elif not getattr(cls, "has_wizard", False):
-        # 向导型 recipe（has_wizard=True）自行负责结果展示与「按任意键返回」，
-        # 框架不再重复 pause，避免出现两次任意键才能返回的问题。
-        pause()
+    # Installation wizard support does not imply that uninstall waits for input.
+    # The menu owns one final pause for every result, including legacy recipes
+    # that call pause themselves while executing.
+    pause()
 
 
 def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
     """执行版本切换流程"""
-    from core.progress import spinner
 
     _name = recipe_display_name(cls)
 
@@ -705,6 +712,9 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     if new_version is None:
         return
 
+    if new_version not in upg_installed_set and not _install_disk_check(instance):
+        return
+
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
     already = new_version in upg_installed_set
@@ -755,7 +765,6 @@ def show_list() -> None:
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     muted = get_color("muted")
     success = get_color("success")
-    error_c = get_color("error")
 
     info = get_platform()
     recipes = [r for r in all_recipes() if info.os_type in r.platforms]
@@ -796,9 +805,8 @@ def show_list() -> None:
 
 def show_install() -> None:
     """选择软件 → 选择版本 → 确认 → 安装"""
-    from software.registry import all_recipes, get as get_recipe
-    from core.platform import get_platform, check_disk_space
-    from core.constants import MIN_DISK_FREE_BYTES
+    from software.registry import all_recipes
+    from core.platform import get_platform
     from software.base import InstallError
 
     info = get_platform()
@@ -835,7 +843,8 @@ def show_install() -> None:
         try:
             if not confirm(
                 breadcrumb=["OpsKit", t("menu.software"), t("software.install")],
-                prompt=t("software.reinstall_confirm"),
+                prompt=t("confirm_ui.reinstall"),
+                info_lines=[escape(_sname), escape(str(existing))],
             ):
                 return
         except UserCancel:
@@ -874,18 +883,15 @@ def show_install() -> None:
     version = versions[int(ver_key) - 1]
 
     # 磁盘空间检查
-    if not check_disk_space(MIN_DISK_FREE_BYTES):
-        print_error(t("error.disk_space",
-                      required=f"{MIN_DISK_FREE_BYTES // 1024 // 1024}MB",
-                      free=""))
-        pause()
+    if not _install_disk_check(instance):
         return
 
     # 确认安装
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.install")],
-            prompt=t("install.confirm", name=_sname, version=version),
+            prompt=t("confirm_ui.install"),
+            info_lines=[escape(f"{_sname} {version}")],
         ):
             return
     except UserCancel:
@@ -1039,7 +1045,8 @@ def show_uninstall() -> None:
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.uninstall")],
-            prompt=t("uninstall.confirm", name=_usname),
+            prompt=t("confirm_ui.remove"),
+            info_lines=[escape(_usname), t("confirm_ui.irreversible")],
         ):
             return
     except UserCancel:
@@ -1051,7 +1058,8 @@ def show_uninstall() -> None:
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "uninstall")
-        instance.uninstall()
+        with suppress_pause():
+            instance.uninstall()
         from core.installed_cache import invalidate
         invalidate(cls.key)
     except PrivilegeError as e:
@@ -1143,7 +1151,8 @@ def show_upgrade() -> None:
     try:
         if not confirm(
             breadcrumb=["OpsKit", t("menu.software"), t("software.upgrade")],
-            prompt=t("upgrade.available", name=_upgname, version=new_version),
+            prompt=t("confirm_ui.upgrade"),
+            info_lines=[escape(f"{_upgname} {new_version}")],
         ):
             return
     except UserCancel:

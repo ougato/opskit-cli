@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import platform
-import shutil
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
@@ -82,21 +81,23 @@ def fetch_supported_versions(timeout: float = 8.0) -> Optional[list[str]]:
 # ─── 架构映射 ─────────────────────────────────────────────────────────────────
 
 def _pgsql_arch() -> str:
-    """将 Python platform.machine() 映射为 theseus-rs 架构字符串"""
+    '将 Python platform.machine() 映射为 theseus-rs 架构字符串'
     m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported postgresql CPU architecture: {m!r}")
 
 
 def _pgsql_arch_darwin() -> str:
-    """macOS 专用：arm64 原生 / x86_64"""
+    'macOS 专用：arm64 原生 / x86_64'
     m = platform.machine().lower()
-    if m in ("aarch64", "arm64"):
-        return "aarch64"
-    return "x86_64"
+    if m in ('x86_64', 'amd64'):
+        return 'x86_64'
+    if m in ('aarch64', 'arm64'):
+        return 'aarch64'
+    raise InstallError(f"Unsupported postgresql CPU architecture: {m!r}")
 
 
 # ─── 路径工具 ─────────────────────────────────────────────────────────────────
@@ -105,6 +106,16 @@ def pgsql_versions_dir() -> Path:
     """所有 PostgreSQL 版本的根目录：~/.opskit/postgresql/"""
     from .constants import PGSQL_PRIVATE_SUBDIR
     return Path.home() / PGSQL_PRIVATE_SUBDIR
+
+
+def pgsql_download_cache_path(version: str, filename: str) -> Path:
+    """Return a persistent PostgreSQL download cache path outside system temp."""
+    from core.paths import cache_dir
+
+    safe_version = version.replace("/", "_").replace("\\", "_")
+    base = cache_dir() / "downloads" / "postgresql" / f"v{safe_version}"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / filename
 
 
 def pgsql_version_dir(version: str) -> Path:
@@ -241,6 +252,21 @@ def _pgdg_query_deb_paths(major: int, version: str, deb_arch: str) -> Optional[d
 
 
 def download_pgsql_deb_linux(version: str, dest_dir: Path) -> Path:
+    """Prepare a complete owned version before publishing without replacing data."""
+    from software._shared.archive_install import staged_directory
+    try:
+        with staged_directory(dest_dir, prefix=".opskit-pgsql-deb-") as staging:
+            _populate_pgsql_deb_linux(version, staging)
+    except FileExistsError as error:
+        raise InstallError("PostgreSQL version directory already exists; refusing to overwrite") from error
+    except InstallError:
+        raise
+    except Exception as error:
+        raise InstallError("PostgreSQL Debian installation failed") from error
+    return dest_dir / "bin"
+
+
+def _populate_pgsql_deb_linux(version: str, dest_dir: Path) -> Path:
     """
     Linux 专用：从 PGDG apt 仓库下载 deb 包（server + client + libpq5），
     解压合并到 dest_dir，返回 bin 目录路径。
@@ -251,7 +277,6 @@ def download_pgsql_deb_linux(version: str, dest_dir: Path) -> Path:
     不需要 apt/root，纯下载解压。支持 Debian/Ubuntu 全系 glibc 环境。
     """
     import httpx
-    import tarfile as _tarfile
     import tempfile
     from .constants import PGSQL_PGDG_DEB_BASE_URLS, PGSQL_LINUX_DEB_ARCH_MAP
 
@@ -301,57 +326,32 @@ def download_pgsql_deb_linux(version: str, dest_dir: Path) -> Path:
             deb_file = tmp / "pkg.deb"
             deb_file.write_bytes(deb_data)
 
-            import subprocess
-            ar_result = subprocess.run(
-                ["ar", "x", str(deb_file)],
-                capture_output=True, cwd=str(tmp)
-            )
-            if ar_result.returncode != 0:
-                raise InstallError(_t("software.postgresql_error.deb_ar_failed", label=label, error=ar_result.stderr.decode()[:200]))
+            from core.debian import extract_data_tar
+            try:
+                data_tar = extract_data_tar(deb_file, tmp)
+            except (OSError, ValueError) as error:
+                raise InstallError(_t("software.postgresql_error.deb_ar_failed", label=label, error="invalid Debian container")) from error
 
-            data_tar = None
-            for candidate in ("data.tar.xz", "data.tar.gz", "data.tar.bz2", "data.tar.zst"):
-                p = tmp / candidate
-                if p.exists():
-                    data_tar = p
-                    break
-            if not data_tar:
-                raise InstallError(_t("software.postgresql_error.deb_no_data_tar", label=label))
+            from core.debian import open_data_tar
 
-            if data_tar.suffix == ".xz":
-                import lzma
-                raw = lzma.decompress(data_tar.read_bytes())
-                tf = _tarfile.open(fileobj=__import__("io").BytesIO(raw))
-            elif data_tar.suffix == ".zst":
-                import zstandard
-                raw = zstandard.ZstdDecompressor().decompress(data_tar.read_bytes())
-                tf = _tarfile.open(fileobj=__import__("io").BytesIO(raw))
-            else:
-                tf = _tarfile.open(str(data_tar))
+            from core.archive import extract_tar_files
 
-            with tf:
-                for member in tf.getmembers():
-                    mname = member.name.lstrip("./")
-                    pg_bin_prefix = f"usr/lib/postgresql/{major}/bin/"
-                    lib_prefix_amd64 = "usr/lib/x86_64-linux-gnu/"
-                    lib_prefix_arm64 = "usr/lib/aarch64-linux-gnu/"
+            def select(name, member):
+                if not member.isfile():
+                    return None
+                parts = Path(name).parts
+                bin_prefix = f"usr/lib/postgresql/{major}/bin/"
+                if name.startswith(bin_prefix):
+                    relative = name[len(bin_prefix):]
+                    return "bin/" + relative if relative else None
+                if name.startswith(("usr/lib/x86_64-linux-gnu/", "usr/lib/aarch64-linux-gnu/")):
+                    filename = parts[-1]
+                    if filename.endswith(".so") or ".so." in filename:
+                        return "lib/" + filename
+                return None
 
-                    if mname.startswith(pg_bin_prefix) and member.isfile():
-                        rel = mname[len(pg_bin_prefix):]
-                        if not rel:
-                            continue
-                        target = bin_dest / rel
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
-                        target.chmod(target.stat().st_mode | 0o111)
-                    elif (mname.startswith(lib_prefix_amd64) or
-                          mname.startswith(lib_prefix_arm64)) and member.isfile():
-                        fname = Path(mname).name
-                        if not fname or not (fname.endswith(".so") or ".so." in fname):
-                            continue
-                        target = lib_dest / fname
-                        with tf.extractfile(member) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
+            with open_data_tar(data_tar) as archive:
+                extract_tar_files(archive, dest_dir, select)
 
     psql_bin = bin_dest / "psql"
     if not psql_bin.exists():
@@ -419,11 +419,15 @@ def download_pgsql_tarball(version: str, dest: Path) -> Path:
         raise InstallError(_t3("software.postgresql_error.macos_unsupported", version=version))
 
     if sys.platform == "win32":
+        from software._shared.architecture import require_windows_x64
+        require_windows_x64("PostgreSQL")
         url_templates = PGSQL_DL_WINDOWS_URLS
         arch = "x86_64"
     else:
-        url_templates = PGSQL_DL_DARWIN_URLS
         arch = _pgsql_arch_darwin()
+        # EDB's URL has no architecture field and contains Intel binaries only.
+        # ARM downloads must use the native archive, without assuming Rosetta.
+        url_templates = [u for u in PGSQL_DL_DARWIN_URLS if arch == "x86_64" or "{arch}" in u]
 
     urls = [u.format(version=version, arch=arch) for u in url_templates]
 
@@ -431,6 +435,7 @@ def download_pgsql_tarball(version: str, dest: Path) -> Path:
         return mirror.download_file(
             urls=urls,
             dest=dest,
+            cache_path=pgsql_download_cache_path(version, dest.name),
         )
     except Exception as e:
         from core.i18n import t as _t4

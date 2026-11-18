@@ -5,23 +5,21 @@ import ctypes
 import signal
 import sys
 import threading
-import time
 from contextlib import contextmanager
 from typing import Iterator
 
 from rich import box as rich_box
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, text_input, pause, console, UserCancel, clear_screen, shield_ctrlc
-from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
+from core.prompt import select, text_input, pause, UserCancel, clear_screen
+from core.theme import get_color, get_icon, print_error
+from network.commands import COMMON_TCP_PORTS
 
 console = Console()
 _THEME_KEY = "network"
 
-_COMMON_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 5432, 6379, 8080, 8443, 27017]
 
 
 @contextmanager
@@ -203,8 +201,6 @@ def show_dns(host: str | None = None, pause_after: bool = True) -> None:
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")
-    error_c = get_color("error")
-    muted = get_color("muted")
 
     # 非交互模式：host 已传入，自动判断正查 / 反查
     if host:
@@ -308,16 +304,15 @@ def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
         return
 
     clear_screen()
-    console.print(f"\n{t('network.scanning_ports')}: {', '.join(map(str, _COMMON_PORTS))}\n")
+    console.print(f"\n{t('network.scanning_ports')}: {', '.join(map(str, COMMON_TCP_PORTS))}\n")
 
     from core.progress import spinner
     with spinner(t("network.scanning")):
-        results = scan_ports(host, _COMMON_PORTS, timeout=0.5)
+        results = scan_ports(host, COMMON_TCP_PORTS, timeout=0.5)
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")
     muted = get_color("muted")
-    error_c = get_color("error")
 
     tbl = Table(
         title=f"[{title_color}]{t('network.port_scan')}: {host}[/{title_color}]",

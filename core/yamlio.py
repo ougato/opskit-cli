@@ -21,7 +21,10 @@ def load_yaml(path: Path | str) -> dict:
 
 def save_yaml(path: Path | str, data: dict) -> None:
     """把 dict 写入 YAML 文件（UTF-8，保持键序，自动建父目录）"""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    _save_yaml(Path(path), data)
+
+
+def _save_yaml(path: Path, data: dict, *, inherit_windows_acl: bool = False) -> None:
+    from core.secrets import atomic_write
+    atomic_write(path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                 inherit_windows_acl=inherit_windows_acl)

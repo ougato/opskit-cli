@@ -62,6 +62,7 @@ colors:
 icons:
   # 导航
   back: "\U0001F519"          # 🔙
+  next_page: "\U0001F51C"     # 🔜
   exit: "\u274C"              # ❌
 
   # 模块
@@ -71,6 +72,13 @@ icons:
   toolkit: "\U0001F527"       # 🔧
   plugin: "\U0001F9E9"        # 🧩
   plugin_manage: "\U0001F9F0"  # 🧰
+  plugin_permissions: "\U0001F510" # 🔐
+  sandbox_cleanup: "\U0001F512"    # 🔒
+  workspace_cleanup: "\U0001F4C2"  # 📂
+  cache_cleanup: "\U0001F9F9"      # 🧹
+  runtime_cache: "\U0001F4E6"      # 📦
+  fetch_cache: "\U0001F4E5"        # 📥
+  prepare_cache: "\U0001F6A7"      # 🚧
   language: "\U0001F310"      # 🌐
   theme: "\U0001F3A8"         # 🎨
   preferences: "\U0001F527"   # 🔧
@@ -109,6 +117,7 @@ icons:
   mysql: "\U0001F42C"         # 🐬
   postgresql: "\U0001F418"    # 🐘
   mongodb: "\U0001F343"       # 🍃
+  clickhouse: "\U0001F4CA"    # 📊
   redis: "\U0001F534"         # 🔴
   ohmyzsh: "\U0001F41A"       # 🐚
 
@@ -137,7 +146,6 @@ icons:
   update_token: "\U0001F511"  # 🔑
   search: "\U0001F50D"        # 🔍
   save: "\U0001F4BE"          # 💾
-  trash: "\U0001F6AE"         # 🗮
   toggle_on: "\U0001F51B"     # 🔛
   toggle_off: "\U0001F515"    # 🔕
 

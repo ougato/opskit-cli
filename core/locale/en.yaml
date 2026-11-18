@@ -26,6 +26,21 @@ module:
   plugin:
     desc: "Plugin management and installed plugin entries"
 
+startup:
+  modules_failed: "Some built-in modules failed to load: {modules}. Check the log; other functions remain available."
+  registry: "built-in module registry"
+
+platform:
+  no_pkg_manager: "No supported package manager was detected"
+  no_pkg_manager_suggestion: "Some software installation features may be unavailable"
+  non_root: "Running without root / administrator privileges"
+  non_root_suggestion: "Some features require elevated privileges"
+  disk_unknown: "Could not read free disk space for the data directory"
+  disk_unknown_suggestion: "Check the data directory and its filesystem"
+  low_disk: "Insufficient disk space for the data directory ({free_mb}MB free)"
+  low_disk_suggestion: "Free space on the data directory filesystem and retry"
+  install_disk_unknown: "The installation target's free disk space is unknown; installation may fail."
+
 plugin:
   manage: "Plugin Management"
   install: "Install Plugin"
@@ -35,43 +50,34 @@ plugin:
   col_name: "Name"
   col_version: "Version"
   col_kind: "Kind"
+  col_source: "Source"
+  col_branch: "Branch"
+  col_fingerprint: "Fingerprint"
   select: "Select plugin"
   cloning: "Cloning..."
   cloning_branch: "Cloning branch {branch}..."
   install_prompt: "Git repo URL"
-  install_hint: "e.g. https://git.example.com/opskit-plugin-xxx.git (append -b <branch>)"
+  install_hint: "e.g. https://git.example.com/org/opskit-plugin-xxx.git (append -b <branch>, --as <local-dir>)"
   install_exists: "Directory exists: {name}"
+  install_bad_alias: "Invalid install directory alias: {name} (use lowercase letters, numbers, hyphens; start with a letter)"
+  install_manifest_name_exists: "Plugin name already exists: {name} (installed dir: {dir}); change plugin.yaml name and retry"
   install_success: "Plugin {name} installed and trusted"
   install_failed: "Install failed ({error})"
   install_no_manifest: "Missing/invalid plugin.yaml, rolled back"
   update_all: "Update All"
-  update_all_downgrade: "{name} version downgrade, skipped (update individually to confirm)"
+  update_trusted: "{name} {version} trusted"
+  update_cancelled: "Update cancelled for {name}"
   update_success: "Plugin {name} updated to {version}"
   update_latest: "{name} is already up to date"
   update_failed: "Update failed ({error})"
   update_not_git: "{name} is not a git repo"
-  git_auth_failed: "SSH auth failed, check key or repo access"
-  git_repo_not_found: "Repository not found or no access"
-  git_network_failed: "Network connection failed, retry later"
-  git_exit: "git exited with code {code}"
-  git_dubious_ownership: "Plugin dir owner differs from current user, run git config --global --add safe.directory <plugin dir> and retry"
-  git_too_old: "git does not support required options, upgrade git"
-  remove_confirm: "Remove {name} and delete its directory?"
   remove_success: "Plugin {name} removed"
-  exec_failed: "Plugin {name} failed to run ({error})"
   entry_failed: "Plugin {name} exited abnormally ({error})"
   col_perms: "Permissions"
   perm_none: "none declared"
-  trust_confirm: "Trust and enable {name}? Plugin code runs with current privileges"
-  trust_granted: "Plugin {name} trusted"
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
   update_tampered: "Plugin {name} content does not match CHECKSUMS.yaml, possible tampering, refused to load"
-  downgrade_confirm: "Version downgrade {old} → {new}, trust and load anyway?"
-  fingerprint_written: "Generated {path}"
-  fingerprint_ok: "Verified, content matches CHECKSUMS.yaml"
-  fingerprint_missing: "CHECKSUMS.yaml not found, generate it first (without --check)"
-  fingerprint_mismatch: "Verification failed, content does not match CHECKSUMS.yaml (tampered or not regenerated)"
   source_warning: "Source not in trusted-source allowlist, code is unreviewed"
 
 install:
@@ -81,13 +87,9 @@ install:
   retry: "Network error, retry {n}/{max}..."
   already: "{name} already installed ({version})"
   checking: "Checking {name}..."
-  confirm: "Install {name} {version}?"
 
 uninstall:
   failed: "{name} uninstall failed: {error}"
-  confirm: "Remove {name}? Irreversible"
-  confirm_version: "Remove {name} {version}? Irreversible"
-  confirm_all: "Remove all {name}? Irreversible"
   success: "{name} uninstalled successfully"
   not_found: "{name} is not installed"
 
@@ -122,6 +124,17 @@ prompt:
   next_page: "Next Page"
 
 error:
+  config_unreadable: "Configuration is invalid, unreadable, or exceeds the size limit; the original configuration was preserved."
+  config_publication: "Cannot safely create configuration; check directory permissions and filesystem support."
+  config_io: "Cannot access or create configuration; check directory permissions and filesystem."
+  config_busy: "Configuration is being used by another operation; please retry."
+  config_lock_identity: "Cannot verify the configuration lock file; check the directory and filesystem."
+  update_health_write: "Cannot save update health state. Startup stopped and recovery data was preserved. Check data directory permissions and available space, then retry."
+  config_field: "Invalid configuration field {field}: expected {expected}; the original configuration was preserved."
+  config_expected_string: "a string"
+  config_expected_boolean: "a boolean"
+  config_expected_mapping: "a mapping"
+  config_expected_module_mapping: "module configuration mappings"
   permission: "Permission denied. Run as root / administrator"
   disk_space: "Insufficient disk space (need {required}, free {free})"
   network: "Network connection failed"
@@ -169,7 +182,6 @@ software:
   select_version: "Select version"
   recommended: "Recommended"
   current: "Current"
-  reinstall_confirm: "Already installed. Reinstall?"
   switch: "Switch"
   switch_success: "Switched to {name} {version}"
   already_latest: "Already on the latest version {version}, nothing to upgrade"
@@ -240,6 +252,14 @@ software:
     extract_failed: "MongoDB {version} extraction failed: {error}"
     bad_structure: "MongoDB {version} install directory structure invalid, missing {file}"
     download_failed: "MongoDB {version} download failed: {error}"
+  clickhouse: "ClickHouse"
+  clickhouse_error:
+    platform_not_supported: "ClickHouse does not support platform ({platform}), supported: linux / darwin"
+    verify_failed: "clickhouse --version check failed after install"
+    not_installed: "ClickHouse {version} is not installed, please install first before switching"
+    download_failed: "ClickHouse {version} download failed: {error}"
+    extract_failed: "ClickHouse {version} extraction failed: {error}"
+    bad_structure: "ClickHouse {version} package layout invalid, usr/bin/clickhouse not found"
   redis: "Redis"
   redis_error:
     platform_not_supported: "Redis does not support platform ({platform}), supported: linux / darwin / windows"
@@ -333,7 +353,6 @@ deps:
   conflict_title: "Version conflict"
   conflict_desc: "{dep} current {current}, requires >={required}"
   conflict_hint: "Upgrading may affect other programs depending on this version. New version will be installed in parallel via apt/pyenv (without replacing system default)"
-  confirm_upgrade: "Continue installing {dep} {required} (isolated install)?"
   user_cancel: "User cancelled: dependency '{dep}' version mismatch (need >={required}, got {current})"
   version_mismatch: "Dependency '{dep}' version mismatch (need >={required}, got {current}), install cancelled"
   installing: "Installing dependency {dep} {target}..."
@@ -366,21 +385,17 @@ rustdesk:
 
 xui:
   input:
-    panel_port: "Panel port (default {default})"
-    panel_user: "Panel user (default {default})"
+    panel_port: "Panel port"
+    panel_user: "Panel user"
     panel_password: "Panel password (auto-generated by default)"
     panel_base_path: "Panel base path (empty by default)"
-    host: "Public host or IP (default {default})"
-    vless_port: "VLESS port (default {default})"
-    sni: "REALITY SNI (default {default})"
-    dest: "REALITY dest (default {default})"
-  confirm:
-    install: "Install and create X-UI nodes?"
+    host: "Public host or IP"
+    vless_port: "VLESS port"
+    sni: "REALITY SNI"
+    dest: "REALITY dest"
   wsl:
-    enable_confirm: "WSL has no systemd; enable and restart?"
     restarting: "Enabled systemd; restarting WSL\n↳ Reopen the terminal and reinstall after restart"
     enabled: "Enabled systemd\n↳ Run wsl --shutdown on Windows, restart WSL, then reinstall"
-    continue_confirm: "Service can't start without it; continue anyway?"
   step:
     check_os: "Check OS"
     install_deps: "Install dependencies"
@@ -397,8 +412,15 @@ xui:
     unsupported_os: "Linux only"
     package_manager_missing: "No supported package manager found"
     panel_config_failed: "Panel configuration failed"
+    port_conflict: "Panel and VLESS ports must be different."
+    inbound_config_failed: "VLESS inbound creation failed; configuration saved for diagnosis, installation incomplete."
+    startup_verify_failed: "X-UI startup verification failed: check service logs and TCP listeners for panel {panel_port} and VLESS {vless_port}."
     reality_key_failed: "Failed to generate REALITY key pair"
     panel_api_failed: "Panel API failed: {error}"
+    install_script_exit: "The 3x-ui installer exited with code {code}"
+    install_script_timeout: "The 3x-ui installer timed out after {seconds} seconds"
+    link_format_conflict: "Choose either --raw or --mihomo"
+    invalid_link: "The saved VLESS REALITY link is invalid"
     download_script_fail: "Failed to download X-UI install script, check network: {url}"
   output:
     install_done: "X-UI configured"
@@ -455,7 +477,6 @@ xui:
     down: "↓"
 
 ohmyzsh:
-  confirm_p10k: "Also install the Powerlevel10k theme?"
   installed_mark: "Installed"
   step:
     check_env: "Checking zsh environment..."
@@ -499,7 +520,9 @@ tailscale:
     exit_node: "Configure exit node"
     login: "Login"
   error:
-    unsupported_os: "Linux only"
+    unsupported_os: "Linux / macOS only"
+    brew_missing: "Homebrew not found. Install Homebrew (https://brew.sh) and try again."
+    brew_timeout: "brew install timed out ({seconds}s). Check your network or run brew install tailscale manually, then retry."
     download_failed: "Failed to download the Tailscale install script. Check your network and try again."
   output:
     install_done: "Tailscale installed"
@@ -590,7 +613,6 @@ wireguard:
   check_port_fail: "Cannot connect to {ip}:{port} (TCP), check cloud firewall / security group"
   check_port_continue: "Port unreachable, ignore warning and continue?"
   port_443_other_occupied: "⚠️  Critical: port 443 is occupied by {proc}! This program must exclusively own port 443 for nginx TLS. Continuing will force-terminate that process, which may cause service interruption or data loss"
-  port_443_other_confirm: "Confirm force-continue and release port 443? This is irreversible [y/N]"
   port_443_other_abort: "Installation cancelled. Please release port 443 manually and retry"
   port_443_nginx_auto: "Detected nginx already running on port 443. This program will append its config automatically without modifying any of your existing sites"
   server_ip_required: "Server IP is required"
@@ -762,10 +784,13 @@ monitor:
 
 cli:
   desc: "OpsKit — Cross-platform DevOps Toolkit"
+  interaction_required: "This operation requires interactive input; supply its business parameters."
   yes_help: "Non-interactive mode: skip all confirmation prompts (like apt -y)"
   version_help: "Show version"
   theme_help: "Override theme"
   lang_help: "Override language (zh / en)"
+  output_help: "Output format: text or json"
+  non_interactive_help: "Reject prompts and menus"
   help_text: "Show this help message"
   software: "Software Management"
   monitor: "System Monitor"
@@ -846,3 +871,260 @@ network:
   closed: "Closed"
   local_ip: "Local IP"
   public_ip_failed: "Failed to get public IP"
+
+plugin_native:
+  back: "Back"
+  run_help: "Run a plugin's own CLI: plugin run NAME -- ARGS"
+  maintenance: Plugin maintenance
+  disk:
+    menu: Space settings
+    minimum: Minimum free space (MiB, 256..1048576)
+    saved: Space threshold saved.
+    failed: Space configuration refused; check configuration and available capacity.
+    details: 'Minimum free: {minimum} MiB; no filesystem quota.'
+    invalid: Minimum free space must be an integer from 256 to 1048576 MiB.
+    low_space: 'Insufficient space at {path}: need {required} MiB, available {available} MiB. This is a check, not a hard quota.'
+    help: Inspect or configure framework disk headroom; no filesystem hard quota.
+  cache_cleanup:
+    menu: Cache cleanup
+    catalog: "Cache categories"
+    hint: "Runtime cache: isolated plugin runtimes and dependencies.\nFetch cache: Git tools used for isolated repository acquisition.\nPreparation remnants: interrupted runtime or tool preparation directories. Only recorded, inactive, unreferenced objects can be collected."
+    runtime: "Runtime cache"
+    fetch: "Fetch cache"
+    prepare: "Preparation remnants"
+    uncertain: "Invalid ownership records are retained. Unrecorded objects are never adopted."
+    empty: "No recorded unreferenced cache objects were found."
+    select: "Select a cache object to review"
+    details: "Cache: {catalog}\nObject: {object}\nOwnership SHA256: {digest}"
+    completed: "The selected unused cache object was removed."
+  workspace_recovery:
+    menu: Workspace cleanup
+    empty: "No confirmed native workspace records were found. Unrecorded directories are never adopted."
+    uncertain: "Invalid workspace records are retained for manual inspection."
+    select: "Select a workspace record to inspect"
+    details: "Directory: {directory}\nTransaction: {transaction}\nRecord SHA256: {digest}"
+    completed: "The recorded native workspace and its recovery record were removed."
+  profile_recovery:
+    menu: Sandbox cleanup
+    empty: "No confirmed native profile records were found."
+    uncertain: "Unconfirmed or invalid profile records are retained for manual inspection; they cannot authorize removal."
+    select: "Select a profile record to inspect"
+    details: "Profile: {profile}\nTransaction: {transaction}\nRecord SHA256: {digest}"
+    completed: "The recorded inactive native profile was removed."
+    completed_removed: "The completed profile deletion record was retired."
+  update_recovery:
+    menu: Update rollback
+    empty: "No valid interrupted update records were found."
+    invalid: "Some update directories have invalid or missing records. They are retained for manual inspection."
+    select: "Select an interrupted update to inspect"
+    details: "Plugin: {plugin}\nDirectory: {directory}\nTransaction: {transaction}\nRecord SHA256: {digest}"
+    completed: "The previous version is restored. Trust remains revoked and recovery evidence is retained."
+  task:
+    cancelled: "Cancelling and stopping processes. Existing host files or transmitted bytes are not rolled back."
+  upload:
+    starting: "Preparing and uploading file to {host}..."
+    completed: "File upload completed ({bytes} bytes)."
+  bootstrap:
+    tools: "Checking the installation environment…"
+    repair: "Preparing the isolated Python environment…"
+    runtime: "Preparing the plugin runtime…"
+  fetch_credentials_hint: "Local authentication is unavailable or server identity is unverified. Provide a repository-bound credential file with verified server keys; leave blank to cancel."
+  fetch_profile_prompt: "Repository credential file path"
+  fetch_profile_help: "Private credential file bound to this exact repository; never saved or automatically reused"
+  allow_private_help: "Allow private IPs for this exact repository for this acquisition only; specify again when updating"
+  prepare_fetch_help: "Prepare isolated native Git acquisition from a reviewed offline Python directory"
+  python_runtime_help: "Standalone Python directory to copy into the native sandbox"
+  plugin_path_help: "Local plugin directory to prepare; preparation does not grant trust"
+  dependency_help: "Check an exact package==version against the reviewed lock; repeat for multiple packages"
+  wheels_help: "Reviewed offline wheel directory; source distributions and network installation are forbidden"
+  lock_file_help: "Reviewed complete dependency lock with SHA256 hashes"
+  no_grants: "No persistent host permissions are saved."
+  select_grant: "Select a permission to inspect or revoke"
+  revoked: "Permission revoked. Active one-time grants are invalidated."
+  prepare_help: "Prepare a native sandbox runtime from a private Python directory and locked offline wheels"
+  permissions: "Plugin permissions"
+  request: "Permission request"
+  once: "Allow this time"
+  always: "Always allow"
+  permissions_help: "Inspect and revoke persistent plugin host permissions"
+  list_help: "List saved persistent permissions"
+  permissions_plugin_help: "Only list permanent grants for this plugin"
+  permissions_show_help: "Show a permanent grant by its ID"
+  revoke_help: "Revoke a permission and invalidate active one-time grants"
+  id_help: "Full permission ID shown by permissions list"
+  permission_line: "Permissions: {permission}"
+  directory_manage_warning: "Allows project tools to access files outside this directory"
+  directory_read_scope: "Includes all subdirectories"
+  resource_line: "Resource: {resource}"
+  fingerprint_line: "Plugin fingerprint: {fingerprint}"
+  tool_warning: "Host tools and their scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory"
+  tool_scope_warning: "Allows the plugin to run this tool with any arguments and access files available to your user"
+  operations:
+    directory:
+      read: "Read"
+      write: "Write"
+      read_write: "Read | Write"
+      manage: "Read | Write | Execute"
+    tool:
+      execute: "Run a host tool"
+  provider:
+    install: Install and authorize
+    approve: Approve access
+    scope: "{caller} → {provider} may call {methods} on {service}"
+    trust: Approval trusts the shown fingerprint and authorizes the listed service calls
+  errors:
+    provider_interaction_required: "Approve plugin installation or access from an interactive menu"
+    provider_request_denied: "No declared dependency or registered provider source"
+    provider_incompatible: "Check the provider's enabled state, version and service contract in Plugin Management"
+    provider_install_failed: "Provider installation failed, check repository connectivity or plugin logs"
+    sdk_required: "Plugin SDK is incompatible; SDK 4 is required. Upgrade older plugin manifests and code."
+    fetch_prepare_invalid: "Invalid isolated Python runtime. Provide a usable Python installation directory."
+    fetch_profile_invalid: "Cannot securely read repository credentials. Check private file permissions, format and exact repository binding."
+    fetch_ssh_connection_failed: "SSH disconnected before server identity verification. Check the repository server, SSH port and proxy/TUN settings."
+    fetch_http_auth_failed: "Repository access denied. Check credentials and repository permissions."
+    fetch_private_denied: "The repository resolves to a private or reserved IP. Add --allow-private for this command only after checking the target."
+    fetch_tls_failed: "Repository TLS validation failed. Check its certificate; for a private CA, supply ca_pem in the repository credential file."
+    fetch_protocol_failed: "The repository response violates the bounded Git protocol. Check the URL, credentials and repository size."
+    fetch_transfer_failed: "Repository download failed. Check the network and retry; no candidate was published."
+    fetch_ssh_host_failed: "SSH host verification failed. Confirm its key with the repository administrator before updating the private profile; new keys are never accepted automatically."
+    fetch_ssh_auth_failed: "SSH private-key authentication failed. Check the key, passphrase and repository access; local agents and other keys are never tried."
+    fetch_prepare_failed: "Isolated Python preparation or verification failed."
+    fetch_python_failed: "Python could not start in isolation. Check system runtime libraries or security software."
+    fetch_dependency_missing: "The current OpsKit Python environment lacks transport dependencies. Use the project virtual environment or install the declared project dependencies, then retry."
+    fetch_setup_failed: "Acquisition tool preparation failed. Check network, free space and directory permissions, then retry installation. Verified downloads are reused."
+    runtime_setup_failed: "Plugin runtime preparation failed; installation was not completed. Check network, free space and directory permissions, then retry."
+    fetch_tools_missing: "Prepare the native acquisition runtime first with plugin prepare-fetch --python-runtime PATH."
+    fetch_tools_invalid: "The prepared native acquisition runtime is stale or damaged. Run plugin prepare-fetch again."
+    acquisition_failed: "Plugin installation failed. Check logs/opskit.log in the data directory."
+    workspace_failed: "Plugin workspace preparation or cleanup failed. Check the data directory path, permissions, and free space."
+    workspace_full: "Temporary workspaces are full. Retry later or use workspace cleanup in plugin maintenance."
+    workspace_busy: "Temporary workspace is busy. Please retry shortly."
+    update_failed: "The plugin update failed. Check the OpsKit log before retrying"
+    candidate_checksums: "The candidate does not match CHECKSUMS.yaml. Retry after the publisher corrects the release"
+    update_modified: "Installed files changed or lack a native installation receipt. Back up your changes before reinstalling; no files were replaced."
+    prepare_invalid: "Invalid plugin, private Python runtime, offline wheels or dependency lock."
+    prepare_failed: "Native plugin runtime preparation failed."
+    runtime_missing: "The native runtime is missing. Run plugin prepare first."
+    runtime_invalid: "The native runtime is stale or damaged. Prepare it again."
+    broker_denied: "The plugin operation was denied or failed."
+    interaction_required: "Interactive authorization is required; non-interactive mode never auto-approves."
+    store_invalid: "The plugin permission store is invalid or cannot be read safely."
+    identity_revoked: "The plugin identity is invalid or its authorization was revoked."
+    denied: "The permission request was denied."
+    changed_during_prompt: "Permissions changed while awaiting confirmation; request again."
+    grant_limit: "The plugin permission limit has been reached."
+    missing_or_revoked: "The required permission is missing or revoked."
+    invalid_id: "Invalid permission ID format."
+    grant_not_found: "The specified permission was not found."
+    platform_pending: "The {platform} native plugin sandbox is not implemented; unisolated execution is refused."
+    platform_unsupported: "The native plugin sandbox does not support this platform."
+    windows_required: "The AppContainer sandbox requires Windows."
+    windows_api_missing: "Windows AppContainer APIs are unavailable on this system."
+    attributes_invalid: "Native sandbox process attribute allocation failed."
+    system_directory_missing: "The Windows system directory could not be determined."
+    token_not_isolated: "The child has no AppContainer isolation token; execution was refused."
+    profile_create_failed: "AppContainer profile creation failed ({status})."
+    profile_sid_missing: "The AppContainer profile returned no security identifier."
+    profile_cleanup_failed: "AppContainer profile cleanup failed ({status})."
+    execution_timeout: "The native plugin exceeded its execution deadline."
+    protocol_failed: "The native plugin sent an invalid message or its transport failed."
+    output_limit: "The native plugin exceeded its output limit."
+    worker_failed: "The native plugin failed or returned no valid result."
+    transport_cleanup_failed: "Native plugin transport cleanup did not finish."
+  lifecycle:
+    plugin_busy: "The plugin is running in another task or process. Wait for it to finish and try again."
+    list_help: "List installed plugins and their compatibility"
+    show_help: "Show plugin identity, permissions, services and trust"
+    install_help: "Install a plugin from a reviewed repository"
+    repository_help: "Plugin Git repository URL or local repository path"
+    branch_help: "Source branch, defaults to the repository default branch"
+    alias_help: "Local installation directory name, independent of the manifest name"
+    limit_help: "Maximum number of records to return"
+    transaction_help: "Transaction ID returned by the corresponding inspection command"
+    record_digest_help: "record_sha256 returned by the corresponding inspection command"
+    catalog_help: "Cache type: runtime, fetch, or prepare"
+    cache_object_help: "Object ID returned by cache inspection"
+    update_help: "Update one or all plugins from their recorded sources"
+    update_name_help: "Plugin name from plugin list"
+    update_all_help: "Update all installed plugins in sequence and report each result"
+    update_target_required: "Specify either a plugin name or --all"
+    update_batch_failed: "{count} plugin updates need attention"
+    update_named_source_required: "Specify a plugin name when supplying credentials or allowing a private connection"
+    remove_help: "Remove a plugin while preserving its state"
+    enable_help: "Enable an installed plugin"
+    disable_help: "Disable an installed plugin"
+    trust_help: "Trust the current plugin content using its complete fingerprint"
+    revoke_help: "Revoke a plugin's execution trust"
+    inspect_profiles_help: "Inspect Windows native sandbox profile recovery records without changing files"
+    recover_profile_help: "Remove one confirmed inactive Windows profile after checking its exact record SHA256"
+    profile_recovery_failed: "Native profile recovery was refused or could not be confirmed. Active, changed or uncertain resources are retained."
+    inspect_native_workspaces_help: "Inspect confirmed native workspace recovery records without deleting directories."
+    recover_workspace_help: "Remove an inactive recorded native workspace using its full journal SHA256."
+    workspace_recovery_failed: "Workspace recovery was refused or could not be confirmed. Active, changed or unknown directories are retained."
+    inspect_cache_help: "Inspect native ownership records; catalog is runtime, fetch or prepare (preparation workspaces)."
+    clean_cache_help: "Remove one unused recorded object using its full ownership SHA256; catalog is runtime, fetch or prepare."
+    cache_cleanup_failed: "Cache cleanup was refused or could not be confirmed. Active, referenced, changed or unknown objects are retained."
+    inspect_updates_help: "Inspect interrupted update records without changing files"
+    recover_update_help: "Restore the recorded previous version; revoke trust and retain all recovery evidence"
+    update_recovery_failed: "Update recovery could not be confirmed. Files and evidence are retained; inspect the transaction again."
+    not_found: "plugin not found or name ambiguous"
+    state_invalid: "invalid plugin, caller or record SHA256"
+    state_failed: "state operation unconfirmed; inspect before retry"
+    inspect_state_help: "Inspect transaction metadata; omitted caller selects self, explicit caller selects a service partition"
+    repair_state_help: "Repair a torn transaction tail matching the observed SHA256; preserve original evidence"
+    inspect_workspaces_help: "Observe bounded workspace entries without reading contents; observations do not establish ownership or authorize deletion"
+    workspaces_failed: "workspace inspection unconfirmed; no cleanup performed"
+    path_invalid: "plugin path must be an ordinary directory"
+    fingerprint_help: "Generate or verify a plugin CHECKSUMS.yaml manifest"
+    checksum_failed: "plugin checksum verification failed"
+    checksum_operation_failed: "plugin checksum operation failed"
+    repository_invalid: "invalid repository or branch"
+    remove_cancelled: "plugin removal cancelled"
+    fingerprint_mismatch: "fingerprint does not match current plugin content"
+    checksum_mismatch: "plugin checksum mismatch"
+    changed: "plugin changed during authorization"
+    authorize_service_help: "Approve the caller's exact declared service contract"
+    revoke_service_help: "Revoke one service edge while preserving independent plugin trust"
+    update_downgrade_pending: "An older version of {name} was installed and awaits trust review"
+
+confirm_ui:
+  uninstall: Uninstall plugin
+  plugin_delete: The plugin directory will be deleted; state data is preserved.
+  trust: Trust plugin
+  trust_detail: Plugins run in a sandbox; approved host tools run with your user privileges.
+  private_connection: Allow connection
+  private_detail: The repository resolves to a private or reserved address; this permits one connection only.
+  revoke: Revoke permission
+  install: Install software
+  reinstall: Reinstall software
+  remove: Uninstall software
+  remove_all: Uninstall all versions
+  irreversible: This action cannot be undone.
+  upgrade: Upgrade software
+  dependency: Install dependency
+  save: Save settings
+  disk_detail: This checks free space; it is not a disk quota.
+  cache: Clean cache
+  cache_detail: Active readers, current references or changed identity prevent deletion.
+  workspace: Clean directory
+  workspace_detail: Deleted only when idle and the recorded parent and directory identities still match.
+  profile: Clean sandbox
+  profile_detail: Deleted only when idle and the recorded identity and directory still match.
+  profile_record: Clean record
+  profile_record_detail: The profile is already deleted; only its remaining record will be removed.
+  rollback: Roll back update
+  rollback_detail: Restoring the old version revokes trust and preserves all recovery evidence.
+  connect_wsl: Enable service
+  connect_wsl_detail: WSL has no systemd; it will be enabled and restarted.
+  continue: Continue
+  continue_detail: The service cannot start without systemd.
+  xui: Install node
+  xui_detail: Install X-UI and create a node.
+  release_port: Force installation
+  release_port_detail: The process using port 443 will be terminated, potentially interrupting service or losing data; this cannot be undone.
+  theme: Install theme
+  apply_update: Apply update
+  tunnel: Remove tunnel
+  peer: Remove peer
+  downgrade_detail: "Version downgrade: {old} → {new}."
+  port_process: "Process using port 443: {process}"
