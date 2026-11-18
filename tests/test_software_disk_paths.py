@@ -90,6 +90,30 @@ def test_python_fallback_target_is_unknown():
     assert PythonRecipe().disk_check_paths() == (None,)
 
 
+@pytest.mark.parametrize("systemd_available", [True, False])
+def test_rustdesk_checks_service_and_temporary_filesystems(monkeypatch, tmp_path, systemd_available):
+    from software.recipes.rustdesk import recipe
+
+    monkeypatch.setattr(recipe.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(recipe, "systemd_is_available", lambda: systemd_available)
+    instance = recipe.RustDeskRecipe()
+    expected = (
+        recipe.RUSTDESK_INSTALL_DIR,
+        recipe.RUSTDESK_DATA_DIR,
+        recipe.RUSTDESK_LOG_DIR,
+        recipe.RUSTDESK_STATE_DIR,
+        tmp_path,
+    )
+    if systemd_available:
+        expected = (*expected, recipe.RUSTDESK_SYSTEMD_DIR)
+    assert instance.disk_check_paths() == expected
+
+    monkeypatch.setattr(host, "check_disk_space", lambda required, path: True)
+    assert disk.check_recipe_disk_space(instance, 1) is True
+    monkeypatch.setattr(host, "check_disk_space", lambda required, path: path != tmp_path)
+    assert disk.check_recipe_disk_space(instance, 1) is False
+
+
 def test_unavailable_temporary_directory_does_not_hide_low_install_space(monkeypatch, tmp_path):
     from software.recipes.redis import common, recipe
     install = tmp_path / "install"
