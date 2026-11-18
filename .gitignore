@@ -103,3 +103,9 @@ cache/*.pending
 /native-profile-leases/
 /native-workspace-leases/
 /plugin-artifact-locks/
+/plugin-artifacts/
+/plugin-capabilities.yaml
+/plugin-capabilities.lock
+
+# Local test scratch directories
+/opskit-test-*/
