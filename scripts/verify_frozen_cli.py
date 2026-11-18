@@ -39,7 +39,8 @@ def verify(binary, build, output, *, timeout=60):
         (["plugin", "prepare", "--help"], 0, False),
         (["plugin", "recover-update", "--help"], 0, False),
         (["plugin", "recover-native-profile", "--help"], 0, False),
-        (["--output", "json", "plugin", "inspect-native-profiles"], 0, True),
+        (["--lang", "en", "--output", "json", "plugin", "inspect-native-profiles"],
+         0 if os.name == "nt" else 1, True),
         (["plugin", "recover-native-workspace", "--help"], 0, False),
         (["--output", "json", "plugin", "inspect-native-workspaces"], 0, True),
         (["plugin", "clean-native-cache", "--help"], 0, False),
@@ -81,6 +82,9 @@ def verify(binary, build, output, *, timeout=60):
                   or type(error["code"]) is not int or error["code"] != expected
                   or not isinstance(error["message"], str) or not error["message"].strip()):
                 raise ValueError("failed frozen CLI returned an invalid error")
+            if (arguments[-2:] == ["plugin", "inspect-native-profiles"] and expected == 1
+                    and error["message"] != "The AppContainer sandbox requires Windows."):
+                raise ValueError("frozen CLI returned an unexpected platform error")
             if arguments[-1] == "--version" and payload.get("data") != {"version": build}:
                 raise ValueError("frozen CLI build mismatch")
             if arguments[-2:] == ["update", "reconcile"] and payload.get("data") != {"state": "no_job"}:

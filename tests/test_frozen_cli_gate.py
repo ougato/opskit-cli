@@ -28,7 +28,8 @@ def test_gate_rejects_broken_artifacts(tmp_path, monkeypatch, failure):
             assert options["env"].get("USERPROFILE") == os.environ.get("USERPROFILE")
         if failure == "timeout":
             raise subprocess.TimeoutExpired(command, options["timeout"])
-        code = 2 if "repair-state" in command else 0
+        code = (2 if "repair-state" in command else
+                1 if "inspect-native-profiles" in command and gate.os.name != "nt" else 0)
         payload = {"schema_version": 1, "ok": code == 0, "data": {},
                    "error": None if code == 0 else {"code": code, "message": "invalid input"}}
         if "--version" in command:
@@ -86,12 +87,14 @@ def test_gate_accepts_complete_success_and_failure_envelopes(tmp_path, monkeypat
     binary.write_bytes(b"intercepted fixture")
 
     def run(command, **options):
-        code = 2 if "repair-state" in command else 0
+        code = (2 if "repair-state" in command else
+                1 if "inspect-native-profiles" in command and gate.os.name != "nt" else 0)
         data = {"version": 7} if "--version" in command else {}
         if command[-2:] == ["update", "reconcile"]:
             data = {"state": "no_job"}
         payload = {"schema_version": 1, "ok": code == 0, "data": data,
-                   "error": None if code == 0 else {"code": 2, "message": "invalid input"}}
+                   "error": None if code == 0 else {"code": code, "message":
+                       "The AppContainer sandbox requires Windows." if code == 1 else "invalid input"}}
         return subprocess.CompletedProcess(command, code, json.dumps(payload).encode(), b"")
 
     monkeypatch.setattr(gate.subprocess, "run", run)
@@ -108,3 +111,41 @@ def test_gate_accepts_complete_success_and_failure_envelopes(tmp_path, monkeypat
     assert any("inspect-native-profiles" in check["args"] for check in checks)
     assert any("inspect-native-workspaces" in check["args"] for check in checks)
     assert any(check["args"] == ["plugin", "recover-native-profile", "--help"] for check in checks)
+
+
+@pytest.mark.parametrize("platform", ["nt", "linux", "darwin"])
+@pytest.mark.parametrize("broken", [False, True])
+def test_profile_gate_checks_platform_contract_and_rejects_other_failures(tmp_path, monkeypatch, platform, broken):
+    from types import SimpleNamespace
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name="nt" if platform == "nt" else "posix",
+                                                  environ=os.environ))
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"intercepted fixture")
+    profile_calls = []
+    def run(command, **options):
+        profile = "inspect-native-profiles" in command
+        code = (2 if "repair-state" in command else 1 if profile and platform != "nt" else 0)
+        message = "The AppContainer sandbox requires Windows." if profile else "invalid input"
+        if profile:
+            profile_calls.append(command)
+            assert command[1:3] == ["--lang", "en"]
+            if broken:
+                code, message = 1, "unrelated inspection failure"
+        data = {"version": 7} if "--version" in command else {}
+        if command[-2:] == ["update", "reconcile"]:
+            data = {"state": "no_job"}
+        payload = {"schema_version": 1, "ok": code == 0, "data": data,
+                   "error": None if code == 0 else {"code": code, "message": message}}
+        return subprocess.CompletedProcess(command, code, json.dumps(payload).encode(), b"")
+    monkeypatch.setattr(gate.subprocess, "run", run)
+    output = tmp_path / "acceptance"
+    if broken:
+        with pytest.raises((ValueError, RuntimeError)):
+            gate.verify(binary, 7, output)
+        assert not (output / "verification.json").exists()
+    else:
+        assert gate.verify(binary, 7, output)["checks"] == 30
+        checks = json.loads((output / "verification.json").read_text())["checks"]
+        profile = next(check for check in checks if "inspect-native-profiles" in check["args"])
+        assert profile["exit_code"] == (0 if platform == "nt" else 1)
+    assert len(profile_calls) == 1

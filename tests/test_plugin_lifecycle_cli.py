@@ -293,10 +293,12 @@ def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
                                   ("inspect-native-workspaces",), ("inspect-native-cache", "runtime"),
                                   ("inspect-native-cache", "fetch"), ("inspect-native-cache", "prepare")])
 def test_maintenance_inspection_cli_in_empty_workspace(isolated, args):
-    inspected = call("plugin", *args, "--limit", "1")
+    inspected = call("--lang", "en", "plugin", *args, "--limit", "1")
     if args == ("inspect-native-profiles",) and sys.platform != "win32":
         assert inspected.exit_code == 1
         assert json.loads(inspected.stdout)["ok"] is False
+        assert json.loads(inspected.stdout)["error"] == {
+            "code": 1, "message": "The AppContainer sandbox requires Windows."}
         return
     assert inspected.exit_code == 0, inspected.output
     assert json.loads(inspected.stdout)["data"] == []

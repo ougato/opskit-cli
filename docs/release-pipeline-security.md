@@ -18,6 +18,8 @@ manifest.json 仅用于流水线核对，不作为同名发布资产上传
 失败保留草稿和诊断日志，测试产物包含 release-tests.log 与 XML
 冻结 CLI 验收无论成功或失败，都单独保存 frozen-check-平台产物名 诊断包，包含各命令的 stdout、stderr 和退出码
 诊断包不进入正式发布矩阵，未通过冻结验收的二进制不上传为发布产物
+`inspect-native-profiles` 仅检查 Windows AppContainer 恢复记录：Windows 空环境应成功返回，Linux/macOS 应返回退出码 1 及明确的 Windows 平台错误
+冻结验收对此命令固定使用英文并检查完整 JSON 错误结构和平台错误文案，其他错误仍阻断发布
 
 ## 构建约束
 
