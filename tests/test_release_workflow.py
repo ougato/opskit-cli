@@ -79,6 +79,15 @@ def test_manylinux_builder_is_pinned_to_amd64_digest():
         assert f"ln -s /opt/rh/devtoolset-10/root/usr/bin/{name} /usr/local/bin/{name}" in command
 
 
+def test_build_setup_does_not_save_disabled_pip_cache():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-python@"))
+    assert "cache" not in setup.get("with", {})
+    installer = WORKFLOW.parents[2] / "scripts/install_release_build.py"
+    assert '"--no-cache-dir"' in installer.read_text(encoding="utf-8")
+
+
 def test_read_only_checkouts_do_not_leave_tokens_for_tests_or_builds():
     for path in WORKFLOW.parent.glob("*.yml"):
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))

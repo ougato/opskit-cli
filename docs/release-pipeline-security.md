@@ -26,6 +26,7 @@ manifest.json 仅用于流水线核对，不作为同名发布资产上传
 外部 Actions 固定提交，manylinux 镜像固定摘要及 amd64 平台
 只有发布任务具有 contents:write，其余任务只读且检出不保留凭据
 原生构建通过 scripts/install_release_build.py 创建全新环境，按 requirements-installer.txt 和 requirements-build.txt 安装锁定依赖
+原生构建安装依赖时禁用 pip 缓存，setup-python 同样不启用 pip 缓存保存，避免不存在的缓存目录使构建收尾失败
 Windows 辅助工具由 scripts/install_windows_build_tools.py 准备，Nuitka 不自动下载缺失工具
 构建任务预算 60 分钟，矩阵独立保留失败结果
 依赖版本与哈希以 pyproject.toml、uv.lock 及导出清单为准
