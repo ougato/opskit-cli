@@ -330,8 +330,10 @@ def test_budget_counts_preparation_but_excludes_user_idle(monkeypatch, preparati
         session._ready.put(ready)
         session.check_cancelled()
         assert session.take() is True
-        assert 28 - preparation < details["remaining"] <= 30 - preparation
-        assert 0 <= details["resumed_deadline"] - time.monotonic() <= 30 - preparation
+        # Subtracting and restoring monotonic timestamps can round just above
+        # the budget on Windows; retain the bound within one microsecond.
+        assert 28 - preparation < details["remaining"] <= 30 - preparation + 1e-6
+        assert 0 <= details["resumed_deadline"] - time.monotonic() <= 30 - preparation + 1e-6
     finally:
         session.cancel(wait=True)
 
