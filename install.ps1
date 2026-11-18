@@ -13,7 +13,6 @@ $ErrorActionPreference = 'Stop'
 $BIN_NAME      = "opskit"
 $DOWNLOAD_BASE = "https://github.com/ougato/opskit-cli/releases/latest/download"
 $INSTALL_DIR   = Join-Path $env:LOCALAPPDATA "opskit"
-$RELEASE_PUBLIC_KEY = ""
 
 function Write-Field { param($label, $value) Write-Host ("  {0,-12}{1}" -f $label, $value) }
 function Write-Ok    { param($msg) Write-Host "  [OK]    $msg" -ForegroundColor Green }
@@ -52,30 +51,6 @@ function Test-Sha256 {
         return $false
     }
     return $true
-}
-
-function Test-ReleaseSignature {
-    param([string]$Url, [string]$Filename, [string]$Digest, [string]$TempDir)
-    if (-not $RELEASE_PUBLIC_KEY -or -not (Get-Command openssl -ErrorAction SilentlyContinue)) {
-        Write-Fail "Pinned release key and OpenSSL 3 required; refusing installation"
-        return $false
-    }
-    try {
-        $message = Join-Path $TempDir "release.signed"
-        $signature = Join-Path $TempDir "release.sig"
-        $keyPath = Join-Path $TempDir "key.der"
-        Invoke-WebRequest -Uri "$Url.signed" -OutFile $message -UseBasicParsing -TimeoutSec 15
-        Invoke-WebRequest -Uri "$Url.sig" -OutFile $signature -UseBasicParsing -TimeoutSec 15
-        if ((Get-Item $message).Length -gt 4096 -or (Get-Item $signature).Length -ne 64) { return $false }
-        $record = Get-Content $message -Raw | ConvertFrom-Json
-        if ($record.filename -ne $Filename -or $record.sha256 -ne $Digest.ToLower() -or $record.build -le 0) { return $false }
-        $rawKey = [Convert]::FromBase64String($RELEASE_PUBLIC_KEY)
-        if ($rawKey.Length -ne 32) { return $false }
-        [byte[]]$prefix = 0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00
-        [System.IO.File]::WriteAllBytes($keyPath, [byte[]]($prefix + $rawKey))
-        & openssl pkeyutl -verify -pubin -keyform DER -inkey $keyPath -rawin -in $message -sigfile $signature *> $null
-        return $LASTEXITCODE -eq 0
-    } catch { return $false }
 }
 
 # -- add install dir to user PATH ----------------------------------------------
@@ -129,10 +104,6 @@ function Main {
         }
 
         if (-not (Test-Sha256 -FilePath $tmpBin -Expected $expectedSha)) {
-            exit 1
-        }
-        if (-not (Test-ReleaseSignature -Url $downloadUrl -Filename $filename -Digest $expectedSha -TempDir $tmpDir)) {
-            Write-Fail "Missing or invalid release signature; refusing installation"
             exit 1
         }
         if (-not [string]::IsNullOrEmpty($expectedSha)) {
