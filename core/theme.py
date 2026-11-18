@@ -92,7 +92,11 @@ def init(theme_name: str | None = None) -> None:
     if theme_file is None:
         theme_file = _theme_path("catppuccin")
         if theme_file is None:
-            raise FileNotFoundError("default theme is unavailable")
+            # Preserve filesystem diagnostics when the bundled default cannot
+            # be reached, instead of hiding an access or path failure.
+            default = _get_themes_dir() / "catppuccin.yaml"
+            default.resolve(strict=True).stat()
+            raise FileNotFoundError(f"default theme is unavailable: {default}")
         theme_name = "catppuccin"
 
     data = _load_yaml(theme_file)

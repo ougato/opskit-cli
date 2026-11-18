@@ -208,6 +208,10 @@ def _allocate_worker(connection, request, buffer=None, length=0):
             parent_identity = _directory(parent)
             reserve_workspace(parent)
             root.mkdir(mode=0o700)
+            if os.name == "nt":
+                # Older CPython releases ignore mkdir's private mode on Windows.
+                from core.secrets import restrict_permissions
+                restrict_permissions(root)
             identity = _directory(root)
         if buffer is not None:
             target = root / "request.json"

@@ -117,6 +117,7 @@ def private_python_runtime(tmp_path):
     shutil.copytree(source / "Lib" / "encodings", runtime / "Lib" / "encodings",
                     ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copyfile(source / "Lib" / "os.py", runtime / "Lib" / "os.py")
+    shutil.copyfile(source / "Lib" / "codecs.py", runtime / "Lib" / "codecs.py")
     shutil.copyfile(source / "Lib" / "linecache.py", runtime / "Lib" / "linecache.py")
     return runtime
 

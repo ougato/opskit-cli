@@ -93,5 +93,5 @@ def test_actual_parent_junction_swap_is_rejected_before_read(tmp_path, monkeypat
             access.read_bounded(target, root, 100)
         assert raced and (moved / target.name).is_file()
     finally:
-        if root.is_junction():
+        if getattr(root.lstat(), "st_reparse_tag", 0) == 0xA0000003:
             root.rmdir()
