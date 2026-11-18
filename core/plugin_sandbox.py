@@ -1081,7 +1081,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
                                seed, seed_files, payload, fingerprint=fingerprint,
                                sdk_sha256=code_digest(), deadline=lambda: _invocations.deadline,
                                checkpoint=checkpoint, dispatch=dispatch,
-                               output=lambda line: console.print(line, markup=False, highlight=False),
+                               output=lambda line: console.print(line, markup=False, highlight=False, soft_wrap=True),
                                staging_parent=base, prepared_runtime=prepared_runtime, **preload_options)
         if action == "service.describe":
             value = result.get("value")
