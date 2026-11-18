@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
-from worker_test_markers import marked_process_exists, publish_marker, publish_process_marker
+from worker_test_markers import marked_process_exists, publish_process_marker
 
 from core import plugin, plugin_inspection as inspection, plugin_sandbox as sandbox
 from core import plugin_services as services
@@ -119,7 +119,7 @@ def fake_inventory_session(connection, buffer, length, requested):
     root = Path(request["root"])
     spec = json.loads((root / "frames.json").read_text())
     if not spec.get("block_after_first"):
-        publish_marker((root / "reader-pid"), str(os.getpid()))
+        publish_process_marker(root / "reader-pid")
     send(connection, spec["header"])
     view = memoryview(buffer).cast("B")
     for index, record in enumerate(spec.get("records", [])):
@@ -128,7 +128,7 @@ def fake_inventory_session(connection, buffer, length, requested):
             requested.wait()
             requested.clear()
     if spec.get("block_after_first"):
-        publish_marker((root / "reader-pid"), str(os.getpid()))
+        publish_process_marker(root / "reader-pid")
     read, write = os.pipe()
     try:
         os.read(read, 1)
@@ -247,7 +247,7 @@ def test_invalid_inventory_header_rejects_and_reaps(tmp_path, monkeypatch, heade
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(RuntimeError, match="invalid plugin inventory inspection result"):
             reader.inventory(tmp_path, timeout=30)
-    assert not psutil.pid_exists(int((tmp_path / "reader-pid").read_text()))
+    assert not marked_process_exists(tmp_path / "reader-pid")
 
 
 @pytest.mark.parametrize("directory", ["../escape", "/absolute", "nested/child", "C:escape", "_hidden", "."])
@@ -260,7 +260,7 @@ def test_response_cannot_inject_inventory_directory(tmp_path, monkeypatch, direc
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(RuntimeError, match="directory identity"):
             reader.inventory(tmp_path, timeout=30)
-    assert not psutil.pid_exists(int((tmp_path / "reader-pid").read_text()))
+    assert not marked_process_exists(tmp_path / "reader-pid")
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -284,7 +284,7 @@ def test_incomplete_inventory_cannot_return_first_identity(tmp_path, monkeypatch
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(KeyboardInterrupt if cancel else TimeoutError):
             reader.inventory(tmp_path, timeout=30)
-    assert not psutil.pid_exists(int(marker.read_text()))
+    assert not marked_process_exists(marker)
 
 
 def test_cancel_event_during_inventory_stream_reclaims_reader(tmp_path, monkeypatch):
@@ -315,7 +315,7 @@ def test_cancel_event_during_inventory_stream_reclaims_reader(tmp_path, monkeypa
         thread.join(10)
     assert not thread.is_alive()
     assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
-    assert not psutil.pid_exists(int(marker.read_text()))
+    assert not marked_process_exists(marker)
 
 
 @pytest.mark.parametrize("select,value", [("all", "unexpected"), ("name", "../escape"), ("service", ""), ([], "")])
