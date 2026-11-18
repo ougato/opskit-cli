@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 
 from core.plugin_state import _plain, _directory
+from core.paths import absolute_path
 
 MAX_WORKSPACES = 8
 # A workspace may hold a single 512MiB checksum-bound upload snapshot. Reserve
@@ -46,6 +47,7 @@ def reserve_workspace(parent):
         raise ValueError("workspace budget parent must be canonical")
     for ancestor in (parent, *parent.parents):
         _directory(ancestor)
+    parent = absolute_path(parent)
     visited = 0
 
     def scan(directory, depth):

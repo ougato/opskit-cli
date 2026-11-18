@@ -1,6 +1,9 @@
 """Retained workspaces consume admission slots without name-based deletion."""
+import os
+
 import pytest
 
+from core.paths import absolute_path
 from core import plugin_workspace as workspace, plugin_workspace_budget as budget
 
 
@@ -12,6 +15,18 @@ def test_unprefixed_spill_is_not_ignored(tmp_path):
     with pytest.raises(ValueError, match="byte quota"):
         budget.reserve_workspace(tmp_path)
     assert spill.read_bytes() == b"x"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows extended paths")
+def test_existing_workspace_inventory_accepts_long_windows_paths(tmp_path):
+    retained = absolute_path(tmp_path) / "runtime" / ("a" * 120) / ("b" * 120)
+    retained.mkdir(parents=True)
+    (retained / "payload").write_bytes(b"archive")
+
+    result = budget.reserve_workspace(tmp_path)
+
+    assert result.workspaces == 1
+    assert result.payload_bytes == len(b"archive")
 
 
 def test_retained_unknown_workspace_names_exhaust_slots(tmp_path):
@@ -122,7 +137,7 @@ def test_changed_file_fails_closed(tmp_path, monkeypatch):
     reads = 0
     def changed(path, *args, **kwargs):
         nonlocal reads
-        if path == value:
+        if absolute_path(path) == absolute_path(value):
             reads += 1
             if reads == 2:
                 before = original(path)
