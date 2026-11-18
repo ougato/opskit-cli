@@ -951,19 +951,19 @@ plugin_native:
   permissions_show_help: "按权限 ID 查看永久权限详情"
   revoke_help: "撤销指定权限，并使正在使用的单次权限失效"
   id_help: "permissions list 显示的完整权限 ID"
-  operation_line: "操作：{operation}"
-  directory_manage_warning: "允许执行项目工具；工具可能访问项目外文件。"
-  directory_read_scope: "包含所有子目录。"
+  permission_line: "权限：{permission}"
+  directory_manage_warning: "允许执行项目工具；工具可能访问项目外文件"
+  directory_read_scope: "包含所有子目录"
   resource_line: "资源：{resource}"
   fingerprint_line: "插件指纹：{fingerprint}"
-  tool_warning: "宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离。"
-  tool_scope_warning: "允许插件使用任意参数运行此工具，可读写当前用户的文件。"
+  tool_warning: "宿主工具及其加载的脚本以当前用户权限运行，可能读写项目外文件；此授权不构成目录隔离"
+  tool_scope_warning: "允许插件使用任意参数运行此工具，可读写当前用户的文件"
   operations:
     directory:
-      read: "读取目录"
-      write: "读写目录"
-      read_write: "读写目录"
-      manage: "读写目录并执行工具"
+      read: "读取"
+      write: "写入"
+      read_write: "读取 | 写入"
+      manage: "读取 | 写入 | 执行"
     tool:
       execute: "执行工具"
   provider:

@@ -312,9 +312,8 @@ def test_permission_prompt_uses_icons_and_back_cancels(monkeypatch, language):
         if language == "zh":
             assert len(text) == 4
     assert kwargs["info_lines"] == [
-        i18n.t("plugin_native.operation_line", operation=i18n.t("plugin_native.operations.directory.read")),
+        i18n.t("plugin_native.permission_line", permission=i18n.t("plugin_native.operations.directory.read")),
         i18n.t("plugin_native.resource_line", resource="E:/project"),
-        i18n.t("plugin_native.directory_read_scope"),
     ]
     assert "description" not in kwargs
 

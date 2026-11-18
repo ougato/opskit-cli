@@ -19,16 +19,16 @@ def test_directory_consent_renders_each_field_and_handles_choices(monkeypatch, l
     monkeypatch.setattr(plugin_capabilities, "_interactive_input", lambda: True)
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     theme.init()
-    request = CapabilityRequest("cocos", "a" * 64, "directory.read", r"F:\cocos\[3.x]")
+    request = CapabilityRequest("cocos", "a" * 64, "directory.manage", r"F:\cocos\[3.x]")
     if expected is None:
         with pytest.raises(prompt.UserCancel):
             plugin_capabilities.prompt_grant(request)
     else:
         assert plugin_capabilities.prompt_grant(request) is expected
     rendered = output.getvalue()
-    operation = i18n.t("plugin_native.operation_line", operation=i18n.t("plugin_native.operations.directory.read"))
+    permission = "权限：读取 | 写入 | 执行" if language == "zh" else "Permissions: Read | Write | Execute"
     resource = i18n.t("plugin_native.resource_line", resource=request.resource)
-    assert f" ├─ {operation}\n ├─ {resource}\n" in rendered
+    assert f" ├─ {permission}\n ├─ {resource}\n ├─ (1)" in rendered
     assert "a" * 64 not in rendered
     assert i18n.t("plugin_native.tool_warning") not in rendered
     assert all(f"({choice})" in rendered for choice in ("1", "2", "0"))

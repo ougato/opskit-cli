@@ -952,19 +952,19 @@ plugin_native:
   permissions_show_help: "Show a permanent grant by its ID"
   revoke_help: "Revoke a permission and invalidate active one-time grants"
   id_help: "Full permission ID shown by permissions list"
-  operation_line: "Operation: {operation}"
-  directory_manage_warning: "Allows project tools to access files outside this directory."
-  directory_read_scope: "Includes all subdirectories."
+  permission_line: "Permissions: {permission}"
+  directory_manage_warning: "Allows project tools to access files outside this directory"
+  directory_read_scope: "Includes all subdirectories"
   resource_line: "Resource: {resource}"
   fingerprint_line: "Plugin fingerprint: {fingerprint}"
-  tool_warning: "Host tools and their scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory."
-  tool_scope_warning: "Allows the plugin to run this tool with any arguments and access files available to your user."
+  tool_warning: "Host tools and their scripts run with your user permissions and may access files outside the project; this grant does not confine them to a directory"
+  tool_scope_warning: "Allows the plugin to run this tool with any arguments and access files available to your user"
   operations:
     directory:
-      read: "Read directory"
-      write: "Read and write directory"
-      read_write: "Read and write directory"
-      manage: "Read, write and run tools"
+      read: "Read"
+      write: "Write"
+      read_write: "Read | Write"
+      manage: "Read | Write | Execute"
     tool:
       execute: "Run a host tool"
   provider:

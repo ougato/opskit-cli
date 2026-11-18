@@ -44,6 +44,22 @@ def test_once_is_reused_only_by_same_invocation(tmp_path):
         authority.check(request(), check_identity=live)
 
 
+@pytest.mark.parametrize("language,permission,resource_label", [
+    ("zh", "权限：写入", "资源："),
+    ("en", "Permissions: Write", "Resource: "),
+])
+def test_file_write_consent_shows_target_path(monkeypatch, language, permission, resource_label):
+    from core import i18n
+    from core.plugin_capabilities import capability_info_lines
+
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+    path = r"E:\ougato\project\game\client.cocos-build.json"
+    resource = json.dumps({"file": path, "create_only": True, "after_sha256": "b" * 64})
+    write = request(operation="directory.write", resource=resource)
+    assert capability_info_lines(write) == [permission, resource_label + path]
+    assert resource in capability_info_lines(write, include_fingerprint=True)[1]
+
+
 def test_permanent_exact_scope_and_identity(tmp_path):
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
     authority.require(request(), check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
@@ -264,9 +280,10 @@ def test_project_management_grant_is_explicit_scoped_and_revocable(tmp_path, cho
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
-def test_project_management_consent_mentions_outside_access(tmp_path, monkeypatch, language):
+def test_project_management_details_mention_outside_access(tmp_path, monkeypatch, language):
     from core import i18n
     from core.plugin_capabilities import capability_info_lines
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
-    lines = capability_info_lines(request(operation="directory.manage", resource=str(tmp_path)))
+    lines = capability_info_lines(request(operation="directory.manage", resource=str(tmp_path)),
+                                  include_fingerprint=True)
     assert lines[-1] == i18n.t("plugin_native.directory_manage_warning")

@@ -85,6 +85,13 @@ def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bo
     from core.i18n import t
     resource = request.resource
     tool_scope = False
+    if request.operation == "directory.write" and not include_fingerprint:
+        try:
+            details = json.loads(resource)
+        except ValueError:
+            details = None
+        if isinstance(details, dict) and isinstance(details.get("file"), str):
+            resource = details["file"]
     if request.operation == "tool.execute":
         try:
             details = json.loads(resource)
@@ -93,14 +100,14 @@ def capability_info_lines(request: CapabilityRequest, *, include_fingerprint: bo
                 resource = details["executable"]
         except (ValueError, KeyError, TypeError):
             pass
-    lines = [t("plugin_native.operation_line", operation=t("plugin_native.operations." + request.operation)),
+    lines = [t("plugin_native.permission_line", permission=t("plugin_native.operations." + request.operation)),
              t("plugin_native.resource_line", resource=resource)]
     if include_fingerprint:
         lines.append(t("plugin_native.fingerprint_line", fingerprint=request.fingerprint))
-    if request.operation in {"directory.read", "directory.read_write", "directory.manage"}:
-        lines.append(t("plugin_native.directory_read_scope"))
-    if request.operation == "directory.manage":
-        lines.append(t("plugin_native.directory_manage_warning"))
+        if request.operation in {"directory.read", "directory.read_write", "directory.manage"}:
+            lines.append(t("plugin_native.directory_read_scope"))
+        if request.operation == "directory.manage":
+            lines.append(t("plugin_native.directory_manage_warning"))
     if request.operation == "tool.execute":
         lines.append(t("plugin_native.tool_scope_warning" if tool_scope else "plugin_native.tool_warning"))
     return lines
