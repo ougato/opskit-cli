@@ -172,15 +172,15 @@ WireGuard两种报告内部共用30秒预算：状态读取和服务查询受进
 程序目标旁共享版本记录现将from/to build与实际SHA256、随机事务ID及prepared/applied阶段绑定。应用在目标锁内拒绝未知摘要、损坏记录、降级和未重启的旧运行进程；授权回滚单独记录反向转换。Windows延迟任务提交前核对绑定的prepared记录，被新任务替代时拒绝。记录写入中断后按实际旧/新摘要解释版本；这不代表完整断电恢复已验收，也不抵御可修改宿主私有文件的同账户攻击者。
 
 
-## 显式签名更新下载
+## 显式更新下载
 
 `update download --timeout SECONDS`已接入（默认300秒，范围0.1..3600），只在打包模式执行；源码模式退出2且不创建运行数据。候选由现有版本/rollout/kill-switch和可信仓库策略选择，不接受任意URL或强制旧版本。成功返回candidate_version、candidate_id、checksum_verified=true、state=downloaded、applied=false；没有符合策略的版本返回available=false。
 
-下载、checksum、签名校验、摘要复核和发布在同一个可终止worker及总预算中进行；实际下载worker持有固定缓存根的暂存区OS锁，阻止并发下载/应用/清理；父进程异常退出而worker仍存活时不会提前放开锁。复用现有下载器，暂存到私有随机update-candidates/ID目录；完成验证和持久化后才原子发布缓存指针。此前候选不会被新下载的残包或坏签名覆盖。应用、启动检查及status解析同一指针；apply仍重新验签，status仍只称not_checked。
+下载、摘要校验和发布在同一个可终止worker及总预算中进行；实际下载worker持有固定缓存根的暂存区OS锁，阻止并发下载/应用/清理；父进程异常退出而worker仍存活时不会提前放开锁。复用现有下载器，暂存到私有随机update-candidates/ID目录；完成验证和持久化后才原子发布缓存指针。此前候选不会被新下载的残包或摘要不匹配的产物覆盖。应用、启动检查及status解析同一指针；apply仍重新核对摘要，status仍只称not_checked。
 
 发布点是最后的原子缓存记录写入。超时/取消发生在该点附近时可能已发布完整候选而响应未返回，应查询status后重试；不得将操作失败解释为保证没有提交。必要的OS文件操作/锁创建及worker回收不构成硬实时保证。尚无跨调用断点续传。新候选分配前执行有界库存检查和受控清理：最多4个目录条目、总文件字节2GiB+1MiB，并为下一次1GiB下载另预留128KiB元数据。当前候选和启动marker引用始终保留；只回收有效所有权记录下的普通文件，拒绝链接/硬链接/损坏记录，未知内容保留，额度不足则拒绝新下载。库存最多64个根条目，不自动递归删除用户目录；超限或不确定旧目录需独立审查。
 
-后台更新复用该下载服务，不维护第二套发布流程。下载、checksum和签名每次重定向均要求HTTPS、无URL凭据，最多5次跳转；checksum拒绝压缩，响应上限4KiB。所有下载错误只报告安全阶段，不回显URL、token或传输异常。实际原生产物和正式签名发布仍需验收。
+后台更新复用该下载服务，不维护第二套发布流程。下载和checksum每次重定向均要求HTTPS、无URL凭据，最多5次跳转；checksum拒绝压缩，响应上限4KiB。所有下载错误只报告安全阶段，不回显URL、token或传输异常。实际原生产物和正式发布仍需验收。
 
 Windows调度任务目录现固定于cache/update-jobs/ID，helper使用固定缓存根的暂存锁，不随candidate_id改变。任务拥有独立摘要绑定快照；未被marker引用的旧候选可清理而不损坏任务产物。异步任务配额及失联恢复仍未完成。
 
@@ -236,4 +236,4 @@ mark_update_applied、confirm_health、启动失败计数及回滚判断现在�
 
 update status在没有活动任务时可读取last_apply_job；有有效退役凭据的回滚任务报告state=rolled_back、active=false、restored_version，health_confirmed=false。历史结果不表示helper当前存活，且不以旧result.json覆盖有效退役结果。
 
-update check对目标升级下限拒绝的build返回available=false、reason=rolled_back_version，不返回候选版本。目标升级build须严格高于历史最高回滚build；download在传输前、apply在备份前及事务准备时重新检查。check仍只读，不代表候选签名已验证。
+update check对目标升级下限拒绝的build返回available=false、reason=rolled_back_version，不返回候选版本。目标升级build须严格高于历史最高回滚build；download在传输前、apply在备份前及事务准备时重新检查。check仍只读，不代表候选摘要已验证。
