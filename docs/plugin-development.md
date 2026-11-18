@@ -121,7 +121,8 @@ multi_select(breadcrumb, subtitle, options, theme_key='root', back_label='', all
 paged_select(*, breadcrumb, items, choice_of, subtitle_of, back_label,
              nav_labels=None, theme_key='root', page_size=9, on_select=None, initial_page=0) -> item | None
 confirm(breadcrumb, prompt, theme_key='root', info_lines=None, require_explicit=False) -> bool
-text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False) -> str
+text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False,
+           *, initial='') -> str
 pause(msg=''); clear_screen(); print_header(breadcrumb)
 waiting(message='') -> context manager
 ```
@@ -129,6 +130,8 @@ waiting(message='') -> context manager
 `select` 为单键选择，按数字立即返回，无需回车；`choices` 是 `{'key': '1', 'label': '...'}` 列表。`select_input` 用于确需输入完整文本的菜单，输入后按回车，空行使用 `default`；普通选项菜单不要使用它。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
 
 为每个业务菜单、选择、输入和确认传入当前面包屑，保留实际入口、已选对象和当前功能；独立步骤可以继续追加步骤名称。例如游戏构建中输入 Git 路径使用“OpsKit → Cocos 工具 → 游戏名 → 项目构建”，字段名称交给 `text_input` 的 `prompt`。复用工具选择等流程时显式传递入口上下文，没有选中对象时不要虚构对象。宿主授权标题仍由框架管理。
+
+`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。清空后回车使用 `default`，默认为空字符串。
 
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 

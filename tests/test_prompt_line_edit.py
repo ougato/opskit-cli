@@ -40,6 +40,22 @@ def test_windows_backspace_empty_and_ascii_remain_usable(monkeypatch):
     assert output.getvalue() == 'ab\b \bc\n'
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows console input')
+def test_initial_text_is_editable_and_can_be_cleared(monkeypatch):
+    keys = iter(['\r', '\b', '2', '\r', '\b', '\r'])
+    output = StringIO()
+    monkeypatch.setattr(prompt, '_getwch', lambda: next(keys))
+    monkeypatch.setattr(sys, 'stdout', output)
+    monkeypatch.setattr(prompt.os, 'system', lambda _: 0)
+    monkeypatch.setattr(prompt, '_render_header', lambda _: None)
+
+    assert prompt.text_input([], 'Path', initial='p0/client') == 'p0/client'
+    assert prompt.text_input([], 'Path', initial='p0/client') == 'p0/clien2'
+    assert prompt.text_input([], 'Path', initial='x') == ''
+    assert ' p0/client\n' in output.getvalue()
+    assert ' (p0/client)' not in output.getvalue()
+
+
 @pytest.mark.parametrize('character', ['\b', '\r', '中'])
 def test_pending_key_after_release_event_is_detected(character):
     released = _InputRecord()
