@@ -65,7 +65,7 @@ jobs:
         python: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
     # Windows local regression alone took 24.7 minutes; allow setup and wheel checks too.
-    # Tests default to 20 seconds; multi-operation native tests declare bounded exceptions.
+    # Tests default to 20 seconds; native integrations and large filesystem boundary tests declare bounded exceptions.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
