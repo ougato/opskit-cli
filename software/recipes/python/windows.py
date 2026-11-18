@@ -47,7 +47,7 @@ class WindowsDriver(PlatformDriver):
     def _route_plan(binary, *, require_file=True):
         from software.base import InstallError
         path = Path(binary).absolute()
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.exe", path.name):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.exe", path.name, re.IGNORECASE):
             raise InstallError("unsupported Python executable filename")
         if require_file:
             info = path.lstat()
@@ -72,7 +72,7 @@ class WindowsDriver(PlatformDriver):
         lines = canonical.splitlines()
         if len(lines) != 5:
             return False
-        match = re.fullmatch(r'"%~dp0\.python-current\\((?:Scripts\\)?[A-Za-z0-9_.-]+\.exe)" %\*', lines[3])
+        match = re.fullmatch(r'"%~dp0\.python-current\\((?:Scripts\\)?[A-Za-z0-9_.-]+\.exe)" %\*', lines[3], re.IGNORECASE)
         return match is not None and canonical == cls._route_text(match[1])
 
     def _authorized_roots(self, new_binary=None):
