@@ -75,6 +75,18 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
+def init_bundled_default() -> None:
+    """Read the fixed theme from the verified, read-only guest SDK snapshot.
+
+    AppContainer can read files while denying normalized-path queries. The
+    host verifies this inventory and rejects reparse points before launch.
+    This entry point accepts no user-selected path or theme name.
+    """
+    global _theme, _theme_name
+    _theme = _load_yaml(Path(__file__).parent / "themes" / "catppuccin.yaml")
+    _theme_name = "catppuccin"
+
+
 def init(theme_name: str | None = None) -> None:
     """
     加载主题：

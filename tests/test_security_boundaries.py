@@ -1,6 +1,7 @@
 """Security regressions exercise actual deadlines, archive paths and routing."""
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -208,7 +209,10 @@ def test_ready_grandchild_is_reclaimed_after_one_real_second(tmp_path, monkeypat
         try:
             observed = psutil.Process(record["pid"])
             if observed.create_time() == record["created"]:
-                assert observed.status() == psutil.STATUS_ZOMBIE
+                if os.name == "nt":
+                    observed.wait(timeout=3)
+                else:
+                    assert observed.status() == psutil.STATUS_ZOMBIE
         except psutil.NoSuchProcess:
             pass
 

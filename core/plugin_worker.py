@@ -65,7 +65,7 @@ def _adapt_sdk(name: str):
     import core.i18n as i18n
     import core.theme as theme
     i18n.init(language=os.environ.get("OPSKIT_LANGUAGE"))
-    theme.init()
+    theme.init_bundled_default()
     # paged_select evaluates plugin callbacks locally and calls adapted select.
     def adapt_ui(method, original):
         bound_signature = signature(original)
