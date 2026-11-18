@@ -12,7 +12,6 @@ import shlex
 import subprocess
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -79,10 +78,11 @@ def detect_version() -> str | None:
 
 
 def latest_version() -> str:
+    from core.http import get_json
     try:
-        req = urllib.request.Request(RUSTDESK_GITHUB_API, headers={"User-Agent": "opskit"})
-        with urllib.request.urlopen(req, timeout=RUSTDESK_PUBLIC_IP_TIMEOUT_SECONDS) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = get_json(RUSTDESK_GITHUB_API, timeout=RUSTDESK_PUBLIC_IP_TIMEOUT_SECONDS, retries=1)
+        if not isinstance(data, dict):
+            return RUSTDESK_VERSION_LATEST
         tag = str(data.get("tag_name") or "").lstrip("v")
         return tag or RUSTDESK_VERSION_LATEST
     except Exception:
@@ -192,6 +192,7 @@ def diagnose_server() -> None:
 
 
 def download_release(version: str) -> Path:
+    from core.mirror import download_file
     arch = RUSTDESK_ARCH_ASSETS.get(platform.machine().lower())
     if not arch:
         raise InstallError(t("rustdesk.error.arch_not_supported", arch=platform.machine()))
@@ -203,7 +204,7 @@ def download_release(version: str) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="opskit-rustdesk-"))
     archive = tmpdir / asset
     try:
-        urllib.request.urlretrieve(url, archive)
+        download_file([url], archive, stall_timeout=RUSTDESK_DOWNLOAD_TIMEOUT_SECONDS)
     except Exception as exc:
         raise InstallError(t("rustdesk.error.download_failed", error=str(exc))) from exc
     return archive
@@ -417,11 +418,13 @@ def load_state() -> dict[str, Any]:
 
 
 def detect_public_host() -> str:
+    from core.http import httpx
     for url in PUBLIC_IP_APIS:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "opskit"})
-            with urllib.request.urlopen(req, timeout=RUSTDESK_PUBLIC_IP_TIMEOUT_SECONDS) as resp:
-                body = resp.read(129)
+            with httpx.stream("GET", url, headers={"User-Agent": "opskit"},
+                              timeout=RUSTDESK_PUBLIC_IP_TIMEOUT_SECONDS, follow_redirects=True) as resp:
+                resp.raise_for_status()
+                body = next(resp.iter_bytes(129), b"")
             if len(body) <= 128:
                 return str(ipaddress.ip_address(body.decode("ascii").strip()))
         except Exception:

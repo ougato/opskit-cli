@@ -193,6 +193,7 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
         f"--include-data-files={runtime_bundle}=core/{runtime_bundle.name}",
         f"--include-data-dir={probe_bundle}=core/native-probe-packaging",
         "--include-package=rich._unicode_data",
+        "--include-package-data=certifi",
         "--include-module=_registry",
     ]
     for pkg in (packages or []):
@@ -283,6 +284,7 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         "--collect-submodules=software",
         "--collect-submodules=monitor",
         "--collect-submodules=network",
+        "--collect-data=certifi",
         "--exclude-module=tkinter",
         "--exclude-module=matplotlib",
         "--exclude-module=numpy",
