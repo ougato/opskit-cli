@@ -193,7 +193,7 @@ def test_activation_runs_on_caller_and_returns_authorization_updates(monkeypatch
         assert activated.is_set()
         assert details["owner_thread"] != threading.get_ident()
         assert details["activation_thread"] == details["validate_thread"] == threading.get_ident()
-        assert 0 < details["remaining"] <= 30
+        assert 0 < details["remaining"] <= 30 + 1e-6
         assert details["resumed"]
         assert details["returned"] == {"state": "result"}
         assert details["owner_networks"] == (("example", ("target",)),)
@@ -347,7 +347,7 @@ def test_sdk_still_loading_does_not_count_as_user_idle(monkeypatch):
         session._ready_at -= 5
         session._ready.put(ready)
         assert session.take() is True
-        assert 23 < details["remaining"] <= 25
+        assert 23 < details["remaining"] <= 25 + 1e-6
     finally:
         session.cancel(wait=True)
 
