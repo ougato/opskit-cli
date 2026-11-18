@@ -7,16 +7,14 @@ import pytest
 from plugin import commands
 
 
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize('hook_source', ['template', 'repo-default', 'repo-config', 'environment'])
-def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, native_lifecycle_tools, hook_source):
+def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fetch_tools, hook_source):
     operation = 'install' if hook_source == 'template' else 'update'
     origin = tmp_path / 'origin'
     origin.mkdir()
     monkeypatch.setenv('OPSKIT_PLUGINS_DIR', str(tmp_path / 'plugins'))
     monkeypatch.setenv('OPSKIT_DATA_DIR', str(tmp_path / 'state'))
-    from core.native_fetch_catalog import FetchCatalog
-    python, _, _ = native_lifecycle_tools
-    FetchCatalog().prepare(python)
     # Isolate the test from the developer's actual Git configuration/templates.
     config = tmp_path / 'gitconfig'
     config.write_text('')
