@@ -249,6 +249,7 @@ def test_invalid_branch_rejected_before_tool_or_source_access(tmp_path, monkeypa
             pytest.fail("invalid branch accepted")
 
 
+@pytest.mark.timeout(300)
 def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
     import json
     import main

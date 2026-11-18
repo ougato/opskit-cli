@@ -91,7 +91,10 @@ else:
 print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': commands, 'skipped_help': skipped, 'absent_pid': absent_pid}))
 """
     result = subprocess.run([str(python), "-I", "-c", probe], cwd=outside, env=env, stdin=subprocess.DEVNULL,
-                            capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+    (output / "probe.stdout").write_text(result.stdout, encoding="utf-8")
+    (output / "probe.stderr").write_text(result.stderr, encoding="utf-8")
+    result.check_returncode()
     provenance = json.loads(result.stdout)
     for name in ("main", "core"):
         if not Path(provenance[name]).resolve().is_relative_to(environment):
