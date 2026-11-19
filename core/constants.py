@@ -3,7 +3,7 @@ from __future__ import annotations
 
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
-APP_VERSION = 12
+APP_VERSION = 13
 # Base64 raw Ed25519 public key supplied by the release owner, never by a download.
 UPDATE_SIGNING_PUBLIC_KEY = ""
 
