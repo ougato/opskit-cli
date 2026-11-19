@@ -47,7 +47,8 @@ if __name__ == '__main__':
         monkeypatch.setattr('core.native_acquisition.populate', lambda *a, **k: pytest.fail('acquisition ran during active invocation'))
         if operation == 'update':
             ok, error = commands.update(manifest)
-            assert not ok and 'busy' in error
+            assert not ok
+            assert error == commands.t('plugin_native.lifecycle.plugin_busy')
         else:
             with pytest.raises(ResourceBusyError):
                 commands.remove(manifest)
