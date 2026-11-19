@@ -236,13 +236,19 @@ def init(region: str | None = None) -> None:
             pass
 
 
-def get_sources(category: str) -> list[str]:
+def get_sources(category: str, *, probe: bool = True) -> list[str]:
     """
     获取指定分类的已排序源列表。
 
-    未初始化时自动调用 init()。
+    未初始化时默认调用 init()；禁止测速时直接使用内置源。
     """
     if not _initialized:
+        if not probe:
+            category_sources = _load_sources().get(category, {})
+            return list(dict.fromkeys(
+                entry["url"] for region in ("global", "cn")
+                for entry in category_sources.get(region, []) if entry.get("url")
+            ))
         init()
     ranked = _cache.get("ranked", {})
     if category in ranked and ranked[category]:
@@ -295,7 +301,7 @@ def _is_cached_valid(path: Path, suffix: str | None = None) -> bool:
     if not path.exists():
         return False
     try:
-        from core.release_signature import file_digest
+        from core.file_digest import file_digest
         if file_digest(path) != path.with_name(path.name + ".cache-sha256").read_text(encoding="ascii").strip():
             return False
     except OSError:
@@ -307,7 +313,7 @@ def _is_cached_valid(path: Path, suffix: str | None = None) -> bool:
 
 
 def _record_download_cache(path: Path) -> None:
-    from core.release_signature import file_digest
+    from core.file_digest import file_digest
     from core.secrets import atomic_write
     atomic_write(path.with_name(path.name + ".cache-sha256"), file_digest(path))
 

@@ -18,6 +18,26 @@ class WorkspaceAllocationFull(RuntimeError):
 class WorkspaceAllocationBusy(RuntimeError):
     """Another process is briefly changing the workspace namespace."""
 
+
+ALLOCATION_STAGES = {"namespace", "lock", "parents", "budget", "create", "permissions", "request", "binding"}
+ALLOCATION_CATEGORIES = {"PermissionError", "FileNotFoundError", "OSError", "ValueError", "RuntimeError"}
+
+
+class WorkspaceAllocationFailure(RuntimeError):
+    """Fixed diagnostic fields from the owned allocator, without private paths."""
+
+    def __init__(self, diagnostic):
+        super().__init__("plugin workspace allocation unconfirmed; evidence retained")
+        self.diagnostic = diagnostic
+
+
+def _valid_allocation_diagnostic(value):
+    return (isinstance(value, dict) and set(value) == {"stage", "category", "errno", "winerror"}
+            and isinstance(value["stage"], str) and value["stage"] in ALLOCATION_STAGES
+            and isinstance(value["category"], str) and value["category"] in ALLOCATION_CATEGORIES
+            and all(value[key] is None or type(value[key]) is int and 0 <= value[key] <= 65535
+                    for key in ("errno", "winerror")))
+
 @dataclass(frozen=True)
 class Workspace:
     root: Path
@@ -185,12 +205,15 @@ def _allocate_worker(connection, request, buffer=None, length=0):
     from core.plugin_workspace_budget import reserve_workspace, WorkspaceCapacityExhausted
     from core.resource_lock import ResourceBusyError
     from network.worker import send
+    stage = "namespace"
     try:
         # One persistent namespace per platform, independent of TEMP/TMPDIR.
         # Validate ancestors before creation; never resolve through host links.
         parent = _workspace_parent()
         root = parent / ("opskit-sandbox-" + request)
+        stage = "lock"
         with platform_state_guard():
+            stage = "parents"
             for directory in (parent, *parent.parents):
                 try:
                     _directory(directory)
@@ -206,9 +229,17 @@ def _allocate_worker(connection, request, buffer=None, length=0):
                         pass
                     _directory(directory)
             parent_identity = _directory(parent)
+            stage = "budget"
             reserve_workspace(parent)
+            stage = "create"
             root.mkdir(mode=0o700)
+            if os.name == "nt":
+                # Older CPython releases ignore mkdir's private mode on Windows.
+                from core.secrets import restrict_permissions
+                stage = "permissions"
+                restrict_permissions(root)
             identity = _directory(root)
+        stage = "request"
         if buffer is not None:
             target = root / "request.json"
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -231,6 +262,7 @@ def _allocate_worker(connection, request, buffer=None, length=0):
                         or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)
                         or current.st_size != length):
                     raise ValueError("request identity changed")
+        stage = "binding"
         if _directory(root) != identity:
             raise ValueError("workspace identity changed")
         if _directory(parent) != parent_identity:
@@ -241,8 +273,12 @@ def _allocate_worker(connection, request, buffer=None, length=0):
         result = {"ok": False, "reason": "capacity"}
     except ResourceBusyError:
         result = {"ok": False, "reason": "busy"}
-    except (OSError, ValueError, RuntimeError):
-        result = {"ok": False}
+    except (OSError, ValueError, RuntimeError) as exc:
+        category = next(kind.__name__ for kind in (PermissionError, FileNotFoundError, OSError, ValueError, RuntimeError)
+                        if isinstance(exc, kind))
+        diagnostic = {"stage": stage, "category": category,
+                      "errno": getattr(exc, "errno", None), "winerror": getattr(exc, "winerror", None)}
+        result = {"ok": False, "diagnostic": diagnostic} if _valid_allocation_diagnostic(diagnostic) else {"ok": False}
     try:
         send(connection, result)
     finally:
@@ -275,6 +311,9 @@ def allocate(*, timeout, request_text=None):
         raise TimeoutError("plugin workspace allocation deadline exceeded")
     request = uuid.uuid4().hex
     result = run(_allocate_worker, (request, *arguments), timeout=remaining, label="plugin workspace allocation")
+    if (isinstance(result, dict) and set(result) == {"ok", "diagnostic"} and result["ok"] is False
+            and _valid_allocation_diagnostic(result["diagnostic"])):
+        raise WorkspaceAllocationFailure(result["diagnostic"])
     if isinstance(result, dict) and set(result) == {"ok", "reason"} and result["ok"] is False:
         if result["reason"] == "capacity":
             raise WorkspaceAllocationFull("plugin workspace allocation unconfirmed; workspace capacity exhausted")

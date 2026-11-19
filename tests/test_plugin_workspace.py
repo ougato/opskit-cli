@@ -210,6 +210,54 @@ def test_invalid_allocation_never_triggers_name_based_cleanup(monkeypatch, resul
         workspace.allocate(timeout=30)
 
 
+def test_allocation_diagnostics_retain_stage_and_errno_without_private_exception_data(monkeypatch, caplog):
+    import errno
+    import json
+    import logging
+    import uuid
+    from core import plugin_workspace_budget
+    from core.plugin_sandbox import WorkspaceError
+    from network import worker
+    from plugin.commands import _log_install_failure
+    results = []
+
+    class Connection:
+        def send_bytes(self, value):
+            results.append(json.loads(value))
+
+        def close(self):
+            pass
+
+    def denied(*args):
+        raise PermissionError(errno.EACCES, "synthetic-sensitive-marker", "private-path")
+
+    monkeypatch.setattr(plugin_workspace_budget, "reserve_workspace", denied)
+    workspace._allocate_worker(Connection(), uuid.uuid4().hex)
+    diagnostic = {"stage": "budget", "category": "PermissionError", "errno": errno.EACCES, "winerror": None}
+    assert results == [{"ok": False, "diagnostic": diagnostic}]
+    monkeypatch.setattr(worker, "run", lambda *args, **kwargs: results[0])
+    with pytest.raises(workspace.WorkspaceAllocationFailure) as captured:
+        workspace.allocate(timeout=30)
+    error = WorkspaceError("allocation failed")
+    error.__cause__ = captured.value
+    monkeypatch.setattr(logging.getLogger("opskit"), "propagate", True)
+    _log_install_failure("update", error)
+    assert "stage=budget category=PermissionError errno=13" in caplog.text
+    assert "synthetic-sensitive-marker" not in caplog.text
+    assert "private-path" not in caplog.text
+
+
+@pytest.mark.parametrize("change", [{"stage": "private-path"}, {"category": "private-token"},
+                                     {"errno": True}, {"winerror": "secret"}, {"extra": 1}])
+def test_unrecognized_allocator_diagnostic_is_not_forwarded(monkeypatch, change):
+    from network import worker
+    diagnostic = {"stage": "create", "category": "OSError", "errno": None, "winerror": None, **change}
+    monkeypatch.setattr(worker, "run", lambda *a, **k: {"ok": False, "diagnostic": diagnostic})
+    with pytest.raises(RuntimeError) as captured:
+        workspace.allocate(timeout=30)
+    assert not isinstance(captured.value, workspace.WorkspaceAllocationFailure)
+
+
 def test_workspace_cleanup_allows_snapshot_larger_than_persistent_state():
     lease = workspace.allocate(timeout=30)
     with (lease.root / "large").open("wb") as stream:

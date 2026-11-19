@@ -38,6 +38,19 @@ def _is_frozen() -> bool:
     return getattr(sys, "frozen", False) or "__compiled__" in globals()
 
 
+def installed_executable() -> Path:
+    """Return the persistent executable path used by the update transaction."""
+    compiled = globals().get("__compiled__")
+    if getattr(compiled, "onefile", False):
+        # Nuitka rewrites argv[0] to the launcher path during onefile startup.
+        # sys.executable can point to the extracted child.
+        launcher = Path(sys.argv[0])
+        if not launcher.is_absolute() or not launcher.is_file():
+            raise ValueError("Nuitka onefile launcher path is unavailable")
+        return launcher.resolve()
+    return Path(sys.executable).resolve()
+
+
 def _source_root() -> Path | None:
     root = Path(__file__).resolve().parent.parent
     if not _is_frozen() and (root / "pyproject.toml").is_file() and (root / "main.py").is_file():

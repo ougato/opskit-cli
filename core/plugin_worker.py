@@ -65,7 +65,7 @@ def _adapt_sdk(name: str):
     import core.i18n as i18n
     import core.theme as theme
     i18n.init(language=os.environ.get("OPSKIT_LANGUAGE"))
-    theme.init()
+    theme.init_bundled_default()
     # paged_select evaluates plugin callbacks locally and calls adapted select.
     def adapt_ui(method, original):
         bound_signature = signature(original)
@@ -120,8 +120,11 @@ def _adapt_sdk(name: str):
         sdk.save_yaml = save_sandbox_yaml
     paths.plugins_dir = sdk.plugins_dir = _plugin_root
     sdk.get_service = lambda name: RemoteService(name)
-    def read_host_file(directory, relative):
-        reply = broker("host.read_file", directory, relative)
+    def read_host_file(directory, relative, *, missing_ok=False):
+        options = {"missing_ok": True} if missing_ok else {}
+        reply = broker("host.read_file", directory, relative, **options)
+        if reply is None and missing_ok:
+            return None
         if not isinstance(reply, dict) or set(reply) != {"encoding", "content"} or reply["encoding"] != "base64":
             raise ValueError("invalid host file response")
         return base64.b64decode(reply["content"], validate=True)
@@ -159,8 +162,10 @@ def _adapt_sdk(name: str):
         reply = broker("host.https", url, method, headers or {}, base64.b64encode(body).decode("ascii"))
         return {"status": reply["status"], "body": base64.b64decode(reply["body"], validate=True)}
     sdk.https_request = https_request
-    sdk.upload_file = lambda directory, relative, url, sha256, headers=None: broker(
-        "host.upload_file", directory, relative, url, sha256, headers or {})
+    def upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None):
+        args = (directory, relative, url, sha256, headers or {})
+        return broker("host.upload_file", *args, *((verify_url,) if verify_url is not None else ()))
+    sdk.upload_file = upload_file
     sdk.request_plugin_install = lambda provider: broker("service.install_provider", provider)
 
     def open_menu(name, breadcrumb, context=None):

@@ -1,5 +1,4 @@
-"""Real signature gates, atomic replacement failure and explicit apply states."""
-import base64
+"""Real checksum gates, atomic replacement failure and explicit apply states."""
 import errno
 import json
 from pathlib import Path
@@ -10,18 +9,16 @@ import stat
 import subprocess
 import time
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import pytest
 from typer.testing import CliRunner
 
 import main
-from core import config, updater
-from core.release_signature import file_digest, payload
+from core import updater
+from core.file_digest import file_digest
 
 
 @pytest.fixture
-def signed_pending(tmp_path, monkeypatch):
+def verified_pending(tmp_path, monkeypatch):
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(updater, "_is_frozen", lambda: True)
     current = tmp_path / "current.exe"
@@ -34,17 +31,10 @@ def signed_pending(tmp_path, monkeypatch):
     pending.parent.mkdir(parents=True)
     magic = b"MZ" if sys.platform == "win32" else b"\xcf\xfa\xed\xfe" if sys.platform == "darwin" else b"\x7fELF"
     pending.write_bytes(magic + b"\0" * (1024 * 100))
-    key = Ed25519PrivateKey.generate()
-    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
-    monkeypatch.setattr(config, "load_config", lambda **kwargs: {"update": {"signing_public_key": public}})
     digest = file_digest(pending)
     updater._write_update_record(pending.parent / "candidate.json", {
         "schema_version": 1, "candidate_id": identity, "build": build,
         "sha256": digest, "state": "verified"})
-    filename = updater._asset_filename()
-    envelope = {"build": build, "filename": filename, "sha256": digest,
-                "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
-    pending.with_name(pending.name + ".sig.json").write_text(json.dumps(envelope))
     return current, pending, build
 
 
@@ -64,19 +54,19 @@ def test_apply_requires_explicit_confirmation_before_mutation(monkeypatch):
     assert result.exit_code == 2
 
 
-def test_changed_signed_artifact_is_not_applied(signed_pending, monkeypatch):
-    current, pending, _ = signed_pending
+def test_changed_signed_artifact_is_not_applied(verified_pending, monkeypatch):
+    current, pending, _ = verified_pending
     pending.write_bytes(pending.read_bytes() + b"tampered")
-    monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("invalid signature applied"))
-    monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("invalid signature applied"))
+    monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("invalid checksum applied"))
+    monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("invalid checksum applied"))
     with pytest.raises(RuntimeError, match="verification or application failed"):
         updater.apply_verified_pending()
     assert current.read_bytes() == b"old-program"
     assert not (current.parent / "backups").exists()
 
 
-def test_backup_failure_reaches_real_backup_then_preserves_current(signed_pending, monkeypatch):
-    current, pending, _ = signed_pending
+def test_backup_failure_reaches_real_backup_then_preserves_current(verified_pending, monkeypatch):
+    current, pending, _ = verified_pending
     calls = []
     def fail(source, destination, **kwargs):
         calls.append((source, destination))
@@ -88,8 +78,8 @@ def test_backup_failure_reaches_real_backup_then_preserves_current(signed_pendin
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
-def test_backup_failure_log_does_not_include_exception_details(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_backup_failure_log_does_not_include_exception_details(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     messages = []
     def fail(*args, **kwargs):
         raise OSError("private backup path / secret")
@@ -101,10 +91,10 @@ def test_backup_failure_log_does_not_include_exception_details(signed_pending, m
 
 
 @pytest.mark.parametrize("collision", ["backup", "receipt"])
-def test_existing_backup_or_receipt_is_never_overwritten(signed_pending, monkeypatch, collision):
+def test_existing_backup_or_receipt_is_never_overwritten(verified_pending, monkeypatch, collision):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     backup = current.parent / "backups" / ("opskit.v7.123." + "b" * 32 + ".bak")
     backup.parent.mkdir()
     receipt = backup.with_name(backup.name + ".json")
@@ -154,8 +144,8 @@ def test_backup_retains_modification_time_and_restorable_permissions(tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows denies renaming the open backup")
-def test_replaced_backup_path_and_owned_bytes_are_both_retained(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_replaced_backup_path_and_owned_bytes_are_both_retained(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     backup = current.parent / "backups" / ("opskit.v7.123." + "b" * 32 + ".bak")
     displaced = current.parent / "displaced-owned-backup"
     monkeypatch.setattr(updater, "_get_backup_path", lambda: backup)
@@ -173,8 +163,8 @@ def test_replaced_backup_path_and_owned_bytes_are_both_retained(signed_pending, 
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
-def test_apply_result_distinguishes_scheduling_from_committed_copy(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_apply_result_distinguishes_scheduling_from_committed_copy(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     calls = []
     monkeypatch.setattr(updater, "_apply_windows", lambda *args: calls.append(args))
     def apply_unix(source, target, version):
@@ -189,10 +179,10 @@ def test_apply_result_distinguishes_scheduling_from_committed_copy(signed_pendin
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows helper scheduling")
-def test_menu_exit_does_not_replace_a_scheduled_startup_job(signed_pending, monkeypatch):
+def test_menu_exit_does_not_replace_a_scheduled_startup_job(verified_pending, monkeypatch):
     from core import update_windows
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     monkeypatch.setattr(updater, "_reconcile_indexed_job_on_boot", lambda: (False, False))
     launches = []
 
@@ -217,10 +207,10 @@ def test_menu_exit_does_not_replace_a_scheduled_startup_job(signed_pending, monk
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows helper scheduling")
-def test_menu_entry_and_exit_keep_one_scheduled_job(signed_pending, monkeypatch):
+def test_menu_entry_and_exit_keep_one_scheduled_job(verified_pending, monkeypatch):
     from core import update_windows
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(main, "ensure_config", lambda: {"log": {}, "update": {}})
     monkeypatch.setattr(main, "theme_init", lambda *_: None)
@@ -256,10 +246,10 @@ def test_menu_entry_and_exit_keep_one_scheduled_job(signed_pending, monkeypatch)
 
 
 @pytest.mark.parametrize("operation", ["upgrade", "rollback"])
-def test_prepared_target_transaction_cannot_be_superseded(signed_pending, monkeypatch, operation):
+def test_prepared_target_transaction_cannot_be_superseded(verified_pending, monkeypatch, operation):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     other = build if operation == "upgrade" else updater.APP_VERSION - 1
     transaction = update_target_state.prepare(
         current, operation=operation, from_build=updater.APP_VERSION, to_build=other,
@@ -273,10 +263,10 @@ def test_prepared_target_transaction_cannot_be_superseded(signed_pending, monkey
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
-def test_other_data_directory_cannot_supersede_prepared_target(signed_pending, monkeypatch):
+def test_other_data_directory_cannot_supersede_prepared_target(verified_pending, monkeypatch):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     transaction = update_target_state.prepare(
         current, operation="upgrade", from_build=updater.APP_VERSION, to_build=build,
         from_digest=file_digest(current), to_digest=file_digest(pending),
@@ -300,10 +290,10 @@ def test_other_data_directory_cannot_supersede_prepared_target(signed_pending, m
     assert current.read_bytes() == b"old-program" and pending.exists() and other_pending.exists()
 
 
-def test_invalid_target_transaction_refuses_apply_without_modifying_data(signed_pending):
+def test_invalid_target_transaction_refuses_apply_without_modifying_data(verified_pending):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     state = update_target_state.path(current)
     updater._write_update_record(state, {"invalid": "unknown user data"})
     before = state.read_bytes(), updater._get_cache_path().read_bytes()
@@ -313,10 +303,10 @@ def test_invalid_target_transaction_refuses_apply_without_modifying_data(signed_
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
-def test_completed_transaction_allows_new_update(signed_pending, monkeypatch):
+def test_completed_transaction_allows_new_update(verified_pending, monkeypatch):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     previous = current.parent / "previous"
     previous.write_bytes(b"previous build")
     historical = update_target_state.prepare(
@@ -338,8 +328,8 @@ def test_completed_transaction_allows_new_update(signed_pending, monkeypatch):
 
 
 @pytest.mark.parametrize("job", ["a" * 32, "invalid-unowned-job"])
-def test_unreconciled_job_index_cannot_be_replaced(signed_pending, monkeypatch, job):
-    current, pending, build = signed_pending
+def test_unreconciled_job_index_cannot_be_replaced(verified_pending, monkeypatch, job):
+    current, pending, build = verified_pending
     cache = updater._read_update_record(updater._get_cache_path())
     updater._write_update_record(updater._get_cache_path(), {**cache, "apply_job": job})
     before = updater._get_cache_path().read_bytes()
@@ -376,8 +366,8 @@ def test_atomic_copy_commit_failure_preserves_current(tmp_path, monkeypatch):
     assert staged.read_bytes() == b"new-program"
 
 
-def test_marker_commit_failure_preserves_current_and_pending(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_marker_commit_failure_preserves_current_and_pending(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     marker = updater._get_cache_path().parent / "update_pending_path.json"
     marker.write_text(json.dumps({"pending": str(pending), "target": str(current), "version": build}))
     real_replace = updater.os.replace
@@ -391,8 +381,8 @@ def test_marker_commit_failure_preserves_current_and_pending(signed_pending, mon
     assert pending.exists() and marker.exists()
 
 
-def test_source_mode_marker_does_not_replace_or_clear_data(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_source_mode_marker_does_not_replace_or_clear_data(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     marker = updater._get_cache_path().parent / "update_pending_path.json"
     marker.write_text(json.dumps({"pending": str(pending), "target": str(current), "version": build}))
     monkeypatch.setattr(updater, "_is_frozen", lambda: False)
@@ -436,10 +426,10 @@ def test_cross_device_copy_failure_preserves_both_files(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("failure", [OSError("permission finalization failed"), KeyboardInterrupt()],
                          ids=["finalization-error", "cancel"])
-def test_unix_post_commit_failure_restores_verified_backup(signed_pending, monkeypatch, failure):
+def test_unix_post_commit_failure_restores_verified_backup(verified_pending, monkeypatch, failure):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     new_bytes = pending.read_bytes()
     # Exercise actual replacement/compensation on temporary files, never the
     # workspace executable. Inject after commit, as chmod/chown/cache can fail.
@@ -456,14 +446,14 @@ def test_unix_post_commit_failure_restores_verified_backup(signed_pending, monke
         assert not updater._do_apply(pending, build)
     assert current.read_bytes() == b"old-program"
     assert pending.read_bytes() == new_bytes
-    assert updater._verify_pending_signature(pending, build)
+    assert updater._verify_pending_checksum(pending, build)
     assert update_target_state.read(current)["phase"] == "aborted"
 
 
-def test_unix_failed_update_can_retry_after_verified_restoration(signed_pending, monkeypatch):
+def test_unix_failed_update_can_retry_after_verified_restoration(verified_pending, monkeypatch):
     from core import update_target_state
 
-    current, pending, build = signed_pending
+    current, pending, build = verified_pending
     monkeypatch.setattr(updater.sys, "platform", "linux")
     monkeypatch.setattr(updater, "_apply_unix", lambda *a: (_ for _ in ()).throw(OSError("failed")))
     assert not updater._do_apply(pending, build)
@@ -475,8 +465,8 @@ def test_unix_failed_update_can_retry_after_verified_restoration(signed_pending,
     assert not list(current.parent.glob(".opskit-replace-*"))
 
 
-def test_cleanup_failure_does_not_misreport_committed_update(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_cleanup_failure_does_not_misreport_committed_update(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     new_bytes = pending.read_bytes()
     monkeypatch.setattr(updater.sys, "platform", "linux")
     def commit(source, target, version):
@@ -497,8 +487,8 @@ def test_backup_names_do_not_collide_in_same_second(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def committed_update(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def committed_update(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     new_bytes = pending.read_bytes()
     def commit(source, target, version, recovery=None):
         updater._atomic_copy(source, target)
@@ -614,7 +604,7 @@ def test_signed_rolled_back_version_cannot_be_reapplied(committed_update, monkey
     current, backup, build, new_bytes = committed_update
     assert updater.rollback()
     pending = updater._get_pending_path()
-    pending.write_bytes(new_bytes)  # Original real signature sidecar remains valid.
+    pending.write_bytes(new_bytes)  # Original real checksum sidecar remains valid.
     before = update_target_state.path(current).read_bytes()
     backups = set(backup.parent.iterdir())
     monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("rolled back version scheduled"))
@@ -734,8 +724,8 @@ def test_update_record_rejects_invalid_shape_or_size(tmp_path, body):
         updater._read_update_record(path)
 
 
-def test_backup_record_failure_aborts_before_replacement(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_backup_record_failure_aborts_before_replacement(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     monkeypatch.setattr(updater, "_write_update_record", lambda *a: (_ for _ in ()).throw(OSError("metadata disk full")))
     monkeypatch.setattr(updater, "_apply_windows", lambda *a: pytest.fail("unrecorded backup applied"))
     monkeypatch.setattr(updater, "_apply_unix", lambda *a: pytest.fail("unrecorded backup applied"))
@@ -743,8 +733,8 @@ def test_backup_record_failure_aborts_before_replacement(signed_pending, monkeyp
     assert current.read_bytes() == b"old-program" and pending.exists()
 
 
-def test_marker_cleanup_failure_still_reports_committed_replacement(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_marker_cleanup_failure_still_reports_committed_replacement(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     new_bytes = pending.read_bytes()
     from update_marker_fixtures import bind_marker
     marker, backup, transaction = bind_marker(current, pending, build)
@@ -760,8 +750,8 @@ def test_marker_cleanup_failure_still_reports_committed_replacement(signed_pendi
 
 
 @pytest.mark.parametrize("version", [None, True, "123", updater.APP_VERSION], ids=["missing", "bool", "string", "old"])
-def test_marker_requires_explicit_new_integer_build(signed_pending, version):
-    current, pending, build = signed_pending
+def test_marker_requires_explicit_new_integer_build(verified_pending, version):
+    current, pending, build = verified_pending
     marker = updater._get_cache_path().parent / "update_pending_path.json"
     updater._write_update_record(marker, {"pending": str(pending), "target": str(current), "version": version})
     assert not updater._apply_update_pending_path()
@@ -819,8 +809,8 @@ def test_source_rollback_has_no_data_side_effect(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows delayed scheduling semantics")
-def test_startup_scheduling_does_not_request_restart_into_old_executable(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_startup_scheduling_does_not_request_restart_into_old_executable(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     monkeypatch.setattr(updater, "_pending_version", None)
     calls = []
     monkeypatch.setattr(updater, "_do_apply", lambda *args: calls.append(args) or True)
@@ -830,16 +820,16 @@ def test_startup_scheduling_does_not_request_restart_into_old_executable(signed_
     assert current.read_bytes() == b"old-program"
 
 
-def test_windows_scheduling_does_not_mark_uncommitted_version_healthy(signed_pending, monkeypatch):
-    current, pending, build = signed_pending
+def test_windows_scheduling_does_not_mark_uncommitted_version_healthy(verified_pending, monkeypatch):
+    current, pending, build = verified_pending
     monkeypatch.setattr(updater.sys, "platform", "win32")
     monkeypatch.setattr(updater, "_apply_windows", lambda *args: None)
     assert updater._do_apply(pending, build)
     assert not updater._get_health_path().exists()
 
 
-def test_backup_directory_link_is_rejected_before_any_copy(signed_pending, monkeypatch, tmp_path):
-    current, pending, build = signed_pending
+def test_backup_directory_link_is_rejected_before_any_copy(verified_pending, monkeypatch, tmp_path):
+    current, pending, build = verified_pending
     external = tmp_path / "outside-backups"
     external.mkdir()
     try:
@@ -852,8 +842,8 @@ def test_backup_directory_link_is_rejected_before_any_copy(signed_pending, monke
     assert not list(external.iterdir())
 
 
-def test_same_executable_competes_across_data_directories(signed_pending, monkeypatch, tmp_path):
-    current, original_pending, build = signed_pending
+def test_same_executable_competes_across_data_directories(verified_pending, monkeypatch, tmp_path):
+    current, original_pending, build = verified_pending
     first_data, second_data = tmp_path / "first-data", tmp_path / "second-data"
     marker = first_data / "ready"
     source = """
@@ -879,8 +869,6 @@ with updater._update_resource.hold(), updater._update_target_resource.hold():
         pending = updater._get_pending_path()
         pending.parent.mkdir(parents=True)
         pending.write_bytes(original_pending.read_bytes())
-        pending.with_name(pending.name + ".sig.json").write_bytes(
-            original_pending.with_name(original_pending.name + ".sig.json").read_bytes())
         updater._write_update_record(pending.parent / "candidate.json", {
             "schema_version": 1, "candidate_id": identity, "build": build,
             "sha256": file_digest(pending), "state": "verified"})

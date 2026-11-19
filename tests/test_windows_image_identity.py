@@ -10,6 +10,13 @@ import pytest
 from core.update_windows import current_process_maps_image
 
 
+@pytest.fixture(autouse=True)
+def copied_interpreter_dependencies(tmp_path):
+    # A relocated uv interpreter needs its DLLs beside the copied executable.
+    for dependency in Path(sys.base_prefix).glob("*.dll"):
+        shutil.copy2(dependency, tmp_path / dependency.name)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows image section query")
 def test_image_query_tracks_running_file_not_replacement(tmp_path):
     executable = tmp_path / "running.exe"

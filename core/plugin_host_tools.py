@@ -115,6 +115,16 @@ def find_executable(plugin, fingerprint, name, preferred, *, authority, check_id
         if root and Path(root).is_absolute():
             base = Path(root) / ("Programs" if variable == "LOCALAPPDATA" else "") / stem
             candidates.extend((base / "cmd" / name, base / "bin" / name, base / name))
+    if name.casefold() == "node.exe":
+        from software.recipes.nodejs.common import node_versions_dir
+        managed = node_versions_dir()
+        try:
+            active = (managed / "active").resolve(strict=True)
+        except (OSError, RuntimeError):
+            pass
+        else:
+            if active.parent == managed and re.fullmatch(r"node[0-9]+\.[0-9]+\.[0-9]+", active.name):
+                add_candidate(active / name)
     seen = set()
     for candidate in candidates:
         checkpoint()

@@ -114,10 +114,9 @@ def private_python_runtime(tmp_path):
         candidate = source / name
         if candidate.exists():
             shutil.copyfile(candidate, runtime / name)
-    shutil.copytree(source / "Lib" / "encodings", runtime / "Lib" / "encodings",
-                    ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copyfile(source / "Lib" / "os.py", runtime / "Lib" / "os.py")
-    shutil.copyfile(source / "Lib" / "linecache.py", runtime / "Lib" / "linecache.py")
+    # Python 3.10 does not freeze all bootstrap modules used by newer releases.
+    shutil.copytree(source / "Lib", runtime / "Lib", ignore=shutil.ignore_patterns(
+        "site-packages", "__pycache__", "test", "tests", "idlelib", "tkinter", "ensurepip"))
     return runtime
 
 

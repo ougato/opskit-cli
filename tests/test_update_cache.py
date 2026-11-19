@@ -170,49 +170,15 @@ def test_changed_candidate_is_preserved_under_quota_pressure(cache, monkeypatch)
     assert (old / "candidate.json").exists()
 
 
-def test_old_signature_without_digest_is_preserved(cache, monkeypatch):
+def test_unknown_candidate_metadata_is_preserved(cache, monkeypatch):
     old = candidate(cache, 1)
-    sidecar = old / "opskit.pending.sig.json"
-    sidecar.write_bytes(b"unproven signature data")
+    sidecar = old / "unknown.json"
+    sidecar.write_bytes(b"unproven metadata")
     monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
     with pytest.raises(RuntimeError, match="quota exhausted"):
         reserve(cache)
-    assert sidecar.read_bytes() == b"unproven signature data"
+    assert sidecar.read_bytes() == b"unproven metadata"
     assert (old / "opskit.pending").exists()
-
-
-def test_verified_signature_digest_allows_owned_reclamation(cache, monkeypatch):
-    old = candidate(cache, 1)
-    sidecar = old / "opskit.pending.sig.json"
-    sidecar.write_bytes(b"signature data")
-    record = updater._read_update_record(old / "candidate.json")
-    updater._write_update_record(old / "candidate.json", {
-        **record, "signature_sha256": hashlib.sha256(sidecar.read_bytes()).hexdigest()})
-    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
-    assert reserve(cache)["removed"] == 1
-    assert not old.exists()
-
-
-def test_legacy_receipt_can_reclaim_cryptographically_verified_signature(cache, monkeypatch):
-    import base64
-    import json
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from core import config
-    from core.release_signature import payload
-
-    old = candidate(cache, 1)
-    record = updater._read_update_record(old / "candidate.json")
-    key = Ed25519PrivateKey.generate()
-    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
-    monkeypatch.setattr(config, "load_config", lambda: {"update": {"signing_public_key": public}})
-    filename = updater._asset_filename()
-    envelope = {"build": record["build"], "filename": filename, "sha256": record["sha256"],
-                "signature": base64.b64encode(key.sign(payload(record["build"], filename, record["sha256"]))).decode()}
-    (old / "opskit.pending.sig.json").write_text(json.dumps(envelope), encoding="utf-8")
-    monkeypatch.setattr(update_cache, "MAX_CANDIDATES", 1)
-    assert reserve(cache)["removed"] == 1
-    assert not old.exists()
 
 
 def test_candidate_replaced_during_cleanup_keeps_changed_file_and_record(cache, monkeypatch):
@@ -261,7 +227,7 @@ from test_update_download import slow_pipeline
 from worker_test_markers import process_birth
 context = get_context("spawn")
 receive, transmit = context.Pipe(duplex=False)
-process = context.Process(target=slow_pipeline, args=(transmit, sys.argv[1], time.monotonic()+60, {"signing_public_key":"test-key"}))
+process = context.Process(target=slow_pipeline, args=(transmit, sys.argv[1], time.monotonic()+60, {}))
 process.start()
 transmit.close()
 limit = time.monotonic()+10

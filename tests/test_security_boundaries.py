@@ -1,6 +1,7 @@
 """Security regressions exercise actual deadlines, archive paths and routing."""
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -163,8 +164,10 @@ def test_timeout_includes_grandchild_startup(tmp_path, monkeypatch):
     # Startup consumes the production budget too; creation is proved separately.
     if marker.exists():
         pid = int(marker.read_text())
-        if psutil.pid_exists(pid):
+        try:
             assert psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            pass
 
 
 def test_ready_grandchild_is_reclaimed_after_one_real_second(tmp_path, monkeypatch):
@@ -206,7 +209,10 @@ def test_ready_grandchild_is_reclaimed_after_one_real_second(tmp_path, monkeypat
         try:
             observed = psutil.Process(record["pid"])
             if observed.create_time() == record["created"]:
-                assert observed.status() == psutil.STATUS_ZOMBIE
+                if os.name == "nt":
+                    observed.wait(timeout=3)
+                else:
+                    assert observed.status() == psutil.STATUS_ZOMBIE
         except psutil.NoSuchProcess:
             pass
 

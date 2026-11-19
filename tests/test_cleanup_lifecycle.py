@@ -478,11 +478,12 @@ else:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires a Windows console")
-@pytest.mark.parametrize("phase", ["render", "input", "key", "pause"])
+@pytest.mark.parametrize("phase", ["render", "input", "key", "pause", "ready"])
 def test_root_ctrl_c_during_render_and_input_exits_cleanly(tmp_path, phase):
     marker = tmp_path / "root.txt"
     script = """
 import ctypes, pathlib, sys, threading, time
+sys.path.insert(0, str(pathlib.Path.cwd()))
 import main
 from core import cleanup, plugin_entry_preload, prompt
 kernel = ctypes.windll.kernel32
@@ -523,9 +524,9 @@ def send(wait_input):
         if not cleanup._console_input_active:
             record('input wait failed')
             return
-    else:
+    elif sys.argv[2] != 'ready':
         time.sleep(.3)
-    if sys.argv[2] in ('key', 'pause'):
+    if sys.argv[2] in ('key', 'pause', 'ready'):
         from core.windows_console_input import _InputRecord
         mode = ctypes.c_ulong()
         if not kernel.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)) or mode.value & 1:
@@ -552,7 +553,10 @@ def select(**kwargs):
         raise RuntimeError('Ctrl+C was not delivered during rendering')
     def ready():
         record(sys.argv[2])
-        threading.Thread(target=send, args=(True,), daemon=True).start()
+        if sys.argv[2] == 'ready':
+            send(False)
+        else:
+            threading.Thread(target=send, args=(True,), daemon=True).start()
     if sys.argv[2] == 'pause':
         ready()
         prompt.pause('pause')
@@ -566,13 +570,24 @@ raise RuntimeError('expected UserExit')
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = subprocess.SW_HIDE
+    command = [sys.executable, "-c", script, str(marker), phase]
+    if phase == "ready":
+        entry = tmp_path / "entry.py"
+        entry.write_text(script, encoding="utf-8")
+        shim = tmp_path / "python.cmd"
+        shim.write_text(
+            f'@echo off\n"{sys.executable}" "{entry}" "{marker}" {phase}\nexit /b %ERRORLEVEL%\n',
+            encoding="utf-8",
+        )
+        command = [os.environ["ComSpec"], "/d", "/c", str(shim)]
     result = subprocess.run(
-        [sys.executable, "-c", script, str(marker), phase], cwd=os.getcwd(),
+        command, cwd=os.getcwd(),
         stdin=subprocess.DEVNULL, startupinfo=startup,
         creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP,
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
     )
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert "Terminate batch job" not in result.stdout + result.stderr
     assert marker.read_text(encoding="utf-8") == f"{phase}\ncancel\nupdate\ncleanup\n"
 
 

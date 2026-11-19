@@ -10,6 +10,25 @@ import sys
 import click
 
 
+def _restart_after_update(arguments):
+    import os
+    from core.paths import installed_executable
+
+    executable = str(installed_executable())
+    argv = [executable, "--post-update", *arguments]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # A replacement at the same path needs a fresh PyInstaller extraction.
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        if original is None:
+            env.pop("LD_LIBRARY_PATH", None)
+        else:
+            env["LD_LIBRARY_PATH"] = original
+        os.execve(executable, argv, env)
+    else:
+        os.execv(executable, argv)
+
+
 def boot(host, *, post_update: bool | None, compiled: bool) -> dict:
     """Initialize startup services and apply eligible pending updates.
 
@@ -92,12 +111,16 @@ def boot(host, *, post_update: bool | None, compiled: bool) -> dict:
     try:
         from core.updater import check_and_apply_pending, pending_version
         if check_and_apply_pending(post_update=post_update):
+            if getattr(sys, "frozen", False) or compiled:
+                # The old archive path now contains new bytes. Restart before
+                # rendering a notice or performing any other lazy import.
+                try:
+                    _restart_after_update(host._restart_arguments(sys.argv[1:]))
+                except OSError as exc:
+                    host._log_startup_failure("update_restart", exc)
+                    raise SystemExit(1) from None
             version = pending_version()
             host.print_info(host.t("update.applying", version=f"v{version}" if version else ""))
-            if getattr(sys, "frozen", False) or compiled:
-                import os
-                arguments = host._restart_arguments(sys.argv[1:])
-                os.execv(sys.executable, [sys.executable, "--post-update", *arguments])
     except Exception as exc:
         updater_module = sys.modules.get("core.updater")
         decision_error = getattr(updater_module, "HealthDecisionPersistenceError", None)

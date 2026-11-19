@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("simulated_windows_launcher")
 import yaml
 
 

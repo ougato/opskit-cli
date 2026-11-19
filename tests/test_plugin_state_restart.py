@@ -129,7 +129,7 @@ def test_unresolved_partition_refused_before_network_or_container(tmp_path, monk
     monkeypatch.setattr("core.plugin_services.resolve_service_access", lambda *args: ())
     def forbidden(*args, **kwargs):
         pytest.fail("unresolved state reached resource creation")
-    monkeypatch.setattr("core.plugin_workspace.owned_workspace", forbidden)
+    monkeypatch.setattr(sandbox, "_encode", forbidden)
     owner = tmp_path / "plugin-data/provider"
     root = owner / "self" if action == "cli" else owner / "callers" / caller
     backup = root.with_name(root.name + ".previous")

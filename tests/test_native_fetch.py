@@ -1,12 +1,11 @@
 """Real Windows Git object acquisition inside AppContainer, no Docker."""
 import os
-from pathlib import Path
-import shutil
 import subprocess
-import sys
 import time
 
 import pytest
+
+from tests.http_server_fixture import LoopbackHTTPServer
 
 from core.native_fetch import local_candidate
 from core.native_runtime import inventory
@@ -67,10 +66,15 @@ def test_real_smart_protocol_pack_is_indexed_only_in_appcontainer(tools, tmp_pat
         assert {item.path for item in result.files} == {"plugin.yaml", "binary.dat"}
 
 
+# This covers broker requests, tool preparation, install and update in one flow
+# Each production operation retains its own deadline; the test needs their sum
+@pytest.mark.timeout(300)
 def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch):
+    # Runtime downloads have separate coverage; acquisition stays local/offline
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import datetime
     import ipaddress
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
     import ssl
     import threading
     from cryptography import x509
@@ -115,7 +119,7 @@ def test_real_https_broker_and_isolated_pack_export(tools, tmp_path, monkeypatch
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackHTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(tmp_path / "cert.pem", tmp_path / "key.pem")
     server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -249,7 +253,9 @@ def test_invalid_branch_rejected_before_tool_or_source_access(tmp_path, monkeypa
             pytest.fail("invalid branch accepted")
 
 
+@pytest.mark.timeout(300)
 def test_real_preparation_and_catalog_acquisition(tools, tmp_path, monkeypatch):
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_runtime", lambda *args: None)
     import json
     import main
     from typer.testing import CliRunner

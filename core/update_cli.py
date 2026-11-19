@@ -123,7 +123,7 @@ def _check_worker(connection):
             raise ValueError()
         target = updater.query_update_target(cfg)
         result = {"current_version": updater.APP_VERSION, "available": target is not None,
-                  "signature_verified": False}
+                  "checksum_verified": False}
         if target is None:
             result["reason"] = "no_eligible_update"
         else:

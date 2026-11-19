@@ -88,7 +88,7 @@ def test_invalid_official_reserved_or_missing_entry_is_rejected(staged, manifest
 
 
 def test_executable_entry_is_checked_without_running_it(staged):
-    value = staged(entries({**BASE, "kind": "exec", "entry": {"linux": "bin/run", "windows": "bin/run"}}, executable=True))
+    value = staged(entries({**BASE, "kind": "exec", "entry": {"linux": "bin/run", "windows": "bin/run", "darwin": "bin/run"}}, executable=True))
     assert check(value).checksums == "missing"
 
 

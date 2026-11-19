@@ -54,7 +54,9 @@ opskit plugin install https://git.example.com/team/hello.git --branch main
 
 SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。安装菜单中用户亲自输入的仓库地址允许本次连接该主机和端口的私网地址；更新已有来源时须明确确认，命令行须指定 `--allow-private`。许可均不持久保存。
 
-`opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml；它是内容校验，不是发布者签名。安装后核对来源、权限、指纹并授信。内容更新撤销旧信任与相关授权，不自动继承。更新必须保留用户本地修改，无法安全替换时拒绝；不能强行覆盖以完成更新。
+`opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml，用于内容校验。安装后核对来源、权限、指纹并授信。已信任插件从记录的仓库和分支获取常规更新时，若运行入口、权限及服务契约一致，且版本未降级，框架校验发布内容后把插件信任和永久目录读取授权续接到新指纹。读取授权继续覆盖原目录及其子目录，并可撤销。单次授权随调用结束失效，其他宿主能力及服务调用授权各自绑定具体指纹。插件未获信任、权限边界变化或降级时仍需确认。更新必须保留用户本地修改，无法安全替换时拒绝。
+
+更新排障可运行 `python main.py --output json plugin update --all`，逐项检查更新状态和失败数。插件正在其他任务或进程中运行时，更新返回插件忙碌提示，等待调用结束后重试，不删除锁文件或强制替换。工作区容量不足、占用和分配失败会分别提示；分配失败时，OpsKit 日志记录失败阶段、异常类别及系统错误码，不记录凭据和原始异常文本。分配结果无法确认时保留现场，不按目录名强制清理。
 
 ## 高级离线准备
 
@@ -88,7 +90,7 @@ Both operations share the same scoped grant; once consent is reused within the i
 
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
-- `read_host_file(directory, relative)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。
+- `read_host_file(directory, relative, *, missing_ok=False)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。仅在指定 `missing_ok=True` 且文件缺失时返回 `None`。
 - `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。可使用显式目录读写授权；否则写入授权绑定文件路径及原、新内容摘要。独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
 - `create_host_file(directory, relative, content)`：经目录读写授权或精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
 - `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
@@ -115,7 +117,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
 - `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
-- `upload_file(directory, relative, url, sha256, headers=None)`：单文件 HTTPS PUT，最多 512MiB；
+- `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
 宿主工具按用户权限执行，并可能执行工程脚本；授权界面必须说明此边界。默认命令授权绑定插件指纹、工具摘要、参数、工作目录及输出范围。支持撤权、取消、超时、进程树回收和日志限额。通用接口不判断特定工具成功码或构建平台。
@@ -160,6 +162,8 @@ SHA256 必须换为核实后的实际指纹。批准精确绑定调用方、提�
 `request_plugin_install(provider: str) -> bool` 是服务提供方唯一面向插件的安装入口。宿主从当前运行身份读取 `uses`，使用宿主登记的来源、分支和最低版本，并在隔离区核对候选指纹、权限和服务契约。用户在同一确认页批准安装、候选授信及指定服务调用边。有效授权直接复用。SDK 调用成功后可在当前操作中获取服务。
 
 get_service 返回 JSON RPC 代理，参数与结果必须可序列化；函数、回调和共享对象不跨边界。循环调用及超过四层嵌套拒绝。宿主先校验授权，worker 在执行点核对快照契约、实际业务版本和公开方法，不在宿主导入提供方。
+
+跨插件菜单通过已声明并授权的 `open_menu` 方法调用。提供方可约定 `action: navigate` 和白名单内的 `destination`，以公开目标标识映射自身菜单。菜单退出后将控制权交还调用方，参数和结果随业务契约记录。调用方身份由宿主绑定。示例见[跨插件菜单导航](plugin-development.md#跨插件菜单导航)。
 
 RPC 版本严格为整数 1。身份由平台绑定，信封未知字段、重复 JSON 键、非有限数字、超额结构或结果后继续调用均拒绝。业务版本不能覆盖传输版本。协议预算见实现与测试，不以合法 JSON 等同于获批能力。
 

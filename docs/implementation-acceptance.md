@@ -438,7 +438,7 @@ tests/test_update_terminal_retirement.py新增7项检查；cache/update-terminal
 
 新wheel现已终态exit0（cache/wheel-update-marker-final-20261013.log）：cache/wheel-archive-reader-ze0w5aoa，234运行文件/239成员，SHA256 defdd1e191aa01295991f41201e00467222919708f55550df5f59afdde3d9762，源码/RECORD一致、pip check及94帮助+9实际检查共103通过。完整源码回归cache/full-update-marker-final-20261013.log已启动，终态前不登记完整通过；此期间保持生产源码稳定。
 
-新增标记权威测试先复现4项失败（cache/update-marker-before-20261013.log）：旧实现在验证归属前探测缓存声明路径，缺少备份/事务绑定仍可替换，且候选丢失或健康发布失败可能丢弃恢复证据。现仅接受schema2，声明必须词法匹配平台自身pending/target；文件探测始终使用平台路径。事务ID、版本、新旧摘要、备份侧车及实际备份字节必须一致；已有其他更新健康记录拒绝。复用当前事务，不创建第二事务；实际目标已是新摘要时可修复完成/健康发布，未提交时仍要求签名、版本下限和原子复制摘要检查。
+新增标记权威测试先复现4项失败（cache/update-marker-before-20261013.log）：旧实现在验证归属前探测缓存声明路径，缺少备份/事务绑定仍可替换，且候选丢失或健康发布失败可能丢弃恢复证据。现仅接受schema2，声明必须词法匹配平台自身pending/target；文件探测始终使用平台路径。事务ID、版本、新旧摘要、备份侧车及实际备份字节必须一致；已有其他更新健康记录拒绝。复用当前事务，不创建第二事务；实际目标已是新摘要时可修复完成/健康发布，未提交时仍要求摘要校验、版本下限和原子复制摘要检查。
 
 旧格式或不明确标记保留并阻止另一次自动应用。健康发布失败时已提交目标要求旧代码重启，但保留pending/marker/backup；新代码带--post-update仍先处理标记，不能先删除pending。新增回归注入健康写入失败，验证新运行版本不循环重启、恢复证据完整，解除故障后健康归属正确并清理候选及标记。此为临时文件场景，不替代正在运行的Windows冻结程序、延迟助手重试、断电或跨账户验收。
 
@@ -778,7 +778,7 @@ macOS/其他声明Python版本、未观察到的同名接口替换、CPU共同�
 
 最后ABI修复后的新wheel位于cache/wheel-archive-reader-7c48bx5j，231运行文件/236成员，源码库存和RECORD校验通过，SHA256 a498432f0151d15877bf46fe54631cc7ede2204a0f75dde29b1b2cb538da7af0。独立审计环境只替换平台wheel，pip check及91个help、7个查询/拒绝共98项通过，未初始化运行存储（cache/wheel-mysql-abi-final-20261013.log）。当前391候选文件秘密扫描0发现（cache/secrets-bytequota-epmjweiw）；不将该快照冒充后续文档编辑或历史扫描。静态123遗留候选、无新增/已解决，diff检查通过。
 
-最后源码完整回归：Windows Python3.12，1829 passed /13 skipped /503.41秒，日志cache/full-mysql-dependencies-final-20261013.log。运行期间未修改生产/测试源码，未并行构建或执行原生资源测试。13跳过及全部声明平台、真实发行版安装/服务、生产签名和八类剩余目标继续开放。本次计划与后续实现变更尚未提交。
+最后源码完整回归：Windows Python3.12，1829 passed /13 skipped /503.41秒，日志cache/full-mysql-dependencies-final-20261013.log。运行期间未修改生产/测试源码，未并行构建或执行原生资源测试。13跳过及全部声明平台、真实发行版安装/服务、生产发布和八类剩余目标继续开放。本次计划与后续实现变更尚未提交。
 
 ## 插件真实资源耗尽及输出管道修复（2026-10-13）
 
@@ -877,13 +877,13 @@ Windows Python3.12.10完整回归1728 passed /13 skipped /431.47秒，cache/full
 | 最小插件运行时与哈希依赖锁 | 待实施 | 源码/wheel/原生准备和依赖一致性 |
 | 秘密历史扫描、SBOM、漏洞门槛 | 待实施 | 脱敏扫描报告及可复现检查 |
 | 性能基准与实测优化 | 令牌/语言/本地 TCP 基准已有 | 完整平台 p50/p95、RSS、资源残留及代表性负载仍待补齐 |
-| 签名生产发布与多平台原生 smoke | 待验收 | 发布负责人信任根、真实产物及环境 |
+| 生产发布与多平台原生 smoke | 待验收 | 真实发布产物及环境 |
 
 ## 边界
 
 ### 同一程序跨数据目录的目标锁（2026-10-13）
 
-updater新增程序目标ResourceLock，身份为规范化程序路径的SHA256，锁放在程序旁私有.opskit-update-locks目录，不依赖OPSKIT_DATA_DIR。frozen self_path解析为实际路径；源代码/无效签名不会进入目标提交锁。_do_apply先验证签名，再在目标锁内复核签名并备份/应用/补偿；rollback和marker原子提交共享该锁。暂存区→目标锁顺序一致。目录不可写/链接/硬链接异常失败，不退回仅暂存区锁，也不修改整个程序目录权限。新运行锁目录已加入.gitignore。
+updater新增程序目标ResourceLock，身份为规范化程序路径的SHA256，锁放在程序旁私有.opskit-update-locks目录，不依赖OPSKIT_DATA_DIR。frozen self_path解析为实际路径；源代码/无效摘要不会进入目标提交锁。_do_apply先验证摘要，再在目标锁内复核摘要并备份/应用/补偿；rollback和marker原子提交共享该锁。暂存区→目标锁顺序一致。目录不可写/链接/硬链接异常失败，不退回仅暂存区锁，也不修改整个程序目录权限。新运行锁目录已加入.gitignore。
 
 Windows helper获取暂存区及规范化程序目标两个字节锁，直到复制/校验/提交/健康与结果记录后释放；等待第二锁失败时也释放第一锁。新的68 passed（24.11秒，cache/update-target-lock-final-20261013.log）：真实独立进程持有A数据目录及同程序目标锁，B数据目录的公开apply服务使用真实签名产物，在备份/修改前被拒绝；另一程序可独立加锁；终止持有者后锁可重用。另覆盖活动操作内目标身份变化拒绝、真实PowerShell共享目标竞争失败、第一锁释放及解除竞争后的成功提交。此前核心65 passed（19.18秒）。
 
@@ -975,7 +975,7 @@ Recipe.diagnostic_report及五种实现统一timeout关键字参数；software d
 
 ### 显式更新只读入口（2026-10-13）
 
-update status/check已接入受监督一次性worker，分别默认10/30秒，可调0.1..3600秒；状态只返回白名单元数据，待更新文件不标为已验证。check复用updater._resolve_update_target，新增显式只读ContextVar：不写缓存、机器标识或遥测，完整放量不创建身份；部分灰度缺已有身份时报错。查询配置读入≤64 KiB、身份≤256字节、原始未压缩元数据≤256 KiB，拒绝无效版本和非HTTPS/含凭据产物URL。网络失败/无匹配产物不冒充无更新；候选版本尚未下载/验证签名，返回signature_verified=false。
+update status/check已接入受监督一次性worker，分别默认10/30秒，可调0.1..3600秒；状态只返回白名单元数据，待更新文件不标为已验证。check复用updater._resolve_update_target，新增显式只读ContextVar：不写缓存、机器标识或遥测，完整放量不创建身份；部分灰度缺已有身份时报错。查询配置读入≤64 KiB、身份≤256字节、原始未压缩元数据≤256 KiB，拒绝无效版本和非HTTPS/含凭据产物URL。网络失败/无匹配产物不冒充无更新；候选版本尚未下载/验证摘要，返回checksum_verified=false。
 
 最初更新/原生入口联合144 passed / 1 skipped（70.23秒）；只读更新/config/原生入口27 passed（11.55秒），含真实status不建运行目录、缓存内容/mtime不变、秘密不进结果、真实已启动worker超时后回收、完整/部分灰度、实际流式元数据成功和体积/形状拒绝。更新/旧更新服务最终批128 passed / 1 skipped（72.14秒），日志cache/update-query-final-20261013.log；之后追加只读版本/URL验证，最终专项24 passed（6.71秒）。超大响应测试一度因pytest自动参数ID过长触发fixture路径错误，已使用短ID重跑通过；不把该次错误结果记成通过。
 
@@ -1053,12 +1053,12 @@ updater下载现限制产物≤1 GiB，检查已有断点、Content-Length及实
 
 - 新增core/update_download.py和update download --timeout（300秒，0.1..3600），源码模式拒绝；复用既有来源/rollout策略和下载器。后台更新迁移到同一服务，删除旧后台下载/签名/发布的第二套编排。
 - 主进程持有固定缓存根的OS暂存区锁；worker在随机私有update-candidates/ID内下载、真实验签、复核摘要和持久化，最后原子发布缓存candidate_id/pending_version。getter解析严格UUID指针，应用/启动/status共用；锁身份不随候选路径变化。Windows启动失败marker继续写固定缓存根。
-- 总预算覆盖查询、传输、签名和发布；迟到阶段不发布。提交附近超时/取消可能已有完整候选但响应丢失，明确要求查询status，不谎称必然未提交。签名/checksum响应拒绝压缩、最多4KiB；重定向最多5次且请求目的地前检查HTTPS/无URL凭据。下载worker禁用原下载器原始日志及遥测，错误只含安全阶段。
+- 总预算覆盖查询、传输、签名和发布；迟到阶段不发布。提交附近超时/取消可能已有完整候选但响应丢失，明确要求查询status，不谎称必然未提交。checksum响应拒绝压缩、最多4KiB；重定向最多5次且请求目的地前检查HTTPS/无URL凭据。下载worker禁用原下载器原始日志及遥测，错误只含安全阶段。
 - 最初10项新回归中1项失败：Windows只读文件句柄fsync不适用，改为可写句柄后10项通过。扩大回归时另一个测试在构造gzip响应时由httpx提前解压失败，改用原始ByteStream验证读取前拒绝，未放宽生产检查。
 - 指针/旧更新流程199 passed / 1 skipped（70.32秒），cache/download-pointer-regression-20261013.log。扩展后的真实签名、应用重验、状态读取、进程超时、TLS重定向和旁车限制联合142 passed / 1 skipped（76.86秒），cache/download-integration-final-20261013.log；随后新增实际开始下载后的取消用例，最终全套另记。
 - 未验收：原生打包spawn、正式发布签名、真实代理/多平台、候选配额/受控清理、跨调用续传、失联/断电日志和完整marker恢复。保留旧候选/失败暂存供后续受控清理，不擅自删除用户目录；不以本批通过宣布全项目完成。
 
-- 本批最终Windows/Python 3.12全套993 passed / 11 skipped（213.46秒），日志cache/full-signed-download-20261013.log，包含19项新下载测试和真实下载开始后的取消回收。真实main.py --output json update download --timeout 2在源码模式退出2、返回单个JSON错误、stderr为空且未创建隔离数据目录；git diff --check通过。只在测试进程将TEMP/TMP定向到F盘私有忽略目录。全项目目标仍未完成，下一批处理候选/异步任务配额与恢复。
+- 本批最终Windows/Python 3.12全套993 passed / 11 skipped（213.46秒），日志cache/full-verified-download-20261013.log，包含19项新下载测试和真实下载开始后的取消回收。真实main.py --output json update download --timeout 2在源码模式退出2、返回单个JSON错误、stderr为空且未创建隔离数据目录；git diff --check通过。只在测试进程将TEMP/TMP定向到F盘私有忽略目录。全项目目标仍未完成，下一批处理候选/异步任务配额与恢复。
 
 
 ## 2026-10-13 候选缓存配额、worker锁与Windows任务位置
@@ -1082,7 +1082,7 @@ updater下载现限制产物≤1 GiB，检查已有断点、Content-Length及实
 - job.json新增schema_version/job_id/target/parent_pid及摘要、可用helper_pid，status绑定新记录的job_id并只返回白名单。helper健康记录增加同一job_id，confirm_health保留。健康确认要求整数build、confirmed=true和同job_id，明确失败阶段不确认；旧版本号匹配回退移除。
 - 阶段初版联合98 passed（49.04秒），cache/job-launch-index-20261013.log。新增失败矩阵与原生helper/CLI联合46 passed（31.40秒），cache/job-journal-failure-matrix-20261013.log。
 - 绑定健康与apply/download联合110 passed（55.20秒），cache/job-journal-bound-health-20261013.log，覆盖真实PowerShell提交后写job_id及confirm保留；prelaunch快照/脚本/意图/索引失败不启动且旧索引不变；postlaunch写失败无重复marker；Popen失败结果可查、结果写失败保持不确定。随后增加旧记录不能凭同版本确认的用例并收紧全部任务健康绑定；最终全套另记。
-- 未验收：helper创建时间/强进程身份和存活、失联恢复、job配额/受控清理、完整marker凭据、断电日志、生产签名和原生跨平台。scheduled/launching/helper_pid不作存活或完成证明；全部操作在隔离测试目录，未运行假二进制或用户插件。
+- 未验收：helper创建时间/强进程身份和存活、失联恢复、job配额/受控清理、完整marker凭据、断电日志、生产发布和原生跨平台。scheduled/launching/helper_pid不作存活或完成证明；全部操作在隔离测试目录，未运行假二进制或用户插件。
 
 本任务阶段/健康归属批次最终Windows/Python 3.12全套1026 passed / 11 skipped（219.74秒），cache/full-job-launch-journal-20261013.log；git diff --check通过。覆盖现代与旧任务健康绑定、启动阶段失败和真实helper行为。异步任务配额、强进程身份、失联/断电及原生跨平台发布仍未验收，全项目目标继续进行。
 
@@ -1135,7 +1135,7 @@ updater下载现限制产物≤1 GiB，检查已有断点、Content-Length及实
 - 新test_update_health_lock真实spawn进程暂停在健康读取之后；父进程验证实际OS锁仍被持有、其他确认/计数/发布入口安全拒绝；释放后核对原记录归属/计数与新build发布，旧runtime不更改新health。真实子进程持根锁发布新计数，后台观察真实竞争、释放后重读并确认；另验证竞争超时、非竞争errno不重试、重放保留、坏记录不泄密、回滚决策持锁且证据保留、清理失败不撤销确认。
 - 初版联合1 failed / 242 passed / 3 skipped（127.51秒），cache/health-lock-initial-20261013.log；真实check用例初始fails=1已达到项目MAX_HEALTH_FAILS=2回滚阈值，按既有失败回滚契约保持旧计数，测试原先错期望增为2。调为fails=0验证实际普通启动计数至1，保留专门回滚持锁用例；debug日志cache/health-check-competition-debug-20261013.log保留。
 - 修正后健康/恢复联合63 passed（46.26秒），cache/health-lock-final-focused-20261013.log；新增坏JSON及非竞争原生errno分类后，最终23项专项passed（6.74秒），cache/health-lock-final-matrix-20261013.log。最终完整源码全套另记。
-- 未完成：跨数据目录/多目标健康归属，回滚后的索引与坏候选处理，任务退役、未索引/旧任务及marker完整恢复，apply总期限、真实断电、生产签名和全部平台原生验收。健康持锁不等于全部更新或完整项目已安全验收；当前变更未提交，完整目标继续进行。
+- 未完成：跨数据目录/多目标健康归属，回滚后的索引与坏候选处理，任务退役、未索引/旧任务及marker完整恢复，apply总期限、真实断电、生产发布和全部平台原生验收。健康持锁不等于全部更新或完整项目已安全验收；当前变更未提交，完整目标继续进行。
 
 - 最终Windows/Python 3.12全套1148 passed / 11 skipped（274.13秒），cache/full-health-lock-20261013.log；git diff --check通过。该全套覆盖最终23项新增健康锁/重放/实际进程竞争及错误分类检查；未执行未知插件或测试二进制。
 

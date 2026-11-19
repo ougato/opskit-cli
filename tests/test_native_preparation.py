@@ -79,6 +79,7 @@ def test_retained_unknown_preparations_bound_new_allocations():
             pytest.fail("over-capacity preparation started")
 
 
+@pytest.mark.timeout(120)
 def test_preparation_cleanup_supports_runtime_inventory_above_guest_state_file_limit():
     with workspace() as target:
         sources = target / "ordinary-runtime-files"

@@ -92,11 +92,14 @@ def test_real_uv_supervision_reclaims_child_tree(tmp_path, monkeypatch, failure)
         assert len(parents) == 1 and parents[0].poll() is not None
         child_pid = int(marker.read_text())
         deadline = time.monotonic() + 3
-        while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
-            if psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE:
-                break
+        def child_running():
+            try:
+                return psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                return False
+        while child_running() and time.monotonic() < deadline:
             time.sleep(.02)
-        assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+        assert not child_running()
     finally:
         for parent in parents:
             process.terminate_tree(parent)

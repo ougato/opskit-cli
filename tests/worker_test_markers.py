@@ -52,9 +52,24 @@ def publish_process_marker(path):
 
 def marked_process_exists(path):
     """A reused PID is not the marked worker; inspection errors propagate."""
-    import psutil
     identity = json.loads(Path(path).read_text(encoding="utf-8"))
+    return process_identity_exists(identity)
+
+
+def process_identity_exists(identity):
+    """Check the recorded process identity and its actual exit state."""
+    import psutil
     try:
-        return process_birth(identity["pid"]) == identity["birth"]
+        if process_birth(identity["pid"]) != identity["birth"]:
+            return False
+        if sys.platform == "win32":
+            # A terminated process object can retain its PID while handles are
+            # closing. Query exit completion rather than PID allocation alone.
+            try:
+                psutil.Process(identity["pid"]).wait(timeout=0)
+            except psutil.TimeoutExpired:
+                return True
+            return False
+        return True
     except psutil.NoSuchProcess:
         return False

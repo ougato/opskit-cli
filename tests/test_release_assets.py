@@ -1,19 +1,13 @@
-"""Exercise real signatures and a stateful gh protocol without external writes."""
-import base64
+"""Exercise checksums and a stateful gh protocol without external writes."""
 import importlib.util
 import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 from types import SimpleNamespace
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
 import pytest
 import yaml
 
-from core.release_signature import file_digest, payload
+from core.file_digest import file_digest
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -25,8 +19,6 @@ COMMIT = "a" * 40
 
 @pytest.fixture
 def artifacts(tmp_path):
-    key = Ed25519PrivateKey.generate()
-    public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
     root = tmp_path / "artifacts"
     for name, (platform, arch, binary) in ra.MATRIX.items():
         directory = root / name
@@ -38,23 +30,7 @@ def artifacts(tmp_path):
         (directory / "manifest.json").write_text(json.dumps({
             "version": "7", "platform": platform, "arch": arch, "binary": binary,
             "sha256": digest, "size": path.stat().st_size}), encoding="utf-8")
-    return root, key, public
-
-
-def sign_all(artifacts):
-    root, key, public = artifacts
-    ra.assets(root, 7, signed=False)
-    for name, (_, _, binary) in ra.MATRIX.items():
-        path = root / name / binary
-        digest = file_digest(path)
-        message = payload(7, binary, digest)
-        signature = key.sign(message)
-        (path.parent / (binary + ".sig.json")).write_text(json.dumps({
-            "build": 7, "filename": binary, "sha256": digest,
-            "signature": base64.b64encode(signature).decode()}), encoding="utf-8")
-        (path.parent / (binary + ".signed")).write_bytes(message)
-        (path.parent / (binary + ".sig")).write_bytes(signature)
-    return ra.assets(root, 7, signed=True, public_key=public)
+    return root
 
 
 class FakeGH:
@@ -111,7 +87,7 @@ class FakeGH:
             body = list(self.remote.values())
         elif method == "PATCH" and endpoint == "releases/17":
             data = json.loads(kwargs["input"])
-            assert len(self.remote) == 20
+            assert len(self.remote) == 8
             self.release.update(data)
             body = dict(self.release)
         else:
@@ -128,8 +104,8 @@ class FakeGH:
                 args[:3] == ["gh", "release", "upload"] or args[4] != "GET"]
 
 
-def test_complete_matrix_with_real_signatures_publishes_last(artifacts):
-    expected = sign_all(artifacts)
+def test_complete_matrix_with_checksums_publishes_last(artifacts):
+    expected = ra.assets(artifacts, 7)
     fake = FakeGH()
     ra.publish(fake.api(), "v7", COMMIT, expected)
     assert fake.release["draft"] is False
@@ -142,7 +118,7 @@ def test_complete_matrix_with_real_signatures_publishes_last(artifacts):
 
 
 def test_failed_upload_retains_draft_and_retry_only_fills_missing(artifacts):
-    expected = sign_all(artifacts)
+    expected = ra.assets(artifacts, 7)
     fake = FakeGH()
     fake.upload_failure = sorted(expected)[4]
     with pytest.raises(RuntimeError, match="draft retained"):
@@ -156,11 +132,11 @@ def test_failed_upload_retains_draft_and_retry_only_fills_missing(artifacts):
     assert fake.release["draft"] is False
     assert all(fake.remote[name] == entry for name, entry in retained.items())
     uploads = [args[4] for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]
-    assert len(uploads) == 16
+    assert len(uploads) == 4
 
 
 def test_completed_upload_with_lost_ack_is_recovered_without_replacement(artifacts):
-    expected = sign_all(artifacts)
+    expected = ra.assets(artifacts, 7)
     fake = FakeGH()
     fake.lose_upload_ack = True
     with pytest.raises(RuntimeError, match="draft retained"):
@@ -169,7 +145,7 @@ def test_completed_upload_with_lost_ack_is_recovered_without_replacement(artifac
     assert fake.release["draft"] is True
     fake.calls.clear()
     ra.publish(fake.api(), "v7", COMMIT, expected)
-    assert len([args for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]) == 19
+    assert len([args for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]) == 7
     assert fake.release["draft"] is False
 
 
@@ -177,14 +153,14 @@ def test_incomplete_public_release_is_never_filled_in_place(artifacts):
     fake = FakeGH()
     fake.release = {"id": 17, "tag_name": "v7", "draft": False, "prerelease": False}
     with pytest.raises(ValueError, match="incomplete"):
-        ra.publish(fake.api(), "v7", COMMIT, sign_all(artifacts))
+        ra.publish(fake.api(), "v7", COMMIT, ra.assets(artifacts, 7))
     assert fake.writes() == []
 
 
 @pytest.mark.parametrize("draft", [True, False])
 @pytest.mark.parametrize("change", ["digest", "size", "state", "missing-digest", "unknown"])
 def test_existing_conflict_never_overwrites_or_publishes(artifacts, draft, change):
-    expected = sign_all(artifacts)
+    expected = ra.assets(artifacts, 7)
     fake = FakeGH()
     fake.release = {"id": 17, "tag_name": "v7", "draft": draft, "prerelease": False}
     fake.remote = {name: fake.asset(path) for name, path in expected.items()}
@@ -204,7 +180,7 @@ def test_remote_digest_rechecked_before_publishing(artifacts):
     fake = FakeGH()
     fake.corrupt_after_upload = True
     with pytest.raises(ValueError, match="refusing replacement"):
-        ra.publish(fake.api(), "v7", COMMIT, sign_all(artifacts))
+        ra.publish(fake.api(), "v7", COMMIT, ra.assets(artifacts, 7))
     assert fake.release["draft"] is True
     assert all(args[4] != "PATCH" for args, _ in fake.calls if args[1] == "api")
 
@@ -214,7 +190,7 @@ def test_api_failures_do_not_become_creation_permission(artifacts, status):
     fake = FakeGH()
     fake.status = status
     with pytest.raises(RuntimeError, match=f"HTTP {status}"):
-        ra.publish(fake.api(), "v7", COMMIT, sign_all(artifacts))
+        ra.publish(fake.api(), "v7", COMMIT, ra.assets(artifacts, 7))
     assert fake.writes() == []
 
 
@@ -222,21 +198,21 @@ def test_changed_tag_is_rejected_without_writes(artifacts):
     fake = FakeGH()
     fake.commit = "b" * 40
     with pytest.raises(ValueError, match="event commit"):
-        ra.publish(fake.api(), "v7", COMMIT, sign_all(artifacts))
+        ra.publish(fake.api(), "v7", COMMIT, ra.assets(artifacts, 7))
     assert fake.writes() == []
 
 
 def test_older_release_does_not_replace_newer_latest(artifacts):
     fake = FakeGH()
     fake.other_releases = [{"id": 18, "tag_name": "v8", "draft": False, "prerelease": False}]
-    ra.publish(fake.api(), "v7", COMMIT, sign_all(artifacts))
+    ra.publish(fake.api(), "v7", COMMIT, ra.assets(artifacts, 7))
     assert fake.release["draft"] is False
     assert fake.release["make_latest"] == "false"
 
 
 @pytest.mark.parametrize("change", ["missing-platform", "extra-file", "wrong-checksum", "wrong-version", "wrong-size"])
-def test_malformed_unsigned_artifacts_refused(artifacts, change):
-    root, _, _ = artifacts
+def test_malformed_artifacts_refused(artifacts, change):
+    root = artifacts
     directory = root / "opskit-linux-x64"
     if change == "missing-platform":
         (root / "opskit-linux-arm64").rename(root / "unexpected")
@@ -250,55 +226,28 @@ def test_malformed_unsigned_artifacts_refused(artifacts, change):
         data["version" if change == "wrong-version" else "size"] = "wrong"
         path.write_text(json.dumps(data))
     with pytest.raises(ValueError):
-        ra.assets(root, 7, signed=False)
+        ra.assets(root, 7)
 
 
-@pytest.mark.parametrize("suffix", ["", ".sig.json", ".signed", ".sig"])
-def test_modified_signed_asset_refused(artifacts, suffix):
-    sign_all(artifacts)
-    root, _, public = artifacts
+@pytest.mark.parametrize("suffix", ["", ".sha256"])
+def test_modified_asset_refused(artifacts, suffix):
+    ra.assets(artifacts, 7)
+    root = artifacts
     path = root / "opskit-linux-x64" / ("opskit-linux-x64" + suffix)
     path.write_bytes(b"tampered")
     with pytest.raises(ValueError):
-        ra.assets(root, 7, signed=True, public_key=public)
-
-
-def test_real_signing_cli_produces_the_validated_asset_set(artifacts):
-    root, key, public = artifacts
-    pem = key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
-    env = dict(os.environ, OPSKIT_RELEASE_SIGNING_KEY=pem, OPSKIT_RELEASE_PUBLIC_KEY=public)
-    binaries = [root / name / binary for name, (_, _, binary) in ra.MATRIX.items()]
-    result = subprocess.run([sys.executable, "-I", str(Path(SPEC.origin).with_name("sign_release.py")),
-                             "--build", "7", *map(str, binaries)], env=env,
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stderr
-    assert len(ra.assets(root, 7, signed=True, public_key=public)) == 20
+        ra.assets(root, 7)
 
 
 def test_unbounded_metadata_refused_before_json_read(artifacts):
-    root, _, _ = artifacts
+    root = artifacts
     manifest = root / "opskit-linux-x64/manifest.json"
     manifest.write_bytes(b" " * (1024 * 1024 + 1))
     with pytest.raises(ValueError, match="exceeds 1 MiB"):
-        ra.assets(root, 7, signed=False)
+        ra.assets(root, 7)
 
 
 def test_validator_matrix_matches_actual_workflow():
     workflow = yaml.safe_load((Path(SPEC.origin).parents[1] / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     builds = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
     assert {build["artifact"] for build in builds} == set(ra.MATRIX)
-
-
-def test_signing_cli_without_pinned_public_key_writes_nothing(artifacts):
-    root, key, _ = artifacts
-    pem = key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
-    env = dict(os.environ, OPSKIT_RELEASE_SIGNING_KEY=pem)
-    env.pop("OPSKIT_RELEASE_PUBLIC_KEY", None)
-    path = root / "opskit-linux-x64/opskit-linux-x64"
-    result = subprocess.run([sys.executable, "-I", str(Path(SPEC.origin).with_name("sign_release.py")),
-                             "--build", "7", str(path)], env=env,
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode != 0
-    assert "pinned release public key is required" in result.stderr
-    assert not list(root.rglob("*.sig*"))
-    assert not list(root.rglob("*.signed"))

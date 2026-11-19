@@ -22,6 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("simulated_windows_launcher")
+
 # ─── 辅助：隔离 data_dir ──────────────────────────────────────────────────────
 
 @pytest.fixture()
@@ -617,20 +619,12 @@ class TestWindowsReplacement:
         monkeypatch.setattr("core.updater._get_cache_path", lambda: cache_path)
         monkeypatch.setattr("core.config.get_data_dir", lambda: tmp_data)
 
-        # Validate a real signature, not a mocked security gate.
-        import base64
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-        from core.release_signature import payload, file_digest
-        key = Ed25519PrivateKey.generate()
-        public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+        # Validate real candidate bytes against their receipt.
+        from core.file_digest import file_digest
         build = upd.APP_VERSION + 1
-        digest = file_digest(fake_pending)
-        filename = upd._asset_filename()
-        envelope = {"build": build, "filename": filename, "sha256": digest,
-                    "signature": base64.b64encode(key.sign(payload(build, filename, digest))).decode()}
-        fake_pending.with_name(fake_pending.name + ".sig.json").write_text(json.dumps(envelope))
-        monkeypatch.setattr("core.config.load_config", lambda: {"update": {"signing_public_key": public}})
+        upd._write_update_record(fake_pending.parent / "candidate.json", {
+            "schema_version": 1, "candidate_id": fake_pending.parent.name,
+            "build": build, "sha256": file_digest(fake_pending), "state": "verified"})
         monkeypatch.setattr(upd, "_self_path", lambda: fake_self)
         monkeypatch.setattr(upd, "_get_pending_path", lambda: fake_pending)
 
@@ -1225,7 +1219,7 @@ class TestGapCoverage:
 )
 class TestE2EAcceptance:
     def test_T32_real_network_download_and_ps_script(self, tmp_data, monkeypatch, caplog):
-        """T32: 真实网络下 下载签名产物并生成独立原子替换任务"""
+        """T32: 真实网络下 下载校验产物并生成独立原子替换任务"""
         import logging
         import core.updater as upd
         from core.constants import APP_VERSION

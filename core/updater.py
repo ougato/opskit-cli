@@ -52,6 +52,7 @@ def _safe_recovery_log(level, message, *args):
 
 _cache_lock = threading.Lock()
 _query_readonly = ContextVar("update_query_readonly", default=False)
+_initialize_rollout_identity = ContextVar("update_initialize_rollout_identity", default=False)
 _download_staging = ContextVar("update_download_staging", default=None)
 MAX_UPDATE_BYTES = 1024 * 1024 * 1024
 
@@ -165,7 +166,8 @@ def _is_frozen() -> bool:
 def _self_path() -> Path:
     """当前可执行文件路径（打包 or python 解释器）"""
     if _is_frozen():
-        return Path(sys.executable).resolve()
+        from core.paths import installed_executable
+        return installed_executable()
     return Path(__file__).resolve().parent.parent / "main.py"
 
 
@@ -187,7 +189,9 @@ def fetch_bootstrap() -> dict[str, Any] | None:
         for url in BOOTSTRAP_URLS:
             try:
                 with httpx.Client(timeout=BOOTSTRAP_TIMEOUT) as client:
-                    return _readonly_json(client, url)
+                    manifest = _readonly_json(client, url)
+                    if type(manifest.get("latest_build")) is int and manifest["latest_build"] > 0:
+                        return manifest
             except (httpx.HTTPError, ValueError, RuntimeError):
                 continue
         return None
@@ -236,7 +240,11 @@ def _get_machine_id() -> str:
     from core.config import get_data_dir
     path = get_data_dir() / "cache" / FILE_MACHINE_ID
     if _query_readonly.get():
+        _update_record_path(path)
         try:
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("invalid update rollout identity file")
             with path.open("rb") as source:
                 raw = source.read(257)
             if len(raw) > 256:
@@ -244,6 +252,14 @@ def _get_machine_id() -> str:
             mid = raw.decode("utf-8").strip()
             if mid:
                 return mid
+        except FileNotFoundError:
+            if _initialize_rollout_identity.get():
+                from uuid import uuid4
+                from core.secrets import atomic_write
+
+                identity = uuid4().hex
+                atomic_write(path, identity)
+                return identity
         except (OSError, ValueError):
             pass
         raise RuntimeError("update rollout identity is not initialized")
@@ -727,8 +743,8 @@ def _apply_marker_locked(marker) -> bool:
                         or transaction["from_build"] != APP_VERSION or version <= APP_VERSION):
                     raise ValueError("update marker target changed")
                 _update_record_path(pending)
-                if not _verify_pending_signature(pending, version):
-                    raise ValueError("update marker signature refused")
+                if not _verify_pending_checksum(pending, version):
+                    raise ValueError("update marker checksum refused")
                 update_target_state.validate_upgrade(target, version)
                 _atomic_copy(pending, target, expected_digest=data["new_sha256"])
             committed = True
@@ -1020,51 +1036,29 @@ def _https_update_stream(url, *, client=None, timeout=None, headers=None):
 def _small_update_body(response):
     response.raise_for_status()
     if response.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
-        raise ValueError("compressed update signature/checksum refused")
+        raise ValueError("compressed update checksum refused")
     body = bytearray()
     for chunk in response.iter_bytes(4096):
         if len(body) + len(chunk) > 4096:
-            raise ValueError("update signature/checksum exceeds limit")
+            raise ValueError("update checksum exceeds limit")
         body.extend(chunk)
     return bytes(body)
 
-def _signing_key(cfg: dict) -> str:
-    from core.constants import UPDATE_SIGNING_PUBLIC_KEY
-    return cfg.get("signing_public_key", "") or UPDATE_SIGNING_PUBLIC_KEY
 
-
-@_update_mutation
-def _fetch_release_signature(pending: Path, asset_url: str, build: int, cfg: dict) -> bool:
-    from urllib.parse import urlparse
-    from core.release_signature import verify
-    from core.secrets import atomic_write
-    key = _signing_key(cfg)
-    if not key or urlparse(asset_url).scheme != "https" or build <= APP_VERSION:
+def _verify_pending_checksum(pending: Path, build: int, *, expected_digest: str | None = None) -> bool:
+    """Bind the candidate's bytes and version to its local verified receipt."""
+    if type(build) is not int or build <= APP_VERSION:
         return False
     try:
-        with httpx.Client(timeout=10) as client:
-            with _https_update_stream(asset_url + ".sig.json", client=client) as response:
-                envelope = json.loads(_small_update_body(response))
-        if not verify(envelope, key, build=build, filename=_asset_filename(), digest=_sha256_file(pending)):
-            return False
-        atomic_write(pending.with_name(pending.name + ".sig.json"), json.dumps(envelope))
-        return True
-    except Exception:
-        return False
-
-
-def _verify_pending_signature(pending: Path, build: int) -> bool:
-    from core.config import load_config
-    from core.release_signature import verify
-    if build <= APP_VERSION:
-        return False
-    try:
-        sidecar = pending.with_name(pending.name + ".sig.json")
-        if sidecar.stat().st_size > 4096:
-            return False
-        envelope = json.loads(sidecar.read_text(encoding="utf-8"))
-        return verify(envelope, _signing_key(load_config().get("update", {})),
-                      build=build, filename=_asset_filename(), digest=_sha256_file(pending))
+        record = _read_update_record(pending.parent / "candidate.json")
+        expected = record.get("sha256")
+        return (type(record.get("schema_version")) is int and record["schema_version"] == 1
+                and record.get("state") == "verified"
+                and type(record.get("build")) is int and record["build"] == build
+                and record.get("candidate_id") == pending.parent.name
+                and isinstance(expected, str) and re.fullmatch(r"[a-f0-9]{64}", expected) is not None
+                and (expected_digest is None or expected == expected_digest)
+                and _sha256_file(pending) == expected)
     except (OSError, ValueError, TypeError):
         return False
 
@@ -1077,16 +1071,58 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _release_urls(asset_url: str) -> list[str]:
+    from urllib.parse import urlsplit
+    from core.mirror import get_sources
+
+    if urlsplit(asset_url).hostname != "github.com":
+        return [asset_url]
+    mirrors = get_sources("github_releases", probe=False)
+    urls = [asset_url if urlsplit(mirror).hostname == "github.com"
+            else f"{mirror.rstrip('/')}/{asset_url}" for mirror in mirrors]
+    return list(dict.fromkeys([*urls, asset_url]))
+
+
 def _get_sha256_from_url(sha256_url: str) -> str:
-    """尝试从独立 .sha256 文件获取校验值（备用来源）"""
-    try:
-        from core.constants import TIMEOUT_HTTP
-        with httpx.Client(timeout=TIMEOUT_HTTP) as client:
+    """Read the origin checksum without delegating checksum trust to mirrors."""
+    from core.constants import TIMEOUT_HTTP
+
+    with httpx.Client(timeout=TIMEOUT_HTTP) as client:
+        try:
             with _https_update_stream(sha256_url, client=client) as response:
-                text = _small_update_body(response).decode("ascii").strip().split()[0]
-                if re.fullmatch(r"[a-fA-F0-9]{64}", text):
-                    return text.lower()
-    except Exception:
+                fields = _small_update_body(response).decode("ascii").split()
+                if fields and re.fullmatch(r"[a-fA-F0-9]{64}", fields[0]):
+                    return fields[0].lower()
+        except (httpx.HTTPError, ValueError, RuntimeError):
+            pass
+    return ""
+
+
+def _github_asset_digest(release: dict, filename: str, asset_url: str) -> str:
+    for asset in release.get("assets", []):
+        if asset.get("name") == filename and asset.get("browser_download_url") == asset_url:
+            digest = asset.get("digest")
+            if isinstance(digest, str) and re.fullmatch(r"sha256:[a-fA-F0-9]{64}", digest):
+                return digest[7:].lower()
+    return ""
+
+
+def _get_release_digest(asset_url: str, build: int, update_cfg: dict) -> str:
+    """Use authenticated GitHub transport for a tag-bound digest fallback."""
+    repo = update_cfg.get("repo", "ougato/opskit-cli")
+    filename = _asset_filename()
+    expected = f"{GITHUB_BASE}/{repo}/releases/download/v{build}/{filename}"
+    if asset_url != expected:
+        return ""
+    endpoint = GITHUB_API_RELEASES.format(repo=repo).removesuffix("/latest") + f"/tags/v{build}"
+    token = update_cfg.get("github_token")
+    headers = {"Authorization": f"token {token}"} if token else None
+    try:
+        with httpx.Client(timeout=TIMEOUT_UPDATE_CHECK) as client:
+            release = _readonly_json(client, endpoint, headers=headers)
+        if release.get("tag_name") == f"v{build}" and release.get("draft") is False:
+            return _github_asset_digest(release, filename, asset_url)
+    except (httpx.HTTPError, ValueError, RuntimeError):
         pass
     return ""
 
@@ -1136,7 +1172,6 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
     - SHA256 双源：Release Body 解析失败时尝试 {asset_url}.sha256 文件
     """
     import tempfile
-    from core.mirror import get_sources
     from core.constants import MAX_RETRY_DOWNLOAD, DOWNLOAD_CHUNK_SIZE, TIMEOUT_HTTP
 
     tmp_path = _get_pending_tmp_path()
@@ -1177,23 +1212,7 @@ def _download_update(asset_url: str, sha256_expected: str, remote_ver: int = 0) 
         else:
             _save_check_cache({"download_version": remote_ver})
 
-    mirrors = get_sources("github_releases")
-    urls: list[str] = []
-    for m in mirrors:
-        if "github.com" in m:
-            urls.append(asset_url)
-        else:
-            proxied = f"{m.rstrip('/')}/{asset_url.lstrip('/')}"
-            urls.append(proxied)
-    # GitHub 直连始终作为兜底候选：镜像排名坍缩到单一坏源时（例如被封禁、
-    # 只对 HEAD 探针秒回却对真实下载吐错误页的代理），仍保留可用回退路径。
-    if asset_url not in urls:
-        urls.append(asset_url)
-    # 去重保序，避免同一坏源占满整个重试预算、挤掉其它可用源
-    seen_urls: set[str] = set()
-    urls = [u for u in urls if not (u in seen_urls or seen_urls.add(u))]
-    if not urls:
-        urls = [asset_url]
+    urls = _release_urls(asset_url)
 
     # SHA256 双源：若 Release Body 无校验值，尝试下载独立 .sha256 文件
     if not sha256_expected:
@@ -1427,7 +1446,7 @@ def _resolve_update_target(update_cfg: dict) -> tuple[int, str, str] | None:
         parsed = urlsplit(asset_url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise RuntimeError("invalid update artifact URL")
-    return remote_ver, asset_url, sha256
+    return remote_ver, asset_url, _github_asset_digest(data, filename, asset_url) or sha256
 
 
 def query_update_target(update_cfg: dict):
@@ -1535,7 +1554,7 @@ def _apply_owned_pending(pending: Path, version: int) -> bool:
     except (OSError, ValueError, TypeError):
         _log.warning("pending update ownership verification failed; preserving candidate")
         return False
-    # _do_apply revalidates its release signature and target transaction.
+    # _do_apply revalidates its release checksum and target transaction.
     return _do_apply(pending, version)
 
 
@@ -1554,8 +1573,8 @@ def _do_apply(pending: Path, remote_ver: int) -> bool:
     """
     if not _is_frozen():
         return False
-    if not _verify_pending_signature(pending, remote_ver):
-        _log.warning("unsigned, changed or outdated pending release refused")
+    if not _verify_pending_checksum(pending, remote_ver):
+        _log.warning("unverified, changed or outdated pending release refused")
         return False
     return _do_apply_verified(pending, remote_ver)
 
@@ -1706,7 +1725,7 @@ def _require_previous_update_confirmed(transaction, target, owner):
 
 @_update_target_mutation
 def _do_apply_verified(pending: Path, remote_ver: int) -> bool:
-    if not _verify_pending_signature(pending, remote_ver):
+    if not _verify_pending_checksum(pending, remote_ver):
         return False
     self_path = _self_path()
     backup = _get_backup_path()
@@ -1902,7 +1921,7 @@ def _apply_windows(pending: Path, self_path: Path, new_version: int, recovery=No
         return
     except Exception as e:
         _log.error("_apply_windows: scheduling failed")
-        # Startup can retry through the same signature/identity gates. No
+        # Startup can retry through the same checksum/identity gates. No
         # MoveFileEx reboot fallback can bypass verification using shared pending.
         marker = _get_cache_path().parent / "update_pending_path.json"
         record = {"pending": str(pending), "target": str(self_path), "version": new_version}

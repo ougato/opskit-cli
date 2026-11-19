@@ -3,6 +3,8 @@ from contextlib import contextmanager
 import hashlib
 import queue
 import re
+import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -10,6 +12,22 @@ import zipfile
 import pytest
 
 from core import native_preload
+
+
+def test_bootstrap_uses_verified_theme_before_readiness(tmp_path):
+    bootstrap = native_preload._bootstrap(tmp_path, "token")
+    script = (
+        "import core.theme as theme, core.plugin_worker as worker\n"
+        "def denied(*args, **kwargs):\n"
+        "    raise PermissionError('normalized path query denied')\n"
+        "theme._theme_path = denied\n"
+        "worker.main = lambda: print('ACTIVATED', flush=True)\n"
+        f"exec({bootstrap!r})\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], input=b"OPSKIT_ACTIVATE:token\n",
+                            capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [b"OPSKIT_READY:token", b"ACTIVATED"]
 
 
 class _Output:

@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("prepared_native_catalog")
+
 from core import plugin_sandbox as sandbox
 from core.plugin import load_manifest
 from core.plugin_trust import compute_fingerprint, grant, invalidate

@@ -2,7 +2,9 @@
 import pytest
 
 from core.native_acquisition import Acquisition
+from core.native_sandbox import CapabilityRequest, GrantChoice
 from core.plugin import load_manifest
+from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
 from core.plugin_install_receipt import content_receipt
 from core.plugin_trust import compute_fingerprint, grant, trusted_record
 from plugin import commands
@@ -32,17 +34,19 @@ def installed(tmp_path, monkeypatch):
     return root, receipt
 
 
-def test_update_replaces_tree_and_revokes_before_publication(installed, monkeypatch):
+def test_update_replaces_tree_and_inherits_trust_after_publication(installed, monkeypatch):
     root, _ = installed
+    approved = compute_fingerprint(root)
     publish = commands.publish_new_directory
     def observe(source, destination):
-        assert trusted_record("demo")["fingerprint"] == ""
+        assert trusted_record("demo")["fingerprint"] == approved
         publish(source, destination)
     monkeypatch.setattr(commands, "publish_new_directory", observe)
     assert commands._update_locked(load_manifest(root)) == (True, "updated")
     assert load_manifest(root).version == "1.1.0"
     record = trusted_record("demo")
-    assert record["fingerprint"] == "" and record["source_commit"] == "b" * 40
+    assert record["fingerprint"] == compute_fingerprint(root)
+    assert record["fingerprint"] != approved and record["source_commit"] == "b" * 40
     assert record["installation_receipt"] == content_receipt(root)
     assert not list(root.parent.glob(".opskit-update-*"))
 
@@ -50,12 +54,14 @@ def test_update_replaces_tree_and_revokes_before_publication(installed, monkeypa
 @pytest.mark.parametrize("prepare_ok", [True, False])
 def test_automatic_update_prepares_published_bytes_before_reporting_success(installed, monkeypatch, prepare_ok):
     root, original_receipt = installed
+    approved = compute_fingerprint(root)
     observed = []
 
     def prepare(manifest, receipt):
         assert manifest.root == root and manifest.version == "1.1.0"
         assert content_receipt(root) == receipt
-        assert trusted_record("demo")["fingerprint"] == ""
+        assert trusted_record("demo")["fingerprint"] == approved
+        assert commands.trust_status(manifest) != commands.TRUST_OK
         observed.append(receipt)
         if not prepare_ok:
             raise ValueError("runtime preparation failed")
@@ -70,7 +76,7 @@ def test_automatic_update_prepares_published_bytes_before_reporting_success(inst
         assert trusted_record("demo")["installation_receipt"] == original_receipt
 
 
-def test_update_publication_failure_restores_old_bytes_without_regrant(installed, monkeypatch):
+def test_update_publication_failure_preserves_trust_of_restored_bytes(installed, monkeypatch):
     root, receipt = installed
     publish = commands.publish_new_directory
     def fail(source, destination):
@@ -80,8 +86,63 @@ def test_update_publication_failure_restores_old_bytes_without_regrant(installed
     monkeypatch.setattr(commands, "publish_new_directory", fail)
     assert not commands._update_locked(load_manifest(root))[0]
     assert content_receipt(root) == receipt
-    assert trusted_record("demo")["fingerprint"] == ""
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
     assert not list(root.parent.glob(".opskit-update-*"))
+
+
+def test_new_plugin_permissions_require_confirmation(installed, monkeypatch):
+    root, _ = installed
+    from core import native_acquisition
+    populate = native_acquisition.populate
+
+    def changed_permissions(source, destination, **kwargs):
+        candidate = populate(source, destination, **kwargs)
+        with (destination / "plugin.yaml").open("a") as manifest:
+            manifest.write("permissions: [network]\n")
+        return Acquisition(candidate.source, candidate.commit, compute_fingerprint(destination),
+                           content_receipt(destination))
+
+    monkeypatch.setattr(native_acquisition, "populate", changed_permissions)
+    assert commands._update_locked(load_manifest(root)) == (True, "updated")
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_CHANGED
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_update_inherits_only_permanent_directory_reads(installed, tmp_path, monkeypatch, fail):
+    root, _ = installed
+    old = compute_fingerprint(root)
+    authority = CapabilityAuthority()
+    read = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "project"))
+    write = CapabilityRequest("demo", old, "directory.read_write", str(tmp_path / "other"))
+    once = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "once"))
+    live = lambda name, fingerprint: trusted_record(name)["fingerprint"] == fingerprint
+    for request, choice in ((read, GrantChoice.ALWAYS), (write, GrantChoice.ALWAYS),
+                            (once, GrantChoice.ONCE)):
+        authority.require(request, check_identity=live, prompt=lambda _, choice=choice: choice)
+    if fail:
+        def fail_grant(*args, **kwargs):
+            raise OSError("injected trust store write failure")
+        monkeypatch.setattr(commands, "grant", fail_grant)
+    assert commands._update_locked(load_manifest(root))[0] is not fail
+    current = compute_fingerprint(root)
+    child = CapabilityRequest("demo", current, "directory.read", str(tmp_path / "project/build"))
+    fresh = CapabilityAuthority()
+    fresh.check(child, check_identity=live)
+    if fail:
+        assert current == old
+        assert set(fresh.list_grants()) == {read, write}
+    else:
+        assert current != old
+        assert write in fresh.list_grants()
+        for request in (write, once):
+            with pytest.raises(CapabilityDenied):
+                fresh.check(CapabilityRequest("demo", current, request.operation, request.resource),
+                            check_identity=live)
+        renewed = CapabilityRequest("demo", current, "directory.read", read.resource)
+        fresh.revoke(renewed)
+        with pytest.raises(CapabilityDenied) as error:
+            fresh.check(child, check_identity=live)
+        assert error.value.code == "missing_or_revoked"
 
 
 def test_update_does_not_overwrite_late_independent_writer(installed, monkeypatch):
@@ -171,7 +232,7 @@ def test_failed_or_cancelled_acquisition_keeps_original_content_and_authority(in
     assert not list(root.parent.glob(".opskit-update-*"))
 
 
-def test_cancelled_publication_restores_original_without_regrant(installed, monkeypatch):
+def test_cancelled_publication_restores_original_with_existing_trust(installed, monkeypatch):
     root, receipt = installed
     publish = commands.publish_new_directory
     def cancel(source, destination):
@@ -182,7 +243,7 @@ def test_cancelled_publication_restores_original_without_regrant(installed, monk
     with pytest.raises(KeyboardInterrupt):
         commands._update_locked(load_manifest(root))
     assert content_receipt(root) == receipt
-    assert trusted_record("demo")["fingerprint"] == ""
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
     assert not list(root.parent.glob(".opskit-update-*"))
 
 
@@ -193,5 +254,5 @@ def test_receipt_save_failure_rolls_back_new_tree(installed, monkeypatch):
     monkeypatch.setattr(commands, "grant", deny)
     assert not commands._update_locked(load_manifest(root))[0]
     assert content_receipt(root) == receipt
-    assert trusted_record("demo")["fingerprint"] == ""
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
     assert not list(root.parent.glob(".opskit-update-*"))

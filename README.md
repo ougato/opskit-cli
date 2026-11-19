@@ -473,7 +473,7 @@ psutil >= 5.9          # 系统监控
 httpx >= 0.27          # HTTP 客户端（更新 / 测速）
 platformdirs >= 4.0    # 跨平台数据目录（XDG / Win / macOS 规范）
 sentry-sdk >= 2.0,<3   # 错误上报（遥测，可关闭）
-cryptography >= 50.0.2 # 发布签名校验；安装使用哈希锁
+cryptography >= 50.0.2 # SSH 与 TLS 支持；安装使用哈希锁
 ```
 
 ---
@@ -525,7 +525,7 @@ make clean  # 清理
 
 **构建依赖：**
 
-正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。正式发布还需配置自己的签名公钥，流程见 [发布验收](docs/release-pipeline-security.md)。
+正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。向 GitHub 推送新的 `v*` 标签即可触发自动打包，无需配置发布签名密钥，安装与更新保留 SHA256 校验，流程见 [发布验收](docs/release-pipeline-security.md)。
 
 Windows x64 还需 MSVC 14.3 或更新版本，以及预先核验的 Dependency Walker。编译器和辅助工具缺失时构建会失败，不自动下载。辅助工具使用独立的新缓存目录：
 

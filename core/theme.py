@@ -75,6 +75,18 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
+def init_bundled_default() -> None:
+    """Read the fixed theme from the verified, read-only guest SDK snapshot.
+
+    AppContainer can read files while denying normalized-path queries. The
+    host verifies this inventory and rejects reparse points before launch.
+    This entry point accepts no user-selected path or theme name.
+    """
+    global _theme, _theme_name
+    _theme = _load_yaml(Path(__file__).parent / "themes" / "catppuccin.yaml")
+    _theme_name = "catppuccin"
+
+
 def init(theme_name: str | None = None) -> None:
     """
     加载主题：
@@ -92,7 +104,11 @@ def init(theme_name: str | None = None) -> None:
     if theme_file is None:
         theme_file = _theme_path("catppuccin")
         if theme_file is None:
-            raise FileNotFoundError("default theme is unavailable")
+            # Preserve filesystem diagnostics when the bundled default cannot
+            # be reached, instead of hiding an access or path failure.
+            default = _get_themes_dir() / "catppuccin.yaml"
+            default.resolve(strict=True).stat()
+            raise FileNotFoundError(f"default theme is unavailable: {default}")
         theme_name = "catppuccin"
 
     data = _load_yaml(theme_file)

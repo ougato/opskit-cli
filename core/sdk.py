@@ -146,7 +146,7 @@ __all__ = [
 ]
 
 
-def read_host_file(directory: str, relative: str) -> bytes:
+def read_host_file(directory: str, relative: str, *, missing_ok: bool = False) -> bytes | None:
     """Read up to 1MiB after host-owned directory authorization."""
     raise PermissionError("host file API requires an isolated plugin worker")
 
@@ -213,6 +213,6 @@ def https_request(url: str, method: str = "GET", headers: dict | None = None,
 
 
 def upload_file(directory: str, relative: str, url: str, sha256: str,
-                headers: dict | None = None) -> dict:
-    """PUT a checksum-bound file (up to 512MiB); requires network and directory consent."""
+                headers: dict | None = None, *, verify_url: str | None = None) -> dict:
+    """PUT a checksum-bound file, optionally verifying it via a signed GET URL."""
     raise PermissionError("upload API requires an isolated plugin worker")

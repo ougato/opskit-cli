@@ -123,7 +123,12 @@ def get_cpu() -> CpuInfo:
     import psutil
     from monitor.cpu_sampling import sample
     usage = sample()
-    freq = psutil.cpu_freq()
+    # Virtualized macOS ARM runners may not expose this optional psutil API
+    frequency = getattr(psutil, "cpu_freq", None)
+    try:
+        freq = frequency() if frequency is not None else None
+    except (NotImplementedError, OSError, RuntimeError):
+        freq = None
     return CpuInfo(
         **usage,
         freq_mhz=freq.current if freq else 0.0,

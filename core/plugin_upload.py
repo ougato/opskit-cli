@@ -76,7 +76,42 @@ def _put(url, headers, snapshot, size, md5, private_targets):
             raw.close()
 
 
-def _worker(connection, workspace, root, source, identity, url, headers, expected, private_targets):
+def _verify(url, size, expected, private_targets):
+    """Stream and compare the stored bytes without exposing them to the plugin."""
+    target = _validate(url, "GET", {}, b"")
+    from core.plugin_egress import allowed_addresses
+    address = allowed_addresses(target.hostname, 443, private_targets)[0]
+    connection = http.client.HTTPSConnection(target.hostname, 443, timeout=10)
+    raw = socket.socket(address[0], address[1], address[2])
+    try:
+        raw.settimeout(10)
+        raw.connect(address[4])
+        connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=target.hostname)
+        raw = None
+        path = (target.path or "/") + ("?" + target.query if target.query else "")
+        connection.request("GET", path, headers={"Accept-Encoding": "identity"})
+        response = connection.getresponse()
+        if response.status == 404:
+            return False
+        if response.status != 200:
+            raise ValueError("upload verification request failed")
+        digest = hashlib.sha256()
+        received = 0
+        while chunk := response.read(min(CHUNK, size - received + 1)):
+            received += len(chunk)
+            if received > size:
+                raise ValueError("stored artifact size mismatch")
+            digest.update(chunk)
+        if received != size or digest.hexdigest() != expected:
+            raise ValueError("stored artifact checksum mismatch")
+        return True
+    finally:
+        connection.close()
+        if raw is not None:
+            raw.close()
+
+
+def _worker(connection, workspace, root, source, identity, url, headers, expected, private_targets, verify_url=None):
     from network.worker import send
     from core.plugin_workspace import validate_binding
     from core.plugin_workspace_recovery import cleanup_lease
@@ -85,7 +120,11 @@ def _worker(connection, workspace, root, source, identity, url, headers, expecte
             validate_binding(workspace)
             snapshot = workspace.root / "upload.bin"
             size, md5 = _snapshot(root, source, identity, snapshot, expected)
-            status = _put(url, headers, snapshot, size, md5, private_targets)
+            status = 200
+            if not verify_url or not _verify(verify_url, size, expected, private_targets):
+                status = _put(url, headers, snapshot, size, md5, private_targets)
+                if verify_url and not _verify(verify_url, size, expected, private_targets):
+                    raise ValueError("stored artifact missing after upload")
             send(connection, {"value": {"status": status, "bytes": size, "sha256": expected}})
     except Exception:
         send(connection, {"error": True})
@@ -93,10 +132,14 @@ def _worker(connection, workspace, root, source, identity, url, headers, expecte
         connection.close()
 
 
-def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, *,
+def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, verify_url=None, *,
                 authority, check_identity, private_targets, deadline, checkpoint):
     """Network permission is checked by the caller; directory access is broker-owned."""
     destination = _validate(url, "PUT", headers, b"")
+    if verify_url is not None:
+        verification = _validate(verify_url, "GET", {}, b"")
+        if (verification.netloc, verification.path) != (destination.netloc, destination.path):
+            raise ValueError("upload verification must target the same object")
     if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
         raise ValueError("upload requires an exact SHA256")
     root, source, identity = _source(directory, relative)
@@ -122,7 +165,7 @@ def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, 
     console.print(t("plugin_native.upload.starting", host=destination.hostname), markup=False)
     with owned_workspace(timeout=min(15, deadline - time.monotonic()), cleanup_timeout=15) as workspace:
         with owned_process(_worker, (workspace, root, source, identity, url, headers, sha256,
-                                    private_targets), label="plugin file upload") as (receive, process):
+                                    private_targets, verify_url), label="plugin file upload") as (receive, process):
             while True:
                 live()
                 if receive.poll(0.05):

@@ -14,6 +14,8 @@ from rich.console import Console
 from rich.cells import cell_len
 from rich.text import Text
 
+from core.windows_console_input import read_control_keys
+
 console = Console()
 
 _input_guard = ContextVar("prompt_input_guard", default=None)
@@ -59,8 +61,6 @@ def _check_input() -> None:
 
 
 def _getwch() -> str:
-    from core.windows_console_input import read_control_keys
-
     with read_control_keys():
         return _read_windows_key()
 
@@ -430,6 +430,8 @@ def print_header(breadcrumb: list[str]) -> None:
     _render_header(breadcrumb)
 
 
+# Keep Ctrl+C local while rendering and running on_ready, before the first read.
+@read_control_keys()
 def select(
     breadcrumb: list[str],
     subtitle: str,
@@ -859,7 +861,7 @@ def _erase_input_character(buf: list[str], secret: bool) -> None:
         sys.stdout.flush()
 
 
-def _read_line(secret: bool = False) -> str:
+def _read_line(secret: bool = False, *, initial: str = '') -> str:
     """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
     Windows：msvcrt 逐字符读取。
@@ -867,8 +869,11 @@ def _read_line(secret: bool = False) -> str:
     两端均支持 ESC 抛 UserCancel、Ctrl+C 退出、退格删字符。
     """
     _check_input()
+    buf = list(initial)
+    if initial:
+        sys.stdout.write('*' * len(initial) if secret else initial)
+        sys.stdout.flush()
     if os.name == 'nt':
-        buf: list[str] = []
         while True:
             ch = _getwch()
             if ch in ('\x00', '\xe0'):
@@ -901,7 +906,6 @@ def _read_line(secret: bool = False) -> str:
         import tty
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
-        buf: list[str] = []
 
         def _read_char() -> str:
             # 直接读 fd（同 _read_key）：sys.stdin 缓冲会吞掉后续字节导致
@@ -983,6 +987,8 @@ def text_input(
     theme_key: str = 'root',
     info_lines: list[str] | None = None,
     secret: bool = False,
+    *,
+    initial: str = '',
 ) -> str:
     """Powerline 风格文本输入。
 
@@ -991,9 +997,12 @@ def text_input(
     default    — 回车时的返回值（未填写时使用）
     info_lines — 标签与输入行之间的信息行（├─ 前缀，如「当前 1.2.3」）
     secret     — 敏感输入（如密码），回显 *
+    initial    — 预先写入可编辑输入缓冲区的单行文本，光标位于末尾
     """
     from core.cli import require_interaction
     require_interaction()
+    if any(ord(char) < 32 or 127 <= ord(char) < 160 for char in initial):
+        raise ValueError('initial text must be a single line without control characters')
     os.system('cls' if os.name == 'nt' else 'clear')
     _render_header(breadcrumb)
 
@@ -1012,7 +1021,7 @@ def text_input(
     hint_str = f'  ({_hint})' if _hint else ''
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
     sys.stdout.flush()
-    raw = _read_line(secret=secret)
+    raw = _read_line(secret=secret, initial=initial) if initial else _read_line(secret=secret)
     return raw if raw else default
 
 
