@@ -2,6 +2,8 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - 'release-check/v*'
     tags:
       - 'v*'
 
@@ -17,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: send build-notify
+        if: github.ref_type == 'tag'
         continue-on-error: true
         env:
           HOOK_URL: ${{ secrets.HOOK_URL }}
@@ -67,7 +70,7 @@ jobs:
           python -I -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-ci.txt
 
       - name: sync version from tag
-        run: python scripts/release_bump.py "${GITHUB_REF_NAME}"
+        run: python scripts/release_bump.py "${GITHUB_REF_NAME##*/}"
 
       - name: run tests
         shell: bash
@@ -118,7 +121,8 @@ jobs:
         shell: python
         run: |
             import os, subprocess, sys
-            sys.exit(subprocess.call([sys.executable, "scripts/release_bump.py", os.environ["GITHUB_REF_NAME"]]))
+            version = os.environ["GITHUB_REF_NAME"].rsplit("/", 1)[-1]
+            sys.exit(subprocess.call([sys.executable, "scripts/release_bump.py", version]))
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: ${{ !matrix.manylinux }}
@@ -179,7 +183,7 @@ jobs:
           name = "${{ matrix.artifact }}" + (".exe" if os.name == "nt" else "")
           output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "opskit-frozen-acceptance"
           subprocess.check_call([sys.executable, "-I", "scripts/verify_frozen_cli.py",
-                                 str(pathlib.Path("dist") / name), "--build", os.environ["GITHUB_REF_NAME"][1:],
+                                 str(pathlib.Path("dist") / name), "--build", os.environ["GITHUB_REF_NAME"].rsplit("/", 1)[-1][1:],
                                  "--output", str(output)])
 
       - name: upload artifact
@@ -200,7 +204,47 @@ jobs:
             ${{ runner.temp }}/opskit-frozen-acceptance/verification.json
           if-no-files-found: ignore
 
+  release-check:
+    if: github.ref_type == 'branch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: opskit-*
+          path: artifacts/
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: validate complete artifact matrix
+        run: |
+          version="${GITHUB_REF_NAME##*/}"
+          python -I scripts/release_assets.py --build "${version#v}" --root artifacts
+
+      - name: checkout current bootstrap data
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: bootstrap-target
+          persist-credentials: false
+
+      - name: verify bootstrap update without publishing
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME##*/}"
+          python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers --preflight
+          python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers
+          python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers --check
+
   release:
+    if: github.ref_type == 'tag'
     needs: [build]
     runs-on: ubuntu-latest
     # Serialize all tags, not only reruns of one tag. Queue order is not trusted;
