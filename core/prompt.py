@@ -1026,8 +1026,9 @@ def text_input(
     _render_info_lines(info_lines, markup=False)
 
     _hint = hint or (_mask_secret(default) if secret else default)
-    hint_str = f'  ({_hint})' if _hint else ''
-    sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
+    sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
+    if _hint:
+        sys.stdout.write(_hint + ' ')
     sys.stdout.flush()
     raw = _read_line(secret=secret, initial=initial) if initial else _read_line(secret=secret)
     return raw if raw else default

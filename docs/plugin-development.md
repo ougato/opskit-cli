@@ -254,3 +254,5 @@ if request_plugin_install("storage_hub"):
 在框架源码检出中运行 `python -m pytest -q tests/test_plugin_developer_example.py tests/test_plugin_sdk4.py tests/test_plugin_framework_menu.py`，可检查示例的中英文菜单、命令行和框架交互契约。这不是第三方插件的完整自动审核：插件维护者还需针对自己的动态菜单、实际图标、授权目标和业务命令执行上述检查，并在实际终端验证图标占位。
 
 确认界面应使用简短的操作标题，将对象、路径和必要的操作后果放入 `info_lines`；删除、覆盖、同步或授权等操作必须保留决定所需的范围与风险信息。确认项和取消行为由框架统一呈现，不要将长问题或动态对象拼入面包屑标题。
+
+文本输入由宿主统一渲染。默认值和输入提示直接显示在输入行，无需添加括号。可编辑的建议值使用 `initial`，空行回退值使用 `default`，敏感默认值由宿主遮挡。

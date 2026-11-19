@@ -236,3 +236,5 @@ Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、�
 ### SDK 4 迁移
 
 见[插件开发指南](plugin-development.md)和[原生升级指南](plugin-native-upgrade-guide.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。[SDK 3 业务分离记录](sdk3-business-separation.md)仅供历史迁移参考。
+
+交互输入的默认值由框架直接显示，不附加括号。需要让用户直接编辑上次输入或建议版本时，使用 `text_input(..., initial=value)`。
