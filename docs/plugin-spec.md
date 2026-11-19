@@ -116,7 +116,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
 - `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
-- `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
+- `https_request(url, method, headers, body)` 是受限 HTTPS RPC，需要 network 权限。请求与响应各限 1 MiB，返回 `status`、`body` 和 `etag`。响应没有有效的强 ETag 时，`etag` 为 `None`。
 - `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 

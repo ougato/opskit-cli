@@ -208,7 +208,7 @@ def host_file_version(path: str) -> dict:
 
 def https_request(url: str, method: str = "GET", headers: dict | None = None,
                   body: bytes = b"") -> dict:
-    """Bounded HTTPS request; returns status and body bytes, requires network permission."""
+    """HTTPS request (1 MiB limit); returns status, body bytes and optional strong ETag."""
     raise PermissionError("network API requires an isolated plugin worker")
 
 
