@@ -40,7 +40,7 @@ def configure_transport(tmp_path, monkeypatch):
             with client.stream(method, url, **kw) as response:
                 yield response
     monkeypatch.setattr(httpx, "stream", stream)
-    monkeypatch.setattr("core.mirror.get_sources", lambda name: ["https://github.com"])
+    monkeypatch.setattr("core.mirror.get_sources", lambda name, **kwargs: ["https://github.com"])
     monkeypatch.setattr(updater, "query_update_target", lambda cfg: (build, "https://example.org/asset", digest))
     return {}, build, binary, responses
 
@@ -117,15 +117,80 @@ def test_new_candidate_never_overwrites_a_newer_pending_version(verified_transpo
     assert updater._get_cache_path().read_bytes() == before
 
 
-def test_repeated_verified_downloads_keep_candidate_count_bounded(verified_transport):
-    from core import update_cache
+def test_repeated_verified_downloads_reuse_existing_candidate(verified_transport, monkeypatch):
     cfg, _, binary, _ = verified_transport
+    first = call_worker(cfg)
+    assert first["ok"], first
+    monkeypatch.setattr(updater, "_download_update", lambda *args: pytest.fail("unexpected redownload"))
     for _ in range(8):
         result = call_worker(cfg)
-        assert result["ok"], result
+        assert result == first
         assert updater._get_pending_path().read_bytes() == binary
     root = updater._get_cache_path().parent / "update-candidates"
-    assert len(list(root.iterdir())) == update_cache.MAX_CANDIDATES
+    assert len(list(root.iterdir())) == 1
+
+
+def test_v1_jumps_to_v11_with_github_digest_and_mirror_bytes(tmp_path, monkeypatch):
+    from core import mirror, version
+
+    monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(updater, "APP_VERSION", 1)
+    monkeypatch.setattr(version, "APP_VERSION", 1)
+    monkeypatch.setattr(updater, "BOOTSTRAP_URLS", ["https://manifest.test/first", "https://manifest.test/second"])
+    monkeypatch.setattr(mirror, "init", lambda: pytest.fail("update worker ran unrelated mirror probes"))
+    monkeypatch.setattr(mirror, "_initialized", False)
+    monkeypatch.setattr(mirror, "_load_sources", lambda: {"github_releases": {
+        "global": [{"url": "https://github.com"}], "cn": [{"url": "https://mirror.test"}]}})
+    monkeypatch.setattr(updater, "DOWNLOAD_RETRY_BASE_DELAY", 0)
+    filename = updater._asset_filename()
+    asset = f"https://github.com/ougato/opskit-cli/releases/download/v11/{filename}"
+    magic = b"MZ" if sys.platform == "win32" else b"\xcf\xfa\xed\xfe" if sys.platform == "darwin" else b"\x7fELF"
+    binary = magic + b"N" * (101 * 1024)
+    digest = hashlib.sha256(binary).hexdigest()
+    seen = []
+
+    def metadata(data):
+        return httpx.Response(200, stream=httpx.ByteStream(json.dumps(data).encode()))
+
+    def respond(request):
+        url = str(request.url)
+        seen.append(url)
+        if url.endswith("/first"):
+            return metadata({"message": "invalid manifest"})
+        if url.endswith("/second"):
+            return metadata({"latest_build": 11, "rollout": 99})
+        if url.endswith("/releases/tags/v11"):
+            return metadata({"tag_name": "v11", "draft": False, "assets": [{
+                "name": filename, "browser_download_url": asset, "digest": "sha256:" + digest}]})
+        if url in (asset, asset + ".sha256"):
+            return httpx.Response(503)
+        if url == "https://mirror.test/" + asset:
+            return httpx.Response(200, content=binary)
+        pytest.fail(f"unexpected update request {url}")
+
+    transport = httpx.MockTransport(respond)
+    client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=transport, **kw))
+
+    @contextmanager
+    def stream(method, url, **kw):
+        with client(transport=transport) as instance, instance.stream(method, url, **kw) as response:
+            yield response
+
+    monkeypatch.setattr(httpx, "stream", stream)
+    machine_bucket = updater._machine_bucket
+
+    def bucket():
+        machine_bucket()  # Exercise actual first-run identity creation.
+        return 0
+
+    monkeypatch.setattr(updater, "_machine_bucket", bucket)
+    result = call_worker({})
+    assert result["ok"], result
+    assert result["data"]["candidate_version"] == 11
+    assert updater._get_pending_path().read_bytes() == binary
+    assert (tmp_path / "cache" / updater.FILE_MACHINE_ID).is_file()
+    assert seen[-1] == "https://mirror.test/" + asset
 
 
 def test_download_without_inline_digest_uses_checksum_file(verified_transport, monkeypatch):
@@ -155,7 +220,7 @@ def test_changed_bytes_after_download_are_refused_before_publication(verified_tr
 def test_published_candidate_schedules_in_fixed_cache_and_keeps_independent_snapshot(verified_transport, tmp_path, monkeypatch):
     import subprocess
     from core.update_cli import status
-    cfg, _, binary, _ = verified_transport
+    cfg, build, binary, responses = verified_transport
     assert call_worker(cfg)["ok"]
     source_generation = updater._get_pending_path().parent
     target = tmp_path / "current-program.exe"
@@ -177,8 +242,14 @@ def test_published_candidate_schedules_in_fixed_cache_and_keeps_independent_snap
     report = status(timeout=10)
     assert report["apply_job"]["id"] == job_id
     assert report["apply_job"]["state"] == "scheduled"
-    for _ in range(5):
-        assert call_worker(cfg)["ok"]
+    for revision in range(5):
+        replacement = binary + bytes([revision])
+        digest = hashlib.sha256(replacement).hexdigest()
+        responses["/asset"] = replacement
+        monkeypatch.setattr(updater, "query_update_target",
+                            lambda cfg: (build, "https://example.org/asset", digest))
+        result = call_worker(cfg)
+        assert result["ok"], result
     assert not source_generation.exists()
     assert (job / "artifact.exe").read_bytes() == binary
     assert target.read_bytes() == b"old-program"

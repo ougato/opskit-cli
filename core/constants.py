@@ -105,10 +105,10 @@ VERSION_FETCH_TIMEOUT = 10          # 后台获取超时（宽松）
 VERSION_FETCH_INTERVAL = 500        # 后台串行获取间隔 ms
 
 # ─── Bootstrap（OpsKit 自更新动态控制面 / version manifest）─────────────────
-# 并发拉取，取最快返回；GitHub raw 为主，ghproxy 镜像作兜底
+# 发布工作流写入默认分支；GitHub raw 为主，ghproxy 镜像作兜底
 BOOTSTRAP_URLS = [
-    "https://raw.githubusercontent.com/ougato/opskit-cli/main/bootstrap.json",
-    "https://mirror.ghproxy.com/https://raw.githubusercontent.com/ougato/opskit-cli/main/bootstrap.json",
+    "https://raw.githubusercontent.com/ougato/opskit-cli/master/bootstrap.json",
+    "https://mirror.ghproxy.com/https://raw.githubusercontent.com/ougato/opskit-cli/master/bootstrap.json",
 ]
 BOOTSTRAP_TIMEOUT = 5
 FILE_BOOTSTRAP_CACHE = "bootstrap_cache.json"

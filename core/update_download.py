@@ -42,6 +42,7 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
     logging_disabled = updater._log.disabled
     updater._log.disabled = True
     readonly_token = updater._query_readonly.set(True)
+    rollout_token = updater._initialize_rollout_identity.set(True)
     try:
         _remaining(deadline)
         cfg = update_cfg if update_cfg is not None else load_config(max_bytes=65536).get("update", {})
@@ -60,7 +61,8 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
         validate_upgrade(updater._self_path(), build)
         _remaining(deadline)
         phase = "checksum_source"
-        digest = digest or updater._get_sha256_from_url(url + ".sha256")
+        digest = (digest or updater._get_sha256_from_url(url + ".sha256")
+                  or updater._get_release_digest(url, build, cfg))
         if not isinstance(digest, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
             raise ValueError("valid update checksum is required")
         digest = digest.lower()
@@ -70,12 +72,18 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
             existing = updater._read_update_record(root_cache)
         except FileNotFoundError:
             existing = {}
-        updater._get_pending_path()
+        active = updater._get_pending_path()
         previous = existing.get("pending_version")
         if previous is not None and (type(previous) is not int or previous <= 0):
             raise ValueError("invalid existing update candidate")
         if previous is not None and build < previous:
             raise ValueError("update candidate is older than pending update")
+        identity = existing.get("candidate_id")
+        if (previous == build and identity and updater._verify_binary(active)
+                and updater._verify_pending_checksum(active, build, expected_digest=digest)):
+            _remaining(deadline)
+            send(connection, {"ok": True, "data": _downloaded(build, identity)})
+            return
         phase = "cache_quota"
         from core.update_cache import reserve_candidate
         reserve_candidate(root_cache, updater.MAX_UPDATE_BYTES + 131072,
@@ -116,9 +124,7 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
         # verified generation, even when the response cannot reach the parent.
         updater._write_update_record(root_cache, {**existing, "candidate_id": identity,
             "pending_version": build, "latest": build})
-        send(connection, {"ok": True, "data": {"available": True, "candidate_version": build,
-            "candidate_id": identity, "checksum_verified": True, "state": "downloaded",
-            "applied": False}})
+        send(connection, {"ok": True, "data": _downloaded(build, identity)})
     except Exception:
         # Never expose URLs, API bodies, configuration or transport exceptions.
         send(connection, {"ok": False, "error": "update download failed during " + phase +
@@ -126,9 +132,15 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
     finally:
         if staging_token is not None:
             updater._download_staging.reset(staging_token)
+        updater._initialize_rollout_identity.reset(rollout_token)
         updater._query_readonly.reset(readonly_token)
         updater._log.disabled = logging_disabled
         connection.close()
+
+
+def _downloaded(build, identity):
+    return {"available": True, "candidate_version": build, "candidate_id": identity,
+            "checksum_verified": True, "state": "downloaded", "applied": False}
 
 
 def download(*, timeout=300, update_cfg=None, cancel_event=None):

@@ -45,6 +45,23 @@ class TestBootExecRestart:
         args = mock_execv.call_args[0]
         assert args[0] == sys.executable
 
+    def test_pyinstaller_restart_uses_fresh_archive_and_original_library_path(self, monkeypatch):
+        from core.startup import _restart_after_update
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "/previous-unpack", raising=False)
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/previous-unpack:/original")
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/original")
+        with patch("os.execve") as execute:
+            _restart_after_update(["--lang", "en"])
+        path, argv, env = execute.call_args.args
+        assert path == sys.executable
+        assert argv == [path, "--post-update", "--lang", "en"]
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert env["LD_LIBRARY_PATH"] == "/original"
+        assert "LD_LIBRARY_PATH_ORIG" not in env
+        assert os.environ["LD_LIBRARY_PATH"] == "/previous-unpack:/original"
+
     def test_dev_mode_no_execv(self):
         """开发模式（frozen=False）下不应调用 os.execv"""
         import main as _main

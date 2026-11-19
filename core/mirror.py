@@ -236,13 +236,19 @@ def init(region: str | None = None) -> None:
             pass
 
 
-def get_sources(category: str) -> list[str]:
+def get_sources(category: str, *, probe: bool = True) -> list[str]:
     """
     获取指定分类的已排序源列表。
 
-    未初始化时自动调用 init()。
+    未初始化时默认调用 init()；禁止测速时直接使用内置源。
     """
     if not _initialized:
+        if not probe:
+            category_sources = _load_sources().get(category, {})
+            return list(dict.fromkeys(
+                entry["url"] for region in ("global", "cn")
+                for entry in category_sources.get(region, []) if entry.get("url")
+            ))
         init()
     ranked = _cache.get("ranked", {})
     if category in ranked and ranked[category]:
