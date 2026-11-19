@@ -7,7 +7,7 @@ import pytest
 from core import plugin_update_recovery as recovery
 from core.plugin_install_receipt import content_receipt
 from core.plugin_state import _directory
-from core.plugin_trust import grant, trusted_record
+from core.plugin_trust import compute_fingerprint, grant, trusted_record
 
 
 @pytest.fixture
@@ -97,7 +97,10 @@ def test_real_update_process_exit_retains_recoverable_record(tmp_path, monkeypat
         (path / "plugin.yaml").write_text(manifest.format(version=version))
         (path / "demo.py").write_text("# " + version)
     before = content_receipt(root)
-    grant("demo", "b" * 64, "1.0.0", str(origin), installation_receipt=before, source_commit="a" * 40)
+    from core.native_acquisition import source_identity
+    source, _ = source_identity(str(origin))
+    grant("demo", compute_fingerprint(root), "1.0.0", source,
+          installation_receipt=before, source_commit="a" * 40)
     program = '''
 import os,sys
 from pathlib import Path

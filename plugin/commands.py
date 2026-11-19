@@ -245,8 +245,16 @@ def grant_trust(manifest: PluginManifest, source: str = "", branch: str | None =
     if manifest.api_version != PLUGIN_API_VERSION:
         raise ValueError(t("plugin_native.errors.sdk_required"))
     record = trusted_record(manifest.name)
-    if not source and record is not None:
-        source = str(record.get("source", ""))
+    if record is not None:
+        stored_source = str(record.get("source", ""))
+        if record.get("installation_receipt"):
+            from core.native_acquisition import source_identity
+            if (source and source_identity(source)[0] != stored_source
+                    or branch is not None and branch != record.get("branch")):
+                raise ValueError(t("plugin_native.lifecycle.repository_invalid"))
+            source = stored_source
+        elif not source:
+            source = stored_source
     fingerprint = compute_fingerprint(manifest.root)
     if (not fingerprint or expected_fingerprint is not None
             and not hmac.compare_digest(fingerprint, expected_fingerprint)):
@@ -464,7 +472,7 @@ def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
 
 def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
                    allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
-    """Acquire a fresh reviewed tree, revoke trust, then replace with rollback."""
+    """Publish a verified update and advance trust for the same installation."""
     from core.native_acquisition import populate
     from core.native_sandbox import NativeSandboxError
     from core.plugin_state import _directory
@@ -485,6 +493,8 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
     if current is None or current.name != manifest.name:
         return False, t("plugin_native.errors.update_modified")
     current_fingerprint = compute_fingerprint(root)
+    if not current_fingerprint or record.get("fingerprint") != current_fingerprint:
+        return False, t("plugin_native.errors.update_trust_required")
     work = root.parent / (".opskit-update-" + uuid.uuid4().hex)
     work.mkdir(mode=0o700)
     owned = _directory(work)
@@ -495,18 +505,11 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
         refreshed = load_manifest(payload)
         if refreshed is None or refreshed.name != manifest.name:
             raise ValueError("update plugin identity changed")
+        if acquired.source != record["source"]:
+            raise ValueError("update source identity changed")
         old_key, new_key = semver_key(current.version), semver_key(refreshed.version)
-        downgrade = old_key is not None and new_key is not None and new_key < old_key
-        trust_continues = (
-            bool(current_fingerprint) and record.get("fingerprint") == current_fingerprint
-            and record["source"] == acquired.source and not downgrade
-            and current.api_version == refreshed.api_version == PLUGIN_API_VERSION
-            and current.kind == refreshed.kind and current.entry == refreshed.entry
-            and set(current.platforms) == set(refreshed.platforms)
-            and set(current.permissions) == set(refreshed.permissions)
-            and current.uses == refreshed.uses
-            and current.service_contracts == refreshed.service_contracts
-        )
+        if old_key is not None and new_key is not None and new_key < old_key:
+            return False, t("plugin_native.errors.update_downgrade_blocked")
         if _directory(root) != initial or content_receipt(root) != before:
             raise ValueError("installed plugin changed during acquisition")
         if before == acquired.receipt:
@@ -527,8 +530,6 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
             from core.plugin_update_recovery import record as record_recovery
             record_recovery(work, plugin=manifest.name, root=root, old=initial, candidate=replacement,
                             old_receipt=before, candidate_receipt=acquired.receipt, installation=record)
-            if not trust_continues:
-                invalidate(manifest.name)
             published = False
             try:
                 publish_new_directory(root, previous)
@@ -547,15 +548,9 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                 fingerprint = compute_fingerprint(root)
                 if not fingerprint or fingerprint != acquired.fingerprint:
                     raise ValueError("authenticated update fingerprint changed")
-                from contextlib import nullcontext
                 from core.plugin_capabilities import CapabilityAuthority
-                carry_reads = (
-                    CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint)
-                    if trust_continues else nullcontext()
-                )
-                with carry_reads:
-                    grant(manifest.name, fingerprint if trust_continues else "",
-                          refreshed.version, acquired.source, record.get("branch"),
+                with CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint):
+                    grant(manifest.name, fingerprint, refreshed.version, acquired.source, record.get("branch"),
                           installation_receipt=acquired.receipt, source_commit=acquired.commit)
             except BaseException:
                 # Only withdraw the exact newly published object. Never overwrite
@@ -570,7 +565,7 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                     publish_new_directory(previous, root)
                 raise
         _remove_tree(previous)
-        return True, "downgrade" if downgrade else "updated"
+        return True, "updated"
     except Exception as exc:
         if not isinstance(exc, NativeSandboxError):
             _log_install_failure("update", exc)

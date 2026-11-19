@@ -101,6 +101,7 @@ def test_update_workspace_failure_preserves_installed_plugin_and_reports_categor
     _, origin = installation
     manifest, error = commands.install(str(origin), alias="demo")
     assert manifest is not None and not error
+    commands.grant_trust(manifest)
     before, authority = content_receipt(manifest.root), trusted_record(manifest.name)
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
 

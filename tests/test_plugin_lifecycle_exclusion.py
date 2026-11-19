@@ -180,7 +180,7 @@ def test_failed_acquisition_preserves_installed_source_and_authorization(tmp_pat
     manifest, error = commands.install(str(origin), branch='main', alias='demo')
     assert manifest is not None and not error
     old_digest = trust.compute_fingerprint(manifest.root)
-    trust.grant('demo',old_digest,'1.0.0',str(origin),'main')
+    commands.grant_trust(manifest)
     (origin / 'demo.py').write_text('# inert version two\n')
     git('add','.')
     git('commit','-qm','next')

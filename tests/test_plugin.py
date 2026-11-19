@@ -448,8 +448,7 @@ def test_invalid_semver_version_rejected(plugins_root) -> None:
 
 
 @pytest.mark.timeout(300)
-def test_update_downgrade_requires_confirm(plugins_root, tmp_path, prepared_fetch_tools) -> None:
-    """更新后版本回退不自动继承信任，交由用户显式确认（防降级攻击）"""
+def test_update_rejects_downgrade_without_replacing_existing_version(plugins_root, tmp_path, prepared_fetch_tools) -> None:
     import subprocess
 
     from plugin import commands
@@ -475,9 +474,10 @@ def test_update_downgrade_requires_confirm(plugins_root, tmp_path, prepared_fetc
     subprocess.run(["git", *git_env, "-C", str(origin), "commit", "-q", "-m", "downgrade"], check=True)
 
     ok, msg = commands.update(manifest)
-    assert (ok, msg) == (True, "downgrade")
+    assert (ok, msg) == (False, commands.t("plugin_native.errors.update_downgrade_blocked"))
     refreshed = load_manifest(dest)
-    assert commands.trust_status(refreshed) != commands.TRUST_OK
+    assert refreshed.version == "1.0.0"
+    assert commands.trust_status(refreshed) == commands.TRUST_OK
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

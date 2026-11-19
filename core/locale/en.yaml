@@ -65,7 +65,6 @@ plugin:
   install_failed: "Install failed ({error})"
   install_no_manifest: "Missing/invalid plugin.yaml, rolled back"
   update_all: "Update All"
-  update_trusted: "{name} {version} trusted"
   update_cancelled: "Update cancelled for {name}"
   update_success: "Plugin {name} updated to {version}"
   update_latest: "{name} is already up to date"
@@ -77,7 +76,6 @@ plugin:
   perm_none: "none declared"
   trust_declined: "{name} not trusted, plugin will not load"
   trust_needed: "Plugin {name} content changed, re-trust required before loading"
-  update_tampered: "Plugin {name} content does not match CHECKSUMS.yaml, possible tampering, refused to load"
   source_warning: "Source not in trusted-source allowlist, code is unreviewed"
 
 install:
@@ -1002,6 +1000,8 @@ plugin_native:
     update_failed: "The plugin update failed. Check the OpsKit log before retrying"
     candidate_checksums: "The candidate does not match CHECKSUMS.yaml. Retry after the publisher corrects the release"
     update_modified: "Installed files changed or lack a native installation receipt. Back up your changes before reinstalling; no files were replaced."
+    update_trust_required: "Run plugin trust with the verified fingerprint before updating"
+    update_downgrade_blocked: "The source version is older. The installed version was retained"
     prepare_invalid: "Invalid plugin, private Python runtime, offline wheels or dependency lock."
     prepare_failed: "Native plugin runtime preparation failed."
     runtime_missing: "The native runtime is missing. Run plugin prepare first."
@@ -1085,13 +1085,12 @@ plugin_native:
     changed: "plugin changed during authorization"
     authorize_service_help: "Approve the caller's exact declared service contract"
     revoke_service_help: "Revoke one service edge while preserving independent plugin trust"
-    update_downgrade_pending: "An older version of {name} was installed and awaits trust review"
 
 confirm_ui:
   uninstall: Uninstall plugin
   plugin_delete: The plugin directory will be deleted; state data is preserved.
   trust: Trust plugin
-  trust_detail: Plugins run in a sandbox; approved host tools run with your user privileges.
+  trust_detail: "Trust includes future verified updates from this installation source. Approved host tools run with your user privileges"
   private_connection: Allow connection
   private_detail: The repository resolves to a private or reserved address; this permits one connection only.
   revoke: Revoke permission
@@ -1126,5 +1125,4 @@ confirm_ui:
   apply_update: Apply update
   tunnel: Remove tunnel
   peer: Remove peer
-  downgrade_detail: "Version downgrade: {old} → {new}."
   port_process: "Process using port 443: {process}"

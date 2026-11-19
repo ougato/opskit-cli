@@ -9,118 +9,31 @@ from core import i18n, theme
 from plugin import menu
 
 
-@pytest.mark.parametrize("stage", ["before_update", "downgrade", "after_update"])
-def test_update_trust_failure_is_reported_without_escaping_menu(monkeypatch, stage):
+def test_update_all_never_opens_trust_confirmation(monkeypatch):
     from core.plugin import PluginManifest
-    original = PluginManifest(name="demo", version="2.0.0", api_version=4, kind="python", entry="demo")
-    refreshed = PluginManifest(name="demo", version="1.0.0", api_version=4, kind="python", entry="demo")
-    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
-    monkeypatch.setattr(menu, "_pick", lambda *args, **kwargs: original)
-    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
-    monkeypatch.setattr(menu, "clear_screen", lambda: None)
-    monkeypatch.setattr(menu, "print_header", lambda *args: None)
-    monkeypatch.setattr(menu.commands, "manifests", lambda: [refreshed])
-    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
-                        menu.commands.TRUST_NONE if stage == "before_update" or manifest is refreshed
-                        else menu.commands.TRUST_OK)
-    updates, errors, pauses, successes = [], [], [], []
-    def update(*args, **kwargs):
-        updates.append(True)
-        return True, "downgrade" if stage == "downgrade" else "updated"
-    def fail_trust(*args, **kwargs):
-        raise ValueError("fingerprint changed")
-    monkeypatch.setattr(menu.commands, "update", update)
-    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
-    monkeypatch.setattr(menu, "print_error", errors.append)
-    monkeypatch.setattr(menu, "print_success", successes.append)
-    monkeypatch.setattr(menu, "pause", lambda: pauses.append(True))
-    menu._update()
-    assert len(errors) == 1 and "fingerprint changed" in errors[0]
-    assert len(pauses) == 1 and not successes
-    assert bool(updates) is (stage != "before_update")
 
-
-def test_update_all_continues_after_one_trust_failure(monkeypatch):
-    from core.plugin import PluginManifest
-    first = PluginManifest(name="first", version="1.0.0", api_version=4, kind="python", entry="first")
-    second = PluginManifest(name="second", version="1.0.0", api_version=4, kind="python", entry="second")
+    plugins = [PluginManifest(name=name, version="2.0.0", api_version=4, kind="python", entry=name)
+               for name in ("pending", "older", "current", "updated")]
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda plugin: {})
     monkeypatch.setattr(menu, "clear_screen", lambda: None)
     monkeypatch.setattr(menu, "print_header", lambda *args: None)
     monkeypatch.setattr(menu, "pause", lambda: None)
-    monkeypatch.setattr(menu, "print_info", lambda *args: None)
-    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
-    monkeypatch.setattr(menu.commands, "manifests", lambda: [first, second])
-    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest:
-                        menu.commands.TRUST_NONE if manifest is first else menu.commands.TRUST_OK)
-    def fail_trust(*args, **kwargs):
-        raise ValueError("fingerprint changed")
-    monkeypatch.setattr(menu, "confirm_trust", fail_trust)
-    errors, updates = [], []
+    monkeypatch.setattr(menu.commands, "manifests", lambda: plugins)
+    monkeypatch.setattr(menu, "confirm_trust", lambda *a, **kw: pytest.fail("update asked for plugin trust"))
+    errors, successes, notices = [], [], []
     monkeypatch.setattr(menu, "print_error", errors.append)
-    monkeypatch.setattr(menu.commands, "update", lambda manifest, **kwargs:
-                        (updates.append(manifest.name) or True, "unchanged"))
+    monkeypatch.setattr(menu, "print_success", successes.append)
+    monkeypatch.setattr(menu, "print_info", notices.append)
+    statuses = {
+        "pending": (False, i18n.t("plugin_native.errors.update_trust_required")),
+        "older": (False, i18n.t("plugin_native.errors.update_downgrade_blocked")),
+        "current": (True, "unchanged"),
+        "updated": (True, "updated"),
+    }
+    monkeypatch.setattr(menu.commands, "update", lambda item, **kwargs: statuses[item.name])
     menu._update_all()
-    assert len(errors) == 1 and "fingerprint changed" in errors[0]
-    assert updates == ["second"]
-
-
-@pytest.mark.parametrize("approved", [True, False])
-def test_update_all_finishes_each_plugin_before_advancing(monkeypatch, approved):
-    from core.plugin import PluginManifest
-    def manifest(name, version):
-        return PluginManifest(name=name, version=version, api_version=4, kind="python", entry=name)
-
-    original = manifest("first", "1.0.0")
-    refreshed = manifest("first", "2.0.0")
-    pending = manifest("pending", "2.0.0")
-    latest = manifest("latest", "1.0.0")
-    installed = [original, pending, latest]
-    events = []
-    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
-    monkeypatch.setattr(menu, "clear_screen", lambda: None)
-    monkeypatch.setattr(menu, "print_header", lambda *args: None)
-    monkeypatch.setattr(menu, "_update_fetch_options", lambda plugin: {})
-    monkeypatch.setattr(menu.commands, "manifests", lambda: list(installed))
-    monkeypatch.setattr(menu.commands, "trusted_record", lambda name: dict(source="repo", installation_receipt="receipt"))
-    monkeypatch.setattr(menu.commands, "trust_status", lambda plugin:
-                        menu.commands.TRUST_CHANGED if plugin in (refreshed, pending) else menu.commands.TRUST_OK)
-    monkeypatch.setattr(menu, "pause", lambda: events.append(("pause",)))
-    monkeypatch.setattr(menu, "print_info", lambda message: events.append(("info", message)))
-    monkeypatch.setattr(menu, "print_success", lambda message: events.append(("success", message)))
-    monkeypatch.setattr(menu, "print_warning", lambda message: events.append(("warning", message)))
-
-    def update(plugin, **kwargs):
-        events.append(("update", plugin.name, plugin.version))
-        if plugin is original:
-            installed[0] = refreshed
-            return True, "updated"
-        return True, "unchanged"
-
-    def confirm_trust(plugin, **kwargs):
-        events.append(("trust", plugin.name, plugin.version))
-        if plugin is refreshed and not approved:
-            raise menu.UserCancel()
-        return True
-
-    monkeypatch.setattr(menu.commands, "update", update)
-    monkeypatch.setattr(menu, "confirm_trust", confirm_trust)
-    menu._update_all()
-    first_result = ("success", i18n.t("plugin.update_success", name="first", version="2.0.0")) if approved else (
-        "warning", i18n.t("plugin.trust_declined", name="first"))
-    assert events == [
-        ("update", "first", "1.0.0"),
-        ("trust", "first", "2.0.0"),
-        first_result,
-        ("pause",),
-        ("update", "pending", "2.0.0"),
-        ("trust", "pending", "2.0.0"),
-        ("success", i18n.t("plugin.update_trusted", name="pending", version="2.0.0")),
-        ("pause",),
-        ("update", "latest", "1.0.0"),
-        ("info", i18n.t("plugin.update_latest", name="latest")),
-        ("pause",),
-    ]
+    assert len(errors) == 2 and len(successes) == 1 and len(notices) == 1
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
@@ -238,30 +151,6 @@ def test_content_changed_during_trust_write_is_not_left_trusted(monkeypatch, tmp
     with pytest.raises(ValueError):
         menu.commands.grant_trust(manifest, expected_fingerprint=fingerprint)
     assert menu.commands.trust_status(manifest) != menu.commands.TRUST_OK
-
-
-def test_downgrade_uses_same_explicit_trust_flow(monkeypatch):
-    from core import plugin
-    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang("zh")))
-    old = plugin.PluginManifest(name="demo", version="2.0.0", api_version=4,
-                                kind="python", entry="demo")
-    new = plugin.PluginManifest(name="demo", version="1.0.0", api_version=4,
-                                kind="python", entry="demo")
-    monkeypatch.setattr(menu, "_pick", lambda *args, **kwargs: old)
-    monkeypatch.setattr(menu.commands, "trust_status", lambda manifest: menu.commands.TRUST_OK)
-    monkeypatch.setattr(menu.commands, "update", lambda *args, **kwargs: (True, "downgrade"))
-    monkeypatch.setattr(menu.commands, "manifests", lambda: [new])
-    monkeypatch.setattr(menu, "_update_fetch_options", lambda manifest: {})
-    monkeypatch.setattr(menu, "clear_screen", lambda: None)
-    monkeypatch.setattr(menu, "print_header", lambda *args: None)
-    monkeypatch.setattr(menu, "print_error", lambda *args: None)
-    monkeypatch.setattr(menu, "pause", lambda: None)
-    monkeypatch.setattr(menu.commands, "grant_trust", lambda *args, **kwargs: pytest.fail("unexpected grant"))
-    prompts = []
-    monkeypatch.setattr(menu, "confirm_trust", lambda manifest, **kwargs: prompts.append(kwargs) or False)
-    menu._update()
-    assert len(prompts) == 1 and "2.0.0" in prompts[0]["additional_detail"]
-    assert "1.0.0" in prompts[0]["additional_detail"]
 
 
 def test_untrusted_plugin_menu_labels_are_plain_text():

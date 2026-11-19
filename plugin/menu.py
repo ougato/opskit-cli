@@ -243,7 +243,7 @@ def _summary_lines(manifest) -> list[str]:
     ]
 
 
-def confirm_trust(manifest, source: str = "", branch: str | None = None, *, additional_detail: str = "") -> bool:
+def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool:
     """展示概要 + 用户确认信任，确认后记录指纹。"""
     from core.constants import PLUGIN_API_VERSION
     if manifest.api_version != PLUGIN_API_VERSION:
@@ -256,8 +256,6 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None, *, addi
     if not fingerprint:
         raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
     lines = _summary_lines(manifest)
-    if additional_detail:
-        lines.append(additional_detail)
     lines.append(t("confirm_ui.trust_detail"))
     if shown_source:
         lines.append(f"{t('plugin.col_source')}: {escape(shown_source)}")
@@ -502,34 +500,9 @@ def _update_all() -> None:
         pause()
 
 
-def _confirm_update_trust(manifest, crumb, **kwargs):
-    """Return to the update screen before showing the result."""
-    error = None
-    try:
-        approved = confirm_trust(manifest, **kwargs)
-    except UserCancel:
-        approved = False
-    except (OSError, ValueError, RuntimeError) as exc:
-        error = str(exc)
-        approved = None
-    clear_screen()
-    print_header(crumb)
-    if error is not None:
-        print_error(t("plugin.update_failed", error=error))
-    elif not approved:
-        print_warning(t("plugin.trust_declined", name=_display_name(manifest)))
-    return approved
-
-
 def _update_one(manifest, crumb) -> None:
     clear_screen()
     print_header(crumb)
-    record = commands.trusted_record(manifest.name) or {}
-    # 有安装凭据时先校验并获取远端内容，再对最终安装的版本确认信任
-    managed = record.get("source") and record.get("installation_receipt")
-    if not managed and commands.trust_status(manifest) != commands.TRUST_OK:
-        if not _confirm_update_trust(manifest, crumb):
-            return
     try:
         ok, msg = commands.update(manifest, automatic=True, **_update_fetch_options(manifest))
     except UserCancel:
@@ -541,23 +514,11 @@ def _update_one(manifest, crumb) -> None:
         else:
             print_error(t("plugin.update_failed", error=msg))
         return
-    if msg == "tampered":
-        print_error(t("plugin.update_tampered", name=_display_name(manifest)))
-        return
-
     refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     if refreshed is None:
         print_error(t("plugin.install_no_manifest"))
         return
     name = _display_name(refreshed)
-    if msg == "downgrade" or commands.trust_status(refreshed) != commands.TRUST_OK:
-        detail = t("confirm_ui.downgrade_detail", old=manifest.version, new=refreshed.version) if msg == "downgrade" else ""
-        if not _confirm_update_trust(refreshed, crumb, additional_detail=detail):
-            return
-        if msg == "unchanged":
-            print_success(t("plugin.update_trusted", name=name, version=refreshed.version))
-            return
-
     if msg == "unchanged":
         print_info(t("plugin.update_latest", name=name))
     else:
