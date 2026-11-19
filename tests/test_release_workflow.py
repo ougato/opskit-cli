@@ -16,6 +16,21 @@ def test_only_release_job_can_write_repository():
         assert effective == {"contents": "write" if name == "release" else "read"}
 
 
+def test_candidate_branch_builds_and_validates_without_publishing():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert workflow[True]["push"]["branches"] == ["release-check/v*"]
+    jobs = workflow["jobs"]
+    assert jobs["release"]["if"] == "github.ref_type == 'tag'"
+    assert jobs["notify-start"]["steps"][0]["if"] == "github.ref_type == 'tag'"
+    candidate = jobs["release-check"]
+    assert candidate["if"] == "github.ref_type == 'branch'"
+    assert candidate["needs"] == ["build"]
+    commands = "\n".join(step.get("run", "") for step in candidate["steps"])
+    assert "scripts/release_assets.py" in commands
+    assert "--sync-installers --check" in commands
+    assert "--publish" not in commands
+
+
 def test_bootstrap_commit_uses_default_branch_after_release_upload():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release"]["steps"]
