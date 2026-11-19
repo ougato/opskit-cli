@@ -227,6 +227,23 @@ uses:
 
 操作者先分别审核调用方和提供方及其指纹，再使用 `opskit plugin authorize-service` 授权精确的调用边。插件更新、指纹变化或撤权后不能沿用旧授权；每次调用都重新验证。`get_service` 不表示提供方已经可用，访问方法或 `service_api_version` 时才会进行实际 RPC 和校验。
 
+### 跨插件菜单导航
+
+需要让调用方打开某个菜单时，提供方可以在既有服务的 `open_menu` 中公开 `action: navigate` 和稳定的 `destination` 标识。提供方在服务文档列出允许的目标、参数和返回值，自己渲染菜单、解释选项并保存配置。未知目标应明确拒绝。目标标识取自公开契约，独立于界面语言、菜单序号、模块名和函数名。
+
+```python
+if request_plugin_install("storage_hub"):
+    get_service("storage").open_menu(breadcrumb, {
+        "action": "navigate",
+        "destination": "configuration",
+        "configure_upload_root": True,
+    })
+```
+
+这是一次交互式服务调用。菜单结束后控制权回到调用方，保存与否按提供方契约读取。需要使用选择结果时直接调用服务代理。提供方沿用宿主绑定的调用方身份及隔离状态，调用方传递业务选项即可。宿主继续处理安装、授信和资源授权。
+
+当业务操作允许在缺少配置时打开设置，提供方可以提供显式选项，例如 `select_profile` 的 `configure_if_missing`。它复用同一个设置菜单，返回后重新读取配置。没有可用配置或用户取消时结束当前业务操作。非交互调用使用显式配置和业务参数。
+
 ## 发布前检查
 
 1. 校验清单、菜单四字规则、主题图标宽度，以及中英文的键和占位符。
