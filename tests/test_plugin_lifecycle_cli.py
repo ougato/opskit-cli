@@ -58,6 +58,17 @@ def test_trust_write_failure_is_not_silenced(isolated, monkeypatch):
         plugin_trust.grant("demo", "a" * 64, "1.0.0")
 
 
+def test_update_preserves_safe_busy_message(isolated, monkeypatch):
+    from types import SimpleNamespace
+    from core.i18n import t
+    from plugin import commands
+    monkeypatch.setattr(commands, "manifests", lambda: [SimpleNamespace(name="demo")])
+    monkeypatch.setattr(commands, "update", lambda *a, **k: (False, t("plugin_native.lifecycle.plugin_busy")))
+    result = call("plugin", "update", "--all")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["data"]["plugins"][0]["error"] == t("plugin_native.lifecycle.plugin_busy")
+
+
 def test_fingerprint_json_generate_check_and_tamper_without_boot(isolated, monkeypatch):
     import main
     def forbidden():
@@ -232,7 +243,7 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
     monkeypatch.setattr(commands, "manifests", lambda: manifests)
     monkeypatch.setattr(commands, "update", update)
     monkeypatch.setattr(commands, "trust_status", lambda manifest:
-                        commands.TRUST_OK if manifest.name == "latest" else commands.TRUST_CHANGED)
+                        commands.TRUST_OK if manifest.name in {"latest", "updated"} else commands.TRUST_CHANGED)
     result = call("plugin", "update", "--all")
     assert result.exit_code == 1 and "private diagnostic" not in result.output
     payload = json.loads(result.stdout)
@@ -245,7 +256,7 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
         ("pending", "unchanged", True),
         ("latest", "unchanged", False),
         ("older", "downgrade", True),
-        ("updated", "updated", True),
+        ("updated", "updated", False),
     ]
     assert {item["name"] for item in results if "error" in item} == {"broken", "older"}
 

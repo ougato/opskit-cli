@@ -358,8 +358,8 @@ def test_hot_reload_after_update(plugins_root) -> None:
 
 
 @pytest.mark.timeout(300)
-def test_update_invalidates_trust(plugins_root, tmp_path, prepared_fetch_tools) -> None:
-    """未变内容保留信任，拉取不同内容后必须撤销旧指纹授权。"""
+def test_update_inherits_trust_from_verified_source(plugins_root, tmp_path, prepared_fetch_tools) -> None:
+    """来自安装来源且权限边界一致的更新继承基础插件信任。"""
     import subprocess
 
     from plugin import commands
@@ -387,7 +387,7 @@ def test_update_invalidates_trust(plugins_root, tmp_path, prepared_fetch_tools) 
     ok, msg = commands.update(manifest)
     assert (ok, msg) == (True, "updated")
     refreshed = load_manifest(dest)
-    assert commands.trust_status(refreshed) == commands.TRUST_CHANGED
+    assert commands.trust_status(refreshed) == commands.TRUST_OK
 
 
 def test_checksums_write_and_verify(plugins_root) -> None:

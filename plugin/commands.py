@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import logging
 import hmac
 import shutil
 import stat
@@ -50,8 +49,30 @@ def _log_install_failure(phase: str, exc: Exception) -> None:
         if module.startswith(("core.", "plugin.")):
             location = f"{module}:{traceback.tb_lineno}"
         traceback = traceback.tb_next
-    logging.getLogger("opskit.plugin.install").warning(
+    from core.logger import get_logger
+    logger = get_logger("opskit.plugin.install")
+    logger.warning(
         "Plugin installation failed: phase=%s category=%s location=%s", phase, category, location)
+    # Wrappers must not hide the allocator's fixed diagnostic fields. Never log
+    # exception messages, paths or transport/credential material from a cause.
+    from core.plugin_workspace import WorkspaceAllocationFailure
+    cause, seen = exc, set()
+    while cause is not None and id(cause) not in seen and len(seen) < 8:
+        seen.add(id(cause))
+        if isinstance(cause, WorkspaceAllocationFailure):
+            diagnostic = cause.diagnostic
+            logger.warning(
+                "Workspace allocation failed: phase=%s stage=%s category=%s errno=%s winerror=%s",
+                phase, diagnostic["stage"], diagnostic["category"], diagnostic["errno"], diagnostic["winerror"])
+        cause = cause.__cause__
+
+
+def _workspace_failure_message(exc):
+    from core.plugin_sandbox import WorkspaceError
+    if isinstance(exc, WorkspaceError):
+        key = {"capacity": "workspace_full", "busy": "workspace_busy"}.get(exc.reason, "workspace_failed")
+        return t("plugin_native.errors." + key)
+    return None
 
 _installation_lock = ResourceLock(lambda: plugins_dir() / ".installation.lock", label="plugin installation")
 
@@ -367,13 +388,9 @@ def install(url: str, branch: str | None = None, alias: str | None = None, *,
         if isinstance(exc, NativeSandboxError):
             return None, str(exc)
         _log_install_failure(phase, exc)
-        from core.plugin_sandbox import WorkspaceError
-        if isinstance(exc, WorkspaceError):
-            if exc.reason == "capacity":
-                return None, t("plugin_native.errors.workspace_full")
-            if exc.reason == "busy":
-                return None, t("plugin_native.errors.workspace_busy")
-            return None, t("plugin_native.errors.workspace_failed")
+        workspace_error = _workspace_failure_message(exc)
+        if workspace_error is not None:
+            return None, workspace_error
         return None, t("plugin_native.errors.acquisition_failed")
     finally:
         # Never roll back dest: it may belong to a concurrent writer. The private
@@ -438,6 +455,10 @@ def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
             return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
                                   fetch_interaction=fetch_interaction, automatic=automatic)
     except (OSError, ValueError, RuntimeError) as exc:
+        _log_install_failure("update_guard", exc)
+        from core.resource_lock import ResourceBusyError
+        if isinstance(exc, ResourceBusyError):
+            return False, t("plugin_native.lifecycle.plugin_busy")
         return False, str(exc)
 
 
@@ -460,6 +481,10 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
     before = content_receipt(root)
     if record.get("installation_receipt") != before:
         return False, t("plugin_native.errors.update_modified")
+    current = load_manifest(root)
+    if current is None or current.name != manifest.name:
+        return False, t("plugin_native.errors.update_modified")
+    current_fingerprint = compute_fingerprint(root)
     work = root.parent / (".opskit-update-" + uuid.uuid4().hex)
     work.mkdir(mode=0o700)
     owned = _directory(work)
@@ -470,6 +495,18 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
         refreshed = load_manifest(payload)
         if refreshed is None or refreshed.name != manifest.name:
             raise ValueError("update plugin identity changed")
+        old_key, new_key = semver_key(current.version), semver_key(refreshed.version)
+        downgrade = old_key is not None and new_key is not None and new_key < old_key
+        trust_continues = (
+            bool(current_fingerprint) and record.get("fingerprint") == current_fingerprint
+            and record["source"] == acquired.source and not downgrade
+            and current.api_version == refreshed.api_version == PLUGIN_API_VERSION
+            and current.kind == refreshed.kind and current.entry == refreshed.entry
+            and set(current.platforms) == set(refreshed.platforms)
+            and set(current.permissions) == set(refreshed.permissions)
+            and current.uses == refreshed.uses
+            and current.service_contracts == refreshed.service_contracts
+        )
         if _directory(root) != initial or content_receipt(root) != before:
             raise ValueError("installed plugin changed during acquisition")
         if before == acquired.receipt:
@@ -485,11 +522,13 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
             if (_directory(root) != initial or content_receipt(root) != before
                     or content_receipt(payload) != acquired.receipt):
                 raise ValueError("update content changed before publication")
-            # Revoke before exposing any new bytes. Rollback does not regrant.
+            # An inherited approval still pins the old bytes until publication
+            # succeeds. The invocation lock excludes execution during replacement.
             from core.plugin_update_recovery import record as record_recovery
             record_recovery(work, plugin=manifest.name, root=root, old=initial, candidate=replacement,
                             old_receipt=before, candidate_receipt=acquired.receipt, installation=record)
-            invalidate(manifest.name)
+            if not trust_continues:
+                invalidate(manifest.name)
             published = False
             try:
                 publish_new_directory(root, previous)
@@ -505,8 +544,19 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                     if installed is None or installed.name != manifest.name:
                         raise ValueError("updated plugin manifest is invalid")
                     prepare_update(installed, acquired.receipt)
-                grant(manifest.name, "", refreshed.version, acquired.source, record.get("branch"),
-                      installation_receipt=acquired.receipt, source_commit=acquired.commit)
+                fingerprint = compute_fingerprint(root)
+                if not fingerprint or fingerprint != acquired.fingerprint:
+                    raise ValueError("authenticated update fingerprint changed")
+                from contextlib import nullcontext
+                from core.plugin_capabilities import CapabilityAuthority
+                carry_reads = (
+                    CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint)
+                    if trust_continues else nullcontext()
+                )
+                with carry_reads:
+                    grant(manifest.name, fingerprint if trust_continues else "",
+                          refreshed.version, acquired.source, record.get("branch"),
+                          installation_receipt=acquired.receipt, source_commit=acquired.commit)
             except BaseException:
                 # Only withdraw the exact newly published object. Never overwrite
                 # an independent writer, and retain old bytes if restoration fails.
@@ -520,12 +570,12 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                     publish_new_directory(previous, root)
                 raise
         _remove_tree(previous)
-        old_key, new_key = semver_key(manifest.version), semver_key(refreshed.version)
-        return True, "downgrade" if old_key is not None and new_key is not None and new_key < old_key else "updated"
+        return True, "downgrade" if downgrade else "updated"
     except Exception as exc:
         if not isinstance(exc, NativeSandboxError):
             _log_install_failure("update", exc)
-        return False, str(exc) if isinstance(exc, NativeSandboxError) else t("plugin_native.errors.update_failed")
+        return False, (str(exc) if isinstance(exc, NativeSandboxError) else
+                       _workspace_failure_message(exc) or t("plugin_native.errors.update_failed"))
     finally:
         if _directory(work) != owned:
             raise RuntimeError("update staging identity changed; cleanup refused")

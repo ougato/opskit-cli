@@ -14,6 +14,8 @@ from rich.console import Console
 from rich.cells import cell_len
 from rich.text import Text
 
+from core.windows_console_input import read_control_keys
+
 console = Console()
 
 _input_guard = ContextVar("prompt_input_guard", default=None)
@@ -59,8 +61,6 @@ def _check_input() -> None:
 
 
 def _getwch() -> str:
-    from core.windows_console_input import read_control_keys
-
     with read_control_keys():
         return _read_windows_key()
 
@@ -430,6 +430,8 @@ def print_header(breadcrumb: list[str]) -> None:
     _render_header(breadcrumb)
 
 
+# Keep Ctrl+C local while rendering and running on_ready, before the first read.
+@read_control_keys()
 def select(
     breadcrumb: list[str],
     subtitle: str,
