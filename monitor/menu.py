@@ -124,7 +124,7 @@ def entry() -> None:
         try:
             key = select(
                 breadcrumb=["OpsKit", t("menu.monitor")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('menu.back')}",

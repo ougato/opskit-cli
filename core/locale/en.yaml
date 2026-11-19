@@ -110,7 +110,6 @@ service:
   unavailable: "Service {service} unavailable, install and trust the provider plugin first"
 
 prompt:
-  select: "Select"
   confirm_yes: "[y/N]"
   input: "Input"
   press_any: "Press any key to continue..."

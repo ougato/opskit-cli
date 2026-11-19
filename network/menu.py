@@ -91,7 +91,7 @@ def entry() -> None:
         try:
             key = select(
                 breadcrumb=["OpsKit", t("menu.network")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -236,7 +236,7 @@ def show_dns(host: str | None = None, pause_after: bool = True) -> None:
     try:
         key = select(
             breadcrumb=["OpsKit", t("menu.network"), t("network.dns")],
-            subtitle=t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key=_THEME_KEY,
             back_label=f"{get_icon('back')} {t('menu.back')}",

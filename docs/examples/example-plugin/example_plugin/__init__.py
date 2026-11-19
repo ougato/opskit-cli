@@ -3,10 +3,10 @@ from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_succ
 from core.sdk import get_service, list_host_files, request_plugin_install
 
 register_locale({
-    "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务",
+    "zh": {"example": {"title": "示例工具", "run": "执行任务",
                        "back": "返回", "storage": "云端配置", "info": "操作：运行示例任务", "done": "任务已完成", "usage": "用法：--hello",
                        "invalid": "参数无效，请使用 --help 查看用法"}},
-    "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task",
+    "en": {"example": {"title": "Example tool", "run": "Run task",
                        "back": "Back", "storage": "Cloud configuration", "info": "Operation: Run the example task", "done": "Task completed", "usage": "Usage: --hello",
                        "invalid": "Invalid arguments; use --help for usage"}},
 })
@@ -38,7 +38,7 @@ def choose_item(items, initial_page=0):
     """Select an item by a single key, starting at the requested page."""
     return paged_select(breadcrumb=["OpsKit", t("example.title")], items=items,
                         choice_of=lambda item, _: {"label": str(item)},
-                        subtitle_of=lambda page, total: t("example.select"),
+                        subtitle_of=lambda page, total: "",
                         back_label=f"{get_icon('back')} {t('example.back')}",
                         initial_page=initial_page)
 
@@ -46,7 +46,7 @@ def choose_item(items, initial_page=0):
 def entry():
     breadcrumb = ["OpsKit", t("example.title")]
     while True:
-        key = select(breadcrumb, t("example.select"),
+        key = select(breadcrumb, "",
                      [{"key": "1", "label": f"{get_icon('devtools')} {t('example.run')}"},
                       {"key": "2", "label": t("example.storage")}],
                      back_label=f"{get_icon('back')} {t('example.back')}",

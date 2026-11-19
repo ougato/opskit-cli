@@ -88,13 +88,13 @@ label:
 from core.sdk import ModuleInfo, get_icon, register_locale, select, t
 
 register_locale({
-    "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务", "back": "返回", "info": "操作：运行示例任务"}},
-    "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task", "back": "Back", "info": "Operation: Run the example task"}},
+    "zh": {"example": {"title": "示例工具", "run": "执行任务", "back": "返回", "info": "操作：运行示例任务"}},
+    "en": {"example": {"title": "Example tool", "run": "Run task", "back": "Back", "info": "Operation: Run the example task"}},
 })
 
 def entry():
     while True:
-        key = select(["OpsKit", t("example.title")], t("example.select"),
+        key = select(["OpsKit", t("example.title")], "",
                      [{"key": "1", "label": get_icon("devtools") + " " + t("example.run")}],
                      back_label=get_icon("back") + " " + t("example.back"),
                      info_lines=[t("example.info")])

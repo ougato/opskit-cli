@@ -110,7 +110,6 @@ service:
   unavailable: "服务 {service} 不可用，请先安装并信任对应插件"
 
 prompt:
-  select: "请选择"
   confirm_yes: "[y/N]"
   input: "请输入"
   press_any: "按任意键继续..."

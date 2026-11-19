@@ -89,7 +89,7 @@ def _entry() -> None:
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('plugin_native.back')}",
@@ -147,7 +147,7 @@ def _group_menu(group_id: str) -> None:
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin"), group_label],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('plugin_native.back')}",
@@ -181,7 +181,7 @@ def _manage() -> None:
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('plugin_native.back')}",
@@ -218,7 +218,7 @@ def _maintenance() -> None:
         try:
             key = select(
                 breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=[{"key": str(i + 1), "label": f"{get_icon(icon)} {t('plugin_native.' + name + '.menu')}"}
                          for i, (icon, name, _) in enumerate(items)],
                 back_label=f"{get_icon('back')} {t('plugin_native.back')}", theme_key=_THEME_KEY,
