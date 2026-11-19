@@ -166,7 +166,8 @@ def _is_frozen() -> bool:
 def _self_path() -> Path:
     """当前可执行文件路径（打包 or python 解释器）"""
     if _is_frozen():
-        return Path(sys.executable).resolve()
+        from core.paths import installed_executable
+        return installed_executable()
     return Path(__file__).resolve().parent.parent / "main.py"
 
 

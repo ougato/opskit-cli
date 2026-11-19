@@ -42,3 +42,5 @@ python scripts/verify_local_update.py /path/to/v1/dist/opskit-linux-x64 \
 加入 `--omit-sidecar` 可令本地服务对 SHA-256 旁车返回 503，验证当前版本使用按标签查询的资产摘要继续下载。
 
 测试二进制和证书只用于本地。正式发布仍使用原始端点和发布工作流。
+
+验证 Linux 正式包的替换和重启行为时，旧版测试程序应使用 `--backend nuitka` 构建。Nuitka 单文件程序启动后会运行解包进程，更新写入和重启都必须指向外层可执行文件。已经发布且受此路径问题影响的旧包（如 v1），需要用包含修复的正式包手动替换一次。

@@ -12,8 +12,9 @@ import click
 
 def _restart_after_update(arguments):
     import os
+    from core.paths import installed_executable
 
-    executable = sys.executable
+    executable = str(installed_executable())
     argv = [executable, "--post-update", *arguments]
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         # A replacement at the same path needs a fresh PyInstaller extraction.

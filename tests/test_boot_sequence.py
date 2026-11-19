@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,23 @@ sys.path.insert(0, str(REPO_ROOT))
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestBootExecRestart:
+    def test_nuitka_update_and_restart_use_outer_launcher(self, tmp_path, monkeypatch):
+        from core import paths, updater
+        from core.startup import _restart_after_update
+
+        launcher = tmp_path / "opskit"
+        launcher.touch()
+        monkeypatch.setattr(paths, "__compiled__", SimpleNamespace(onefile=True), raising=False)
+        monkeypatch.setattr(updater, "_is_frozen", lambda: True)
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "onefile_123" / "opskit.bin"))
+        monkeypatch.setattr(sys, "argv", [str(launcher)])
+
+        assert updater._self_path() == launcher.resolve()
+        with patch("os.execv") as execute:
+            _restart_after_update(["--lang", "en"])
+        executable = str(launcher.resolve())
+        execute.assert_called_once_with(executable, [executable, "--post-update", "--lang", "en"])
+
     def test_frozen_mode_calls_execv(self):
         """打包模式（frozen=True）下 check_and_apply_pending() 返回 True 时应调用 os.execv"""
         import main as _main
