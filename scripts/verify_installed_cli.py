@@ -48,7 +48,10 @@ print(json.dumps({'module': windows.__file__, 'checks': records, 'resources_remo
 '''
     result = subprocess.run([str(python), "-I", "-c", probe, str(output / "python-route-home")],
                             cwd=outside, env=env, capture_output=True, text=True,
-                            encoding="utf-8", timeout=60, check=True)
+                            encoding="utf-8", timeout=60)
+    (output / "windows-routes.stdout").write_text(result.stdout, encoding="utf-8")
+    (output / "windows-routes.stderr").write_text(result.stderr, encoding="utf-8")
+    result.check_returncode()
     report = json.loads(result.stdout)
     if not Path(report["module"]).resolve().is_relative_to(environment):
         raise ValueError("Python route imported code outside the installed environment")
@@ -91,7 +94,10 @@ else:
 print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': commands, 'skipped_help': skipped, 'absent_pid': absent_pid}))
 """
     result = subprocess.run([str(python), "-I", "-c", probe], cwd=outside, env=env, stdin=subprocess.DEVNULL,
-                            capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+    (output / "probe.stdout").write_text(result.stdout, encoding="utf-8")
+    (output / "probe.stderr").write_text(result.stderr, encoding="utf-8")
+    result.check_returncode()
     provenance = json.loads(result.stdout)
     for name in ("main", "core"):
         if not Path(provenance[name]).resolve().is_relative_to(environment):
@@ -120,7 +126,8 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
         (output / f"{index:03d}.stdout").write_text(result.stdout, encoding="utf-8")
         (output / f"{index:03d}.stderr").write_text(result.stderr, encoding="utf-8")
         if result.returncode != expected:
-            raise RuntimeError("installed CLI failed: " + " ".join(arguments))
+            raise RuntimeError("installed CLI failed: " + " ".join(arguments)
+                               + f" (expected {expected}, got {result.returncode}; case {index:03d})")
         if structured:
             payload = json.loads(result.stdout)
             if (not isinstance(payload, dict)

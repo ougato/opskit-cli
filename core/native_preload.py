@@ -183,7 +183,7 @@ def _bootstrap(base, token):
     return ("import sys,os; sys.path.insert(0," + repr(str(runtime / "site-packages")) + "); "
             "sys.argv=['core.plugin_worker'," + repr(str(request)) + "]; "
             "import core.plugin_worker as w,core.sdk,core.i18n as i,core.theme as t; "
-            "i.init(language=os.environ.get('OPSKIT_LANGUAGE')); t.init(); "
+            "i.init(language=os.environ.get('OPSKIT_LANGUAGE')); t.init_bundled_default(); "
             "print(" + repr(ready) + ",flush=True); "
             "sys.stdin.buffer.readline(128)==" + repr(expected) + " or sys.exit(3); w.main()")
 

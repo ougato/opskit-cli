@@ -42,7 +42,7 @@ def test_invalid_request_rejected_before_all_operations(tmp_path, monkeypatch, c
 
 @pytest.mark.parametrize("changes", [
     {}, {"action": "entry", "args": []}, {"kind": "exec", "entry": "bin/run"},
-    {"kind": "exec", "entry": {"linux": "bin/run", "windows": "run.exe"}},
+    {"kind": "exec", "entry": {"linux": "bin/run", "windows": "run.exe", "darwin": "bin/run-mac"}},
     {"action": "service.call", "service": "counter", "method": "read", "args": [1],
      "kwargs": {"option": True}, "service_contract": {"api_version": 7, "methods": ["read"]}},
     {"action": "service.describe", "service": "counter", "args": [],

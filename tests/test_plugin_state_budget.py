@@ -78,7 +78,9 @@ def test_scan_refuses_directory_mutation(tmp_path):
         nonlocal calls
         calls += 1
         if calls == 8:
+            before = base.stat()
             write(base, "injected", 1)
+            os.utime(base, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
     with pytest.raises(state.StateTransactionError, match="directory changed"):
         budget.reserve_platform_state(base, checkpoint=checkpoint)
 

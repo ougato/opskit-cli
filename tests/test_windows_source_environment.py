@@ -9,6 +9,7 @@ def test_existing_project_environment_is_reused(tmp_path, monkeypatch):
     executable.touch()
     monkeypatch.setattr(bootstrap.sys, 'prefix', 'base')
     monkeypatch.setattr(bootstrap.sys, 'base_prefix', 'base')
+    monkeypatch.setattr(bootstrap, '_executable_venv_root', lambda: None)
     monkeypatch.delenv('VIRTUAL_ENV', raising=False)
     seen = []
     monkeypatch.setattr(bootstrap, '_exec_reenter', seen.append)

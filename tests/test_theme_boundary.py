@@ -70,3 +70,15 @@ def test_frozen_resource_path_is_honored(tmp_path, monkeypatch):
     monkeypatch.setattr(theme, "_theme_name", "catppuccin")
     theme.init("catppuccin")
     assert theme.get_color("success") == "frozen"
+
+
+def test_guest_default_does_not_require_normalized_path_queries(monkeypatch):
+    from pathlib import Path
+    def denied(*args, **kwargs):
+        raise PermissionError("AppContainer normalized path query denied")
+    monkeypatch.setattr(Path, "resolve", denied)
+    monkeypatch.setattr(theme, "_theme", {})
+    monkeypatch.setattr(theme, "_theme_name", "other")
+    theme.init_bundled_default()
+    assert theme.current_theme() == "catppuccin"
+    assert theme.get_icon("back") != "•"

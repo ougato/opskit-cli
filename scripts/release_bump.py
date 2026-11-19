@@ -124,9 +124,11 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="仅校验一致性，不写入")
     mode.add_argument("--preflight", action="store_true", help="只读验证待发布版本及配置，拒绝降级")
     ap.add_argument("--root", type=Path, help="待更新的独立检出目录，默认脚本所属仓库")
+    ap.add_argument("--sync-installers", action="store_true", help="同步事件提交的安装脚本到发布目录")
     args = ap.parse_args()
 
     constants, bootstrap = CONSTANTS, BOOTSTRAP
+    installers = []
     if args.root is not None:
         root = args.root.resolve(strict=True)
         targets = (root / "core/constants.py", root / "bootstrap.json")
@@ -135,6 +137,14 @@ def main() -> int:
                     or target.stat().st_nlink != 1):
                 raise ValueError(f"release target must be an unlinked regular file: {target}")
         constants, bootstrap = targets
+    if args.sync_installers:
+        root = constants.parent.parent
+        for name in ("install.sh", "install.ps1"):
+            source, target = ROOT / name, root / name
+            if (target.resolve(strict=True) != target or not target.is_file()
+                    or target.stat().st_nlink != 1):
+                raise ValueError(f"release target must be an unlinked regular file: {target}")
+            installers.append((target, source.read_bytes()))
 
     try:
         build = parse_build(args.tag)
@@ -148,6 +158,8 @@ def main() -> int:
 
     if args.check:
         errs = check_consistency(build, constants, bootstrap)
+        if any(target.read_bytes() != content for target, content in installers):
+            errs.append("发布目录的安装脚本与事件提交不一致")
         if errs:
             for e in errs:
                 print(f"[bump] 校验失败：{e}", file=sys.stderr)
@@ -166,6 +178,8 @@ def main() -> int:
 
     write_app_version(build, constants)
     data = update_bootstrap(build, args.min_build, args.rollout, args.notes, bootstrap)
+    for target, content in installers:
+        target.write_bytes(content)
     print(f"[bump] APP_VERSION → {build}")
     print(f"[bump] bootstrap → latest_build={data['latest_build']} "
           f"min_build={data['min_build']} rollout={data['rollout']}")

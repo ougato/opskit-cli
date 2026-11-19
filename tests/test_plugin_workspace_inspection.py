@@ -51,6 +51,7 @@ def test_entry_limit_rejects_partial_success(tmp_path):
     assert len(list(parent.iterdir())) == 2
 
 
+@pytest.mark.timeout(120)
 def test_unknown_entries_are_also_scan_bounded(tmp_path):
     parent = namespace(tmp_path)
     for index in range(4097):

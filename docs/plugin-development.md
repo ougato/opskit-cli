@@ -121,7 +121,8 @@ multi_select(breadcrumb, subtitle, options, theme_key='root', back_label='', all
 paged_select(*, breadcrumb, items, choice_of, subtitle_of, back_label,
              nav_labels=None, theme_key='root', page_size=9, on_select=None, initial_page=0) -> item | None
 confirm(breadcrumb, prompt, theme_key='root', info_lines=None, require_explicit=False) -> bool
-text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False) -> str
+text_input(breadcrumb, prompt, default='', hint='', theme_key='root', info_lines=None, secret=False,
+           *, initial='') -> str
 pause(msg=''); clear_screen(); print_header(breadcrumb)
 waiting(message='') -> context manager
 ```
@@ -129,6 +130,8 @@ waiting(message='') -> context manager
 `select` 为单键选择，按数字立即返回，无需回车；`choices` 是 `{'key': '1', 'label': '...'}` 列表。`select_input` 用于确需输入完整文本的菜单，输入后按回车，空行使用 `default`；普通选项菜单不要使用它。两者输入 0 或按 Esc 返回 `None`。多选使用方向键、空格和回车，返回已勾选的零起始下标；0/Esc 返回 `None`，只有空选项列表才无须交互直接返回 `[]`。有选项时，即使启用 `--yes` 也必须由用户选择；非交互模式不能以空选择冒充用户确认。
 
 为每个业务菜单、选择、输入和确认传入当前面包屑，保留实际入口、已选对象和当前功能；独立步骤可以继续追加步骤名称。例如游戏构建中输入 Git 路径使用“OpsKit → Cocos 工具 → 游戏名 → 项目构建”，字段名称交给 `text_input` 的 `prompt`。复用工具选择等流程时显式传递入口上下文，没有选中对象时不要虚构对象。宿主授权标题仍由框架管理。
+
+`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。清空后回车使用 `default`，默认为空字符串。
 
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 
@@ -223,6 +226,23 @@ uses:
 ```
 
 操作者先分别审核调用方和提供方及其指纹，再使用 `opskit plugin authorize-service` 授权精确的调用边。插件更新、指纹变化或撤权后不能沿用旧授权；每次调用都重新验证。`get_service` 不表示提供方已经可用，访问方法或 `service_api_version` 时才会进行实际 RPC 和校验。
+
+### 跨插件菜单导航
+
+需要让调用方打开某个菜单时，提供方可以在既有服务的 `open_menu` 中公开 `action: navigate` 和稳定的 `destination` 标识。提供方在服务文档列出允许的目标、参数和返回值，自己渲染菜单、解释选项并保存配置。未知目标应明确拒绝。目标标识取自公开契约，独立于界面语言、菜单序号、模块名和函数名。
+
+```python
+if request_plugin_install("storage_hub"):
+    get_service("storage").open_menu(breadcrumb, {
+        "action": "navigate",
+        "destination": "configuration",
+        "configure_upload_root": True,
+    })
+```
+
+这是一次交互式服务调用。菜单结束后控制权回到调用方，保存与否按提供方契约读取。需要使用选择结果时直接调用服务代理。提供方沿用宿主绑定的调用方身份及隔离状态，调用方传递业务选项即可。宿主继续处理安装、授信和资源授权。
+
+当业务操作允许在缺少配置时打开设置，提供方可以提供显式选项，例如 `select_profile` 的 `configure_if_missing`。它复用同一个设置菜单，返回后重新读取配置。没有可用配置或用户取消时结束当前业务操作。非交互调用使用显式配置和业务参数。
 
 ## 发布前检查
 

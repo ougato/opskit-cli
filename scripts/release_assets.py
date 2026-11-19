@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import itertools
 import json
 import os
@@ -12,7 +11,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core.release_signature import file_digest, payload, verify
+from core.file_digest import file_digest
 
 
 MATRIX = {
@@ -32,7 +31,7 @@ def children(path: Path, limit: int) -> list[Path]:
     return entries
 
 
-def assets(root: Path, build: int, *, signed: bool, public_key: str = "") -> dict[str, Path]:
+def assets(root: Path, build: int) -> dict[str, Path]:
     """No glob-driven publication: require exactly the declared build matrix."""
     if build <= 0:
         raise ValueError("release build must be positive")
@@ -43,8 +42,6 @@ def assets(root: Path, build: int, *, signed: bool, public_key: str = "") -> dic
     for directory in directories:
         platform, arch, binary = MATRIX[directory.name]
         expected = {binary, binary + ".sha256", "manifest.json"}
-        if signed:
-            expected.update(binary + suffix for suffix in (".sig.json", ".signed", ".sig"))
         entries = children(directory, len(expected))
         if {p.name for p in entries} != expected:
             raise ValueError("unexpected or missing artifact file")
@@ -63,14 +60,6 @@ def assets(root: Path, build: int, *, signed: bool, public_key: str = "") -> dic
                 or manifest.get("binary") != binary or manifest.get("sha256") != digest
                 or type(manifest.get("size")) is not int or manifest["size"] != path.stat().st_size):
             raise ValueError("artifact manifest mismatch")
-        if signed:
-            envelope = json.loads((directory / (binary + ".sig.json")).read_text(encoding="utf-8"))
-            if not verify(envelope, public_key, build=build, filename=binary, digest=digest):
-                raise ValueError("artifact signature mismatch")
-            if (directory / (binary + ".signed")).read_bytes() != payload(build, binary, digest):
-                raise ValueError("signed payload mismatch")
-            if (directory / (binary + ".sig")).read_bytes() != base64.b64decode(envelope["signature"], validate=True):
-                raise ValueError("detached signature mismatch")
         for entry in entries:
             if entry.name != "manifest.json":
                 result[entry.name] = entry
@@ -192,8 +181,7 @@ def main() -> None:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
-    expected = assets(args.root, args.build, signed=args.publish,
-                      public_key=os.environ.get("OPSKIT_RELEASE_PUBLIC_KEY", ""))
+    expected = assets(args.root, args.build)
     if args.publish:
         publish(GitHub(os.environ["GITHUB_REPOSITORY"]), f"v{args.build}",
                 os.environ["GITHUB_SHA"], expected)

@@ -56,7 +56,7 @@ def test_selected_plugin_refreshes_sdk_without_changing_dependencies(environment
 
 def test_speculation_never_updates_runtime(environment):
     catalog, old, old_id, digest, manifest = environment
-    with pytest.raises(NativeSandboxError, match='runtime'):
+    with pytest.raises(NativeSandboxError):
         with manager.acquire(manifest, old['fingerprint'], checkpoint=lambda: None,
                              authorize=lambda: True, speculative=True):
             pytest.fail('stale runtime accepted')

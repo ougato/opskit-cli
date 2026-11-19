@@ -177,6 +177,13 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     received = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = received[0][1] if received else b""
+            self.send_response(200 if received else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
             received.append((self.path, body, self.headers["Content-MD5"]))
@@ -216,6 +223,7 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     try:
         result = upload.upload_file("demo", "a" * 64, str(root), "build.bin",
                                     "https://127.0.0.1/object?synthetic-secret", digest, {},
+                                    verify_url="https://127.0.0.1/object?synthetic-read-secret",
                                     authority=authority, check_identity=lambda *a: True,
                                     private_targets=["127.0.0.1:443"],
                                     deadline=time.monotonic() + 30, checkpoint=lambda: None)

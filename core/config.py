@@ -113,7 +113,7 @@ def validate_startup_config(config: dict[str, Any]) -> None:
     for section, fields in {
         "log": {"level": (str, "string")},
         "update": {"enabled": (bool, "boolean"), "repo": (str, "string"),
-                   "github_token": (str, "string"), "signing_public_key": (str, "string")},
+                   "github_token": (str, "string")},
         "mirror": {"region": (str, "string")},
         "telemetry": {"enabled": (bool, "boolean"), "dsn": (str, "string")},
     }.items():

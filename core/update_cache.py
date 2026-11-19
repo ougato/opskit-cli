@@ -15,7 +15,7 @@ MAX_CANDIDATES = 4
 MAX_CANDIDATE_BYTES = 2 * 1024 ** 3 + 1024 ** 2
 MAX_INVENTORY_ENTRIES = 64
 _ID = re.compile(r"[a-f0-9]{32}")
-_FILES = {"opskit.pending", "opskit.pending.tmp", "opskit.pending.sig.json", "candidate.json"}
+_FILES = {"opskit.pending", "opskit.pending.tmp", "candidate.json"}
 
 
 def _pins(cache_path, root):
@@ -87,9 +87,6 @@ def _inventory(root, checkpoint):
                 or record["build"] <= 0 or record.get("state") not in {"preparing", "verified"}
                 or (record.get("sha256") is not None and (not isinstance(record["sha256"], str)
                     or not re.fullmatch(r"[a-f0-9]{64}", record["sha256"])))
-                or (record.get("signature_sha256") is not None and
-                    (not isinstance(record["signature_sha256"], str)
-                     or not re.fullmatch(r"[a-f0-9]{64}", record["signature_sha256"])))
                 or (record.get("state") == "verified" and record.get("sha256") is None)):
             raise ValueError("invalid update candidate ownership record")
         rows.append({"path": node, "bytes": sum(value.st_size for value in files.values()),
@@ -127,41 +124,18 @@ def _matches_digest(path, previous, expected, checkpoint):
 
 
 def _contents_proven(row, checkpoint):
-    """Retain partials and signatures whose content cannot be proven."""
+    """Retain partials whose content cannot be proven."""
     record, files, node = row["record"], row["files"], row["path"]
     for name, key in (("opskit.pending", "sha256"),
-                      ("opskit.pending.sig.json", "signature_sha256"),
                       ("opskit.pending.tmp", None)):
         path = node / name
         if path not in files:
             continue
         if record["state"] != "verified" or key is None:
             return False
-        if key == "signature_sha256" and record.get(key) is None:
-            if not _legacy_signature_proven(path, files[path], record):
-                return False
-            continue
         if not _matches_digest(path, files[path], record.get(key), checkpoint):
             return False
     return True
-
-
-def _legacy_signature_proven(path, previous, record):
-    """Older receipts can be reclaimed only if their signature still verifies."""
-    from core import updater
-    from core.config import load_config
-    from core.release_signature import verify
-    if previous.st_size > 4096:
-        return False
-    try:
-        envelope = updater._read_update_record(path)
-        if not _same_file(_info(path), previous):
-            return False
-        cfg = load_config().get("update", {})
-        return isinstance(cfg, dict) and verify(envelope, updater._signing_key(cfg),
-            build=record["build"], filename=updater._asset_filename(), digest=record["sha256"])
-    except (OSError, ValueError, TypeError):
-        return False
 
 
 def _reclaim(row, checkpoint):

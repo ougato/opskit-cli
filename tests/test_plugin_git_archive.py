@@ -1,4 +1,6 @@
 """Shared Git archive validation is independent of backend and checkout hooks."""
+from types import SimpleNamespace
+
 import pytest
 
 from core import plugin_git_archive as worker, plugin_runtime_inventory as inventory
@@ -57,10 +59,11 @@ def test_duplicate_request_fields_refused():
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_format):
+def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_format, monkeypatch):
     import subprocess
     import shutil
     from core import native_fetch_worker as native
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
 
     git = shutil.which("git")
     if git is None:
@@ -98,10 +101,11 @@ def test_dulwich_indexes_real_git_packs_without_git_runtime(tmp_path, object_for
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, object_format):
+def test_dulwich_reads_committed_local_repository_without_checkout(tmp_path, object_format, monkeypatch):
     import subprocess
     import shutil
     from core import native_fetch_worker as native
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
 
     git = shutil.which("git")
     if git is None:
@@ -126,10 +130,12 @@ def test_worker_bundled_independently_of_sdk_and_gateway():
     sources = inventory.native_fetch_snapshot()
     assert {"core/" + name for name in inventory.NATIVE_FETCH_FILES} <= set(sources)
     assert "core/dulwich/__init__.py" in sources
+    bundled = inventory.bundle_snapshot()
+    sdk = inventory.snapshot()
     for name, source in sources.items():
-        assert source == inventory.bundle_snapshot()[name]
+        assert source == bundled[name]
         if name != "core/__init__.py":
-            assert name not in inventory.snapshot()
+            assert name not in sdk
     assert "core/native_git_ssh.py" not in inventory.snapshot()
 
 

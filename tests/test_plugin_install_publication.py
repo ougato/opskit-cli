@@ -90,6 +90,53 @@ def test_workspace_failure_reports_safe_specific_diagnostic(installation, monkey
     assert not list(plugins.glob(".opskit-install-*"))
 
 
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("reason,key", [(None, "workspace_failed"), ("capacity", "workspace_full"), ("busy", "workspace_busy")])
+def test_update_workspace_failure_preserves_installed_plugin_and_reports_category(
+        installation, monkeypatch, language, reason, key):
+    from core import i18n
+    from core.plugin_install_receipt import content_receipt
+    from core.plugin_sandbox import WorkspaceError
+    from core.plugin_trust import trusted_record
+    _, origin = installation
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert manifest is not None and not error
+    before, authority = content_receipt(manifest.root), trusted_record(manifest.name)
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+
+    def fail(*args, **kwargs):
+        raise WorkspaceError("private filesystem detail", reason=reason)
+
+    monkeypatch.setattr("core.native_acquisition.populate", fail)
+    ok, error = commands.update(manifest)
+    assert not ok and error == i18n.t("plugin_native.errors." + key)
+    assert "private filesystem detail" not in error
+    assert content_receipt(manifest.root) == before
+    assert trusted_record(manifest.name) == authority
+    assert not list(manifest.root.parent.glob(".opskit-update-*"))
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_update_busy_is_localized_without_fetching(installation, monkeypatch, language):
+    from contextlib import contextmanager
+    from core import i18n
+    from core.resource_lock import ResourceBusyError
+    _, origin = installation
+    manifest, error = commands.install(str(origin), alias="demo")
+    assert manifest is not None and not error
+    monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
+
+    @contextmanager
+    def busy(**kwargs):
+        raise ResourceBusyError("private lock detail")
+        yield
+
+    monkeypatch.setattr("core.plugin_invocation_lock.hold", busy)
+    monkeypatch.setattr("core.native_acquisition.populate", lambda *a, **k: pytest.fail("busy plugin fetched"))
+    ok, error = commands.update(manifest)
+    assert not ok and error == i18n.t("plugin_native.lifecycle.plugin_busy")
+
+
 def test_cancel_cleans_private_candidate_and_preserves_target(installation, monkeypatch):
     plugins, origin = installation
     target = plugins / "demo"

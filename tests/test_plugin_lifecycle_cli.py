@@ -4,11 +4,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
 from core.cli import configure
-from core.plugin_trust import is_trusted, trusted_record
+from core.plugin_trust import trusted_record
 
 runner = CliRunner()
 
@@ -29,7 +31,11 @@ def git(root, *args):
     subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-C", str(root), *args], check=True, capture_output=True)
 
 
-def test_install_without_prepared_native_tools_does_not_publish_or_trust(isolated):
+def test_install_preparation_failure_does_not_publish_or_trust(isolated, monkeypatch):
+    from core.native_sandbox import NativeSandboxError
+    def unavailable(*args, **kwargs):
+        raise NativeSandboxError("fetch_setup_failed")
+    monkeypatch.setattr("core.plugin_bootstrap.ensure_fetch", unavailable)
     origin = isolated / "origin"
     origin.mkdir()
     manifest = origin / "plugin.yaml"
@@ -50,6 +56,17 @@ def test_trust_write_failure_is_not_silenced(isolated, monkeypatch):
     monkeypatch.setattr(secrets, "atomic_write", denied)
     with pytest.raises(PermissionError):
         plugin_trust.grant("demo", "a" * 64, "1.0.0")
+
+
+def test_update_preserves_safe_busy_message(isolated, monkeypatch):
+    from types import SimpleNamespace
+    from core.i18n import t
+    from plugin import commands
+    monkeypatch.setattr(commands, "manifests", lambda: [SimpleNamespace(name="demo")])
+    monkeypatch.setattr(commands, "update", lambda *a, **k: (False, t("plugin_native.lifecycle.plugin_busy")))
+    result = call("plugin", "update", "--all")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["data"]["plugins"][0]["error"] == t("plugin_native.lifecycle.plugin_busy")
 
 
 def test_fingerprint_json_generate_check_and_tamper_without_boot(isolated, monkeypatch):
@@ -183,7 +200,7 @@ def test_source_builder_reuses_cli_and_rejects_unlocked_or_secret_parameters(tmp
                    "OPSKIT_PLUGINS_DIR": str(tmp_path / "clones")}
     help_result = subprocess.run([sys.executable, str(script), "--help"],
         env=environment, capture_output=True, text=True, encoding="utf-8", timeout=20)
-    assert help_result.returncode == 0 and "lock-file" in help_result.stdout
+    assert help_result.returncode == 0 and "lock-file" in re.sub(r"\x1b\[[0-9;]*m", "", help_result.stdout)
     missing = subprocess.run([sys.executable, str(script), str(tmp_path)],
         env=environment, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert missing.returncode == 2
@@ -226,7 +243,7 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
     monkeypatch.setattr(commands, "manifests", lambda: manifests)
     monkeypatch.setattr(commands, "update", update)
     monkeypatch.setattr(commands, "trust_status", lambda manifest:
-                        commands.TRUST_OK if manifest.name == "latest" else commands.TRUST_CHANGED)
+                        commands.TRUST_OK if manifest.name in {"latest", "updated"} else commands.TRUST_CHANGED)
     result = call("plugin", "update", "--all")
     assert result.exit_code == 1 and "private diagnostic" not in result.output
     payload = json.loads(result.stdout)
@@ -239,7 +256,7 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
         ("pending", "unchanged", True),
         ("latest", "unchanged", False),
         ("older", "downgrade", True),
-        ("updated", "updated", True),
+        ("updated", "updated", False),
     ]
     assert {item["name"] for item in results if "error" in item} == {"broken", "older"}
 
@@ -273,7 +290,7 @@ def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
         shown = call("plugin", "permissions", "show", grant_id)
         assert shown.exit_code == 0 and json.loads(shown.stdout)["data"] == grant
         assert call("plugin", "permissions", "revoke", "invalid").exit_code == 2
-        assert authority.list_grants() == grants
+        assert sorted(authority.list_grants(), key=lambda item: item.plugin) == grants
 
         revoked = call("plugin", "permissions", "revoke", grant_id)
         assert revoked.exit_code == 0 and json.loads(revoked.stdout)["data"] == {"revoked": grant_id}
@@ -287,7 +304,13 @@ def test_permissions_cli_filters_inspects_and_revokes_permanent_grant(isolated):
                                   ("inspect-native-workspaces",), ("inspect-native-cache", "runtime"),
                                   ("inspect-native-cache", "fetch"), ("inspect-native-cache", "prepare")])
 def test_maintenance_inspection_cli_in_empty_workspace(isolated, args):
-    inspected = call("plugin", *args, "--limit", "1")
+    inspected = call("--lang", "en", "plugin", *args, "--limit", "1")
+    if args == ("inspect-native-profiles",) and sys.platform != "win32":
+        assert inspected.exit_code == 1
+        assert json.loads(inspected.stdout)["ok"] is False
+        assert json.loads(inspected.stdout)["error"] == {
+            "code": 1, "message": "The AppContainer sandbox requires Windows."}
+        return
     assert inspected.exit_code == 0, inspected.output
     assert json.loads(inspected.stdout)["data"] == []
     assert call("plugin", *args, "--limit", "0").exit_code == 2

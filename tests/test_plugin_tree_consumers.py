@@ -28,6 +28,7 @@ def test_snapshot_traversal_checks_execution_budget(tmp_path, monkeypatch):
     assert calls == [True]
 
 
+@pytest.mark.timeout(120)
 def test_worker_state_counts_empty_directories_without_list_materialization(tmp_path, monkeypatch):
     for index in range(4097):
         (tmp_path / str(index)).mkdir()

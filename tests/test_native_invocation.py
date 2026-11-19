@@ -134,6 +134,7 @@ def test_normal_invocation_rechecks_prepared_runtime_before_launch(tmp_path, mon
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_interpreter_probe_uses_actual_isolated_target(sdk_runtime, tmp_path):
     from core.native_interpreter import probe
     from packaging.tags import sys_tags
@@ -145,6 +146,7 @@ def test_interpreter_probe_uses_actual_isolated_target(sdk_runtime, tmp_path):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, monkeypatch):
     from core import plugin_sandbox as sandbox
     from core.plugin import load_manifest
@@ -174,6 +176,7 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_old_sdk_is_refreshed_before_real_native_invocation(sdk_runtime, tmp_path, monkeypatch):
     from core import plugin_sandbox as sandbox
     from core.native_runtime import stage, inventory
@@ -205,6 +208,7 @@ def test_old_sdk_is_refreshed_before_real_native_invocation(sdk_runtime, tmp_pat
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_developer_example_cli_runs_in_native_sandbox(sdk_runtime, tmp_path, monkeypatch):
     from core import plugin_sandbox as sandbox
     from core.plugin import load_manifest
@@ -224,6 +228,7 @@ def test_developer_example_cli_runs_in_native_sandbox(sdk_runtime, tmp_path, mon
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_preloaded_sandbox_does_not_import_plugin_before_activation(sdk_runtime, tmp_path, monkeypatch):
     """Plugin code waits for activation; archive verification is tested separately."""
     import psutil
@@ -288,6 +293,7 @@ def test_preloaded_sandbox_does_not_import_plugin_before_activation(sdk_runtime,
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_preloaded_entry_rechecks_state_and_revocation(sdk_runtime, tmp_path, monkeypatch):
     """A ready snapshot cannot execute after state changes or authorization is revoked."""
     from core import native_preload, plugin_sandbox
@@ -366,6 +372,7 @@ def test_preloaded_entry_rechecks_state_and_revocation(sdk_runtime, tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeypatch, language):
     from core import i18n
@@ -433,9 +440,8 @@ def test_actual_sdk_worker_language_rpc_and_state(sdk_runtime, tmp_path, monkeyp
     assert "example" not in sys.modules
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_long_workspace_interpreter_probe_uses_verified_alias(sdk_runtime, tmp_path, monkeypatch):
-    from contextlib import contextmanager
-    from core import native_interpreter
     from core.native_interpreter import probe
     from core.native_short_path import _short_path
     from core.native_runtime import absolute_path
@@ -453,6 +459,7 @@ def test_long_workspace_interpreter_probe_uses_verified_alias(sdk_runtime, tmp_p
     assert markers["sys_platform"] == "win32"
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
+@pytest.mark.timeout(300)
 def test_long_workspace_actual_plugin_invocation(sdk_runtime, tmp_path, monkeypatch):
     from contextlib import contextmanager
     from core import native_invocation

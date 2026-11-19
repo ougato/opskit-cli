@@ -16,21 +16,6 @@ def test_only_release_job_can_write_repository():
         assert effective == {"contents": "write" if name == "release" else "read"}
 
 
-def test_signer_comes_from_event_commit_without_persisted_credentials():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["release"]["steps"]
-    signer = next(i for i, step in enumerate(steps) if
-                  "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
-    checkouts = [step for step in steps[:signer] if
-                 step.get("uses", "").startswith("actions/checkout@")]
-    assert checkouts[-1]["with"]["ref"] == "${{ github.sha }}"
-    assert checkouts[-1]["with"]["persist-credentials"] is False
-    assert sum("OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {})
-               for step in steps) == 1
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in workflow.get("env", {})
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in workflow["jobs"]["release"].get("env", {})
-
-
 def test_bootstrap_commit_uses_default_branch_after_release_upload():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release"]["steps"]
@@ -45,11 +30,10 @@ def test_bootstrap_commit_uses_default_branch_after_release_upload():
     assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
     assert checkout["with"]["path"] == "bootstrap-target"
     commands = steps[publish]["run"]
-    assert "python -I scripts/pin_release_key.py --root bootstrap-target" in commands
     assert 'python -I scripts/release_bump.py "${GITHUB_REF_NAME}" --root bootstrap-target' in commands
     assert "git -C bootstrap-target push" in commands
     preflight = commands.index("--preflight")
-    assert preflight < commands.index("scripts/pin_release_key.py")
+    assert preflight < commands.index("--check")
 
 
 def test_release_tags_share_non_cancelling_publish_lock():
@@ -58,18 +42,18 @@ def test_release_tags_share_non_cancelling_publish_lock():
     assert concurrency == {"group": "opskit-release-publish", "cancel-in-progress": False}
 
 
-def test_artifact_validation_precedes_signing_and_publication():
+def test_artifact_validation_precedes_publication():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release"]["steps"]
     validate = next(i for i, step in enumerate(steps) if
                     "scripts/release_assets.py" in step.get("run", "") and
                     "--publish" not in step["run"])
-    signer = next(i for i, step in enumerate(steps) if
-                  "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
     publish = next(i for i, step in enumerate(steps) if "--publish" in step.get("run", ""))
-    assert validate < signer < publish
-    assert "pip install" not in steps[signer]["run"]
-    assert "OPSKIT_RELEASE_PUBLIC_KEY" in steps[publish]["env"]
+    assert validate < publish
+    assert steps[publish]["env"] == {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+    download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+    assert download["with"]["pattern"] == "opskit-*"
+    assert download["with"].get("merge-multiple", False) is False
 
 
 def test_all_external_actions_use_immutable_commits():
@@ -80,20 +64,6 @@ def test_all_external_actions_use_immutable_commits():
                 action = step.get("uses")
                 if action is not None:
                     assert re.fullmatch(r"actions/[a-z-]+@[0-9a-f]{40}", action), (path, action)
-
-
-def test_signing_uses_isolated_hash_locked_environment():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["release"]["steps"]
-    install = next(step for step in steps if step.get("name") == "install release verification dependency")
-    assert "-I -m venv" in install["run"]
-    assert "--isolated install" in install["run"]
-    for option in ("--require-hashes", "--only-binary=:all:", "--no-deps", "requirements-release-signing.txt"):
-        assert option in install["run"]
-    assert "OPSKIT_RELEASE_SIGNING_KEY" not in install.get("env", {})
-    assert install["run"].index("requirements-installer.txt") < install["run"].index("requirements-release-signing.txt")
-    signer = next(step for step in steps if "OPSKIT_RELEASE_SIGNING_KEY" in step.get("env", {}))
-    assert '"$RUNNER_TEMP/opskit-signing/bin/python" -I scripts/sign_release.py' in signer["run"]
 
 
 def test_manylinux_builder_is_pinned_to_amd64_digest():
@@ -107,6 +77,15 @@ def test_manylinux_builder_is_pinned_to_amd64_digest():
     # SCons' default environment searches /usr/local/bin, not the devtoolset PATH.
     for name in ("gcc", "g++"):
         assert f"ln -s /opt/rh/devtoolset-10/root/usr/bin/{name} /usr/local/bin/{name}" in command
+
+
+def test_build_setup_does_not_save_disabled_pip_cache():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-python@"))
+    assert "cache" not in setup.get("with", {})
+    installer = WORKFLOW.parents[2] / "scripts/install_release_build.py"
+    assert '"--no-cache-dir"' in installer.read_text(encoding="utf-8")
 
 
 def test_read_only_checkouts_do_not_leave_tokens_for_tests_or_builds():
@@ -148,6 +127,39 @@ def test_ci_dependency_installations_cannot_resolve_unlocked_packages():
     assert "'--no-deps', str(next(" in wheel
 
 
+def test_test_jobs_use_fresh_environments_before_installing_dependencies():
+    release = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    regression = yaml.safe_load((WORKFLOW.parent / "test.yml").read_text(encoding="utf-8"))
+    for job in (release["jobs"]["test"], regression["jobs"]["regression"]):
+        steps = job["steps"]
+        isolation = next(step for step in steps if "venv.EnvBuilder" in step.get("run", ""))
+        installer = next(step for step in steps if "requirements-installer.txt" in step.get("run", ""))
+        assert steps.index(isolation) < steps.index(installer)
+        assert isolation["shell"] == "python"
+        assert "with_pip=True" in isolation["run"]
+        assert "system_site_packages=True" not in isolation["run"]
+        assert "GITHUB_PATH" in isolation["run"]
+        assert "RUNNER_TEMP" in isolation["run"]
+
+
+def test_secret_scan_exception_is_limited_to_reviewed_historical_fixture():
+    root = WORKFLOW.parents[2]
+    exceptions = [line for line in (root / ".gitleaksignore").read_text().splitlines()
+                  if line and not line.startswith("#")]
+    assert exceptions == [
+        "3e80a4ea522de862e8fb2f2df72c315a68b1f4b2:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "a25fa93adf14bb3365e2ff557cbeec512d859fc9:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "67125d26312450173da0be1f86aa7f6762b2f43f:tests/test_plugin_fetch_source.py:generic-api-key:160",
+        "0506b194acf315dc488dc596cb4bb2d1df980263:tests/test_plugin_fetch_source.py:generic-api-key:161",
+    ]
+    workflow = yaml.safe_load((WORKFLOW.parent / "test.yml").read_text(encoding="utf-8"))
+    scan = next(step["run"] for step in workflow["jobs"]["secrets"]["steps"]
+                if "--log-opts" in step.get("run", ""))
+    assert "--gitleaks-ignore-path .gitleaksignore" in scan
+    assert "--ignore-gitleaks-allow" in scan
+    assert "--all -m --full-history" in scan
+
+
 def test_frozen_artifact_gate_precedes_upload():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["build"]["steps"]
@@ -159,3 +171,8 @@ def test_frozen_artifact_gate_precedes_upload():
     assert "subprocess.check_call" in command
     assert '"${{ matrix.artifact }}"' in command
     assert '"--build"' in command and '"--output"' in command
+    diagnostic = next(step for step in steps if step.get("name") == "save frozen CLI diagnostics")
+    assert diagnostic["if"] == "always()"
+    assert diagnostic["with"]["name"] == "frozen-check-${{ matrix.artifact }}"
+    assert all(suffix in diagnostic["with"]["path"] for suffix in ("*.stdout", "*.stderr", "*.status.json"))
+    assert "if" not in steps[upload]  # Broken executables never become release assets.

@@ -1,6 +1,5 @@
 """Windows 8.3 paths are an optional, pinned execution optimization."""
 import os
-from pathlib import Path
 
 import pytest
 
@@ -137,7 +136,7 @@ def test_short_alias_reparse_point_is_rejected(tmp_path, monkeypatch):
                           capture_output=True, check=False)
     if made.returncode:
         pytest.skip("Windows junction creation is unavailable")
-    assert alias.is_junction()
+    assert getattr(alias.lstat(), "st_reparse_tag", 0) == 0xA0000003
     monkeypatch.setattr(native_short_path, "_short_path", lambda _: alias)
     with pytest.raises(ValueError, match="reparse point"):
         with native_short_path.short_execution_root(root, "runtime/python/python.exe"):

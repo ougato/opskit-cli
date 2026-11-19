@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import stat
 import struct
+import sys
 import time
 import uuid
 
@@ -204,7 +205,10 @@ def _state(entry, root, handle=None):
     body = _control(handle, _GET)
     _authorize_target(_target(body), root)
     info = entry.lstat()
-    if getattr(info, "st_reparse_tag", None) != _MOUNT_POINT or (info.st_dev, info.st_ino) != identity:
+    # CPython before 3.12 exposes the 32-bit volume serial in st_dev
+    # The native guard still retains the full volume and file identity
+    stat_identity = (identity[0] & 0xFFFFFFFF, identity[1]) if sys.version_info < (3, 12) else identity
+    if getattr(info, "st_reparse_tag", None) != _MOUNT_POINT or (info.st_dev, info.st_ino) != stat_identity:
         raise InstallError("junction identity changed")
     descriptor, protected = _security(handle)
     return _State(identity, body, descriptor, protected)

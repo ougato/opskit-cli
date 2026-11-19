@@ -1,8 +1,8 @@
 """Host-only capability decisions; plugins cannot write this authority store."""
 from __future__ import annotations
 
-from dataclasses import asdict
-from contextlib import nullcontext
+from dataclasses import asdict, replace
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -232,6 +232,32 @@ class CapabilityAuthority:
     def list_grants(self) -> list[CapabilityRequest]:
         with self.lock.hold():
             return [CapabilityRequest(**value) for value in self._load()["grants"].values()]
+
+    @contextmanager
+    def inherit_directory_reads(self, plugin: str, previous: str, fingerprint: str):
+        """Carry permanent read scopes across a verified, trust-preserving update."""
+        with self.lock.hold():
+            state = self._load()
+            original = state["grants"]
+            updated = original.copy()
+            for key, item in original.items():
+                request = CapabilityRequest(**item)
+                if (request.plugin, request.fingerprint, request.operation) != (
+                    plugin, previous, "directory.read",
+                ):
+                    continue
+                updated.pop(key)
+                renewed = replace(request, fingerprint=fingerprint)
+                updated[_key(renewed)] = asdict(renewed)
+            if updated == original:
+                yield
+                return
+            self._save({**state, "grants": updated})
+            try:
+                yield
+            except BaseException:
+                self._save(state)
+                raise
 
     def revoke(self, request: CapabilityRequest) -> None:
         with self.lock.hold():

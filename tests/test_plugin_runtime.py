@@ -11,6 +11,7 @@ from core import plugin_runtime as runtime
 
 
 def inputs(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.native_sandbox.get_backend", lambda: SimpleNamespace(probe=lambda: None))
     python = tmp_path / "python"
     python.mkdir()
     (python / "python.exe").write_bytes(b"not executed on host")

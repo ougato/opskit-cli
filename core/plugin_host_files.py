@@ -54,8 +54,8 @@ def list_files(plugin, fingerprint, directory, *, authority, check_identity, che
     return sorted(names)
 
 
-def read_file(plugin, fingerprint, directory, relative, *, authority, check_identity):
-    if (not isinstance(directory, str) or not Path(directory).is_absolute()
+def read_file(plugin, fingerprint, directory, relative, *, authority, check_identity, missing_ok=False):
+    if (type(missing_ok) is not bool or not isinstance(directory, str) or not Path(directory).is_absolute()
             or not isinstance(relative, str) or not relative or "\\" in relative
             or any(ord(char) < 32 for char in directory + relative)):
         raise ValueError("invalid host file request")
@@ -81,12 +81,17 @@ def read_file(plugin, fingerprint, directory, relative, *, authority, check_iden
             or getattr(current, "st_file_attributes", 0) & 0x400):
         raise ValueError("host directory changed during authorization")
     target = root.joinpath(*name.parts)
-    body = _read_file(target, root, MAX_READ)
+    try:
+        body = _read_file(target, root, MAX_READ)
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
+        body = None
     current = root.lstat()
     if (current.st_dev, current.st_ino) != root_identity:
         raise ValueError("host directory changed during read")
     authority.check(scope, check_identity=check_identity)
-    return {"encoding": "base64", "content": base64.b64encode(body).decode("ascii")}
+    return None if body is None else {"encoding": "base64", "content": base64.b64encode(body).decode("ascii")}
 
 
 def file_status(plugin, fingerprint, directory, relative, *, authority, check_identity):

@@ -54,6 +54,7 @@ def register(app, translate=None):
                 "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
                 "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
+        safe.add(t("plugin_native.lifecycle.plugin_busy"))
         safe.update(t("plugin_native.errors.platform_pending", platform=platform) for platform in ("linux", "darwin"))
         return message if message in safe else t("plugin_native.errors." + default)
     def state_command(name, caller, digest=None):
@@ -280,10 +281,8 @@ def register(app, translate=None):
         elif status == "downgrade":
             result["authorization_required"] = True
             result["error"] = t("plugin_native.lifecycle.update_downgrade_pending", name=manifest.name)
-        elif status == "unchanged":
-            result["authorization_required"] = commands.trust_status(manifest) != commands.TRUST_OK
         else:
-            result["authorization_required"] = True
+            result["authorization_required"] = commands.trust_status(manifest) != commands.TRUST_OK
         return result
 
     @app.command("update", help=translate("lifecycle.update_help"))

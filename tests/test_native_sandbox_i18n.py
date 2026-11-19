@@ -1,5 +1,6 @@
 """New native plugin UI must use the same bilingual catalogues as OpsKit."""
-from types import SimpleNamespace
+
+import re
 
 import pytest
 
@@ -60,8 +61,8 @@ def test_native_run_failure_uses_cli_error_boundary(monkeypatch, language):
     monkeypatch.setattr(cli, "run_plugin", refused)
     result = CliRunner().invoke(main.app, ["--non-interactive", "plugin", "run", "probe"])
     assert result.exit_code == 1
-    assert i18n.t("plugin_native.errors.worker_failed") in result.output
-    assert "Traceback" not in result.output
+    assert i18n.t("plugin_native.errors.worker_failed") in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "Traceback" not in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
@@ -89,31 +90,31 @@ def test_lifecycle_help_and_resolution_errors_follow_language(monkeypatch, langu
                          ("fingerprint", "fingerprint_help"),
                          ("authorize-service", "authorize_service_help")):
         result = runner.invoke(app, [command, "--help"], terminal_width=240)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         expected = i18n.t("plugin_native.lifecycle." + key)
-        assert " ".join(expected.split()) in " ".join(result.output.split())
+        assert " ".join(expected.split()) in " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).split())
     result = runner.invoke(app, ["show", "missing"])
     assert result.exit_code == 2
-    assert i18n.t("plugin_native.lifecycle.not_found") in result.output
+    assert i18n.t("plugin_native.lifecycle.not_found") in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     result = runner.invoke(app, ["recover-update", "invalid", "--record-sha256", "BAD"])
     assert result.exit_code == 1
-    assert i18n.t("plugin_native.lifecycle.update_recovery_failed") in result.output
+    assert i18n.t("plugin_native.lifecycle.update_recovery_failed") in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     result = runner.invoke(app, ["recover-native-workspace", "invalid", "--record-sha256", "BAD"])
     assert result.exit_code == 1
-    assert i18n.t("plugin_native.lifecycle.workspace_recovery_failed") in result.output
+    assert i18n.t("plugin_native.lifecycle.workspace_recovery_failed") in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     result = runner.invoke(app, ["prepare", "--help"], terminal_width=240)
-    assert result.exit_code == 0, result.output
-    visible = "".join(result.output.replace("│", "").split())
+    assert result.exit_code == 0, re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    visible = "".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("│", "").split())
     for key in ("plugin_path_help", "dependency_help", "python_runtime_help", "wheels_help", "lock_file_help"):
         assert "".join(i18n.t("plugin_native." + key).split()) in visible
     for command in ("install", "update"):
         result = runner.invoke(app, [command, "--help"], terminal_width=240)
         assert result.exit_code == 0
-        assert "--fetch-profile" in result.output and "--allow-private" in result.output
+        assert "--fetch-profile" in re.sub(r"\x1b\[[0-9;]*m", "", result.output) and "--allow-private" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         for key in ("fetch_profile_help", "allow_private_help"):
             expected = i18n.t("plugin_native." + key)
             # Rich wraps option descriptions inside table borders.
-            visible = "".join(result.output.replace("│", "").split())
+            visible = "".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("│", "").split())
             assert "".join(expected.split()) in visible
 
 
@@ -163,9 +164,9 @@ def test_prepare_fetch_help_and_failure_are_localized(monkeypatch, capsys, langu
     runner = CliRunner()
     result = runner.invoke(app, ["prepare-fetch", "--help"])
     assert result.exit_code == 0
-    assert help_word in result.output
-    assert "--git-runtime" not in result.output and "--python-runtime" in result.output
-    assert "--packages" not in result.output
+    assert help_word in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--git-runtime" not in re.sub(r"\x1b\[[0-9;]*m", "", result.output) and "--python-runtime" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--packages" not in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     def fail(*args, **kwargs):
         raise ValueError("SECRET")
     monkeypatch.setattr(FetchCatalog, "prepare", fail)
@@ -173,7 +174,7 @@ def test_prepare_fetch_help_and_failure_are_localized(monkeypatch, capsys, langu
     try:
         result = runner.invoke(app, ["prepare-fetch", "--python-runtime", "python"])
         assert result.exit_code == 2
-        output = result.output + capsys.readouterr().out
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output) + capsys.readouterr().out
         assert i18n.t("plugin_native.errors.fetch_prepare_invalid") in output
         assert "SECRET" not in output and "plugin_native." not in output
     finally:

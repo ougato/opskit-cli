@@ -1,8 +1,4 @@
 """Receipts retain host authority across build, commit, inspection and collection."""
-import hashlib
-import json
-import os
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -119,7 +115,7 @@ def test_commit_rejects_pending_directory_with_wrong_generated_name(tmp_path, co
 
 def test_active_cross_process_resource_lock_blocks_cleanup(tmp_path, context):
     old,path=output(tmp_path,context);output(tmp_path,context)
-    row=next(r for r in manage("list",{"resource":str(tmp_path),"keep":1},context) if r["id"]==old)
+    next(r for r in manage("list",{"resource":str(tmp_path),"keep":1},context) if r["id"]==old)
     code="from core.plugin_artifacts import resource_lock; from pathlib import Path\nwith resource_lock(Path("+repr(str(tmp_path))+")): pass"
     with artifacts.resource_lock(tmp_path):
         child=subprocess.run([sys.executable,"-c",code],capture_output=True,timeout=10)

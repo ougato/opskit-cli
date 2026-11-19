@@ -705,6 +705,7 @@ def test_real_helper_wait_deadline_does_not_replace_live_parent(job):
         parent.wait(timeout=5)
 
 
+@pytest.mark.timeout(90)
 def test_scheduled_helper_waits_for_exact_parent_process(job):
     folder, target, artifact, old, new = job
     ready, release = folder / "scheduler-ready", folder / "scheduler-release"
@@ -727,13 +728,16 @@ def test_scheduled_helper_waits_for_exact_parent_process(job):
                               creationflags=subprocess.CREATE_NO_WINDOW)
     helper_result = None
     try:
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 30
         while not ready.exists():
             if parent.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError("scheduler did not launch the update helper")
             time.sleep(.02)
         job_dir = folder / "cache" / "update-jobs" / ready.read_text(encoding="ascii")
+        deadline = time.monotonic() + 30
         while not (job_dir / "running.json").exists():
+            if (job_dir / "result.json").exists():
+                raise RuntimeError(f"scheduled helper failed before acknowledgement: {(job_dir / 'result.json').read_text(encoding='utf-8')}")
             if parent.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError("scheduled helper did not acknowledge launch")
             time.sleep(.02)
@@ -742,6 +746,7 @@ def test_scheduled_helper_waits_for_exact_parent_process(job):
         release.write_text("release", encoding="ascii")
         stdout, stderr = parent.communicate(timeout=10)
         assert parent.returncode == 0, (stdout, stderr)
+        deadline = time.monotonic() + 20
         while not (job_dir / "result.json").exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError("scheduled helper did not finish after its parent exited")

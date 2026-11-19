@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
-from worker_test_markers import publish_marker
+from worker_test_markers import publish_marker, publish_process_marker, marked_process_exists
 
 from core import plugin, plugin_inspection as inspection, plugin_sandbox as sandbox
 
@@ -51,7 +51,7 @@ def bad_manifest_session(connection, buffer, length, requested):
     spec = json.loads(Path(request["root"]).joinpath("frames.json").read_text())
     marker = Path(request["root"]) / "reader-pid"
     if not spec.get("block_after_first"):
-        publish_marker(marker, str(os.getpid()))
+        publish_process_marker(marker)
     send(connection, spec["header"])
     if spec.get("block_after_first"):
         view = memoryview(buffer).cast("B")
@@ -60,7 +60,7 @@ def bad_manifest_session(connection, buffer, length, requested):
         send(connection, {"offset": 0, "size": inspection.REQUEST_LIMIT})
         requested.wait()
         requested.clear()
-        publish_marker(marker, str(os.getpid()))
+        publish_process_marker(marker)
     if "chunk" in spec:
         send(connection, spec["chunk"])
     # Remain live, so a rejection must actually reap the owned process.
@@ -160,7 +160,7 @@ def test_invalid_transport_rejects_and_reaps(tmp_path, monkeypatch, spec):
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(RuntimeError, match="manifest inspection"):
             reader.manifest(tmp_path, timeout=30)
-    assert not psutil.pid_exists(int((tmp_path / "reader-pid").read_text()))
+    assert not marked_process_exists(tmp_path / "reader-pid")
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -181,7 +181,7 @@ def test_next_chunk_blocked_uses_same_deadline_and_reaps(tmp_path, monkeypatch, 
     with closing(inspection.ContentInspector()) as reader:
         with pytest.raises(KeyboardInterrupt if cancel else TimeoutError):
             reader.manifest(tmp_path, timeout=30)
-    assert marker.exists() and not psutil.pid_exists(int(marker.read_text()))
+    assert marker.exists() and not marked_process_exists(marker)
 
 
 @pytest.mark.usefixtures("prepared_native_catalog")

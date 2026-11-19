@@ -13,7 +13,7 @@ from core import updater
 def download_env(tmp_path, monkeypatch):
     from core import mirror
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(mirror, "get_sources", lambda *a: ["https://github.com"])
+    monkeypatch.setattr(mirror, "get_sources", lambda *a, **kw: ["https://github.com"])
     monkeypatch.setattr(updater.shutil, "disk_usage", lambda *a: SimpleNamespace(free=2 * 1024 ** 3))
     monkeypatch.setattr(updater, "MAX_UPDATE_BYTES", 8)
     cache = updater._get_pending_path().parent

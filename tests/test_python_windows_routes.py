@@ -14,6 +14,11 @@ from software._shared import windows_commands, windows_junction
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires Windows junctions and cmd")
 
 
+@pytest.mark.parametrize("relative", ["python.exe", "Python.EXE", "Scripts\\Python.EXE"])
+def test_generated_command_is_owned_regardless_of_executable_case(relative):
+    assert WindowsDriver._owned_command("python.cmd", WindowsDriver._route_text(relative))
+
+
 @pytest.fixture
 def driver(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

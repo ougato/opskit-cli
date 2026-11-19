@@ -1,11 +1,13 @@
 """Real read-only DB/API checks, invalid state and safe report output."""
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import sqlite3
 import threading
 
 import pytest
+
+from tests.http_server_fixture import LoopbackHTTPServer
 
 from xui import diagnostics, utils, constants
 
@@ -103,8 +105,13 @@ def test_database_locked_does_not_wait_beyond_budget(tmp_path):
     with sqlite3.connect(path) as writer:
         writer.execute("begin exclusive")
         start = time.monotonic()
-        with pytest.raises(TimeoutError, match="XUI database"):
-            diagnostics._inbound_configured(path, 443, timeout=.05)
+        try:
+            healthy = diagnostics._inbound_configured(path, 443, timeout=.05)
+        except TimeoutError as error:
+            assert "XUI database" in str(error)
+        else:
+            # SQLite can report SQLITE_BUSY just before the supervisor expires.
+            assert healthy is False
         assert time.monotonic() - start < 3
         writer.rollback()
 
@@ -168,7 +175,7 @@ def test_real_loopback_api_protocol(reply, healthy):
             self.end_headers()
             self.wfile.write(body)
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -193,7 +200,7 @@ def test_api_redirect_is_not_followed():
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

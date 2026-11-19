@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,23 @@ sys.path.insert(0, str(REPO_ROOT))
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestBootExecRestart:
+    def test_nuitka_update_and_restart_use_outer_launcher(self, tmp_path, monkeypatch):
+        from core import paths, updater
+        from core.startup import _restart_after_update
+
+        launcher = tmp_path / "opskit"
+        launcher.touch()
+        monkeypatch.setattr(paths, "__compiled__", SimpleNamespace(onefile=True), raising=False)
+        monkeypatch.setattr(updater, "_is_frozen", lambda: True)
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "onefile_123" / "opskit.bin"))
+        monkeypatch.setattr(sys, "argv", [str(launcher)])
+
+        assert updater._self_path() == launcher.resolve()
+        with patch("os.execv") as execute:
+            _restart_after_update(["--lang", "en"])
+        executable = str(launcher.resolve())
+        execute.assert_called_once_with(executable, [executable, "--post-update", "--lang", "en"])
+
     def test_frozen_mode_calls_execv(self):
         """打包模式（frozen=True）下 check_and_apply_pending() 返回 True 时应调用 os.execv"""
         import main as _main
@@ -44,6 +62,23 @@ class TestBootExecRestart:
         mock_execv.assert_called_once()
         args = mock_execv.call_args[0]
         assert args[0] == sys.executable
+
+    def test_pyinstaller_restart_uses_fresh_archive_and_original_library_path(self, monkeypatch):
+        from core.startup import _restart_after_update
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "/previous-unpack", raising=False)
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/previous-unpack:/original")
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/original")
+        with patch("os.execve") as execute:
+            _restart_after_update(["--lang", "en"])
+        path, argv, env = execute.call_args.args
+        assert path == sys.executable
+        assert argv == [path, "--post-update", "--lang", "en"]
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert env["LD_LIBRARY_PATH"] == "/original"
+        assert "LD_LIBRARY_PATH_ORIG" not in env
+        assert os.environ["LD_LIBRARY_PATH"] == "/previous-unpack:/original"
 
     def test_dev_mode_no_execv(self):
         """开发模式（frozen=False）下不应调用 os.execv"""
