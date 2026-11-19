@@ -478,11 +478,12 @@ else:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires a Windows console")
-@pytest.mark.parametrize("phase", ["render", "input", "key", "pause", "ready"])
+@pytest.mark.parametrize("phase", ["render", "input", "key", "pause", "ready", "plugin", "confirm", "text"])
 def test_root_ctrl_c_during_render_and_input_exits_cleanly(tmp_path, phase):
     marker = tmp_path / "root.txt"
     script = """
-import ctypes, pathlib, sys, threading, time
+import ctypes, os, pathlib, sys, threading, time
+from types import SimpleNamespace
 sys.path.insert(0, str(pathlib.Path.cwd()))
 import main
 from core import cleanup, plugin_entry_preload, prompt
@@ -516,6 +517,12 @@ main._on_exit = on_exit
 plugin_entry_preload.cancel_pending = lambda **kwargs: record('cancel')
 prompt._stdin_is_tty = lambda: True
 actual_select = main.select
+phase = sys.argv[2]
+batch_phases = ('ready', 'plugin', 'confirm', 'text')
+if phase in batch_phases:
+    def shell(command):
+        raise AssertionError('Windows prompt launched a shell to clear the screen')
+    os.system = shell
 def send(wait_input):
     if wait_input:
         deadline = time.monotonic() + 5
@@ -524,9 +531,9 @@ def send(wait_input):
         if not cleanup._console_input_active:
             record('input wait failed')
             return
-    elif sys.argv[2] != 'ready':
+    elif phase not in batch_phases:
         time.sleep(.3)
-    if sys.argv[2] in ('key', 'pause', 'ready'):
+    if phase in (*batch_phases, 'key', 'pause'):
         from core.windows_console_input import _InputRecord
         mode = ctypes.c_ulong()
         if not kernel.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)) or mode.value & 1:
@@ -553,7 +560,7 @@ def select(**kwargs):
         raise RuntimeError('Ctrl+C was not delivered during rendering')
     def ready():
         record(sys.argv[2])
-        if sys.argv[2] == 'ready':
+        if phase in batch_phases:
             send(False)
         else:
             threading.Thread(target=send, args=(True,), daemon=True).start()
@@ -564,6 +571,19 @@ def select(**kwargs):
     kwargs['on_ready'] = ready
     return actual_select(**kwargs)
 main.select = select
+if phase == 'plugin':
+    from plugin import menu
+    menu.commands.loaded_plugins = lambda: []
+    menu.select = select
+    main.discover_modules = lambda cfg: [SimpleNamespace(key='plugin', icon='*', label='Plugins', entry=menu._entry)]
+    main.select = lambda **kwargs: '1'
+elif phase in ('confirm', 'text'):
+    def render(labels):
+        record(phase)
+        send(False)
+    prompt._render_header = render
+    main.select = (lambda **kwargs: prompt.confirm(['OpsKit'], 'Confirm')) if phase == 'confirm' else (
+        lambda **kwargs: prompt.text_input(['OpsKit'], 'Text'))
 main._main_menu({})
 raise RuntimeError('expected UserExit')
 """
@@ -571,7 +591,7 @@ raise RuntimeError('expected UserExit')
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = subprocess.SW_HIDE
     command = [sys.executable, "-c", script, str(marker), phase]
-    if phase == "ready":
+    if phase in ("ready", "plugin", "confirm", "text"):
         entry = tmp_path / "entry.py"
         entry.write_text(script, encoding="utf-8")
         shim = tmp_path / "python.cmd"
