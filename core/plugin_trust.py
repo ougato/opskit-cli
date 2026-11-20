@@ -1,8 +1,7 @@
-"""插件信任存储 — 首次信任确认 + 指纹变更重确认
+"""保存已批准的插件指纹以及独立的服务调用授权。
 
-信任模型（同 Homebrew tap）：插件代码在加载前必须经用户明确信任；
-信任时记录插件目录内容指纹，之后内容一旦变化（如 git pull 更新）即失效，
-需要用户重新确认，防止「先发好版本、后续更新投毒」。
+插件运行时核对当前内容指纹。受控更新可以在验证发布内容后续接已有信任，
+服务调用仍须持有与调用者、提供方指纹和契约匹配的授权。
 
 存储位置：<data_dir>/plugin_trust.yaml
     <name>:
@@ -179,7 +178,7 @@ def grant(name: str, fingerprint: str, version: str, source: str = "", branch: s
           installation_receipt: str | None = None, source_commit: str | None = None) -> None:
     """记录用户对插件当前内容的信任。
 
-    branch 为 None 时保留原记录已存的分支（更新重确认不丢失安装分支）。
+    branch 为 None 时保留记录中的安装分支。
     """
     if (installation_receipt is not None or source_commit is not None) and (
             not isinstance(installation_receipt, str) or re.fullmatch(r"[0-9a-f]{64}", installation_receipt) is None

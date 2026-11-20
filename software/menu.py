@@ -44,7 +44,7 @@ def entry() -> None:
         try:
             key = select(
                 breadcrumb=["OpsKit", t("menu.software")],
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -160,9 +160,9 @@ def _pick_and_act(breadcrumb: list[str], recipes: list) -> None:
             "hint": hints.get(cls.key, ""),
         },
         subtitle_of=lambda page, total_pages: (
-            f"{t('prompt.select')}  [{page + 1}/{total_pages}]"
+            f"[{page + 1}/{total_pages}]"
             if total_pages > 1
-            else t("prompt.select")
+            else ""
         ),
         back_label=f"{get_icon('back')} {t('menu.back')}",
         nav_labels=(t("software.prev_page"), t("software.next_page")),
@@ -194,7 +194,7 @@ def _show_submenu(breadcrumb: list[str], cls: type) -> None:
         try:
             key = select(
                 breadcrumb=sub_breadcrumb,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -267,7 +267,7 @@ def show_actions(breadcrumb: list[str], cls: type) -> None:
         try:
             key = select(
                 breadcrumb=sub_breadcrumb,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -821,7 +821,7 @@ def show_install() -> None:
     try:
         key = select(
             breadcrumb=["OpsKit", t("menu.software"), t("software.install")],
-            subtitle=t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key=_THEME_KEY,
             back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -988,7 +988,7 @@ def show_installed() -> None:
             "label": f"{get_icon(item[0].key)} {recipe_display_name(item[0])}",
             "hint": item[2],
         },
-        subtitle_of=lambda page, total_pages: t("prompt.select"),
+        subtitle_of=lambda page, total_pages: "",
         back_label=f"{get_icon('back')} {t('menu.back')}",
         nav_labels=(t("software.prev_page"), t("software.next_page")),
         theme_key=_THEME_KEY,
@@ -1028,7 +1028,7 @@ def show_uninstall() -> None:
     try:
         key = select(
             breadcrumb=["OpsKit", t("menu.software"), t("software.uninstall")],
-            subtitle=t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key=_THEME_KEY,
             back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -1104,7 +1104,7 @@ def show_upgrade() -> None:
     try:
         key = select(
             breadcrumb=["OpsKit", t("menu.software"), t("software.upgrade")],
-            subtitle=t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key=_THEME_KEY,
             back_label=f"{get_icon('back')} {t('menu.back')}",

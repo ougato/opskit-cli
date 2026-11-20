@@ -717,7 +717,7 @@ def manage_client() -> None:
         try:
             key = select(
                 breadcrumb=breadcrumb,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key="software",
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -987,7 +987,7 @@ def _pick_tunnel(tunnels, sub):
     try:
         key = select(
             breadcrumb=sub,
-            subtitle=t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key="software",
             back_label=t("menu.back"),

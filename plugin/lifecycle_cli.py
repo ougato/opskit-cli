@@ -50,7 +50,8 @@ def register(app, translate=None):
         # Only fixed host-generated translations are safe to show. Never render
         # raw process, repository, credential or filesystem diagnostics.
         keys = ("fetch_dependency_missing", "fetch_python_failed", "fetch_setup_failed", "runtime_setup_failed", "fetch_tools_missing", "fetch_tools_invalid", "acquisition_failed", "workspace_failed", "workspace_full", "workspace_busy",
-                "update_failed", "update_modified", "candidate_checksums", "execution_timeout", "platform_unsupported",
+                "update_failed", "update_modified", "update_trust_required", "update_downgrade_blocked",
+                "candidate_checksums", "execution_timeout", "platform_unsupported",
                 "fetch_profile_invalid", "fetch_private_denied", "fetch_tls_failed", "fetch_protocol_failed", "fetch_transfer_failed",
                 "fetch_ssh_host_failed", "fetch_ssh_auth_failed", "fetch_http_auth_failed", "fetch_ssh_connection_failed")
         safe = {t("plugin_native.errors." + key) for key in keys}
@@ -276,13 +277,8 @@ def register(app, translate=None):
         if not ok:
             result["error"] = (t("plugin.update_not_git", name=manifest.name) if status == "not_git"
                                else acquisition_error(status, "update_failed"))
-        elif status == "tampered":
-            result["error"] = t("plugin.update_tampered", name=manifest.name)
-        elif status == "downgrade":
-            result["authorization_required"] = True
-            result["error"] = t("plugin_native.lifecycle.update_downgrade_pending", name=manifest.name)
         else:
-            result["authorization_required"] = commands.trust_status(manifest) != commands.TRUST_OK
+            result["authorization_required"] = False
         return result
 
     @app.command("update", help=translate("lifecycle.update_help"))

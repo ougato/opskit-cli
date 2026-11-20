@@ -65,7 +65,6 @@ plugin:
   install_failed: "安装失败（{error}）"
   install_no_manifest: "缺 plugin.yaml 或清单非法，已回滚"
   update_all: "更新全部"
-  update_trusted: "已信任 {name} {version}"
   update_cancelled: "已取消更新 {name}"
   update_success: "插件 {name} 已更新到 {version}"
   update_latest: "{name} 已是最新版本"
@@ -78,7 +77,6 @@ plugin:
   trust_declined: "未信任 {name}，插件不会加载"
   trust_needed: "插件 {name} 内容已变化，重新信任后才会加载"
   source_warning: "来源不在可信来源白名单，代码未经审查"
-  update_tampered: "插件 {name} 内容与发布清单 CHECKSUMS.yaml 不符，可能被篡改，已拒绝加载"
 
 install:
   progress: "[{step}/{total}] {desc}..."
@@ -112,7 +110,6 @@ service:
   unavailable: "服务 {service} 不可用，请先安装并信任对应插件"
 
 prompt:
-  select: "请选择"
   confirm_yes: "[y/N]"
   input: "请输入"
   press_any: "按任意键继续..."
@@ -1001,6 +998,8 @@ plugin_native:
     update_failed: "插件更新失败，请查看 OpsKit 日志后重试"
     candidate_checksums: "候选版本与 CHECKSUMS.yaml 不匹配，请等待发布方修正后再更新"
     update_modified: "安装内容已修改或缺少原生安装凭据。请先备份修改再重新安装，本次未替换任何文件。"
+    update_trust_required: "请先运行 plugin trust 并提供已核对的指纹"
+    update_downgrade_blocked: "来源版本低于已安装版本，已保留当前版本"
     prepare_invalid: "插件、私有 Python 运行时、离线 wheel 或依赖锁无效。"
     prepare_failed: "原生插件运行时准备失败。"
     runtime_missing: "尚未准备原生运行时，请先运行 plugin prepare。"
@@ -1084,13 +1083,12 @@ plugin_native:
     changed: "授权期间插件内容发生变化"
     authorize_service_help: "批准调用方声明的指定服务契约"
     revoke_service_help: "撤销一项服务调用授权，保留插件自身的信任授权"
-    update_downgrade_pending: "{name} 已装入较低版本，请检查并确认信任"
 
 confirm_ui:
   uninstall: 卸载插件
   plugin_delete: 插件目录将被删除，状态数据保留。
   trust: 信任插件
-  trust_detail: 插件运行于沙盒，授权的宿主工具以当前用户权限运行。
+  trust_detail: "确认后将信任此安装来源的后续已校验更新。授权的宿主工具以当前用户权限运行"
   private_connection: 允许连接
   private_detail: 仓库地址指向内网或保留地址，仅允许本次连接。
   revoke: 撤销权限
@@ -1125,5 +1123,4 @@ confirm_ui:
   apply_update: 应用更新
   tunnel: 删除隧道
   peer: 删除节点
-  downgrade_detail: "版本回退：{old} → {new}。"
   port_process: "占用进程：{process}"

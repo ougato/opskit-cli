@@ -477,7 +477,8 @@ def _broker(manifest, request: dict):
         if "network" not in manifest.permissions or kwargs or len(args) != 4:
             raise SandboxError("network capability not granted")
         import base64
-        if not isinstance(args[3], str) or len(args[3]) > 44000:
+        from core.plugin_http import MAX_ENCODED_BODY, request as https_request
+        if not isinstance(args[3], str) or len(args[3]) > MAX_ENCODED_BODY:
             raise SandboxError("invalid HTTP request body")
         body = base64.b64decode(args[3], validate=True)
         private = _read_sandbox_setting("private_targets", manifest.name)
@@ -487,7 +488,6 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        from core.plugin_http import request as https_request
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version", "host.list_files"}:

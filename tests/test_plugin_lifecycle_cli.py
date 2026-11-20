@@ -224,11 +224,12 @@ def test_update_rejects_invalid_target_or_bulk_source_options(isolated, monkeypa
 def test_update_all_reports_each_result_and_continues_after_failures(isolated, monkeypatch):
     from core.plugin import PluginManifest
     from plugin import commands
+    from core.i18n import t
     statuses = {
         "broken": (False, "private diagnostic"),
-        "pending": (True, "unchanged"),
+        "pending": (False, t("plugin_native.errors.update_trust_required")),
         "latest": (True, "unchanged"),
-        "older": (True, "downgrade"),
+        "older": (False, t("plugin_native.errors.update_downgrade_blocked")),
         "updated": (True, "updated"),
     }
     manifests = [PluginManifest(name=name, version="1.0.0", api_version=4, kind="python", entry=name)
@@ -248,20 +249,20 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
     assert result.exit_code == 1 and "private diagnostic" not in result.output
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
-    assert payload["data"]["failed"] == 2
+    assert payload["data"]["failed"] == 3
     assert calls == list(statuses)
     results = payload["data"]["plugins"]
     assert [(item["name"], item["status"], item.get("authorization_required")) for item in results] == [
         ("broken", "failed", None),
-        ("pending", "unchanged", True),
+        ("pending", "failed", None),
         ("latest", "unchanged", False),
-        ("older", "downgrade", True),
+        ("older", "failed", None),
         ("updated", "updated", False),
     ]
-    assert {item["name"] for item in results if "error" in item} == {"broken", "older"}
+    assert {item["name"] for item in results if "error" in item} == {"broken", "older", "pending"}
 
     single = call("plugin", "update", "pending")
-    assert single.exit_code == 0
+    assert single.exit_code == 1
     assert json.loads(single.stdout)["data"] == results[1]
 
 

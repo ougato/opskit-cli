@@ -319,7 +319,8 @@ def _drain_input() -> None:
     if os.name == 'nt':
         import msvcrt
         while msvcrt.kbhit():
-            _getwch()
+            if _getwch() in ('\x03', '\x04'):
+                raise UserExit
     else:
         import select as _select
         import termios
@@ -422,7 +423,10 @@ def clear_screen() -> None:
     """清除终端屏幕（跨平台）"""
     from core.cli import non_interactive
     if not non_interactive.get():
-        os.system('cls' if os.name == 'nt' else 'clear')
+        if os.name == 'nt':
+            console.clear()
+        else:
+            os.system('clear')
 
 
 def print_header(breadcrumb: list[str]) -> None:
@@ -461,7 +465,7 @@ def select(
     if len(numbered) > 9 and [c['key'] for c in numbered] == [str(i + 1) for i in range(len(numbered))]:
         return _select_numbered_pages(breadcrumb, subtitle, numbered, theme_key, show_shortcuts,
                                       back_label, on_ready, description, info_lines)
-    os.system('cls' if os.name == 'nt' else 'clear')
+    clear_screen()
     labels = [*breadcrumb, subtitle] if subtitle else breadcrumb
     _render_header(labels)
     _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
@@ -553,13 +557,14 @@ def _select_numbered_pages(breadcrumb, subtitle, choices, theme_key, show_shortc
             return key
 
 
+@read_control_keys()
 def select_input(breadcrumb: list[str], subtitle: str, choices: list[dict[str, Any]],
                  back_label: str = '', description: str = '', default: str = '',
                  info_lines: list[str] | None = None) -> str:
     """Display the standard numbered menu and accept a full line of input."""
     from core.cli import require_interaction
     require_interaction()
-    os.system('cls' if os.name == 'nt' else 'clear')
+    clear_screen()
     _render_header([*breadcrumb, subtitle] if subtitle else breadcrumb)
     _render_info_lines([*([description] if description else []), *(info_lines or [])], markup=False)
     _render_options([(c['key'], c['label']) for c in choices if c['key'] != '0'], back_label=back_label)
@@ -708,6 +713,7 @@ def _read_key_seq() -> str:
     return 'NAV'
 
 
+@read_control_keys()
 def multi_select(
     breadcrumb: list[str],
     subtitle: str,
@@ -733,7 +739,7 @@ def multi_select(
     checked: set[int] = set()
 
     def _render() -> None:
-        os.system('cls' if os.name == 'nt' else 'clear')
+        clear_screen()
         _render_header(breadcrumb)
         row2 = Text()
         tee = Text(f' {_TEE} ')
@@ -811,6 +817,7 @@ def multi_select(
             raise UserExit
 
 
+@read_control_keys()
 def confirm(
     breadcrumb: list[str],
     prompt: str,
@@ -828,7 +835,7 @@ def confirm(
         require_interaction()
     if _auto_yes and not require_explicit:
         return True
-    os.system('cls' if os.name == 'nt' else 'clear')
+    clear_screen()
     _render_header([*breadcrumb, prompt])
     _render_info_lines(info_lines)
     from core.i18n import t as _t
@@ -979,6 +986,7 @@ def _mask_secret(value: str) -> str:
     return f'{value[:4]}****{value[-4:]}'
 
 
+@read_control_keys()
 def text_input(
     breadcrumb: list[str],
     prompt: str,
@@ -1003,7 +1011,7 @@ def text_input(
     require_interaction()
     if any(ord(char) < 32 or 127 <= ord(char) < 160 for char in initial):
         raise ValueError('initial text must be a single line without control characters')
-    os.system('cls' if os.name == 'nt' else 'clear')
+    clear_screen()
     _render_header(breadcrumb)
 
     row2 = Text()
@@ -1018,8 +1026,9 @@ def text_input(
     _render_info_lines(info_lines, markup=False)
 
     _hint = hint or (_mask_secret(default) if secret else default)
-    hint_str = f'  ({_hint})' if _hint else ''
-    sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m{hint_str} ')
+    sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
+    if _hint:
+        sys.stdout.write(_hint + ' ')
     sys.stdout.flush()
     raw = _read_line(secret=secret, initial=initial) if initial else _read_line(secret=secret)
     return raw if raw else default
@@ -1038,6 +1047,7 @@ def suppress_pause() -> Iterator[None]:
         _pause_suppressed.reset(token)
 
 
+@read_control_keys()
 def pause(msg: str = '') -> None:
     """操作完成后等待用户按任意键（屏蔽 SIGINT 防止二次中断）。
 

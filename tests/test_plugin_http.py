@@ -11,7 +11,7 @@ from core import plugin_http as http
     ("https://example.com", "CONNECT", {}, b""),
     ("https://example.com", "GET", {"Host": "internal"}, b""),
     ("https://example.com", "GET", {"accept": "a\r\nb"}, b""),
-    ("https://example.com", "PUT", {}, b"x" * 32769),
+    ("https://example.com", "PUT", {}, b"x" * (http.MAX_BODY + 1)),
 ], ids=["scheme", "credentials", "port", "method", "host-header", "newline", "body-limit"])
 def test_invalid_requests_fail_before_worker(url, method, headers, body, monkeypatch):
     import network.worker
@@ -39,6 +39,7 @@ def test_https_uses_checked_numeric_address_and_preserves_query(monkeypatch):
     class Response:
         status = 302
         def read(self, limit): return b"redirect body"
+        def getheader(self, name): return '"version"' if name == "ETag" else None
     class Connection:
         def __init__(self, *a, **k): self.sock = None
         def request(self, method, path, **kwargs): calls.append((method, path))
@@ -54,6 +55,7 @@ def test_https_uses_checked_numeric_address_and_preserves_query(monkeypatch):
     monkeypatch.setattr(http.http.client, "HTTPSConnection", Connection)
     result = http._perform("https://example.com/path?q=1", "GET", {}, b"", [])
     assert result["status"] == 302
+    assert result["etag"] == '"version"'
     assert calls == [("93.184.216.34", 443), "example.com", ("GET", "/path?q=1")]
 
 

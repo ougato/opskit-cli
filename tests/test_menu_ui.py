@@ -438,4 +438,5 @@ class TestTextInputInfoLines:
         out = capsys.readouterr().out
         assert result == "1.2.4"
         assert "当前 1.2.3" in out
-        assert "(1.2.4)" in out
+        assert "1.2.4" in out
+        assert "(1.2.4)" not in out

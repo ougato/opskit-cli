@@ -90,7 +90,7 @@ def test_update_publication_failure_preserves_trust_of_restored_bytes(installed,
     assert not list(root.parent.glob(".opskit-update-*"))
 
 
-def test_new_plugin_permissions_require_confirmation(installed, monkeypatch):
+def test_same_source_update_preserves_base_trust_when_permissions_change(installed, monkeypatch):
     root, _ = installed
     from core import native_acquisition
     populate = native_acquisition.populate
@@ -104,7 +104,64 @@ def test_new_plugin_permissions_require_confirmation(installed, monkeypatch):
 
     monkeypatch.setattr(native_acquisition, "populate", changed_permissions)
     assert commands._update_locked(load_manifest(root)) == (True, "updated")
-    assert commands.trust_status(load_manifest(root)) == commands.TRUST_CHANGED
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
+
+
+def test_explicit_revocation_is_not_restored_by_an_update(installed, monkeypatch):
+    from core.plugin_trust import invalidate
+
+    root, receipt = installed
+    invalidate("demo")
+    monkeypatch.setattr("core.native_acquisition.populate", lambda *a, **kw: pytest.fail("revoked plugin fetched"))
+    ok, message = commands._update_locked(load_manifest(root))
+    assert not ok and message == commands.t("plugin_native.errors.update_trust_required")
+    assert content_receipt(root) == receipt
+    assert trusted_record("demo")["fingerprint"] == ""
+
+
+@pytest.mark.parametrize("role", ["caller", "provider"])
+def test_service_contract_upgrade_preserves_base_trust_but_revokes_old_edge(installed, monkeypatch, role):
+    from core import native_acquisition
+    from core.plugin_trust import grant_service, is_service_authorized
+
+    root, _ = installed
+    installation = trusted_record("demo")
+    template = (
+        "uses:\n  - service: storage\n    provider: peer\n    api_version: {version}\n    methods: [open_menu]\n"
+        if role == "caller" else
+        "provides: [storage]\nservice_contracts:\n  storage:\n    api_version: {version}\n    methods: [open_menu]\n"
+    )
+
+    def version_contract(directory, version):
+        with (directory / "plugin.yaml").open("a", encoding="utf-8") as manifest:
+            manifest.write(template.format(version=version))
+
+    version_contract(root, 5)
+    previous = compute_fingerprint(root)
+    grant("demo", previous, installation["version"], installation["source"], installation["branch"],
+          installation_receipt=content_receipt(root), source_commit=installation["source_commit"])
+    peer_fingerprint = "c" * 64
+    grant("peer", peer_fingerprint, "1.0.0")
+    caller, provider = (("demo", "peer") if role == "caller" else ("peer", "demo"))
+    old_fingerprints = {"demo": previous, "peer": peer_fingerprint}
+    grant_service(caller, old_fingerprints[caller], "storage", provider, old_fingerprints[provider], 5, ["open_menu"])
+    assert is_service_authorized(caller, old_fingerprints[caller], "storage", provider,
+                                 old_fingerprints[provider], 5, "open_menu")
+    populate = native_acquisition.populate
+
+    def upgraded_contract(source, destination, **kwargs):
+        candidate = populate(source, destination, **kwargs)
+        version_contract(destination, 6)
+        return Acquisition(candidate.source, candidate.commit, compute_fingerprint(destination),
+                           content_receipt(destination))
+
+    monkeypatch.setattr(native_acquisition, "populate", upgraded_contract)
+    assert commands._update_locked(load_manifest(root)) == (True, "updated")
+    assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
+    new_fingerprints = {**old_fingerprints, "demo": compute_fingerprint(root)}
+    assert "storage" not in trusted_record(caller).get("service_grants", {})
+    assert not is_service_authorized(caller, new_fingerprints[caller], "storage", provider,
+                                     new_fingerprints[provider], 6, "open_menu")
 
 
 @pytest.mark.parametrize("fail", [False, True])

@@ -68,7 +68,7 @@ def _main_menu_loop(host, cfg: dict) -> None:
         try:
             key = host.select(
                 breadcrumb=["OpsKit"],
-                subtitle=host.t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key="root",
                 back_label=f"{host.get_icon('exit')} {host.t('menu.exit')}",
@@ -119,7 +119,7 @@ def _handle_preferences(host, cfg: dict) -> None:
         try:
             key = host.select(
                 breadcrumb=["OpsKit", host.t("menu.preferences")],
-                subtitle=host.t("prompt.select"),
+                subtitle="",
                 choices=pref_choices,
                 theme_key="root",
                 back_label=f"{host.get_icon('back')} {host.t('menu.back')}",
@@ -142,7 +142,7 @@ def _handle_theme(host, cfg: dict) -> None:
     try:
         key = host.select(
             breadcrumb=["OpsKit", host.t("menu.theme")],
-            subtitle=host.t("prompt.select"),
+            subtitle="",
             choices=choices,
             theme_key="root",
             back_label=f"{host.get_icon('back')} {host.t('menu.back')}",

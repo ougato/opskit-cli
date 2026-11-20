@@ -230,7 +230,7 @@ def test_failure_message_survives_menu_clear(monkeypatch, language, expected):
     monkeypatch.setattr(prompt, "console", Console(file=output, width=160, color_system=None))
     monkeypatch.setattr(cli, "require_interaction", lambda: None)
     monkeypatch.setattr(prompt, "_read_key_seq", lambda: "0")
-    monkeypatch.setattr(prompt.os, "system", lambda cmd: output.write("CLEAR\n"))
+    monkeypatch.setattr(prompt, "clear_screen", lambda: output.write("CLEAR\n"))
     monkeypatch.setattr(main, "select", prompt.select)
     monkeypatch.setattr(main, "discover_modules", lambda cfg: loader.ModuleDiscovery([], ["software"]))
     monkeypatch.setattr(main, "_start_background_workers", lambda cfg: None)

@@ -6,7 +6,14 @@ import ssl
 import time
 from urllib.parse import urlsplit
 
-MAX_BODY = 32768
+MAX_BODY = 1024 * 1024
+MAX_ENCODED_BODY = 4 * ((MAX_BODY + 2) // 3)
+
+
+def valid_etag(value):
+    return (isinstance(value, str) and 2 < len(value) <= 256
+            and value.startswith('"') and value.endswith('"')
+            and all(33 <= ord(char) <= 126 and char != '"' for char in value[1:-1]))
 
 
 def _validate(url, method, headers, body):
@@ -56,7 +63,9 @@ def _perform(url, method, headers, body, private_targets):
         data = response.read(MAX_BODY + 1)
         if len(data) > MAX_BODY:
             raise ValueError("HTTP response body exceeds limit")
-        return {"status": response.status, "body": base64.b64encode(data).decode("ascii")}
+        etag = response.getheader("ETag")
+        return {"status": response.status, "body": base64.b64encode(data).decode("ascii"),
+                "etag": etag if valid_etag(etag) else None}
     finally:
         connection.close()
         if raw is not None:
@@ -85,11 +94,12 @@ def request(url, method, headers, body, *, private_targets, deadline, checkpoint
                 raise TimeoutError("plugin HTTPS deadline exceeded")
             if receive.poll(0.05):
                 import json
-                value = json.loads(receive.recv_bytes(65536))
+                value = json.loads(receive.recv_bytes(MAX_ENCODED_BODY + 1024))
                 if not isinstance(value, dict) or set(value) != {"value"}:
                     raise RuntimeError("plugin HTTPS request failed")
                 result = value["value"]
-                if (not isinstance(result, dict) or set(result) != {"status", "body"}
+                if (not isinstance(result, dict) or set(result) != {"status", "body", "etag"}
+                        or (result["etag"] is not None and not valid_etag(result["etag"]))
                         or type(result["status"]) is not int or not 100 <= result["status"] <= 599
                         or not isinstance(result["body"], str)
                         or len(base64.b64decode(result["body"], validate=True)) > MAX_BODY):

@@ -41,6 +41,7 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
     else:
         manifest, error = commands.install(str(origin), branch='main', alias='demo')
         assert manifest is not None and not error, error
+        commands.grant_trust(manifest)
         if hook_source == 'repo-default':
             hook(origin / '.git' / 'hooks' / 'post-merge')
         else:
@@ -57,6 +58,7 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
     if operation == 'install':
         manifest, error = commands.install(str(origin), branch='main', alias='demo')
         assert manifest is not None and not error, error
+        commands.grant_trust(manifest)
     else:
         ok, error = commands.update(manifest)
         assert ok and error == 'updated'

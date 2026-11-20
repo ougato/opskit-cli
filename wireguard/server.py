@@ -992,7 +992,7 @@ def manage_peers() -> None:
         try:
             key = select(
                 breadcrumb=breadcrumb,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key="software",
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -1241,7 +1241,7 @@ def remove_peer(breadcrumb: list[str], *, peer_id: str | None = None) -> dict | 
         try:
             key = select(
                 breadcrumb=sub,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key="software",
                 back_label=f"{get_icon('back')} {t('menu.back')}",
@@ -1344,7 +1344,7 @@ def rename_peer(breadcrumb: list[str], *, peer_id: str | None = None, name: str 
         try:
             key = select(
                 breadcrumb=sub,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=choices,
                 theme_key="software",
                 back_label=f"{get_icon('back')} {t('menu.back')}",

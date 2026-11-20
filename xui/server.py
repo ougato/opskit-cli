@@ -606,7 +606,7 @@ def manage_nodes() -> None:
         try:
             key = select(
                 breadcrumb=breadcrumb,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=[
                     {"key": "1", "label": f"{get_icon('link')} {t('xui.manage.print_links')}"},
                     {"key": "2", "label": f"{get_icon('state')} {t('xui.manage.show_state')}"},

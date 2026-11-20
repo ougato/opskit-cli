@@ -88,13 +88,13 @@ label:
 from core.sdk import ModuleInfo, get_icon, register_locale, select, t
 
 register_locale({
-    "zh": {"example": {"title": "示例工具", "select": "请选择", "run": "执行任务", "back": "返回", "info": "操作：运行示例任务"}},
-    "en": {"example": {"title": "Example tool", "select": "Select", "run": "Run task", "back": "Back", "info": "Operation: Run the example task"}},
+    "zh": {"example": {"title": "示例工具", "run": "执行任务", "back": "返回", "info": "操作：运行示例任务"}},
+    "en": {"example": {"title": "Example tool", "run": "Run task", "back": "Back", "info": "Operation: Run the example task"}},
 })
 
 def entry():
     while True:
-        key = select(["OpsKit", t("example.title")], t("example.select"),
+        key = select(["OpsKit", t("example.title")], "",
                      [{"key": "1", "label": get_icon("devtools") + " " + t("example.run")}],
                      back_label=get_icon("back") + " " + t("example.back"),
                      info_lines=[t("example.info")])
@@ -207,7 +207,7 @@ def edit_path(breadcrumb, current):
 | 依赖 | `ensure_python_package(package, import_name='')` | 仅检查已准备运行时中的依赖，不安装任何软件或 Python 包。 |
 | 宿主文件 | `read_host_file(directory, relative)`, `compare_write_host_file(directory, relative, expected_sha256, content)`, `create_host_file(directory, relative, content)`, `host_file_status(directory, relative)`, `artifact_info(directory, relative)` | 通过宿主授权及有界校验；写入须处理失败与中断。 |
 | 宿主工具 | `host_execute(executable, arguments, directory, options=None)`, `host_path_info(path, directory=False, write=False, execute=False)`, `host_find_executable(name, preferred="")`, `host_file_version(path)`, `host_asar_directories(directory, relative, member)` | 按已获准的读取目录树、工具和执行范围访问。`host_asar_directories` 只列举 ASAR 目录。`host_find_executable` 查找普通绝对路径，返回前仍需目录读取授权；找不到时返回空字符串，不执行程序。 |
-| 产物和网络 | `host_artifacts(action, parameters)`, `https_request(url, method='GET', headers=None, body=b'')`, `upload_file(directory, relative, url, sha256, headers=None)` | 使用框架的产物凭据、受限 HTTPS 和内容摘要绑定上传；详细约束见插件规范。 |
+| 产物和网络 | `host_artifacts(action, parameters)`, `https_request(url, method='GET', headers=None, body=b'')`, `upload_file(directory, relative, url, sha256, headers=None)` | 使用框架的产物凭据、受限 HTTPS 和内容摘要绑定上传。HTTPS 响应提供 `etag`，正文上限 1 MiB。 |
 
 插件自身状态按身份和服务调用方隔离，成功调用只有通过最终的期限、授权和状态检查后才提交。临时工作区并非永久存储；不得推断其他插件的状态目录。不要使用已删除的 `ensure_software`、`software_bin` 或旧 `host_archive_directories`。
 
@@ -254,3 +254,5 @@ if request_plugin_install("storage_hub"):
 在框架源码检出中运行 `python -m pytest -q tests/test_plugin_developer_example.py tests/test_plugin_sdk4.py tests/test_plugin_framework_menu.py`，可检查示例的中英文菜单、命令行和框架交互契约。这不是第三方插件的完整自动审核：插件维护者还需针对自己的动态菜单、实际图标、授权目标和业务命令执行上述检查，并在实际终端验证图标占位。
 
 确认界面应使用简短的操作标题，将对象、路径和必要的操作后果放入 `info_lines`；删除、覆盖、同步或授权等操作必须保留决定所需的范围与风险信息。确认项和取消行为由框架统一呈现，不要将长问题或动态对象拼入面包屑标题。
+
+文本输入由宿主统一渲染。默认值和输入提示直接显示在输入行，无需添加括号。可编辑的建议值使用 `initial`，空行回退值使用 `default`，敏感默认值由宿主遮挡。

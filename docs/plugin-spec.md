@@ -54,7 +54,7 @@ opskit plugin install https://git.example.com/team/hello.git --branch main
 
 SSH 验证准确主机/端口的本机 known_hosts 后，受控尝试 SSH agent 和默认私钥；不自动接受未知服务器，不执行 SSH config 的命令。HTTPS 认证被拒绝后可使用 Windows 凭据管理器中的精确 Git 目标。没有可用认证时，菜单请求显式凭据文件；命令行可通过 `--fetch-profile` 提供。安装菜单中用户亲自输入的仓库地址允许本次连接该主机和端口的私网地址；更新已有来源时须明确确认，命令行须指定 `--allow-private`。许可均不持久保存。
 
-`opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml，用于内容校验。安装后核对来源、权限、指纹并授信。已信任插件从记录的仓库和分支获取常规更新时，若运行入口、权限及服务契约一致，且版本未降级，框架校验发布内容后把插件信任和永久目录读取授权续接到新指纹。读取授权继续覆盖原目录及其子目录，并可撤销。单次授权随调用结束失效，其他宿主能力及服务调用授权各自绑定具体指纹。插件未获信任、权限边界变化或降级时仍需确认。更新必须保留用户本地修改，无法安全替换时拒绝。
+`opskit plugin fingerprint PATH` 生成 CHECKSUMS.yaml，用于内容校验。首次安装时确认来源、权限和内容指纹。批准后即信任该安装来源在记录分支上的后续已校验更新。框架完成发布验证后续接新指纹和永久目录读取授权，更新菜单不会再次打开信任确认。来源改变、已撤销信任、内容不符或远端版本低于本地时拒绝更新，保留当前安装。旧框架已清空指纹的安装可在核对当前指纹后用 `opskit plugin trust <插件> --fingerprint <指纹>` 恢复信任。单次授权随调用结束失效。其他宿主能力和跨插件服务授权继续绑定具体指纹，服务调用还需匹配契约。
 
 更新排障可运行 `python main.py --output json plugin update --all`，逐项检查更新状态和失败数。插件正在其他任务或进程中运行时，更新返回插件忙碌提示，等待调用结束后重试，不删除锁文件或强制替换。工作区容量不足、占用和分配失败会分别提示；分配失败时，OpsKit 日志记录失败阶段、异常类别及系统错误码，不记录凭据和原始异常文本。分配结果无法确认时保留现场，不按目录名强制清理。
 
@@ -116,7 +116,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
 - `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
-- `https_request(url, method, headers, body)`：受限 HTTPS RPC，需要 network 权限。
+- `https_request(url, method, headers, body)` 是受限 HTTPS RPC，需要 network 权限。请求与响应各限 1 MiB，返回 `status`、`body` 和 `etag`。响应没有有效的强 ETag 时，`etag` 为 `None`。
 - `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 
@@ -236,3 +236,5 @@ Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、�
 ### SDK 4 迁移
 
 见[插件开发指南](plugin-development.md)和[原生升级指南](plugin-native-upgrade-guide.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。[SDK 3 业务分离记录](sdk3-business-separation.md)仅供历史迁移参考。
+
+交互输入的默认值由框架直接显示，不附加括号。需要让用户直接编辑上次输入或建议版本时，使用 `text_input(..., initial=value)`。

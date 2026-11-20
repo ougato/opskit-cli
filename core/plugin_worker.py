@@ -160,7 +160,8 @@ def _adapt_sdk(name: str):
         if not isinstance(body, bytes):
             raise TypeError("HTTPS body must be bytes")
         reply = broker("host.https", url, method, headers or {}, base64.b64encode(body).decode("ascii"))
-        return {"status": reply["status"], "body": base64.b64decode(reply["body"], validate=True)}
+        return {"status": reply["status"], "body": base64.b64decode(reply["body"], validate=True),
+                "etag": reply.get("etag")}
     sdk.https_request = https_request
     def upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None):
         args = (directory, relative, url, sha256, headers or {})

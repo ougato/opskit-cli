@@ -516,7 +516,7 @@ def manage_ohmyzsh() -> None:
         try:
             key = select(
                 breadcrumb=base,
-                subtitle=t("prompt.select"),
+                subtitle="",
                 choices=[
                     {"key": "1", "label": f"{get_icon('edit')} {t('ohmyzsh.manage.p10k_configure')}"},
                     {"key": "2", "label": f"{get_icon('save')} {t('ohmyzsh.manage.p10k_apply_preset')}"},
