@@ -212,6 +212,7 @@ def artifact_batch_info(directory: str, relatives: list[str]) -> list[dict]:
 
 HOST_TOOL_PROGRESS = True
 HOST_TOOL_STAGE_ONLY_PROGRESS = True
+HOST_TOOL_COMPACT_DIAGNOSTICS = True
 
 
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:

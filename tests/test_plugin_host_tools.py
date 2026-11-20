@@ -68,7 +68,12 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
     tool.write_bytes(b"test")
     def stream(*args, **kwargs):
         yield "routine startup"
+        yield "Timing failed: begin script"
         yield "begin script phase 17%"
+        yield "Error: [BABEL] Note: generated file exceeds limit"
+        yield "    at babel()"
+        yield "Error: repeated [BABEL] Note: generated file exceeds limit"
+        yield "    at forwarded()"
         yield "Error: script build failed"
         yield "    at compile()"
         return 34
@@ -81,18 +86,20 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
         **({} if stage_only else {"progress_marker": "phase ", "progress_label": "Engine"}),
         "failed_label": "Failed",
         "diagnostics": ["Error:"],
+        "quiet_prefixes": ["Timing failed: "],
+        "compact_diagnostics": ["[BABEL] Note: "],
         "success_codes": [0, 36],
     }}, progress_console=Console(force_terminal=False), **context)
     assert result["returncode"] == 34
     assert lines[0].startswith("Launch") and "100%" in lines[0]
-    assert lines[1:3] == ["Error: script build failed", "    at compile()"]
-    assert lines[3].startswith("Scripts") and "Failed" in lines[3]
-    assert lines[0].index("█") == lines[3].index("░")
+    assert lines[1:4] == ["[BABEL] Note: generated file exceeds limit", "Error: script build failed", "    at compile()"]
+    assert lines[4].startswith("Scripts") and "Failed" in lines[4]
+    assert lines[0].index("█") == lines[4].index("░")
     if stage_only:
-        assert len(lines) == 4
+        assert len(lines) == 5
     else:
-        assert lines[4].startswith("Engine") and "17%" in lines[4]
-        assert lines[4].index("█") == lines[0].index("█")
+        assert lines[5].startswith("Engine") and "17%" in lines[5]
+        assert lines[5].index("█") == lines[0].index("█")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")

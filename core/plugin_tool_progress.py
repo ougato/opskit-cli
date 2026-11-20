@@ -19,7 +19,7 @@ class ToolProgress:
             return value
 
         required = {"stages", "failed_label", "diagnostics", "success_codes"}
-        if not isinstance(spec, dict) or set(spec) not in (
+        if not isinstance(spec, dict) or set(spec) - {"quiet_prefixes", "compact_diagnostics"} not in (
             required, required | {"progress_marker", "progress_label"},
         ):
             raise ValueError("invalid progress description")
@@ -35,6 +35,13 @@ class ToolProgress:
                 raise ValueError("invalid progress stage")
             self.stages.append((field(stage[0]), field(stage[1]) if index else None))
         self.diagnostics = tuple(field(value).lower() for value in diagnostics)
+        for key in ("quiet_prefixes", "compact_diagnostics"):
+            values = spec.get(key, [])
+            if not isinstance(values, list) or len(values) > 16:
+                raise ValueError("invalid progress diagnostic rules")
+            setattr(self, key, tuple(field(value) for value in values))
+        self.seen_compact = set()
+        self.compact_stack = False
         self.marker = None
         self.progress_label = None
         if "progress_marker" in spec:
@@ -90,6 +97,22 @@ class ToolProgress:
             self.output(row.plain)
 
     def line(self, line):
+        if line.startswith(self.quiet_prefixes):
+            return
+        if self.compact_stack and (not line.strip() or line.startswith("    at ")):
+            return
+        self.compact_stack = False
+        for marker in self.compact_diagnostics:
+            _, match, details = line.partition(marker)
+            if match:
+                self.diagnostic = False
+                self.compact_stack = True
+                message = match + details
+                if message not in self.seen_compact:
+                    if len(self.seen_compact) < 128:
+                        self.seen_compact.add(message)
+                    self.output(message)
+                return
         for index in range(self.index + 1, len(self.stages)):
             if self.stages[index][1] in line:
                 self._summary(True)
