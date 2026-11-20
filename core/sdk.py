@@ -220,6 +220,10 @@ def host_execute(executable: str, arguments: list[str], directory: str, options:
     raise PermissionError("host tool API requires an isolated plugin worker")
 
 
+HOST_ARTIFACT_PUBLISH_PARENTS = True
+HOST_ARTIFACT_COMMIT_HASHES = True
+
+
 def host_artifacts(action: str, parameters: dict) -> dict | list:
     """Commit/list/collect identity-bound outputs owned by the current plugin."""
     raise PermissionError("artifact receipt API requires an isolated plugin worker")

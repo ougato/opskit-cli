@@ -38,7 +38,7 @@ def resource_lock(resource):
         yield
 
 
-def _snapshot(path, checkpoint, expected_files=None):
+def _snapshot(path, checkpoint, expected_files=None, *, file_hashes=None):
     from core.plugin_tree import bounded_paths
     from core.host_file_access import open_bounded
     path = _ordinary(str(path), directory=True)
@@ -63,17 +63,22 @@ def _snapshot(path, checkpoint, expected_files=None):
             raise ValueError("output exceeds limit")
         if stat.S_ISREG(info.st_mode):
             relative_name = child.relative_to(path).as_posix()
-            file_digest = hashlib.sha256() if relative_name in expected_files else None
+            if file_hashes is not None and (len(file_hashes) >= 128 or len(relative_name) > 512):
+                file_hashes.clear()
+                file_hashes = None
+            file_digest = hashlib.sha256() if relative_name in expected_files or file_hashes is not None else None
             with open_bounded(child, path, MAX_OUTPUT_BYTES) as source:
                 while body := source.read(1024**2):
                     checkpoint()
                     digest.update(body)
                     if file_digest is not None:
                         file_digest.update(body)
-            if file_digest is not None:
+            if relative_name in expected_files:
                 if file_digest.hexdigest() != expected_files[relative_name]:
                     raise ValueError("output file hash does not match validated content")
                 found.add(relative_name)
+            if file_hashes is not None:
+                file_hashes[relative_name] = file_digest.hexdigest()
         digest.update(json.dumps([child.relative_to(path).as_posix(), info.st_dev, info.st_ino,
             info.st_mode, info.st_size, info.st_mtime_ns], separators=(",", ":")).encode())
     if _directory(path) != identity:
@@ -84,17 +89,46 @@ def _snapshot(path, checkpoint, expected_files=None):
             "inventory_sha256": digest.hexdigest(), "bytes": size, "files": files}
 
 
+def _mkdir(path, plugin, fingerprint, *, authority, check_identity, checkpoint):
+    if (not path.is_absolute() or path.name in {"", ".", ".."}
+            or any(ord(c) < 32 for c in str(path))):
+        raise ValueError("ordinary absolute directory required")
+    parent = _ordinary(str(path.parent), directory=True)
+    identity = _directory(parent)
+    scope = _grant(plugin, fingerprint, "directory.write", str(path), authority, check_identity, checkpoint)
+    with resource_lock(parent):
+        checkpoint()
+        authority.check(scope, check_identity=check_identity)
+        if _directory(_ordinary(str(parent), directory=True)) != identity:
+            raise ValueError("directory parent changed")
+        if not os.path.lexists(path):
+            path.mkdir()
+        return _ordinary(str(path), directory=True)
+
+
 def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
     """Publish a digest-bound copy to a new directory on the destination volume."""
     from io import BytesIO
 
     from core.host_file_access import open_bounded, source_path
 
-    if (os.name != "nt" or set(parameters) != {"source", "destination", "files"}
+    if (os.name != "nt" or set(parameters) - {"create_parents_from"} != {"source", "destination", "files"}
             or not isinstance(parameters["destination"], str)):
         raise ValueError("invalid tree publication request")
     source = _ordinary(parameters["source"], directory=True)
     destination = Path(parameters["destination"])
+    if "create_parents_from" in parameters:
+        root = _ordinary(parameters["create_parents_from"], directory=True)
+        parts = destination.relative_to(root).parts
+        if (not 1 <= len(parts) <= 16 or any(
+                part in {".", ".."} or part.endswith((".", " ")) or ":" in part
+                or any(ord(char) < 32 for char in part) for part in parts)
+                or destination == source or source in destination.parents):
+            raise ValueError("invalid tree publication path")
+        parent = root
+        for part in parts[:-1]:
+            parent = _mkdir(parent / part, plugin, fingerprint, authority=authority,
+                            check_identity=check_identity, checkpoint=checkpoint)
     parent = _ordinary(str(destination.parent), directory=True)
     _, destination, identity = source_path(str(parent), destination.name)
     if destination == source:
@@ -133,8 +167,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
 
     def check():
         checkpoint()
-        authority.check(read_scope, check_identity=check_identity)
-        authority.check(write_scope, check_identity=check_identity)
+        authority.check_many((read_scope, write_scope), check_identity=check_identity)
         if _directory(source) != source_identity or source_path(str(parent), destination.name)[2] != identity:
             raise ValueError("tree publication location changed")
 
@@ -403,27 +436,19 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     if action == "mkdir":
         if set(parameters) != {"directory"} or not isinstance(parameters["directory"], str):
             raise ValueError("invalid directory request")
-        path = Path(parameters["directory"])
-        if not path.is_absolute() or path.name in {"", ".", ".."} or any(ord(c) < 32 for c in str(path)):
-            raise ValueError("ordinary absolute directory required")
-        parent = _ordinary(str(path.parent), directory=True)
-        identity = _directory(parent)
-        scope = _grant(plugin, fingerprint, "directory.write", str(path), authority, check_identity, checkpoint)
-        with resource_lock(parent):
-            checkpoint()
-            authority.check(scope, check_identity=check_identity)
-            if _directory(_ordinary(str(parent), directory=True)) != identity:
-                raise ValueError("directory parent changed")
-            if not os.path.lexists(path):
-                path.mkdir()
-            return {"directory": str(_ordinary(str(path), directory=True))}
+        directory = _mkdir(Path(parameters["directory"]), plugin, fingerprint, authority=authority,
+                           check_identity=check_identity, checkpoint=checkpoint)
+        return {"directory": str(directory)}
     allowed = {"list": {"resource", "keep"}, "commit": {"id", "required_files"},
                "clean": {"id", "record_sha256", "keep"},
                "adopt": {"resource", "directory", "snapshot", "required_files", "completed_ns"}}
-    optional = {"expected_files"} if action == "commit" else set()
+    optional = {"expected_files", "include_file_hashes"} if action == "commit" else set()
     if action not in allowed or not allowed[action] <= set(parameters) or set(parameters) - allowed[action] - optional:
         raise ValueError("invalid artifact operation")
     expected_files = parameters.get("expected_files", {})
+    include_file_hashes = parameters.get("include_file_hashes", False)
+    if type(include_file_hashes) is not bool:
+        raise ValueError("invalid file hash request")
     if (not isinstance(expected_files, dict) or len(expected_files) > 32
             or any(not isinstance(name, str) or not name or "\\" in name
                    or PurePosixPath(name).is_absolute() or any(part in {"..", "."} or ":" in part for part in PurePosixPath(name).parts)
@@ -475,11 +500,18 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             # Adoption and especially deletion retain exact-output consent.
             permission_path = path
         scope = _grant(plugin, fingerprint, "directory.write", str(permission_path), authority, check_identity, check)
+        scopes = (scope,)
+        if include_file_hashes:
+            scopes += (_grant(plugin, fingerprint, "directory.read", str(path), authority, check_identity, check),)
         def live():
             check()
-            authority.check(scope, check_identity=check_identity)
+            authority.check_many(scopes, check_identity=check_identity)
         live()
-        snapshot = _snapshot(path, live, expected_files) if expected_files else _snapshot(path, live)
+        file_hashes = {} if include_file_hashes else None
+        if file_hashes is not None:
+            snapshot = _snapshot(path, live, expected_files, file_hashes=file_hashes)
+        else:
+            snapshot = _snapshot(path, live, expected_files) if expected_files else _snapshot(path, live)
         if action == "adopt":
             expected = parameters["snapshot"]
             # Import never trusts caller-provided content hashes without recomputing them.
@@ -504,7 +536,10 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             value.update(snapshot, phase="committed", completed_ns=parameters.get("completed_ns", time.time_ns()))
             live()
             _save(plugin, token, value)
-            return {"id": token, "directory": str(path), "bytes": snapshot["bytes"], "files": snapshot["files"]}
+            result = {"id": token, "directory": str(path), "bytes": snapshot["bytes"], "files": snapshot["files"]}
+            if file_hashes:
+                result["file_hashes"] = file_hashes
+            return result
         rows = _inspect(plugin, resource, keep, live)
         row = next((row for row in rows if row["id"] == token), None)
         if (not row or not row["cleanup_candidate"] or digest != parameters["record_sha256"]

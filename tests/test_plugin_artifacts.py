@@ -63,6 +63,23 @@ def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_pat
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+def test_publish_tree_creates_parents_under_requested_root(tmp_path, context):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.html").write_bytes(b"web")
+    destination = tmp_path / "artifacts" / "build" / "official"
+    parameters = {"source": str(source), "destination": str(destination),
+                  "create_parents_from": str(tmp_path),
+                  "files": {"index.html": {"source": "index.html", "sha256": hashlib.sha256(b"web").hexdigest()}}}
+    assert manage("publish_tree", parameters, context) == {"directory": str(destination)}
+    assert manage("publish_tree", parameters, context) == {"directory": str(destination)}
+    assert (destination / "index.html").read_bytes() == b"web"
+    with pytest.raises(ValueError):
+        manage("publish_tree", {**parameters, "destination": str(tmp_path / ".." / "escape" / "output")}, context)
+    assert not (tmp_path.parent / "escape" / "output").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
 def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
     source = tmp_path / "source"
     source.mkdir()

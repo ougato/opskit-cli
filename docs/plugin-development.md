@@ -141,6 +141,10 @@ Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destinatio
 
 发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。
 
+`HOST_ARTIFACT_PUBLISH_PARENTS` 可用时，传入已存在的绝对路径 `create_parents_from`，宿主可在同一次发布调用里创建目标父目录。目标必须位于该目录下，每层创建仍检查目录写入授权。
+
+`HOST_ARTIFACT_COMMIT_HASHES` 可用时，给产物 `commit` 传入 `include_file_hashes: true`，可在目录读取授权下取得校验时计算的完整 `file_hashes`。超过 128 个文件或路径超出限制时省略该字段，调用方可继续按批读取摘要。发布时仍会校验复制内容。
+
 `host_artifacts("zip_entry", {"directory": directory, "file": file, "member": member})` 在目录读取授权下返回指定 ZIP 成员的 Base64 内容。成员必须唯一，最大 1 MiB；该操作不解压到宿主磁盘。
 
 `host_artifacts("sign_update_manifest", {"directory": directory, "file": file, "manifest": manifest, "public_key": public_key})` 在目录读取授权下为 v1 更新清单签名。传入 Base64 清单和包内公钥的 Base64 SPKI DER 编码。宿主确认 P-256 私钥与公钥对应，并使用固定签名域和 SHA-256 生成 Base64 DER 签名。提供已有 `signature` 时，宿主验签后返回原签名。私钥保留在宿主。

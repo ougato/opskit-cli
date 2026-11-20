@@ -224,10 +224,20 @@ class CapabilityAuthority:
 
     def check(self, request: CapabilityRequest, *, check_identity) -> None:
         """Revalidate before/during privileged work; never opens a prompt."""
-        self._live(request, check_identity)
+        self.check_many((request,), check_identity=check_identity)
+
+    def check_many(self, requests: tuple[CapabilityRequest, ...], *, check_identity) -> None:
+        """Check related scopes against one live identity and one grant snapshot."""
+        if not requests:
+            raise ValueError("at least one capability scope is required")
+        identity = requests[0]
+        if any((scope.plugin, scope.fingerprint) != (identity.plugin, identity.fingerprint)
+               for scope in requests):
+            raise ValueError("capability checks require the same plugin identity")
+        self._live(identity, check_identity)
         with self.lock.hold():
             state = self._load()
-            if not self._authorized(request, state):
+            if not all(self._authorized(request, state) for request in requests):
                 raise CapabilityDenied("missing_or_revoked")
 
     def list_grants(self) -> list[CapabilityRequest]:
