@@ -60,7 +60,8 @@ def test_invalid_arguments_never_prompt(tmp_path, args, options):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
-def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeypatch, context):
+@pytest.mark.parametrize("stage_only", [False, True])
+def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeypatch, context, stage_only):
     from rich.console import Console
 
     tool = tmp_path / "tool.exe"
@@ -77,8 +78,7 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
     context["output"] = lines.append
     result = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {"progress": {
         "stages": [["Launch"], ["Scripts", "begin script"]],
-        "progress_marker": "phase ",
-        "progress_label": "Engine",
+        **({} if stage_only else {"progress_marker": "phase ", "progress_label": "Engine"}),
         "failed_label": "Failed",
         "diagnostics": ["Error:"],
         "success_codes": [0, 36],
@@ -87,8 +87,12 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
     assert lines[0].startswith("Launch") and "100%" in lines[0]
     assert lines[1:3] == ["Error: script build failed", "    at compile()"]
     assert lines[3].startswith("Scripts") and "Failed" in lines[3]
-    assert lines[4].startswith("Engine") and "17%" in lines[4]
-    assert lines[0].index("█") == lines[3].index("░") == lines[4].index("█")
+    assert lines[0].index("█") == lines[3].index("░")
+    if stage_only:
+        assert len(lines) == 4
+    else:
+        assert lines[4].startswith("Engine") and "17%" in lines[4]
+        assert lines[4].index("█") == lines[0].index("█")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")

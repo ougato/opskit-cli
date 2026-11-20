@@ -18,9 +18,10 @@ class ToolProgress:
                 raise ValueError("invalid progress text")
             return value
 
-        if not isinstance(spec, dict) or set(spec) != {
-            "stages", "progress_marker", "progress_label", "failed_label", "diagnostics", "success_codes",
-        }:
+        required = {"stages", "failed_label", "diagnostics", "success_codes"}
+        if not isinstance(spec, dict) or set(spec) not in (
+            required, required | {"progress_marker", "progress_label"},
+        ):
             raise ValueError("invalid progress description")
         stages, diagnostics, codes = (spec[key] for key in ("stages", "diagnostics", "success_codes"))
         if (not isinstance(stages, list) or not 1 <= len(stages) <= 16
@@ -34,8 +35,11 @@ class ToolProgress:
                 raise ValueError("invalid progress stage")
             self.stages.append((field(stage[0]), field(stage[1]) if index else None))
         self.diagnostics = tuple(field(value).lower() for value in diagnostics)
-        self.marker = re.compile(re.escape(field(spec["progress_marker"])) + r"([0-9]{1,3})%")
-        self.progress_label = field(spec["progress_label"])
+        self.marker = None
+        self.progress_label = None
+        if "progress_marker" in spec:
+            self.marker = re.compile(re.escape(field(spec["progress_marker"])) + r"([0-9]{1,3})%")
+            self.progress_label = field(spec["progress_label"])
         self.failed_label = field(spec["failed_label"])
         self.codes = codes
         self.console = console
@@ -46,7 +50,7 @@ class ToolProgress:
         self.live = None
         self.finished = False
         self.width = max(_global_step_width(), max(_display_width(label) + 2
-                         for label in [self.progress_label, *(name for name, _ in self.stages)]))
+                         for label in [self.progress_label or "", *(name for name, _ in self.stages)]))
         self.active_color = get_color("progress.bar_active")
 
     def __enter__(self):
@@ -92,7 +96,7 @@ class ToolProgress:
                 self.index = index
                 self.stage_started = monotonic()
                 break
-        match = self.marker.search(line)
+        match = self.marker.search(line) if self.marker is not None else None
         if match and int(match[1]) <= 100:
             self.percent = int(match[1])
         normalized = line.lower()
@@ -114,7 +118,7 @@ class ToolProgress:
         self.finished = True
         success = code in self.codes
         self._summary(success)
-        if success or self.percent is not None:
+        if self.progress_label is not None and (success or self.percent is not None):
             percent = 100 if success else self.percent
             self._emit(self._row(self.progress_label, percent, monotonic() - self.started,
                                  _GREEN if success else _RED))
