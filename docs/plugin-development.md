@@ -139,7 +139,13 @@ waiting(message='') -> context manager
 
 Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷暂存文件并核对摘要，整目录一次发布。目标已存在时，只有全部文件和摘要一致才返回成功。
 
+发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。
+
 `host_artifacts("zip_entry", {"directory": directory, "file": file, "member": member})` 在目录读取授权下返回指定 ZIP 成员的 Base64 内容。成员必须唯一，最大 1 MiB；该操作不解压到宿主磁盘。
+
+`host_artifacts("sign_update_manifest", {"directory": directory, "file": file, "manifest": manifest, "public_key": public_key})` 在目录读取授权下为 v1 更新清单签名。传入 Base64 清单和包内公钥的 Base64 SPKI DER 编码。宿主确认 P-256 私钥与公钥对应，并使用固定签名域和 SHA-256 生成 Base64 DER 签名。提供已有 `signature` 时，宿主验签后返回原签名。私钥保留在宿主。
+
+`host_artifacts("file_header", {"directory": directory, "file": file})` 在目录读取授权下返回文件前 12 字节的十六进制编码和同一读取流的完整 SHA-256，用于将格式检查与归档摘要绑定。
 
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 

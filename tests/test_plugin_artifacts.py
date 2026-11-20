@@ -26,6 +26,58 @@ def manage(action, params, context, owner="demo"):
     return artifacts.manage(owner, "a" * 64, action, params, **context)
 
 
+def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_path, context):
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    (tmp_path / "key.pem").write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    public = key.public_key()
+    body = b'{"schemaVersion":1,"files":[]}'
+    params = {"directory": str(tmp_path), "file": "key.pem",
+              "manifest": base64.b64encode(body).decode("ascii"),
+              "public_key": base64.b64encode(public.public_bytes(
+                  serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).decode("ascii")}
+    result = manage("sign_update_manifest", params, context)
+    assert set(result) == {"signature"}
+    public.verify(base64.b64decode(result["signature"]),
+                  b"game-update-manifest-v1\0" + body, ec.ECDSA(hashes.SHA256()))
+    assert manage("sign_update_manifest", params, context) == result
+    assert manage("sign_update_manifest", {**params, **result}, context) == result
+    with pytest.raises(ValueError, match="invalid update manifest signature"):
+        manage("sign_update_manifest", {**params, **result, "manifest": base64.b64encode(
+            b'{"schemaVersion":1,"files":[{}]}').decode("ascii")}, context)
+    with pytest.raises(ValueError, match="does not match"):
+        manage("sign_update_manifest", {**params, "public_key": "YWJj"}, context)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "payload.png").write_bytes(b"payload")
+    destination = tmp_path / "patch"
+    manifest = b'{"schemaVersion":1}'
+    params = {
+        "source": str(source), "destination": str(destination),
+        "files": {
+            "payload.png": {"source": "payload.png", "sha256": hashlib.sha256(b"payload").hexdigest()},
+            "manifest.json": {"content": base64.b64encode(manifest).decode("ascii"),
+                              "sha256": hashlib.sha256(manifest).hexdigest()},
+        },
+    }
+    assert manage("publish_tree", params, context) == {"directory": str(destination)}
+    assert (destination / "manifest.json").read_bytes() == manifest
+    assert (destination / "payload.png").read_bytes() == b"payload"
+    assert not (source / "manifest.json").exists()
+    params["destination"] = str(tmp_path / "invalid")
+    params["files"]["manifest.json"]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="invalid inline tree digest"):
+        manage("publish_tree", params, context)
+    assert not (tmp_path / "invalid").exists()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
 def test_publish_tree_preserves_existing_archive_and_rejects_changed_source(tmp_path, context):
     source = tmp_path / "build"

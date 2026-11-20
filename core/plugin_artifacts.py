@@ -86,6 +86,8 @@ def _snapshot(path, checkpoint, expected_files=None):
 
 def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
     """Publish a digest-bound copy to a new directory on the destination volume."""
+    from io import BytesIO
+
     from core.host_file_access import open_bounded, source_path
 
     if (os.name != "nt" or set(parameters) != {"source", "destination", "files"}
@@ -101,14 +103,25 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
     if not isinstance(files, dict) or not 0 < len(files) <= MAX_OUTPUT_ENTRIES:
         raise ValueError("invalid tree inventory")
     validated = {}
+    inline_limit = 4 * 1024**2 + 1024
+    inline_size = 0
     for name, entry in files.items():
-        if not isinstance(entry, dict) or set(entry) != {"source", "sha256"}:
+        if not isinstance(entry, dict) or set(entry) not in ({"source", "sha256"}, {"content", "sha256"}):
             raise ValueError("invalid tree entry")
         _, target, _ = source_path(str(parent), name)
-        _, original, _ = source_path(str(source), entry["source"])
         digest = entry["sha256"]
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("invalid tree digest")
+        if "source" in entry:
+            _, original, _ = source_path(str(source), entry["source"])
+        else:
+            content = entry["content"]
+            if not isinstance(content, str) or len(content) > ((4 * 1024**2 + 2) // 3) * 4:
+                raise ValueError("invalid inline tree content")
+            original = base64.b64decode(content, validate=True)
+            inline_size += len(original)
+            if inline_size > inline_limit or hashlib.sha256(original).hexdigest() != digest:
+                raise ValueError("invalid inline tree digest or size")
         validated[target.relative_to(parent).as_posix()] = (original, digest)
     if len(validated) != len(files) or len({name.casefold() for name in validated}) != len(files):
         raise ValueError("duplicate tree entry")
@@ -140,8 +153,10 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
                 temporary = staging.joinpath(*PurePosixPath(name).parts)
                 temporary.parent.mkdir(parents=True, exist_ok=True)
                 digest = hashlib.sha256()
-                with open_bounded(original, source, MAX_OUTPUT_BYTES) as incoming, temporary.open("xb") as outgoing:
-                    while body := incoming.read(1024**2):
+                incoming = BytesIO(original) if isinstance(original, bytes) else open_bounded(
+                    original, source, MAX_OUTPUT_BYTES)
+                with incoming as stream, temporary.open("xb") as outgoing:
+                    while body := stream.read(1024**2):
                         checkpoint()
                         total += len(body)
                         if total > MAX_OUTPUT_BYTES:
@@ -183,6 +198,81 @@ def _zip_entry(plugin, fingerprint, parameters, *, authority, check_identity, ch
     checkpoint()
     authority.check(scope, check_identity=check_identity)
     return {"content": base64.b64encode(body).decode("ascii")}
+
+
+def _file_header(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from core.host_file_access import MAX_ARTIFACT_BYTES, open_bounded, source_path
+
+    if set(parameters) != {"directory", "file"}:
+        raise ValueError("invalid file header request")
+    directory, path, identity = source_path(parameters["directory"], parameters["file"])
+    scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
+    if source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("file header directory changed")
+    with open_bounded(path, directory, MAX_ARTIFACT_BYTES) as stream:
+        header = stream.read(12)
+        digest = hashlib.sha256(header)
+        while chunk := stream.read(1024**2):
+            checkpoint()
+            digest.update(chunk)
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    return {"header": header.hex(), "sha256": digest.hexdigest()}
+
+
+def _sign_update_manifest(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from core.host_file_access import open_bounded, source_path
+
+    required = {"directory", "file", "manifest", "public_key"}
+    if set(parameters) not in (required, required | {"signature"}):
+        raise ValueError("invalid update signing request")
+    encoded, public = parameters["manifest"], parameters["public_key"]
+    limit = 4 * 1024**2
+    if (not isinstance(encoded, str) or len(encoded) > ((limit + 2) // 3) * 4
+            or not isinstance(public, str) or len(public) > 256):
+        raise ValueError("invalid update signing input")
+    body = base64.b64decode(encoded, validate=True)
+    manifest = json.loads(body)
+    if (len(body) > limit or not isinstance(manifest, dict)
+            or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 1
+            or not isinstance(manifest.get("files"), list)):
+        raise ValueError("invalid update manifest")
+    expected_key = base64.b64decode(public, validate=True)
+    directory, key_path, identity = source_path(parameters["directory"], parameters["file"])
+    scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
+    if source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("signing key directory changed")
+    with open_bounded(key_path, directory, 16384) as stream:
+        try:
+            key = serialization.load_pem_private_key(stream.read(16385), password=None)
+        except (ValueError, TypeError):
+            raise ValueError("invalid update signing key") from None
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise ValueError("update signing requires a P-256 key")
+    verifier = key.public_key()
+    if verifier.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo) != expected_key:
+        raise ValueError("signing key does not match the build public key")
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    message = b"game-update-manifest-v1\0" + body
+    algorithm = ec.ECDSA(hashes.SHA256())
+    if "signature" in parameters:
+        encoded_signature = parameters["signature"]
+        if not isinstance(encoded_signature, str) or not 1 <= len(encoded_signature) <= 108:
+            raise ValueError("invalid existing update signature")
+        signature = base64.b64decode(encoded_signature, validate=True)
+        if not 1 <= len(signature) <= 80:
+            raise ValueError("invalid existing update signature")
+    else:
+        signature = key.sign(message, ec.ECDSA(hashes.SHA256(), deterministic_signing=True))
+    try:
+        verifier.verify(signature, message, algorithm)
+    except InvalidSignature:
+        raise ValueError("invalid update manifest signature") from None
+    return {"signature": base64.b64encode(signature).decode("ascii")}
 
 
 def pending(plugin, token, resource, path, checkpoint):
@@ -259,6 +349,12 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     if action == "zip_entry":
         return _zip_entry(plugin, fingerprint, parameters, authority=authority,
                           check_identity=check_identity, checkpoint=checkpoint)
+    if action == "sign_update_manifest":
+        return _sign_update_manifest(plugin, fingerprint, parameters, authority=authority,
+                                     check_identity=check_identity, checkpoint=checkpoint)
+    if action == "file_header":
+        return _file_header(plugin, fingerprint, parameters, authority=authority,
+                            check_identity=check_identity, checkpoint=checkpoint)
     if action == "mkdir":
         if set(parameters) != {"directory"} or not isinstance(parameters["directory"], str):
             raise ValueError("invalid directory request")
