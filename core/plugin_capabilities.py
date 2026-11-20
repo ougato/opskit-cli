@@ -14,6 +14,7 @@ from core.paths import data_dir
 from core.resource_lock import ResourceLock
 
 MAX_GRANTS = 256
+DIRECTORY_OPERATIONS = frozenset({"directory.read", "directory.write", "directory.read_write", "directory.manage"})
 
 
 def _interactive_input():
@@ -185,7 +186,7 @@ class CapabilityAuthority:
         key = _key(request)
         if key in state["grants"] or self.once.get(key) == state["epoch"]:
             return True
-        if request.operation not in {"directory.read", "directory.write", "directory.read_write", "directory.manage"}:
+        if request.operation not in DIRECTORY_OPERATIONS:
             return False
         return (any(_covers(CapabilityRequest(**item), request) for item in state["grants"].values())
                 or any(self.once.get(key) == state["epoch"] and _covers(item, request)
@@ -234,17 +235,16 @@ class CapabilityAuthority:
             return [CapabilityRequest(**value) for value in self._load()["grants"].values()]
 
     @contextmanager
-    def inherit_directory_reads(self, plugin: str, previous: str, fingerprint: str):
-        """Carry permanent read scopes across a verified, trust-preserving update."""
+    def inherit_directory_grants(self, plugin: str, previous: str, fingerprint: str):
+        """Carry permanent directory scopes across a verified, trust-preserving update."""
         with self.lock.hold():
             state = self._load()
             original = state["grants"]
             updated = original.copy()
             for key, item in original.items():
                 request = CapabilityRequest(**item)
-                if (request.plugin, request.fingerprint, request.operation) != (
-                    plugin, previous, "directory.read",
-                ):
+                if ((request.plugin, request.fingerprint) != (plugin, previous)
+                        or request.operation not in DIRECTORY_OPERATIONS):
                     continue
                 updated.pop(key)
                 renewed = replace(request, fingerprint=fingerprint)

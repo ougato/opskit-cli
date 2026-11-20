@@ -551,7 +551,7 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                 if not fingerprint or fingerprint != acquired.fingerprint:
                     raise ValueError("authenticated update fingerprint changed")
                 from core.plugin_capabilities import CapabilityAuthority
-                with CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint):
+                with CapabilityAuthority().inherit_directory_grants(manifest.name, current_fingerprint, fingerprint):
                     grant(manifest.name, fingerprint, refreshed.version, acquired.source, branch,
                           installation_receipt=acquired.receipt, source_commit=acquired.commit)
             except BaseException:

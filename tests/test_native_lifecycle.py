@@ -165,16 +165,18 @@ def test_service_contract_upgrade_preserves_base_trust_but_revokes_old_edge(inst
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_update_inherits_only_permanent_directory_reads(installed, tmp_path, monkeypatch, fail):
+def test_update_inherits_permanent_directory_grants(installed, tmp_path, monkeypatch, fail):
     root, _ = installed
     old = compute_fingerprint(root)
     authority = CapabilityAuthority()
     read = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "project"))
     write = CapabilityRequest("demo", old, "directory.read_write", str(tmp_path / "other"))
+    manage = CapabilityRequest("demo", old, "directory.manage", str(tmp_path / "managed"))
+    tool = CapabilityRequest("demo", old, "tool.execute", str(tmp_path / "tool.exe"))
     once = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "once"))
     live = lambda name, fingerprint: trusted_record(name)["fingerprint"] == fingerprint
     for request, choice in ((read, GrantChoice.ALWAYS), (write, GrantChoice.ALWAYS),
-                            (once, GrantChoice.ONCE)):
+                            (manage, GrantChoice.ALWAYS), (tool, GrantChoice.ALWAYS), (once, GrantChoice.ONCE)):
         authority.require(request, check_identity=live, prompt=lambda _, choice=choice: choice)
     if fail:
         def fail_grant(*args, **kwargs):
@@ -187,11 +189,16 @@ def test_update_inherits_only_permanent_directory_reads(installed, tmp_path, mon
     fresh.check(child, check_identity=live)
     if fail:
         assert current == old
-        assert set(fresh.list_grants()) == {read, write}
+        assert set(fresh.list_grants()) == {read, write, manage, tool}
     else:
         assert current != old
-        assert write in fresh.list_grants()
-        for request in (write, once):
+        assert set(fresh.list_grants()) == {tool, *(
+            CapabilityRequest("demo", current, request.operation, request.resource) for request in (read, write, manage)
+        )}
+        for operation in ("directory.read", "directory.write", "directory.manage"):
+            fresh.check(CapabilityRequest("demo", current, operation, str(tmp_path / "managed" / "child")),
+                        check_identity=live)
+        for request in (tool, once):
             with pytest.raises(CapabilityDenied):
                 fresh.check(CapabilityRequest("demo", current, request.operation, request.resource),
                             check_identity=live)
