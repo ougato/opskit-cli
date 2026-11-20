@@ -80,6 +80,29 @@ def test_publish_tree_creates_parents_under_requested_root(tmp_path, context):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+@pytest.mark.parametrize(("target_name", "source_name"), [
+    ("../outside.txt", "source.txt"),
+    ("index.html", "../outside.txt"),
+])
+def test_publish_tree_rejects_escaping_inventory_paths(tmp_path, context, target_name, source_name):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "source.txt").write_bytes(b"web")
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside")
+    destination = tmp_path / "published"
+    parameters = {
+        "source": str(source),
+        "destination": str(destination),
+        "files": {target_name: {"source": source_name, "sha256": hashlib.sha256(b"web").hexdigest()}},
+    }
+    with pytest.raises(ValueError, match="invalid host relative path"):
+        manage("publish_tree", parameters, context)
+    assert not destination.exists()
+    assert outside.read_bytes() == b"outside"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
 def test_publish_tree_combines_baseline_and_changed_bundle_at_final_archive(tmp_path, context):
     project = tmp_path / "client"
     baseline = project / "artifacts" / "baseline"

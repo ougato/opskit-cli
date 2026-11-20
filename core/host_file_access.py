@@ -7,25 +7,33 @@ import stat
 MAX_ARTIFACT_BYTES = 512 * 1024**2
 
 
-def source_path(directory, relative):
-    """Authenticate an ordinary root and a relative name without reading bytes."""
-    if (not isinstance(directory, str) or not Path(directory).is_absolute()
-            or not isinstance(relative, str) or not relative or "\\" in relative
-            or any(ord(c) < 32 for c in directory + relative)):
+def relative_host_path(root, relative):
+    """Join a validated relative name to an already authenticated root."""
+    if (not isinstance(relative, str) or not relative or "\\" in relative
+            or any(ord(c) < 32 for c in relative)):
         raise ValueError("invalid host file source")
-    root = Path(directory).absolute()
     name = PurePosixPath(relative)
     if (name.is_absolute() or not name.parts or ".." in name.parts
             or any(":" in part or part.endswith((".", " ")) for part in name.parts)):
         raise ValueError("invalid host relative path")
+    return root.joinpath(*name.parts)
+
+
+def source_path(directory, relative):
+    """Authenticate an ordinary root and a relative name without reading bytes."""
+    if (not isinstance(directory, str) or not Path(directory).is_absolute()
+            or any(ord(c) < 32 for c in directory)):
+        raise ValueError("invalid host file source")
+    root = Path(directory).absolute()
+    target = relative_host_path(root, relative)
     for parent in (root, *root.parents):
         info = parent.lstat()
-        if parent.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise ValueError("linked host directory forbidden")
     if not root.is_dir():
         raise ValueError("host directory required")
     info = root.stat()
-    return root, root.joinpath(*name.parts), (info.st_dev, info.st_ino)
+    return root, target, (info.st_dev, info.st_ino)
 
 
 def _windows_long_path(path):

@@ -110,7 +110,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
     """Publish a digest-bound copy to a new directory on the destination volume."""
     from io import BytesIO
 
-    from core.host_file_access import open_bounded, source_path
+    from core.host_file_access import open_bounded, relative_host_path, source_path
     from core.native_task_control import periodic_checkpoint
     from core.plugin_tree import bounded_paths
 
@@ -148,12 +148,12 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
     for name, entry in files.items():
         if not isinstance(entry, dict) or set(entry) not in ({"source", "sha256"}, {"content", "sha256"}):
             raise ValueError("invalid tree entry")
-        _, target, _ = source_path(str(parent), name)
+        target = relative_host_path(parent, name)
         digest = entry["sha256"]
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("invalid tree digest")
         if "source" in entry:
-            _, original, _ = source_path(str(source), entry["source"])
+            original = relative_host_path(source, entry["source"])
             if original == destination or destination in original.parents:
                 raise ValueError("destination overlaps source")
         else:
