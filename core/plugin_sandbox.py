@@ -1028,11 +1028,16 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
         def checkpoint():
             _remaining()
             _check_live_authorizations()
+        exit_requested = False
+
         def dispatch(message):
-            from core.prompt import UserCancel
+            nonlocal exit_requested
+            from core.prompt import UserCancel, UserExit
             from core.prompt import input_wait_scope
             from core.plugin_capabilities import CapabilityDenied
             from core.i18n import t
+            if exit_requested:
+                return {"exit": True}
             try:
                 from contextlib import nullcontext
                 display = getattr(_invocations, "wait_display", None)
@@ -1041,6 +1046,9 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
                     return {"value": _broker(manifest, message)}
             except UserCancel:
                 return {"cancel": True}
+            except UserExit:
+                exit_requested = True
+                return {"exit": True}
             except CapabilityDenied as error:
                 # CapabilityDenied contains only host-owned localized messages.
                 return {"error": str(error)}
@@ -1097,4 +1105,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
     check_authorization(manifest)
     _save_state(result["state"], state_root, plugin=manifest.name, caller=state_caller,
                 budget_base=data_dir().absolute() / "plugin-data")
+    if exit_requested:
+        from core.prompt import UserExit
+        raise UserExit
     return result.get("value")

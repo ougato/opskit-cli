@@ -500,7 +500,9 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
     owned = _directory(work)
     payload, previous = work / "payload", work / "previous"
     try:
-        acquired = populate(record["source"], payload, branch=record.get("branch"),
+        from core.plugin_provider_install import provider_update_branch
+        branch = provider_update_branch(manifest.name, record["source"], record.get("branch"))
+        acquired = populate(record["source"], payload, branch=branch,
                             fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
         refreshed = load_manifest(payload)
         if refreshed is None or refreshed.name != manifest.name:
@@ -550,7 +552,7 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                     raise ValueError("authenticated update fingerprint changed")
                 from core.plugin_capabilities import CapabilityAuthority
                 with CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint):
-                    grant(manifest.name, fingerprint, refreshed.version, acquired.source, record.get("branch"),
+                    grant(manifest.name, fingerprint, refreshed.version, acquired.source, branch,
                           installation_receipt=acquired.receipt, source_commit=acquired.commit)
             except BaseException:
                 # Only withdraw the exact newly published object. Never overwrite

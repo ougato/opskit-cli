@@ -36,6 +36,9 @@ def broker(method, *args, **kwargs):
     if reply.get("cancel"):
         from core.prompt import UserCancel
         raise UserCancel
+    if reply.get("exit"):
+        from core.prompt import UserExit
+        raise UserExit
     if reply.get("error"):
         raise PermissionError(reply["error"])
     return reply.get("value")

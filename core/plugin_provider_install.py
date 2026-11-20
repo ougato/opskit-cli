@@ -10,8 +10,18 @@ from core.plugin_capabilities import CapabilityDenied
 
 # Only host-controlled sources can be invoked by a sandboxed plugin.
 _PROVIDERS = {
-    "storage_hub": ("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "develop", (0, 3, 1)),
+    "storage_hub": ("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "master", (0, 3, 1)),
 }
+
+
+def provider_update_branch(provider, source, branch):
+    if provider == "storage_hub" and branch in ("develop", "release"):
+        from core.native_acquisition import source_identity
+
+        official_source, master, _ = _PROVIDERS[provider]
+        if source == source_identity(official_source)[0]:
+            return master
+    return branch
 
 
 def _compatible(manifest, provider, requirement, minimum):

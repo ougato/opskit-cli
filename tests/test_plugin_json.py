@@ -71,6 +71,15 @@ def test_guest_reply_uses_shared_limit_instead_of_truncating_at_one_megabyte(mon
     assert json.loads(capsys.readouterr().out.removeprefix(worker.PREFIX))["method"] == "pause"
 
 
+def test_guest_treats_host_exit_as_normal_exit(monkeypatch):
+    from core.prompt import UserExit
+
+    monkeypatch.setattr(worker.sys, "stdin", io.StringIO(plugin_json.dumps_message({"exit": True}) + "\n"))
+    with pytest.raises(UserExit) as result:
+        worker.broker("select")
+    assert result.value.code == 0
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_invalid_outgoing_values_rejected_recursively(value):
     with pytest.raises(ValueError):

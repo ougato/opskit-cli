@@ -22,6 +22,10 @@ class WorkspaceCapacityExhausted(ValueError):
     """The bounded workspace namespace cannot accommodate another task."""
 
 
+class WorkspaceInventoryChanged(ValueError):
+    """A concurrent writer invalidated the workspace inventory."""
+
+
 @dataclass(frozen=True)
 class WorkspaceBudget:
     payload_bytes: int
@@ -73,13 +77,13 @@ def reserve_workspace(parent):
                 elif _plain(info, stat.S_ISREG) and info.st_nlink == 1:
                     payload += info.st_size
                     if _version(info) != _version(path.lstat()):
-                        raise ValueError("workspace file changed")
+                        raise WorkspaceInventoryChanged("workspace file changed")
                 else:
                     raise ValueError("unsafe retained workspace")
                 if payload + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
                     raise WorkspaceCapacityExhausted("workspace byte quota exhausted")
         if _version(before) != _version(directory.lstat()):
-            raise ValueError("workspace directory changed")
+            raise WorkspaceInventoryChanged("workspace directory changed")
         return payload, entries
 
     before = parent.lstat()
@@ -105,7 +109,7 @@ def reserve_workspace(parent):
                 charged += info.st_size
                 entries += 1
                 if _version(info) != _version(path.lstat()):
-                    raise ValueError("workspace file changed")
+                    raise WorkspaceInventoryChanged("workspace file changed")
             else:
                 raise ValueError("unsafe retained workspace")
             if charged + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
@@ -113,7 +117,7 @@ def reserve_workspace(parent):
             if entries + WORKSPACE_ENTRIES > MAX_WORKSPACE_ENTRIES:
                 raise WorkspaceCapacityExhausted("workspace entry quota exhausted")
     if _version(before) != _version(parent.lstat()):
-        raise ValueError("workspace parent changed")
+        raise WorkspaceInventoryChanged("workspace parent changed")
     if charged + WORKSPACE_BYTES > MAX_WORKSPACE_BYTES:
         raise WorkspaceCapacityExhausted("workspace byte quota exhausted")
     if entries + WORKSPACE_ENTRIES > MAX_WORKSPACE_ENTRIES:

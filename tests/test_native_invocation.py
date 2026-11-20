@@ -147,8 +147,10 @@ def test_interpreter_probe_uses_actual_isolated_target(sdk_runtime, tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows isolation required")
 @pytest.mark.timeout(300)
-def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, monkeypatch):
+@pytest.mark.parametrize("exit_from_menu", [False, True])
+def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, monkeypatch, exit_from_menu):
     from core import plugin_sandbox as sandbox
+    from core import prompt
     from core.plugin import load_manifest
     from core.plugin_trust import compute_fingerprint, grant
     from core.native_runtime_catalog import RuntimeCatalog
@@ -158,10 +160,12 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     (plugin / "plugin.yaml").write_text(
         "name: demo\nversion: 1.0.0\napi_version: 4\nkind: python\nentry: public_example\n")
     (plugin / "public_example.py").write_text(
-        "from core.sdk import plugin_data_dir, waiting\n"
+        "from core.sdk import pause, plugin_data_dir, waiting\n"
         "def cli(argv):\n"
         "    with waiting():\n"
         "        (plugin_data_dir('demo') / 'committed.txt').write_text('native-state')\n"
+        "    if argv:\n"
+        "        pause()\n"
         "    return 23\n")
     fingerprint = compute_fingerprint(plugin)
     grant("demo", fingerprint, "1.0.0")
@@ -170,7 +174,15 @@ def test_public_invocation_commits_native_worker_state(sdk_runtime, tmp_path, mo
     RuntimeCatalog(tmp_path / "data/native-plugin-runtimes").publish(
         "demo", source, record, check_identity=lambda *args: True)
     assert not hasattr(sandbox, "docker_command")
-    assert sandbox.invoke(load_manifest(plugin), "cli") == 23
+    if exit_from_menu:
+        def quit_menu():
+            raise prompt.UserExit
+
+        monkeypatch.setattr(prompt, "pause", quit_menu)
+        with pytest.raises(prompt.UserExit):
+            sandbox.invoke(load_manifest(plugin), "cli", args=["exit"])
+    else:
+        assert sandbox.invoke(load_manifest(plugin), "cli") == 23
     assert (tmp_path / "data/plugin-data/demo/self/state/committed.txt").read_text() == "native-state"
     assert "public_example" not in sys.modules
 
