@@ -107,7 +107,7 @@ class ToolProgress:
             if match:
                 self.diagnostic = False
                 self.compact_stack = True
-                message = match + details
+                message = " ".join((match + details).split())
                 if message not in self.seen_compact:
                     if len(self.seen_compact) < 128:
                         self.seen_compact.add(message)

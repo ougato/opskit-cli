@@ -72,7 +72,7 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
         yield "begin script phase 17%"
         yield "Error: [BABEL] Note: generated file exceeds limit"
         yield "    at babel()"
-        yield "Error: repeated [BABEL] Note: generated file exceeds limit"
+        yield "Error: repeated [BABEL] Note: generated file exceeds limit   "
         yield "    at forwarded()"
         yield "Error: script build failed"
         yield "    at compile()"
