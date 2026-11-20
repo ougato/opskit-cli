@@ -124,6 +124,7 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 __all__ = [
     "read_host_file",
     "compare_write_host_file",
+    "atomic_write_host_file",
     "create_host_file",
     "host_file_status",
     "list_host_files",
@@ -153,6 +154,12 @@ def read_host_file(directory: str, relative: str, *, missing_ok: bool = False) -
 
 def compare_write_host_file(directory: str, relative: str, expected_sha256: str, content: bytes) -> dict:
     """Replace an unchanged bounded host file after exact write authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def atomic_write_host_file(directory: str, relative: str, lock_name: str,
+                           expected_sha256: str | None, content: bytes) -> dict:
+    """Publish a bounded compare-and-replace under a cooperating directory lock."""
     raise PermissionError("host file API requires an isolated plugin worker")
 
 

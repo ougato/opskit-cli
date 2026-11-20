@@ -5,12 +5,76 @@ import json
 import os
 import re
 import stat
+import time
 import uuid
 
 from core.host_file_access import _windows_final_path, _windows_long_path, source_path
 from core.native_sandbox import CapabilityRequest
 
 MAX_WRITE = 16 * 1024
+MAX_ATOMIC_WRITE = 1024 * 1024
+
+
+def atomic_write(plugin, fingerprint, directory, relative, lock_name, expected_sha256, encoded, *,
+                 authority, check_identity, checkpoint):
+    """Replace a bounded ordinary file under a cooperating directory lock."""
+    from core.host_file_access import read_bounded
+    from core.plugin_host_tools import _grant, _identity, _ordinary
+
+    if (not isinstance(relative, str) or "/" in relative or "\\" in relative
+            or not isinstance(lock_name, str) or not re.fullmatch(r"\.[a-z0-9-]{1,64}", lock_name)
+            or lock_name == relative
+            or (expected_sha256 is not None and
+                (not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)))
+            or not isinstance(encoded, str) or len(encoded) > (MAX_ATOMIC_WRITE + 2) // 3 * 4):
+        raise ValueError("invalid atomic write request")
+    content = base64.b64decode(encoded, validate=True)
+    if len(content) > MAX_ATOMIC_WRITE:
+        raise ValueError("atomic write limit exceeded")
+    root, target, identity = source_path(directory, relative)
+    scope = _grant(plugin, fingerprint, "directory.read_write", str(root), authority, check_identity, checkpoint)
+    if source_path(directory, relative) != (root, target, identity):
+        raise ValueError("host directory changed during authorization")
+    lock = root / lock_name
+    deadline = time.monotonic() + 3
+    while True:
+        checkpoint()
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                return {"written": False}
+            time.sleep(.03)
+    pending = lock / (uuid.uuid4().hex + ".tmp")
+    lock_identity = _identity(_ordinary(str(lock), directory=True))
+    try:
+        if source_path(directory, relative) != (root, target, identity):
+            raise ValueError("host directory changed before write")
+        try:
+            original = read_bounded(target, root, MAX_ATOMIC_WRITE)
+        except FileNotFoundError:
+            original = None
+        actual = hashlib.sha256(original).hexdigest() if original is not None else None
+        if actual != expected_sha256:
+            return {"written": False}
+        with pending.open("xb") as stream:
+            if os.name == "nt" and _windows_final_path(stream.fileno()) != _windows_long_path(pending):
+                raise ValueError("temporary host file redirected")
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        checkpoint()
+        authority.check(scope, check_identity=check_identity)
+        if (source_path(directory, relative) != (root, target, identity)
+                or _identity(_ordinary(str(lock), directory=True)) != lock_identity):
+            raise ValueError("host directory changed before publish")
+        os.replace(pending, target)
+        return {"written": True}
+    finally:
+        if _identity(_ordinary(str(lock), directory=True)) == lock_identity:
+            pending.unlink(missing_ok=True)
+            lock.rmdir()
 
 
 def _exclusive_open(path):

@@ -138,6 +138,12 @@ def _adapt_sdk(name: str):
         return broker("host.compare_write", directory, relative, expected_sha256,
                       base64.b64encode(content).decode("ascii"))
     sdk.compare_write_host_file = compare_write_host_file
+    def atomic_write_host_file(directory, relative, lock_name, expected_sha256, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.atomic_write", directory, relative, lock_name, expected_sha256,
+                      base64.b64encode(content).decode("ascii"))
+    sdk.atomic_write_host_file = atomic_write_host_file
     def create_host_file(directory, relative, content):
         if not isinstance(content, bytes):
             raise TypeError("host file content must be bytes")

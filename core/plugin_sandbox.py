@@ -565,8 +565,8 @@ def _broker(manifest, request: dict):
         return artifact_info(manifest.name, fingerprint, *args, authority=authority,
                              check_identity=identity, deadline=lambda: _invocations.deadline,
                              checkpoint=checkpoint)
-    if method in {"host.compare_write", "host.create_file"}:
-        if kwargs or len(args) != (4 if method == "host.compare_write" else 3):
+    if method in {"host.compare_write", "host.create_file", "host.atomic_write"}:
+        if kwargs or len(args) != {"host.compare_write": 4, "host.create_file": 3, "host.atomic_write": 5}[method]:
             raise SandboxError("invalid host file arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -576,10 +576,11 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        from core.plugin_host_write import compare_write, create_file
+        from core.plugin_host_write import atomic_write, compare_write, create_file
         from core.prompt import guard_input
         with guard_input(checkpoint):
-            operation = compare_write if method == "host.compare_write" else create_file
+            operation = {"host.compare_write": compare_write, "host.create_file": create_file,
+                         "host.atomic_write": atomic_write}[method]
             return operation(manifest.name, fingerprint, *args, authority=authority,
                              check_identity=identity, checkpoint=checkpoint)
     if method in {"host.read_file", "host.file_status"}:
