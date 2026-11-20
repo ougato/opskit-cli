@@ -1,6 +1,7 @@
 """Host-owned, plugin-partitioned output receipts and explicit safe collection."""
 from contextlib import contextmanager
 import hashlib
+import base64
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -83,6 +84,107 @@ def _snapshot(path, checkpoint, expected_files=None):
             "inventory_sha256": digest.hexdigest(), "bytes": size, "files": files}
 
 
+def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    """Publish a digest-bound copy to a new directory on the destination volume."""
+    from core.host_file_access import open_bounded, source_path
+
+    if (os.name != "nt" or set(parameters) != {"source", "destination", "files"}
+            or not isinstance(parameters["destination"], str)):
+        raise ValueError("invalid tree publication request")
+    source = _ordinary(parameters["source"], directory=True)
+    destination = Path(parameters["destination"])
+    parent = _ordinary(str(destination.parent), directory=True)
+    _, destination, identity = source_path(str(parent), destination.name)
+    if destination == source or source in destination.parents:
+        raise ValueError("destination overlaps source")
+    files = parameters["files"]
+    if not isinstance(files, dict) or not 0 < len(files) <= MAX_OUTPUT_ENTRIES:
+        raise ValueError("invalid tree inventory")
+    validated = {}
+    for name, entry in files.items():
+        if not isinstance(entry, dict) or set(entry) != {"source", "sha256"}:
+            raise ValueError("invalid tree entry")
+        _, target, _ = source_path(str(parent), name)
+        _, original, _ = source_path(str(source), entry["source"])
+        digest = entry["sha256"]
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("invalid tree digest")
+        validated[target.relative_to(parent).as_posix()] = (original, digest)
+    if len(validated) != len(files) or len({name.casefold() for name in validated}) != len(files):
+        raise ValueError("duplicate tree entry")
+    read_scope = _grant(plugin, fingerprint, "directory.read", str(source), authority, check_identity, checkpoint)
+    write_scope = _grant(plugin, fingerprint, "directory.read_write", str(parent), authority, check_identity, checkpoint)
+    source_identity = _directory(source)
+
+    def check():
+        checkpoint()
+        authority.check(read_scope, check_identity=check_identity)
+        authority.check(write_scope, check_identity=check_identity)
+        if _directory(source) != source_identity or source_path(str(parent), destination.name)[2] != identity:
+            raise ValueError("tree publication location changed")
+
+    expected = {name: digest for name, (_, digest) in validated.items()}
+    with resource_lock(parent):
+        check()
+        if os.path.lexists(destination):
+            if _snapshot(destination, check, expected)["files"] != len(expected):
+                raise ValueError("existing tree differs from verified source")
+            return {"directory": str(destination)}
+        staging = parent / (".opskit-tree-" + uuid.uuid4().hex)
+        staging.mkdir()
+        staging_identity = tuple(_directory(staging))
+        total = 0
+        try:
+            for name, (original, expected_digest) in validated.items():
+                check()
+                temporary = staging.joinpath(*PurePosixPath(name).parts)
+                temporary.parent.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha256()
+                with open_bounded(original, source, MAX_OUTPUT_BYTES) as incoming, temporary.open("xb") as outgoing:
+                    while body := incoming.read(1024**2):
+                        checkpoint()
+                        total += len(body)
+                        if total > MAX_OUTPUT_BYTES:
+                            raise ValueError("tree exceeds limit")
+                        digest.update(body)
+                        outgoing.write(body)
+                if digest.hexdigest() != expected_digest:
+                    raise ValueError("tree source changed during copy")
+            if _snapshot(staging, check, expected)["files"] != len(expected):
+                raise ValueError("staged tree differs from verified source")
+            check()
+            os.rename(staging, destination)
+            return {"directory": str(destination)}
+        finally:
+            if staging.exists():
+                _remove_owned_tree(staging, staging_identity, lambda: None, max_entries=MAX_OUTPUT_ENTRIES,
+                                   max_files=MAX_OUTPUT_ENTRIES, max_bytes=MAX_OUTPUT_BYTES, max_depth=64)
+
+
+def _zip_entry(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from zipfile import ZipFile
+    from core.host_file_access import MAX_ARTIFACT_BYTES, open_bounded, source_path
+
+    if set(parameters) != {"directory", "file", "member"} or not isinstance(parameters["member"], str):
+        raise ValueError("invalid ZIP entry request")
+    directory, archive, identity = source_path(parameters["directory"], parameters["file"])
+    scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
+    if source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("ZIP directory changed")
+    limit = 1024 * 1024
+    with open_bounded(archive, directory, MAX_ARTIFACT_BYTES) as stream, ZipFile(stream) as package:
+        matches = [item for item in package.infolist() if item.filename == parameters["member"]]
+        if len(matches) != 1 or matches[0].is_dir() or matches[0].file_size > limit:
+            raise ValueError("ZIP entry missing, ambiguous or too large")
+        with package.open(matches[0]) as member:
+            body = member.read(limit + 1)
+    if len(body) > limit or source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("ZIP entry changed or too large")
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    return {"content": base64.b64encode(body).decode("ascii")}
+
+
 def pending(plugin, token, resource, path, checkpoint):
     checkpoint()
     record = _record_path(plugin, token)
@@ -151,6 +253,12 @@ def _required(path, names, checkpoint):
 def manage(plugin, fingerprint, action, parameters, *, authority, check_identity, deadline, checkpoint, **unused):
     if not isinstance(parameters, dict):
         raise ValueError("invalid artifact parameters")
+    if action == "publish_tree":
+        return _publish_tree(plugin, fingerprint, parameters, authority=authority,
+                             check_identity=check_identity, checkpoint=checkpoint)
+    if action == "zip_entry":
+        return _zip_entry(plugin, fingerprint, parameters, authority=authority,
+                          check_identity=check_identity, checkpoint=checkpoint)
     if action == "mkdir":
         if set(parameters) != {"directory"} or not isinstance(parameters["directory"], str):
             raise ValueError("invalid directory request")

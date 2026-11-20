@@ -137,6 +137,10 @@ waiting(message='') -> context manager
 
 `atomic_write_host_file(directory, relative, lock_name, expected_sha256, content)` 在目录读写授权下原子替换不超过 1 MiB 的普通文件。`relative` 为单个文件名，`lock_name` 为协作写入者共用的点号前缀锁目录。`expected_sha256=None` 表示要求目标不存在；返回 `{"written": false}` 时重新读取并合并后重试。
 
+Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷暂存文件并核对摘要，整目录一次发布。目标已存在时，只有全部文件和摘要一致才返回成功。
+
+`host_artifacts("zip_entry", {"directory": directory, "file": file, "member": member})` 在目录读取授权下返回指定 ZIP 成员的 Base64 内容。成员必须唯一，最大 1 MiB；该操作不解压到宿主磁盘。
+
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 
 信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录授权提示仅显示权限、资源和授权选项，多个权限用 ` | ` 分隔。单独申请执行宿主工具时仍会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。

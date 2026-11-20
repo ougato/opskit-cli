@@ -1,4 +1,6 @@
 """Receipts retain host authority across build, commit, inspection and collection."""
+import base64
+import hashlib
 import subprocess
 import sys
 import time
@@ -22,6 +24,41 @@ def context(tmp_path, monkeypatch):
 
 def manage(action, params, context, owner="demo"):
     return artifacts.manage(owner, "a" * 64, action, params, **context)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+def test_publish_tree_preserves_existing_archive_and_rejects_changed_source(tmp_path, context):
+    source = tmp_path / "build"
+    source.mkdir()
+    (source / "index.html").write_bytes(b"built")
+    destination = tmp_path / "archive"
+    digest = hashlib.sha256(b"built").hexdigest()
+    params = {"source": str(source), "destination": str(destination),
+              "files": {"web/index.html": {"source": "index.html", "sha256": digest}}}
+    assert manage("publish_tree", params, context) == {"directory": str(destination)}
+    assert manage("publish_tree", params, context) == {"directory": str(destination)}
+    assert (destination / "web" / "index.html").read_bytes() == b"built"
+    (source / "index.html").write_bytes(b"changed")
+    params["destination"] = str(tmp_path / "second")
+    with pytest.raises(ValueError, match="changed during copy"):
+        manage("publish_tree", params, context)
+    assert not (tmp_path / "second").exists()
+    assert list(tmp_path.glob(".opskit-tree-*")) == []
+
+
+def test_zip_entry_reads_only_requested_member_and_rejects_duplicates(tmp_path, context):
+    from zipfile import ZipFile
+
+    package = tmp_path / "sample.zip"
+    params = {"directory": str(tmp_path), "file": package.name, "member": "assets/environment.json"}
+    with ZipFile(package, "w") as archive:
+        archive.writestr(params["member"], b'{"env":{}}')
+        archive.writestr("unrelated.txt", b"other")
+    assert base64.b64decode(manage("zip_entry", params, context)["content"]) == b'{"env":{}}'
+    with ZipFile(package, "a") as archive, pytest.warns(UserWarning, match="Duplicate name"):
+        archive.writestr(params["member"], b"duplicate")
+    with pytest.raises(ValueError, match="ambiguous"):
+        manage("zip_entry", params, context)
 
 
 def output(project, context, *, commit=True, owner="demo"):
