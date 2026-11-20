@@ -63,7 +63,7 @@
 
 以 Cocos 为例，游戏级输出目录和保留数量覆盖插件级默认值，重置游戏设置后重新继承默认值。客户端版本与渠道由选中分支的 `env/environment.json` 提供，构建版本可通过菜单或命令行指定。插件 README 应明确每一项的实际生效来源。
 
-上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256，将该摘要传给 `upload_file`。上传时宿主会重新校验实际文件摘要。插件应使用所选目录的相对路径生成对象键。首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
+上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 每批最多读取 64 个文件的元数据，结果按输入顺序返回。将摘要传给 `upload_file`，宿主会重新校验实际文件摘要。插件应使用所选目录的相对路径生成对象键。首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
 
 ## 清单与入口
 

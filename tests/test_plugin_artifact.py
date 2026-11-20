@@ -36,6 +36,23 @@ def test_real_large_file_returns_only_size_and_checksum(tmp_path, monkeypatch):
         inspect(tmp_path, authority)
 
 
+def test_batch_artifact_preserves_requested_order(tmp_path, monkeypatch):
+    contents = {"first.bin": b"first", "second.bin": b"second"}
+    for name, data in contents.items():
+        (tmp_path / name).write_bytes(data)
+    authority = authorize(tmp_path, monkeypatch)
+    names = ["second.bin", "first.bin"]
+    try:
+        assert artifact.artifact_batch_info("demo", "a" * 64, str(tmp_path), names,
+            authority=authority, check_identity=lambda *args: True, deadline=time.monotonic() + 30,
+            checkpoint=lambda: None) == [
+                {"bytes": len(contents[name]), "sha256": hashlib.sha256(contents[name]).hexdigest()}
+                for name in names
+            ]
+    finally:
+        authority.close()
+
+
 def test_denied_artifact_never_starts_file_worker(tmp_path, monkeypatch):
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
     monkeypatch.setattr(authority, "require", lambda *args, **kwargs:

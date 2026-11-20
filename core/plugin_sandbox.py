@@ -554,10 +554,10 @@ def _broker(manifest, request: dict):
         from core.plugin_host_archive import directories
         return directories(manifest.name, fingerprint, *args, authority=authority,
                            check_identity=identity, checkpoint=checkpoint)
-    if method == "host.artifact_info":
+    if method in {"host.artifact_info", "host.artifact_batch_info"}:
         if kwargs or len(args) != 2:
             raise SandboxError("invalid artifact arguments")
-        from core.plugin_artifact import artifact_info
+        from core.plugin_artifact import artifact_info, artifact_batch_info
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
@@ -566,9 +566,10 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        return artifact_info(manifest.name, fingerprint, *args, authority=authority,
-                             check_identity=identity, deadline=lambda: _invocations.deadline,
-                             checkpoint=checkpoint)
+        inspect_artifacts = artifact_info if method == "host.artifact_info" else artifact_batch_info
+        return inspect_artifacts(manifest.name, fingerprint, *args, authority=authority,
+                                 check_identity=identity, deadline=lambda: _invocations.deadline,
+                                 checkpoint=checkpoint)
     if method in {"host.compare_write", "host.create_file", "host.atomic_write"}:
         if kwargs or len(args) != {"host.compare_write": 4, "host.create_file": 3, "host.atomic_write": 5}[method]:
             raise SandboxError("invalid host file arguments")

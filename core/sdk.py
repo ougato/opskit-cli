@@ -129,6 +129,7 @@ __all__ = [
     "host_file_status",
     "list_host_files",
     "artifact_info",
+    "artifact_batch_info",
     "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
@@ -185,6 +186,11 @@ def list_host_files(directory: str, *, missing_ok: bool = False) -> list[str]:
 
 def artifact_info(directory: str, relative: str) -> dict:
     """Return bytes/SHA256 for an authorized ordinary host file, up to 512MiB."""
+    raise PermissionError("artifact API requires an isolated plugin worker")
+
+
+def artifact_batch_info(directory: str, relatives: list[str]) -> list[dict]:
+    """Return ordered metadata for up to 64 ordinary files under one authorized directory."""
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 

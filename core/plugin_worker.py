@@ -153,6 +153,7 @@ def _adapt_sdk(name: str):
     sdk.list_host_files = lambda directory, *, missing_ok=False: broker("host.list_files", directory, missing_ok=missing_ok)
     sdk.host_asar_directories = lambda directory, relative, member: broker("host.asar_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
+    sdk.artifact_batch_info = lambda directory, relatives: broker("host.artifact_batch_info", directory, relatives)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)

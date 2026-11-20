@@ -86,6 +86,8 @@ SDK `artifact_info(directory, relative) -> {bytes, sha256}` 在精确目录读�
 将该 SHA256 传给 `upload_file`，上传快照会再次核对；文件变化不静默接受新摘要。
 同一调用、同一精确目录的一次授权可复用，不重复询问。
 
+`artifact_batch_info(directory, relatives)` 使用同一目录读取授权和同样的文件校验，接受 1～64 个不同相对路径，按请求顺序返回大小和 SHA-256。整批读取失败时不返回部分摘要。
+
 `artifact_info` returns only host-computed file size and SHA256 under explicit directory
 consent (ordinary files, up to 512MiB). Upload verifies its snapshot against that digest.
 Both operations share the same scoped grant; once consent is reused within the invocation.
