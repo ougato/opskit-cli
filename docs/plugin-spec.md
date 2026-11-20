@@ -11,6 +11,8 @@ Windows 使用 AppContainer 与 Job Object。插件在隔离验证完成后才�
 开发规则、菜单示例和 SDK 完整导出目录见[插件开发指南](plugin-development.md)；旧插件迁移步骤见[原生升级指南](plugin-native-upgrade-guide.md)。
 For migration steps and bilingual SDK examples, see the native upgrade guide.
 
+SDK 多选菜单每页最多显示 9 项，按 `n` 或 `p` 翻页时保留勾选状态。
+
 ## 清单与入口
 
 ```yaml

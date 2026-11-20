@@ -182,3 +182,55 @@ def test_multi_select_cursor_wraps(monkeypatch) -> None:
 
 def test_multi_select_empty_options() -> None:
     assert multi_select(["OpsKit"], "pick", []) == []
+
+
+def test_multi_select_keeps_choices_across_pages(monkeypatch) -> None:
+    _feed_keys(monkeypatch, ["p", " ", "n", "n", " ", "p", "DOWN", " ", "\r"])
+    assert multi_select(["OpsKit"], "", list("abcdefghij")) == [0, 1, 9]
+
+
+def test_multi_select_flushes_focused_row_before_space(monkeypatch) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from core import prompt
+
+    class TerminalOutput(StringIO):
+        def write(self, value):
+            writes.append(value)
+            return super().write(value)
+
+    writes = []
+    monkeypatch.setattr(prompt, "console", Console(file=TerminalOutput(), width=100, color_system=None))
+    keys = iter(["DOWN", "DOWN", "DOWN", " ", "\r"])
+    expected_rows = iter(["[•] 全部构建", "[•] WebMobile", "[•] WebDesktop", "[•] Android", "[✔] Android"])
+
+    def read_key():
+        assert len(writes) == 1
+        frame = writes.pop()
+        assert next(expected_rows) in frame
+        assert "[ ] 微信小游戏" in frame
+        return next(keys)
+
+    monkeypatch.setattr(prompt, "clear_screen", lambda: None)
+    monkeypatch.setattr(prompt, "_read_key_seq", read_key)
+    assert multi_select(["OpsKit"], "", ["全部构建", "WebMobile", "WebDesktop", "Android", "微信小游戏"],
+                        all_index=0) == [3]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console key events")
+def test_multi_select_ignores_queued_windows_key_repeats(monkeypatch, capsys) -> None:
+    from core import prompt, windows_console_input
+
+    down = (0x28, True, "\x00")
+    up = (0x28, False, "\x00")
+    space = (0x20, True, " ")
+    records = iter([down, up, down, up, down, down, down, up, space, space, (0x0d, True, "\r")])
+    monkeypatch.setattr(prompt, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr(prompt, "_read_windows_key", lambda read: read())
+    monkeypatch.setattr(windows_console_input, "read_key_event", lambda: next(records))
+    monkeypatch.setattr(prompt, "clear_screen", lambda: None)
+    assert multi_select(["OpsKit"], "", ["All", "WebMobile", "WebDesktop", "Android", "WeChat"],
+                        all_index=0) == [3]
+    assert "[✔] Android" in capsys.readouterr().out

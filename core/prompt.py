@@ -65,11 +65,19 @@ def _getwch() -> str:
         return _read_windows_key()
 
 
-def _read_windows_key() -> str:
+def _read_windows_key(read=None) -> str:
     import msvcrt
     from core.cleanup import (_begin_console_input, _console_interrupt_pending,
                               _end_console_input)
 
+    from core.windows_console_input import key_available
+
+    if read is None:
+        read = msvcrt.getwch
+        def ready():
+            return msvcrt.kbhit() or (_input_guard.get() is not None and key_available())
+    else:
+        ready = key_available
     active = _begin_console_input()
     interrupted = False
     try:
@@ -79,25 +87,23 @@ def _read_windows_key() -> str:
             with _waiting_for_input():
                 while not _console_interrupt_pending():
                     if _input_guard.get() is not None:
-                        from core.windows_console_input import key_available
                         _check_input()
-                        if msvcrt.kbhit() or key_available():
+                        if ready():
                             break
-                    elif msvcrt.kbhit():
+                    elif ready():
                         break
                     time.sleep(0.05)
-            value = "\x03" if _console_interrupt_pending() else msvcrt.getwch()
+            value = "\x03" if _console_interrupt_pending() else read()
         elif _input_guard.get() is not None:
-            from core.windows_console_input import key_available
             with _waiting_for_input():
                 while True:
                     _check_input()
-                    if msvcrt.kbhit() or key_available():
+                    if ready():
                         break
                     time.sleep(0.05)
-            value = msvcrt.getwch()
+            value = read()
         else:
-            value = msvcrt.getwch()
+            value = read()
     finally:
         if active:
             interrupted = _end_console_input()
@@ -106,6 +112,32 @@ def _read_windows_key() -> str:
     if _input_guard.get() is not None and value in ("\x03", "\x04"):
         raise KeyboardInterrupt
     return value
+
+
+def _read_multi_select_key(pressed: set[int]) -> str:
+    if os.name != "nt" or not _stdin_is_tty():
+        return _read_key_seq()
+    from core.windows_console_input import read_key_event
+
+    def read():
+        event = read_key_event()
+        if event is None:
+            return ""
+        key, down, character = event
+        if not down:
+            pressed.discard(key)
+            return ""
+        if key in (0x26, 0x28, 0x20):  # Up, Down, Space
+            if key in pressed:
+                return ""
+            pressed.add(key)
+            return {0x26: "UP", 0x28: "DOWN", 0x20: " "}[key]
+        return character if character != "\x00" else ""
+
+    while True:
+        value = _read_windows_key(read)
+        if value:
+            return value
 
 
 def _read_fd(fd: int, count: int) -> bytes:
@@ -724,7 +756,7 @@ def multi_select(
 ) -> list[int] | None:
     """Powerline 风格多选菜单：↑↓ 移动光标、空格勾选、回车确认。
 
-    subtitle  — 标题下的提示 pill（与 text_input 的字段标签同款式）
+    subtitle  — 标题下的提示，传空字符串可隐藏
     options   — 选项文案列表
     all_index — 「全选」项下标（可选）：勾选它全选、取消它全不选；
                 其余项全部勾上时自动连带勾上，任一项取消时自动连带取消
@@ -737,20 +769,26 @@ def multi_select(
     require_interaction()
     cursor = 0
     checked: set[int] = set()
+    pressed: set[int] = set()
+    page_size = 9
+    total = len(options)
+    from core.i18n import t
+    from core.theme import get_icon
 
     def _render() -> None:
         clear_screen()
         _render_header(breadcrumb)
-        row2 = Text()
-        tee = Text(f' {_TEE} ')
-        tee.stylize(_PIPE_COLOR)
-        row2.append_text(tee)
-        row2.append_text(_cap_text(_INPUT_SEG))
-        row2.append_text(_seg_text(subtitle, _INPUT_SEG))
-        row2.append_text(_tail_text(_INPUT_SEG))
-        console.print(row2)
+        if subtitle:
+            row2 = Text(f' {_TEE} ', style=_PIPE_COLOR)
+            row2.append_text(_cap_text(_INPUT_SEG))
+            row2.append_text(_seg_text(subtitle, _INPUT_SEG))
+            row2.append_text(_tail_text(_INPUT_SEG))
+            console.print(row2)
         # Text 明文拼接（[ ] 不参与 rich 标记解析）；光标显示在括号内（[•]），勾选为 [✔]
-        for i, label in enumerate(options):
+        start = cursor // page_size * page_size
+        end = min(start + page_size, total)
+        for i in range(start, end):
+            label = options[i]
             row = Text()
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
@@ -766,19 +804,29 @@ def multi_select(
             row.append('] ')
             row.append(_pad_label(label), style='bold' if i == cursor else '')
             console.print(row)
+        navigation = []
+        if start:
+            navigation.append(('p', f"{get_icon('back')} {t('prompt.prev_page')}"))
+        if end < total:
+            navigation.append(('n', f"{get_icon('next_page')} {t('prompt.next_page')}"))
         if back_label:
+            navigation.append(('0', back_label))
+        for key, label in navigation:
             row = Text()
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
             row.append_text(tee)
-            row.append(f'(0) {_pad_label(back_label)}', style='dim')
+            row.append(f'({key}) {_pad_label(label)}', style='dim' if key == '0' else '')
             console.print(row)
-        sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
-        sys.stdout.flush()
+        console.print(Text(f' {_BEND}', style=_PIPE_COLOR), end=' ')
 
     while True:
-        _render()
-        ch = _read_key_seq()
+        # Commit a whole frame before reading the next key. In a Windows
+        # terminal, individual row writes can leave the previous focus visible
+        # while the new title and rows are still being drawn.
+        with console:
+            _render()
+        ch = _read_multi_select_key(pressed)
         if not ch:
             if not _stdin_is_tty():
                 console.print()
@@ -788,6 +836,14 @@ def multi_select(
             cursor = (cursor - 1) % len(options)
         elif ch == 'DOWN':
             cursor = (cursor + 1) % len(options)
+        elif ch.lower() == 'n':
+            next_start = (cursor // page_size + 1) * page_size
+            if next_start < total:
+                cursor = next_start
+        elif ch.lower() == 'p':
+            previous_start = (cursor // page_size - 1) * page_size
+            if previous_start >= 0:
+                cursor = previous_start
         elif ch == ' ':
             if cursor in checked:
                 checked.discard(cursor)
