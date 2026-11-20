@@ -132,6 +132,22 @@ def test_zip_entry_reads_only_requested_member_and_rejects_duplicates(tmp_path, 
         manage("zip_entry", params, context)
 
 
+def test_zip_entry_pattern_matches_only_one_path_component(tmp_path, context):
+    from zipfile import ZipFile
+
+    package = tmp_path / "sample.ipa"
+    params = {"directory": str(tmp_path), "file": package.name,
+              "member_pattern": "Payload/*.app/environment.json"}
+    with ZipFile(package, "w") as archive:
+        archive.writestr("Payload/Game.app/environment.json", b'{"env":{}}')
+        archive.writestr("Payload/Game.app/Nested/Other.app/environment.json", b"nested")
+    assert base64.b64decode(manage("zip_entry", params, context)["content"]) == b'{"env":{}}'
+    with ZipFile(package, "a") as archive:
+        archive.writestr("Payload/Another.app/environment.json", b"another")
+    with pytest.raises(ValueError, match="ambiguous"):
+        manage("zip_entry", params, context)
+
+
 def output(project, context, *, commit=True, owner="demo"):
     token = uuid.uuid4().hex
     path = project / ("opskit-" + token)

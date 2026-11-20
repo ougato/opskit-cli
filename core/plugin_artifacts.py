@@ -179,19 +179,37 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
 
 
 def _zip_entry(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from stat import S_ISLNK
     from zipfile import ZipFile
     from core.host_file_access import MAX_ARTIFACT_BYTES, open_bounded, source_path
 
-    if set(parameters) != {"directory", "file", "member"} or not isinstance(parameters["member"], str):
+    fields = set(parameters)
+    if fields not in ({"directory", "file", "member"}, {"directory", "file", "member_pattern"}):
         raise ValueError("invalid ZIP entry request")
+    exact = "member" in parameters
+    selector = parameters["member" if exact else "member_pattern"]
+    if not isinstance(selector, str):
+        raise ValueError("invalid ZIP entry selector")
+    if exact:
+        def matches_name(name):
+            return name == selector
+    else:
+        if selector.count("*") != 1 or not re.fullmatch(r"[A-Za-z0-9_./*-]{1,256}", selector):
+            raise ValueError("invalid ZIP entry pattern")
+        prefix, suffix = selector.split("*")
+        pattern = re.compile(re.escape(prefix) + r"[^/\\]+" + re.escape(suffix))
+
+        def matches_name(name):
+            return pattern.fullmatch(name) is not None
     directory, archive, identity = source_path(parameters["directory"], parameters["file"])
     scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
     if source_path(parameters["directory"], parameters["file"])[2] != identity:
         raise ValueError("ZIP directory changed")
     limit = 1024 * 1024
     with open_bounded(archive, directory, MAX_ARTIFACT_BYTES) as stream, ZipFile(stream) as package:
-        matches = [item for item in package.infolist() if item.filename == parameters["member"]]
-        if len(matches) != 1 or matches[0].is_dir() or matches[0].file_size > limit:
+        matches = [item for item in package.infolist() if matches_name(item.filename)]
+        if (len(matches) != 1 or matches[0].is_dir() or S_ISLNK(matches[0].external_attr >> 16)
+                or matches[0].file_size > limit):
             raise ValueError("ZIP entry missing, ambiguous or too large")
         with package.open(matches[0]) as member:
             body = member.read(limit + 1)
