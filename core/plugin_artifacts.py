@@ -330,6 +330,53 @@ def _file_header(plugin, fingerprint, parameters, *, authority, check_identity, 
     return {"header": header.hex(), "sha256": digest.hexdigest()}
 
 
+def _remove_verified_file(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from core.host_file_access import open_bounded, source_path
+
+    if os.name != "nt" or set(parameters) != {"directory", "file", "sha256"}:
+        raise ValueError("invalid verified file removal")
+    directory, name, digest = (parameters[key] for key in ("directory", "file", "sha256"))
+    if (not isinstance(name, str) or "/" in name or "\\" in name
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("invalid verified file removal")
+    root, target, identity = source_path(directory, name)
+    scope = _grant(plugin, fingerprint, "directory.read_write", str(root),
+                   authority, check_identity, checkpoint)
+
+    def check():
+        checkpoint()
+        authority.check(scope, check_identity=check_identity)
+        if source_path(directory, name) != (root, target, identity):
+            raise ValueError("verified removal directory changed")
+
+    def inspect(path):
+        with open_bounded(path, root, 1024**2) as stream:
+            info = os.fstat(stream.fileno())
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                raise ValueError("file differs from expected content")
+            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+    with resource_lock(root):
+        check()
+        before = inspect(target)
+        retired = root / (".opskit-removed-" + uuid.uuid4().hex)
+        check()
+        os.rename(target, retired)
+        try:
+            if inspect(retired) != before:
+                raise ValueError("file changed during removal")
+            check()
+            final = retired.lstat()
+            if (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns) != before or final.st_nlink != 1:
+                raise ValueError("file changed before removal")
+            retired.unlink()
+        except BaseException:
+            if not os.path.lexists(target) and source_path(directory, name) == (root, target, identity):
+                os.rename(retired, target)
+            raise
+    return {"removed": True}
+
+
 def _sign_update_manifest(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes, serialization
@@ -469,6 +516,9 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     if action == "read_verified_file":
         return _read_verified_file(plugin, fingerprint, parameters, authority=authority,
                                    check_identity=check_identity, checkpoint=checkpoint)
+    if action == "remove_verified_file":
+        return _remove_verified_file(plugin, fingerprint, parameters, authority=authority,
+                                     check_identity=check_identity, checkpoint=checkpoint)
     if action == "mkdir":
         if set(parameters) != {"directory"} or not isinstance(parameters["directory"], str):
             raise ValueError("invalid directory request")

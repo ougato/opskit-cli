@@ -143,6 +143,8 @@ waiting(message='') -> context manager
 
 Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷边复制边核对 SHA-256 和写入长度，发布前检查暂存文件的清单、身份、大小和修改时间，再原子发布整个目录。需要独立回读验证内容的调用方应另行校验。目标已存在时，只有全部文件和摘要一致才返回成功。
 
+支持 `HOST_ARTIFACT_REMOVE_FILE` 的 Windows 宿主提供 `host_artifacts("remove_verified_file", {"directory": directory, "file": filename, "sha256": digest})`。该接口要求目录读写授权，只删除摘要匹配且不超过 1 MiB 的普通文件。`file` 必须是单个文件名。
+
 SDK 提供 `HOST_ARTIFACT_PUBLISH_NESTED` 时，目标可位于源根目录下。参与复制的源文件必须在目标目录之外，源根目录和目标目录也必须不同。
 
 发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。

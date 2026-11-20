@@ -10,7 +10,7 @@ import pytest
 
 from core import plugin_artifacts as artifacts
 from core.native_sandbox import GrantChoice
-from core.plugin_capabilities import CapabilityAuthority
+from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
 
 
 @pytest.fixture
@@ -34,6 +34,66 @@ def test_read_verified_file_rejects_changed_large_config(tmp_path, context):
     assert base64.b64decode(manage("read_verified_file", params, context)["content"]) == content
     with pytest.raises(ValueError, match="digest or size differs"):
         manage("read_verified_file", {**params, "sha256": "0" * 64}, context)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite file rename")
+def test_remove_verified_file_requires_the_expected_content(tmp_path, context):
+    target = tmp_path / "old.txt"
+    target.write_bytes(b"old")
+    params = {"directory": str(tmp_path), "file": target.name,
+              "sha256": hashlib.sha256(b"different").hexdigest()}
+    with pytest.raises(ValueError, match="expected content"):
+        manage("remove_verified_file", params, context)
+    assert target.read_bytes() == b"old"
+    params["sha256"] = hashlib.sha256(b"old").hexdigest()
+    assert manage("remove_verified_file", params, context) == {"removed": True}
+    assert not target.exists()
+    assert not list(tmp_path.glob(".opskit-removed-*"))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite file rename")
+def test_remove_verified_file_preserves_a_concurrent_replacement(tmp_path, context, monkeypatch):
+    target = tmp_path / "old.txt"
+    target.write_bytes(b"old")
+    replacement = tmp_path / "incoming.txt"
+    replacement.write_bytes(b"new")
+    rename = artifacts.os.rename
+
+    def replace_before_move(path, destination):
+        if path == target:
+            rename(target, tmp_path / "saved.txt")
+            rename(replacement, target)
+        return rename(path, destination)
+
+    monkeypatch.setattr(artifacts.os, "rename", replace_before_move)
+    with pytest.raises(ValueError, match="expected content"):
+        manage("remove_verified_file", {
+            "directory": str(tmp_path), "file": target.name, "sha256": hashlib.sha256(b"old").hexdigest(),
+        }, context)
+    assert target.read_bytes() == b"new"
+    assert (tmp_path / "saved.txt").read_bytes() == b"old"
+    assert not list(tmp_path.glob(".opskit-removed-*"))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite file rename")
+def test_remove_verified_file_restores_the_original_on_revocation(tmp_path, context, monkeypatch):
+    target = tmp_path / "old.txt"
+    target.write_bytes(b"old")
+    authority = context["authority"]
+    check = authority.check
+
+    def revoke_after_move(scope, **options):
+        if not target.exists():
+            authority.revoke(scope)
+        return check(scope, **options)
+
+    monkeypatch.setattr(authority, "check", revoke_after_move)
+    with pytest.raises(CapabilityDenied, match="missing_or_revoked"):
+        manage("remove_verified_file", {
+            "directory": str(tmp_path), "file": target.name, "sha256": hashlib.sha256(b"old").hexdigest(),
+        }, context)
+    assert target.read_bytes() == b"old"
+    assert not list(tmp_path.glob(".opskit-removed-*"))
 
 
 def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_path, context):

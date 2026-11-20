@@ -240,6 +240,7 @@ def finish_host_tool_output(success: bool) -> None:
 
 HOST_ARTIFACT_PUBLISH_PARENTS = True
 HOST_ARTIFACT_PUBLISH_NESTED = True
+HOST_ARTIFACT_REMOVE_FILE = True
 HOST_ARTIFACT_COMMIT_HASHES = True
 
 
