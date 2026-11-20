@@ -200,6 +200,28 @@ def _zip_entry(plugin, fingerprint, parameters, *, authority, check_identity, ch
     return {"content": base64.b64encode(body).decode("ascii")}
 
 
+def _read_verified_file(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from core.host_file_access import open_bounded, source_path
+
+    if set(parameters) != {"directory", "file", "sha256", "limit"}:
+        raise ValueError("invalid verified file request")
+    limit, expected = parameters["limit"], parameters["sha256"]
+    if (type(limit) is not int or not 1 <= limit <= 8 * 1024**2
+            or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)):
+        raise ValueError("invalid verified file bounds")
+    directory, path, identity = source_path(parameters["directory"], parameters["file"])
+    scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
+    if source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("verified file directory changed")
+    with open_bounded(path, directory, limit) as stream:
+        body = stream.read(limit + 1)
+    if len(body) > limit or hashlib.sha256(body).hexdigest() != expected:
+        raise ValueError("verified file digest or size differs")
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    return {"content": base64.b64encode(body).decode("ascii")}
+
+
 def _file_header(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
     from core.host_file_access import MAX_ARTIFACT_BYTES, open_bounded, source_path
 
@@ -355,6 +377,9 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     if action == "file_header":
         return _file_header(plugin, fingerprint, parameters, authority=authority,
                             check_identity=check_identity, checkpoint=checkpoint)
+    if action == "read_verified_file":
+        return _read_verified_file(plugin, fingerprint, parameters, authority=authority,
+                                   check_identity=check_identity, checkpoint=checkpoint)
     if action == "mkdir":
         if set(parameters) != {"directory"} or not isinstance(parameters["directory"], str):
             raise ValueError("invalid directory request")

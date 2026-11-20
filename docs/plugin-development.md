@@ -147,6 +147,8 @@ Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destinatio
 
 `host_artifacts("file_header", {"directory": directory, "file": file})` 在目录读取授权下返回文件前 12 字节的十六进制编码和同一读取流的完整 SHA-256，用于将格式检查与归档摘要绑定。
 
+`host_artifacts("read_verified_file", {"directory": directory, "file": file, "sha256": digest, "limit": limit})` 在目录读取授权下读取已知 SHA-256 的文件，并返回 Base64 内容。调用者指定上限，最多 8 MiB。摘要不符或超出上限时读取失败。
+
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 
 信息行只是通用展示模板，不是授权接口。插件调用 `host_path_info`、`read_host_file`、`host_execute` 等 SDK 能力时，框架独立生成授权窗口、校验目标并处理本次、永久和返回选项；插件自己的菜单或业务确认不能授予宿主权限。目录授权提示仅显示权限、资源和授权选项，多个权限用 ` | ` 分隔。单独申请执行宿主工具时仍会说明工具以当前用户权限运行。插件指纹仍用于授权绑定，可在权限管理中查看。

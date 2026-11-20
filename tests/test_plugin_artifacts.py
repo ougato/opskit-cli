@@ -26,6 +26,16 @@ def manage(action, params, context, owner="demo"):
     return artifacts.manage(owner, "a" * 64, action, params, **context)
 
 
+def test_read_verified_file_rejects_changed_large_config(tmp_path, context):
+    content = b" " * (1024**2 + 1)
+    (tmp_path / "settings.json").write_bytes(content)
+    params = {"directory": str(tmp_path), "file": "settings.json", "limit": 4 * 1024**2,
+              "sha256": hashlib.sha256(content).hexdigest()}
+    assert base64.b64decode(manage("read_verified_file", params, context)["content"]) == content
+    with pytest.raises(ValueError, match="digest or size differs"):
+        manage("read_verified_file", {**params, "sha256": "0" * 64}, context)
+
+
 def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_path, context):
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
