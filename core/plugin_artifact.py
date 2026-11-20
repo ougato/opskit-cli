@@ -4,7 +4,7 @@ import json
 import re
 import time
 
-from core.host_file_access import open_bounded, source_path
+from core.host_file_access import open_bounded, relative_host_path, source_path
 from core.host_file_access import MAX_ARTIFACT_BYTES as MAX_FILE
 from core.native_sandbox import CapabilityRequest
 from core.sdk import HOST_ARTIFACT_BATCH_LIMIT
@@ -52,12 +52,7 @@ def artifact_batch_info(plugin, fingerprint, directory, relatives, *, authority,
             or len(set(relatives)) != len(relatives)):
         raise ValueError("invalid artifact batch")
     root, source, identity = source_path(directory, relatives[0])
-    sources = [source]
-    for relative in relatives[1:]:
-        path_root, source, current = source_path(directory, relative)
-        if path_root != root or current != identity:
-            raise ValueError("artifact directory changed")
-        sources.append(source)
+    sources = [source, *(relative_host_path(root, relative) for relative in relatives[1:])]
     scope = CapabilityRequest(plugin, fingerprint, "directory.read", str(root))
     from core.prompt import guard_input
     checkpoint()
