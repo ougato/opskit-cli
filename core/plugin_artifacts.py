@@ -97,7 +97,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
     destination = Path(parameters["destination"])
     parent = _ordinary(str(destination.parent), directory=True)
     _, destination, identity = source_path(str(parent), destination.name)
-    if destination == source or source in destination.parents:
+    if destination == source:
         raise ValueError("destination overlaps source")
     files = parameters["files"]
     if not isinstance(files, dict) or not 0 < len(files) <= MAX_OUTPUT_ENTRIES:
@@ -113,6 +113,8 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("invalid tree digest")
         if "source" in entry:
+            if source in destination.parents:
+                raise ValueError("destination overlaps source")
             _, original, _ = source_path(str(source), entry["source"])
         else:
             content = entry["content"]

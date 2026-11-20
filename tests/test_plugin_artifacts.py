@@ -87,6 +87,15 @@ def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
         manage("publish_tree", params, context)
     assert not (tmp_path / "invalid").exists()
 
+    inline = {"source": str(tmp_path), "destination": str(tmp_path / "generated"), "files": {
+        ".well-known/assetlinks.json": {"content": base64.b64encode(manifest).decode("ascii"),
+                                         "sha256": hashlib.sha256(manifest).hexdigest()},
+    }}
+    manage("publish_tree", inline, context)
+    assert (tmp_path / "generated" / ".well-known" / "assetlinks.json").read_bytes() == manifest
+    with pytest.raises(ValueError, match="destination overlaps source"):
+        manage("publish_tree", {**inline, "files": {"payload.png": params["files"]["payload.png"]}}, context)
+
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
 def test_publish_tree_preserves_existing_archive_and_rejects_changed_source(tmp_path, context):
