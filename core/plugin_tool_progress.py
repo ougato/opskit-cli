@@ -38,6 +38,7 @@ class ToolProgress:
         self.percent = None
         self.diagnostic = False
         self.live = None
+        self.finished = False
 
     def __enter__(self):
         from rich.live import Live
@@ -50,7 +51,7 @@ class ToolProgress:
         return self
 
     def __exit__(self, *exc):
-        if exc[0] is not None:
+        if exc[0] is not None and not self.finished:
             self._summary(False)
         if self.live is not None:
             self.live.stop()
@@ -101,6 +102,7 @@ class ToolProgress:
         self.output(f"{label}{' ' * max(2, 14 - cell_len(label))}{bar}  {progress:>4}  {elapsed:.2f}s")
 
     def finish(self, code):
+        self.finished = True
         success = code in self.codes
         self._summary(success)
         if success or self.percent is not None:
