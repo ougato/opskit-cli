@@ -1,5 +1,19 @@
 """Host task cancellation; no worker or plugin owns the console input."""
 import sys
+import time
+
+
+def periodic_checkpoint(checkpoint, *, interval=0.1):
+    """Poll an expensive check by elapsed time within one host operation."""
+    next_check = 0.0
+
+    def poll():
+        nonlocal next_check
+        if time.monotonic() >= next_check:
+            checkpoint()
+            next_check = time.monotonic() + interval
+
+    return poll
 
 
 def task_checkpoint(checkpoint, *, output=None):

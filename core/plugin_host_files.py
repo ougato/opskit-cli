@@ -12,6 +12,7 @@ MAX_LIST_NAMES_BYTES = 1024 * 1024
 def list_files(plugin, fingerprint, directory, *, authority, check_identity, checkpoint, missing_ok=False):
     """List ordinary files as relative paths after directory consent."""
     import stat
+    from core.native_task_control import periodic_checkpoint
     from core.plugin_host_tools import MAX_OUTPUT_DEPTH, MAX_OUTPUT_ENTRIES, _grant, _identity, _ordinary
     from core.plugin_tree import bounded_paths
 
@@ -35,7 +36,7 @@ def list_files(plugin, fingerprint, directory, *, authority, check_identity, che
     names = []
     names_bytes = 0
     for entry in bounded_paths(root, max_entries=MAX_OUTPUT_ENTRIES, max_depth=MAX_OUTPUT_DEPTH,
-                               skip_dirs=frozenset(), checkpoint=checkpoint):
+                               skip_dirs=frozenset(), checkpoint=periodic_checkpoint(checkpoint)):
         info = entry.lstat()
         if getattr(info, "st_file_attributes", 0) & 0x400:
             raise ValueError("linked host path forbidden")

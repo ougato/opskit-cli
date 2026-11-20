@@ -311,16 +311,19 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         if error.code != "missing_or_revoked":
             raise
         scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)
-    from core.native_task_control import task_checkpoint
-    checkpoint = task_checkpoint(checkpoint, output=output)
+    from core.native_task_control import periodic_checkpoint, task_checkpoint
+    check_cancelled = task_checkpoint(lambda: None, output=output)
     next_check = 0.0
     def current_deadline():
         return deadline() if callable(deadline) else deadline
-    def live():
-        nonlocal next_check
-        checkpoint()
+    def check_running():
+        check_cancelled()
         if time.monotonic() >= current_deadline():
             raise TimeoutError("host tool deadline exceeded")
+    def live():
+        nonlocal next_check
+        check_running()
+        checkpoint()
         authority.check(scope, check_identity=check_identity)
         if (_identity(_ordinary(executable)) != tool_id
                 or _identity(_ordinary(directory, directory=True)) != root_id
@@ -332,6 +335,12 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
             if base:
                 check_space(base)
             next_check = time.monotonic() + 2
+    # Log bursts must not turn filesystem and authorization checks into
+    # backpressure on the child. Keep the normal idle polling interval.
+    revalidate_stream = periodic_checkpoint(live)
+    def poll_stream():
+        check_running()
+        revalidate_stream()
     with artifacts.resource_lock(root):
         live()
         if hashlib.sha256(_read_file(tool, Path(tool.anchor), 256 * 1024**2)).hexdigest() != digest:
@@ -367,7 +376,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
             with (host_work_scope() if host_work_scope is not None else nullcontext(),
                   progress if progress is not None else nullcontext()):
                 iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
-                                  **input_args, timeout=timeout, checkpoint=live)
+                                  **input_args, timeout=timeout, checkpoint=poll_stream)
                 try:
                     while True:
                         try:

@@ -5,10 +5,11 @@ import sys
 import time
 import base64
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
-from core import plugin_host_tools as tools, process
+from core import native_task_control, plugin_host_tools as tools, process
 from core.native_sandbox import GrantChoice
 from core.plugin_capabilities import CapabilityAuthority
 
@@ -43,6 +44,41 @@ def test_raw_exit_code_no_business_success_policy(tmp_path, monkeypatch, context
     from core import plugin_artifacts as receipts
     record, _ = receipts._load("demo", result["output"]["id"])
     assert record["phase"] == "pending"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_log_burst_keeps_timed_authorization_and_final_revalidation(tmp_path, monkeypatch, context):
+    from core.plugin_capabilities import CapabilityDenied
+
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+    now = 10.0
+    checks = []
+    authority = context["authority"]
+    clock = SimpleNamespace(monotonic=lambda: now)
+    monkeypatch.setattr(tools, "time", clock)
+    monkeypatch.setattr(native_task_control, "time", clock)
+    context.update(deadline=20.0, checkpoint=lambda: checks.append(now))
+
+    def stream(_, *, checkpoint, **kwargs):
+        nonlocal now
+        checkpoint()
+        before = len(checks)
+        for _ in range(64):
+            checkpoint()
+            yield "output"
+        assert len(checks) == before
+
+        now += 0.1
+        checkpoint()
+        assert len(checks) == before + 1
+        authority.revoke(next(iter(authority.once_scopes.values())))
+        return 0
+
+    monkeypatch.setattr(process, "stream", stream)
+    with pytest.raises(CapabilityDenied):
+        tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {}, **context)
+    assert checks[-2:] == [now, now]
 
 
 @pytest.mark.parametrize("args,options", [("shell command", {}), (["bad\narg"], {}), ([], {"shell": True}), ([1], {}),

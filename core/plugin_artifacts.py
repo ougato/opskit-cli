@@ -107,6 +107,7 @@ def _mkdir(path, plugin, fingerprint, *, authority, check_identity, checkpoint):
 
 
 def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from core.native_task_control import periodic_checkpoint
     """Publish a digest-bound copy to a new directory on the destination volume."""
     from io import BytesIO
 
@@ -165,18 +166,23 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
     write_scope = _grant(plugin, fingerprint, "directory.read_write", str(parent), authority, check_identity, checkpoint)
     source_identity = _directory(source)
 
-    def check():
-        checkpoint()
-        authority.check_many((read_scope, write_scope), check_identity=check_identity)
+    def check_location():
         if _directory(source) != source_identity or source_path(str(parent), destination.name)[2] != identity:
             raise ValueError("tree publication location changed")
 
+    def check():
+        checkpoint()
+        authority.check_many((read_scope, write_scope), check_identity=check_identity)
+        check_location()
+
     expected = {name: digest for name, (_, digest) in validated.items()}
+    poll = periodic_checkpoint(check)
     with resource_lock(parent):
         check()
         if os.path.lexists(destination):
-            if _snapshot(destination, check, expected)["files"] != len(expected):
+            if _snapshot(destination, poll, expected)["files"] != len(expected):
                 raise ValueError("existing tree differs from verified source")
+            check()
             return {"directory": str(destination)}
         staging = parent / (".opskit-tree-" + uuid.uuid4().hex)
         staging.mkdir()
@@ -184,7 +190,8 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
         total = 0
         try:
             for name, (original, expected_digest) in validated.items():
-                check()
+                poll()
+                check_location()
                 temporary = staging.joinpath(*PurePosixPath(name).parts)
                 temporary.parent.mkdir(parents=True, exist_ok=True)
                 digest = hashlib.sha256()
@@ -192,7 +199,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
                     original, source, MAX_OUTPUT_BYTES)
                 with incoming as stream, temporary.open("xb") as outgoing:
                     while body := stream.read(1024**2):
-                        checkpoint()
+                        poll()
                         total += len(body)
                         if total > MAX_OUTPUT_BYTES:
                             raise ValueError("tree exceeds limit")
@@ -200,7 +207,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
                         outgoing.write(body)
                 if digest.hexdigest() != expected_digest:
                     raise ValueError("tree source changed during copy")
-            if _snapshot(staging, check, expected)["files"] != len(expected):
+            if _snapshot(staging, poll, expected)["files"] != len(expected):
                 raise ValueError("staged tree differs from verified source")
             check()
             os.rename(staging, destination)
@@ -416,6 +423,7 @@ def _required(path, names, checkpoint):
 
 
 def manage(plugin, fingerprint, action, parameters, *, authority, check_identity, deadline, checkpoint, **unused):
+    from core.native_task_control import periodic_checkpoint
     if not isinstance(parameters, dict):
         raise ValueError("invalid artifact parameters")
     if action == "publish_tree":
@@ -480,7 +488,10 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             def live():
                 check()
                 authority.check(scope, check_identity=check_identity)
-            return _inspect(plugin, resource, keep, live)
+            live()
+            rows = _inspect(plugin, resource, keep, periodic_checkpoint(live))
+            live()
+            return rows
         if action == "adopt":
             if type(parameters["completed_ns"]) is not int or not 0 < parameters["completed_ns"] <= time.time_ns():
                 raise ValueError("invalid receipt timestamp")
@@ -507,11 +518,12 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             check()
             authority.check_many(scopes, check_identity=check_identity)
         live()
+        poll = periodic_checkpoint(live)
         file_hashes = {} if include_file_hashes else None
         if file_hashes is not None:
-            snapshot = _snapshot(path, live, expected_files, file_hashes=file_hashes)
+            snapshot = _snapshot(path, poll, expected_files, file_hashes=file_hashes)
         else:
-            snapshot = _snapshot(path, live, expected_files) if expected_files else _snapshot(path, live)
+            snapshot = _snapshot(path, poll, expected_files) if expected_files else _snapshot(path, poll)
         if action == "adopt":
             expected = parameters["snapshot"]
             # Import never trusts caller-provided content hashes without recomputing them.
@@ -519,8 +531,9 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
                     "identity", "parent_identity", "inventory_sha256", "bytes")):
                 raise ValueError("legacy output no longer matches its receipt")
             _required(path, parameters["required_files"], live)
-            for row in _inspect(plugin, resource, 1, live):
+            for row in _inspect(plugin, resource, 1, poll):
                 if row["directory"] == str(path):
+                    live()
                     return row
             token = uuid.uuid4().hex
             pending(plugin, token, resource, path, live)
@@ -540,12 +553,12 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
             if file_hashes:
                 result["file_hashes"] = file_hashes
             return result
-        rows = _inspect(plugin, resource, keep, live)
+        rows = _inspect(plugin, resource, keep, poll)
         row = next((row for row in rows if row["id"] == token), None)
         if (not row or not row["cleanup_candidate"] or digest != parameters["record_sha256"]
                 or not _matches(value, snapshot)):
             raise ValueError("output changed, uncommitted, or retained")
-        if _snapshot(path, live) != snapshot:
+        if _snapshot(path, poll) != snapshot:
             raise ValueError("output changed after candidate inspection")
         def deleting():
             live()
