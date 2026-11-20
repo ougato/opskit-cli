@@ -138,6 +138,7 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
 
 __all__ = [
     "read_host_file",
+    "read_host_files",
     "compare_write_host_file",
     "atomic_write_host_file",
     "create_host_file",
@@ -169,6 +170,11 @@ def read_host_file(directory: str, relative: str, *, missing_ok: bool = False) -
     raise PermissionError("host file API requires an isolated plugin worker")
 
 
+def read_host_files(directory: str, relatives: list[str]) -> list[bytes]:
+    """Read up to 64 ordinary files, with an aggregate limit of 8 MiB."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
 def compare_write_host_file(directory: str, relative: str, expected_sha256: str, content: bytes) -> dict:
     """Replace an unchanged bounded host file after exact write authorization."""
     raise PermissionError("host file API requires an isolated plugin worker")
@@ -195,7 +201,11 @@ def host_asar_directories(directory: str, relative: str, member: str) -> list[st
     raise PermissionError("host archive API requires an isolated plugin worker")
 
 
-def list_host_files(directory: str, *, missing_ok: bool = False) -> list[str]:
+HOST_FILE_LIST_SUBDIRECTORIES = True
+
+
+def list_host_files(directory: str, *, missing_ok: bool = False,
+                    subdirectories: list[str] | None = None) -> list[str]:
     """List ordinary files under an authorized host directory, or allow an absent directory."""
     raise PermissionError("host file listing requires an isolated plugin worker")
 
@@ -205,8 +215,11 @@ def artifact_info(directory: str, relative: str) -> dict:
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
+HOST_ARTIFACT_BATCH_LIMIT = 512
+
+
 def artifact_batch_info(directory: str, relatives: list[str]) -> list[dict]:
-    """Return ordered metadata for up to 64 ordinary files under one authorized directory."""
+    """Return ordered metadata for ordinary files under one authorized directory."""
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
@@ -226,6 +239,7 @@ def finish_host_tool_output(success: bool) -> None:
 
 
 HOST_ARTIFACT_PUBLISH_PARENTS = True
+HOST_ARTIFACT_PUBLISH_NESTED = True
 HOST_ARTIFACT_COMMIT_HASHES = True
 
 

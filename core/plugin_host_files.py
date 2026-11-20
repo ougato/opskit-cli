@@ -9,7 +9,43 @@ MAX_READ = 1024 * 1024
 MAX_LIST_NAMES_BYTES = 1024 * 1024
 
 
-def list_files(plugin, fingerprint, directory, *, authority, check_identity, checkpoint, missing_ok=False):
+def read_files(plugin, fingerprint, directory, relatives, *, authority, check_identity, checkpoint):
+    """Read a bounded batch under one directory capability."""
+    from core.host_file_access import source_path
+    from core.native_task_control import periodic_checkpoint
+    from core.plugin_host_tools import _grant
+
+    if (not isinstance(relatives, list) or not 1 <= len(relatives) <= 64
+            or any(not isinstance(name, str) for name in relatives)
+            or len(set(relatives)) != len(relatives)):
+        raise ValueError("invalid host file batch")
+    root, _, identity = source_path(directory, relatives[0])
+    scope = _grant(plugin, fingerprint, "directory.read", str(root), authority, check_identity, checkpoint)
+
+    def check():
+        checkpoint()
+        authority.check(scope, check_identity=check_identity)
+        if source_path(directory, relatives[0])[2] != identity:
+            raise ValueError("host directory changed during batch read")
+
+    check()
+    poll = periodic_checkpoint(check)
+    remaining = 8 * MAX_READ
+    result = []
+    for relative in relatives:
+        poll()
+        _, path, current = source_path(directory, relative)
+        if current != identity:
+            raise ValueError("host directory changed during batch read")
+        body = _read_file(path, root, min(MAX_READ, remaining))
+        remaining -= len(body)
+        result.append(base64.b64encode(body).decode("ascii"))
+    check()
+    return result
+
+
+def list_files(plugin, fingerprint, directory, *, authority, check_identity, checkpoint,
+               missing_ok=False, subdirectories=None):
     """List ordinary files as relative paths after directory consent."""
     import stat
     from core.native_task_control import periodic_checkpoint
@@ -18,6 +54,15 @@ def list_files(plugin, fingerprint, directory, *, authority, check_identity, che
 
     if type(missing_ok) is not bool:
         raise ValueError("invalid missing-directory policy")
+    if subdirectories is not None and (
+        not isinstance(subdirectories, list) or not 1 <= len(subdirectories) <= 32
+        or any(not isinstance(name, str) or not name or name in {".", ".."}
+               or any(char in name for char in "/\\:") or name.endswith((".", " "))
+               or any(ord(char) < 32 or ord(char) == 127 for char in name)
+               for name in subdirectories)
+        or len({name.casefold() for name in subdirectories}) != len(subdirectories)
+    ):
+        raise ValueError("invalid host subdirectory list")
     try:
         root = _ordinary(directory, directory=True)
     except FileNotFoundError:
@@ -35,22 +80,35 @@ def list_files(plugin, fingerprint, directory, *, authority, check_identity, che
     check_directory()
     names = []
     names_bytes = 0
-    for entry in bounded_paths(root, max_entries=MAX_OUTPUT_ENTRIES, max_depth=MAX_OUTPUT_DEPTH,
-                               skip_dirs=frozenset(), checkpoint=periodic_checkpoint(checkpoint)):
-        info = entry.lstat()
-        if getattr(info, "st_file_attributes", 0) & 0x400:
-            raise ValueError("linked host path forbidden")
-        if stat.S_ISDIR(info.st_mode):
-            continue
-        relative = entry.relative_to(root).as_posix()
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or any(ord(char) < 32 or ord(char) == 127 for char in relative)
-                or any(":" in part or "\\" in part or part.endswith((".", " ")) for part in relative.split("/"))):
-            raise ValueError("unsafe host file")
-        names_bytes += len(relative.encode("utf-8"))
-        if names_bytes > MAX_LIST_NAMES_BYTES:
-            raise ValueError("host file list limit exceeded")
-        names.append(relative)
+    entries = 0
+    poll = periodic_checkpoint(checkpoint)
+    for subtree in ([root] if subdirectories is None else [root / name for name in subdirectories]):
+        try:
+            subtree = _ordinary(str(subtree), directory=True)
+        except FileNotFoundError:
+            if missing_ok and subdirectories is not None:
+                continue
+            raise
+        subtree_identity = _identity(subtree)
+        for entry in bounded_paths(subtree, max_entries=MAX_OUTPUT_ENTRIES - entries,
+                                   max_depth=MAX_OUTPUT_DEPTH, skip_dirs=frozenset(), checkpoint=poll):
+            entries += 1
+            info = entry.lstat()
+            if getattr(info, "st_file_attributes", 0) & 0x400:
+                raise ValueError("linked host path forbidden")
+            if stat.S_ISDIR(info.st_mode):
+                continue
+            relative = entry.relative_to(root).as_posix()
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+                    or any(":" in part or "\\" in part or part.endswith((".", " ")) for part in relative.split("/"))):
+                raise ValueError("unsafe host file")
+            names_bytes += len(relative.encode("utf-8"))
+            if names_bytes > MAX_LIST_NAMES_BYTES:
+                raise ValueError("host file list limit exceeded")
+            names.append(relative)
+        if _ordinary(str(subtree), directory=True) != subtree or _identity(subtree) != subtree_identity:
+            raise ValueError("host subdirectory changed during listing")
     check_directory()
     return sorted(names)
 

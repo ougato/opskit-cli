@@ -125,7 +125,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
         if (not 1 <= len(parts) <= 16 or any(
                 part in {".", ".."} or part.endswith((".", " ")) or ":" in part
                 or any(ord(char) < 32 for char in part) for part in parts)
-                or destination == source or source in destination.parents):
+                or destination == source):
             raise ValueError("invalid tree publication path")
         parent = root
         for part in parts[:-1]:
@@ -153,9 +153,9 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("invalid tree digest")
         if "source" in entry:
-            if source in destination.parents:
-                raise ValueError("destination overlaps source")
             _, original, _ = source_path(str(source), entry["source"])
+            if original == destination or destination in original.parents:
+                raise ValueError("destination overlaps source")
         else:
             content = entry["content"]
             if not isinstance(content, str) or len(content) > ((4 * 1024**2 + 2) // 3) * 4:

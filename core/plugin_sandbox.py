@@ -24,6 +24,7 @@ WIRE_LIMIT = 32 * 1024**2
 MAX_FILES = 4096
 CONTROL_TIMEOUT = 30
 CONFIG_READ_TIMEOUT = 30
+TREE_PUBLICATION_REQUEST_LIMIT = 8 * 1024**2
 
 
 class SandboxError(RuntimeError):
@@ -462,7 +463,10 @@ def _broker(manifest, request: dict):
         plugin_json.require_version(request)
     except ValueError:
         raise SandboxError("unsupported broker protocol version") from None
-    if len(plugin_json.dumps(request)) > 65536:
+    tree_publication = (method == "host.artifacts" and not kwargs and len(args) == 2
+                        and args[0] == "publish_tree" and isinstance(args[1], dict))
+    limit = TREE_PUBLICATION_REQUEST_LIMIT if tree_publication else 65536
+    if len(plugin_json.dumps(request)) > limit:
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
@@ -526,7 +530,7 @@ def _broker(manifest, request: dict):
         return None
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version", "host.list_files"}:
         expected = 4 if method == "host.execute" else (1 if method in {"host.file_version", "host.list_files"} else 2)
-        allowed = {"missing_ok"} if method == "host.list_files" else set()
+        allowed = {"missing_ok", "subdirectories"} if method == "host.list_files" else set()
         if set(kwargs) - allowed or (len(args) != expected and not (method == "host.path_info" and len(args) in (3, 4))):
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
@@ -625,18 +629,24 @@ def _broker(manifest, request: dict):
                          "host.atomic_write": atomic_write}[method]
             return operation(manifest.name, fingerprint, *args, authority=authority,
                              check_identity=identity, checkpoint=checkpoint)
-    if method in {"host.read_file", "host.file_status"}:
+    if method in {"host.read_file", "host.read_files", "host.file_status"}:
         allowed = {"missing_ok"} if method == "host.read_file" else set()
         if set(kwargs) - allowed or len(args) != 2:
             raise SandboxError("invalid host file arguments")
-        from core.plugin_host_files import read_file, file_status
+        from core.plugin_host_files import read_file, read_files, file_status
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
         def identity(name, expected):
             return name == manifest.name and check_authorization(manifest) == expected
         from core.prompt import guard_input
-        with guard_input(lambda: (_remaining(), _check_live_authorizations())):
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        if method == "host.read_files":
+            return read_files(manifest.name, fingerprint, *args, authority=authority,
+                              check_identity=identity, checkpoint=checkpoint)
+        with guard_input(checkpoint):
             operation = read_file if method == "host.read_file" else file_status
             return operation(manifest.name, fingerprint, *args,
                              authority=authority, check_identity=identity, **kwargs)

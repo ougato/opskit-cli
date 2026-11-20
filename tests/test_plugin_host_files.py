@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from core.plugin_host_files import list_files, read_file
+from core.plugin_host_files import list_files, read_file, read_files
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
 from core.native_sandbox import GrantChoice
 
@@ -51,6 +51,32 @@ def test_host_read_requires_exact_authorized_scope(tmp_path, monkeypatch):
     with pytest.raises(CapabilityDenied):
         read_file("demo", "a" * 64, str(root), "config.json",
                   authority=authority, check_identity=lambda *a: True)
+
+
+def test_batch_read_uses_one_grant_and_keeps_order(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    files = [f"{index}.meta" for index in range(32)]
+    for name in files:
+        (root / name).write_bytes(name.encode())
+    authority = CapabilityAuthority(path=tmp_path / "permissions.yaml")
+    original = authority.require
+    requests = []
+
+    def require(scope, **kwargs):
+        requests.append(scope)
+        return original(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs)
+
+    monkeypatch.setattr(authority, "require", require)
+    context = dict(authority=authority, check_identity=lambda *a: True, checkpoint=lambda: None)
+    try:
+        response = read_files("demo", "a" * 64, str(root), files[::-1], **context)
+        assert list(map(base64.b64decode, response)) == [name.encode() for name in files[::-1]]
+        assert [(request.operation, request.resource) for request in requests] == [("directory.read", str(root))]
+        with pytest.raises(ValueError, match="invalid host relative path"):
+            read_files("demo", "a" * 64, str(root), [files[0], "../permissions.yaml"], **context)
+    finally:
+        authority.close()
 
 
 def test_parent_grant_allows_child_reads_and_revocation_stops_them(tmp_path):
@@ -149,3 +175,29 @@ def test_optional_file_listing_only_accepts_missing_directories(tmp_path):
     (tmp_path / "artifacts").write_text("not a directory")
     with pytest.raises(ValueError):
         list_files("demo", "a" * 64, missing, missing_ok=True, **options)
+
+
+def test_file_listing_can_limit_one_root_grant_to_selected_subdirectories(tmp_path):
+    from core.plugin_host_files import list_files
+
+    root = tmp_path / "project"
+    for directory in ("assets", "settings", "ignored"):
+        (root / directory).mkdir(parents=True)
+        (root / directory / "file.json").write_text("{}")
+    (root / "root-file.json").write_text("{}")
+    requests = []
+
+    class Authority:
+        def require(self, scope, **kwargs):
+            requests.append(scope)
+
+        def check(self, scope, **kwargs):
+            assert scope == requests[0]
+
+    options = {"authority": Authority(), "check_identity": lambda *_: True, "checkpoint": lambda: None}
+    assert list_files("demo", "a" * 64, str(root), missing_ok=True,
+                      subdirectories=["settings", "assets", "missing"], **options) == [
+                          "assets/file.json", "settings/file.json"]
+    assert [(request.operation, request.resource) for request in requests] == [("directory.read", str(root))]
+    with pytest.raises(ValueError, match="invalid host subdirectory list"):
+        list_files("demo", "a" * 64, str(root), subdirectories=["../ignored"], **options)

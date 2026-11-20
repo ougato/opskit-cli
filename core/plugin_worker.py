@@ -147,6 +147,12 @@ def _adapt_sdk(name: str):
             raise ValueError("invalid host file response")
         return base64.b64decode(reply["content"], validate=True)
     sdk.read_host_file = read_host_file
+    def read_host_files(directory, relatives):
+        reply = broker("host.read_files", directory, relatives)
+        if not isinstance(reply, list) or len(reply) != len(relatives):
+            raise ValueError("invalid host file batch response")
+        return [base64.b64decode(content, validate=True) for content in reply]
+    sdk.read_host_files = read_host_files
     def compare_write_host_file(directory, relative, expected_sha256, content):
         if not isinstance(content, bytes):
             raise TypeError("host file content must be bytes")
@@ -165,7 +171,12 @@ def _adapt_sdk(name: str):
         return broker("host.create_file", directory, relative, base64.b64encode(content).decode("ascii"))
     sdk.create_host_file = create_host_file
     sdk.host_file_status = lambda directory, relative: broker("host.file_status", directory, relative)
-    sdk.list_host_files = lambda directory, *, missing_ok=False: broker("host.list_files", directory, missing_ok=missing_ok)
+    def list_host_files(directory, *, missing_ok=False, subdirectories=None):
+        options = {"missing_ok": missing_ok}
+        if subdirectories is not None:
+            options["subdirectories"] = subdirectories
+        return broker("host.list_files", directory, **options)
+    sdk.list_host_files = list_host_files
     sdk.host_asar_directories = lambda directory, relative, member: broker("host.asar_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
     sdk.artifact_batch_info = lambda directory, relatives: broker("host.artifact_batch_info", directory, relatives)

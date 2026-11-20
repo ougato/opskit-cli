@@ -37,11 +37,11 @@ def test_real_large_file_returns_only_size_and_checksum(tmp_path, monkeypatch):
 
 
 def test_batch_artifact_preserves_requested_order(tmp_path, monkeypatch):
-    contents = {"first.bin": b"first", "second.bin": b"second"}
+    contents = {f"{index}.bin": str(index).encode() for index in range(artifact.MAX_BATCH)}
     for name, data in contents.items():
         (tmp_path / name).write_bytes(data)
     authority = authorize(tmp_path, monkeypatch)
-    names = ["second.bin", "first.bin"]
+    names = list(reversed(contents))
     try:
         assert artifact.artifact_batch_info("demo", "a" * 64, str(tmp_path), names,
             authority=authority, check_identity=lambda *args: True, deadline=time.monotonic() + 30,

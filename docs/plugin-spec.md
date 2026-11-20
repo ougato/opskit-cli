@@ -86,7 +86,7 @@ SDK `artifact_info(directory, relative) -> {bytes, sha256}` 在精确目录读�
 将该 SHA256 传给 `upload_file`，上传快照会再次核对；文件变化不静默接受新摘要。
 同一调用、同一精确目录的一次授权可复用，不重复询问。
 
-`artifact_batch_info(directory, relatives)` 使用同一目录读取授权和同样的文件校验，接受 1～64 个不同相对路径，按请求顺序返回大小和 SHA-256。整批读取失败时不返回部分摘要。
+`artifact_batch_info(directory, relatives)` 使用同一目录读取授权和同样的文件校验，按请求顺序返回不同相对路径对应的大小和 SHA-256。每批最多 `HOST_ARTIFACT_BATCH_LIMIT` 个路径，当前为 512。整批读取失败时不返回部分摘要。
 
 `artifact_info` returns only host-computed file size and SHA256 under explicit directory
 consent (ordinary files, up to 512MiB). Upload verifies its snapshot against that digest.
@@ -95,6 +95,7 @@ Both operations share the same scoped grant; once consent is reused within the i
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
 - `read_host_file(directory, relative, *, missing_ok=False)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。仅在指定 `missing_ok=True` 且文件缺失时返回 `None`。
+- `read_host_files(directory, relatives)`：复用同一目录读取授权和路径校验，接受 1～64 个不同相对路径。每个文件最多 1 MiB，整批最多 8 MiB，按请求顺序返回字节。任一文件无法读取时整批失败。
 - `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。可使用显式目录读写授权；否则写入授权绑定文件路径及原、新内容摘要。独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
 - `create_host_file(directory, relative, content)`：经目录读写授权或精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
 - `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
@@ -114,7 +115,7 @@ if not git:
 The Windows host finds an ordinary executable in the preferred location, PATH or conventional install directories. Directory consent is required before returning a match; execution requires its own authorization. An empty string means no candidate was found.
 - `host_file_version(path)`：在 Windows 经所在目录读取授权后检查普通可执行文件的固定版本信息，返回四位文件版本和产品版本；接口不运行可执行文件。
 - `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
-- `list_host_files(directory, *, missing_ok=False)`：经目录读取授权后，递归返回排序后的普通文件相对路径，路径使用 `/`。启用 `missing_ok` 时，尚未创建的目录返回空列表。拒绝链接、重解析点、硬链接和特殊文件。最多遍历 65,536 项、64 层，返回的路径 UTF-8 总长度最多 1 MiB。文件内容和摘要分别通过各自的 SDK 接口读取。
+- `list_host_files(directory, *, missing_ok=False, subdirectories=None)`：经目录读取授权后，递归返回排序后的普通文件相对路径，路径使用 `/`。可用 `subdirectories` 指定最多 32 个直属子目录，路径仍相对于 `directory` 返回。启用 `missing_ok` 时跳过尚未创建的目录。拒绝链接、重解析点、硬链接和特殊文件。单次最多遍历 65,536 项，每个子树最多 64 层，返回的路径 UTF-8 总长度最多 1 MiB。文件内容和摘要分别通过各自的 SDK 接口读取。
 - `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell。返回原始 `returncode`。
   SDK 提供 `finish_host_tool_output(success)` 时，可设置 `defer_output: true`。宿主保留本次插件调用的工具输出，进度仍实时更新。等业务校验完成后传 `true` 丢弃输出，或传 `false` 在终端按原顺序回放。中断或调用退出时，未处理的输出由宿主回放。此选项与 `capture_output` 互斥。
   SDK 提供 `HOST_TOOL_STAGE_ONLY_PROGRESS` 时，可同时省略 `progress_marker` 和 `progress_label`，仅显示阶段动画和阶段结果。

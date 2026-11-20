@@ -80,6 +80,35 @@ def test_publish_tree_creates_parents_under_requested_root(tmp_path, context):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+def test_publish_tree_combines_baseline_and_changed_bundle_at_final_archive(tmp_path, context):
+    project = tmp_path / "client"
+    baseline = project / "artifacts" / "baseline"
+    bundle = tmp_path / "workspace"
+    baseline.mkdir(parents=True)
+    bundle.mkdir()
+    (baseline / "index.html").write_bytes(b"baseline")
+    resource = bundle / "resource.json"
+    resource.write_bytes(b"changed")
+    destination = project / "artifacts" / "build" / "new"
+    files = {
+        "index.html": {"source": "client/artifacts/baseline/index.html",
+                       "sha256": hashlib.sha256(b"baseline").hexdigest()},
+        "assets/shop/resource.json": {"source": "workspace/resource.json",
+                                       "sha256": hashlib.sha256(b"changed").hexdigest()},
+    }
+    parameters = {"source": str(tmp_path), "destination": str(destination),
+                  "create_parents_from": str(project), "files": files}
+    assert manage("publish_tree", parameters, context) == {"directory": str(destination)}
+    assert (destination / "index.html").read_bytes() == b"baseline"
+    assert (destination / "assets/shop/resource.json").read_bytes() == b"changed"
+    resource.write_bytes(b"modified after inventory")
+    rejected = destination.with_name("rejected")
+    with pytest.raises(ValueError, match="source changed during copy"):
+        manage("publish_tree", {**parameters, "destination": str(rejected)}, context)
+    assert not rejected.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
 def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
     source = tmp_path / "source"
     source.mkdir()
@@ -110,8 +139,15 @@ def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
     }}
     manage("publish_tree", inline, context)
     assert (tmp_path / "generated" / ".well-known" / "assetlinks.json").read_bytes() == manifest
+    copied = {**inline, "destination": str(tmp_path / "copied"), "files": {
+        "payload.png": {**params["files"]["payload.png"], "source": "source/payload.png"},
+    }}
+    manage("publish_tree", copied, context)
+    assert (tmp_path / "copied" / "payload.png").read_bytes() == b"payload"
     with pytest.raises(ValueError, match="destination overlaps source"):
-        manage("publish_tree", {**inline, "files": {"payload.png": params["files"]["payload.png"]}}, context)
+        manage("publish_tree", {**copied, "files": {
+            "payload.png": {**params["files"]["payload.png"], "source": "copied/payload.png"},
+        }}, context)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")

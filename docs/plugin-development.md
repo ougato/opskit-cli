@@ -63,7 +63,11 @@
 
 以 Cocos 为例，游戏级输出目录和保留数量覆盖插件级默认值，重置游戏设置后重新继承默认值。客户端版本与渠道由选中分支的 `env/environment.json` 提供，构建版本可通过菜单或命令行指定。插件 README 应明确每一项的实际生效来源。
 
-上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 每批最多读取 64 个文件的元数据，结果按输入顺序返回。将摘要传给 `upload_file`，宿主会重新校验实际文件摘要。插件应使用所选目录的相对路径生成对象键。首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
+上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 按 `HOST_ARTIFACT_BATCH_LIMIT` 分批读取元数据，结果按输入顺序返回。将摘要传给 `upload_file`，宿主会重新校验实际文件摘要。插件应使用所选目录的相对路径生成对象键。首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
+
+在同一已授权目录读取多个小文件时，可使用 `read_host_files(directory, relatives)`。每批最多 64 个文件，每个最多 1 MiB，合计最多 8 MiB。例如 `manifest, config = read_host_files(project, ["package.json", "env/environment.json"])`。兼容旧框架的插件可在 SDK 未提供此接口时逐个读取。
+
+SDK 提供 `HOST_FILE_LIST_SUBDIRECTORIES` 时，可用 `list_host_files(project, subdirectories=["assets", "settings"], missing_ok=True)` 枚举指定子树。结果包含子目录前缀，同一个项目目录授权覆盖整批枚举。
 
 ## 清单与入口
 
@@ -138,6 +142,8 @@ waiting(message='') -> context manager
 `atomic_write_host_file(directory, relative, lock_name, expected_sha256, content)` 在目录读写授权下原子替换不超过 1 MiB 的普通文件。`relative` 为单个文件名，`lock_name` 为协作写入者共用的点号前缀锁目录。`expected_sha256=None` 表示要求目标不存在；返回 `{"written": false}` 时重新读取并合并后重试。
 
 Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷边复制边核对 SHA-256 和写入长度，发布前检查暂存文件的清单、身份、大小和修改时间，再原子发布整个目录。需要独立回读验证内容的调用方应另行校验。目标已存在时，只有全部文件和摘要一致才返回成功。
+
+SDK 提供 `HOST_ARTIFACT_PUBLISH_NESTED` 时，目标可位于源根目录下。参与复制的源文件必须在目标目录之外，源根目录和目标目录也必须不同。
 
 发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。
 

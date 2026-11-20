@@ -7,8 +7,9 @@ import time
 from core.host_file_access import open_bounded, source_path
 from core.host_file_access import MAX_ARTIFACT_BYTES as MAX_FILE
 from core.native_sandbox import CapabilityRequest
+from core.sdk import HOST_ARTIFACT_BATCH_LIMIT
 
-MAX_BATCH = 64
+MAX_BATCH = HOST_ARTIFACT_BATCH_LIMIT
 
 
 def _worker(connection, root, sources, identity):
@@ -81,7 +82,7 @@ def artifact_batch_info(plugin, fingerprint, directory, relatives, *, authority,
         while True:
             live()
             if receive.poll(0.05):
-                message = json.loads(receive.recv_bytes(16384))
+                message = json.loads(receive.recv_bytes(MAX_BATCH * 128))
                 if not isinstance(message, dict) or set(message) != {"value"}:
                     raise RuntimeError("artifact inspection failed")
                 results = message["value"]

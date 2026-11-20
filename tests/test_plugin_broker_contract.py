@@ -1,4 +1,6 @@
 """Untrusted RPC envelopes cannot select identities or host-only callbacks."""
+import hashlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -88,6 +90,37 @@ def test_find_executable_dispatch_uses_host_identity(caller, monkeypatch):
     request["args"] = ["git.exe"]
     with pytest.raises(sandbox.SandboxError, match="invalid host capability arguments"):
         sandbox._broker(caller, request)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows tree publication")
+def test_large_tree_inventory_reaches_only_the_tree_publisher(caller, monkeypatch, tmp_path):
+    from core.native_sandbox import GrantChoice
+    from core.plugin_capabilities import CapabilityAuthority
+
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    source.mkdir()
+    (source / "file.bin").write_bytes(b"verified")
+    digest = hashlib.sha256(b"verified").hexdigest()
+    inventory = {"source": str(source), "destination": str(destination),
+                 "files": {f"assets/{number}/file.bin": {"source": "file.bin", "sha256": digest}
+                           for number in range(800)}}
+    request = {"rpc_version": 1, "method": "host.artifacts", "args": ["publish_tree", inventory]}
+    request["args"][0] = "mkdir"
+    with pytest.raises(sandbox.SandboxError, match="broker request too large"):
+        sandbox._broker(caller, request)
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    require = authority.require
+    monkeypatch.setattr(authority, "require",
+                        lambda scope, **kwargs: require(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs))
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", authority, raising=False)
+    try:
+        request["args"][0] = "publish_tree"
+        assert sandbox._broker(caller, request) == {"directory": str(destination)}
+        files = list(destination.rglob("*.bin"))
+        assert len(files) == 800
+        assert all(path.read_bytes() == b"verified" for path in files)
+    finally:
+        authority.close()
 
 
 @pytest.mark.parametrize("terminal,noninteractive,expected", [(True, False, True), (False, False, False), (True, True, False)])
