@@ -54,6 +54,21 @@ def waiting(message: str = ""):
         display.close()
 
 
+@contextmanager
+def progress_step(message: str, failed_label: str):
+    """Use installation-style activity animation for one timed step."""
+    from core.installation_progress import WaitingDisplay
+    display = WaitingDisplay()
+    display.start(message, failed_label=failed_label)
+    try:
+        yield
+    except BaseException:
+        display.stop(failed=True)
+        raise
+    else:
+        display.stop()
+
+
 def select(breadcrumb: list[str], subtitle: str, choices: list[dict], theme_key: str = 'root',
            show_shortcuts: list[tuple[str, str, str]] | None = None, back_label: str = '',
            description: str = '', info_lines: list[str] | None = None) -> str | None:
@@ -130,6 +145,7 @@ __all__ = [
     "list_host_files",
     "artifact_info",
     "artifact_batch_info",
+    "progress_step",
     "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",

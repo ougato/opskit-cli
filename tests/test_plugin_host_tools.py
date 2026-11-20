@@ -87,7 +87,8 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
     assert lines[0].startswith("Launch") and "100%" in lines[0]
     assert lines[1:3] == ["Error: script build failed", "    at compile()"]
     assert lines[3].startswith("Scripts") and "Failed" in lines[3]
-    assert lines[4].startswith("Engine  17%")
+    assert lines[4].startswith("Engine") and "17%" in lines[4]
+    assert lines[0].index("█") == lines[3].index("░") == lines[4].index("█")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")

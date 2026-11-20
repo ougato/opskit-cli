@@ -445,12 +445,15 @@ def _broker(manifest, request: dict):
     _remaining()
     if method in {"ui.wait_start", "ui.wait_stop"}:
         display = getattr(_invocations, "wait_display", None)
-        if display is None or kwargs or len(args) != (1 if method == "ui.wait_start" else 0):
+        starting = method == "ui.wait_start"
+        if (display is None or len(args) != int(starting)
+                or set(kwargs) - ({"failed_label"} if starting else {"failed"})
+                or ("failed" in kwargs and type(kwargs["failed"]) is not bool)):
             raise SandboxError("invalid waiting scope")
         if method == "ui.wait_start":
-            display.start(args[0])
+            display.start(args[0], **kwargs)
         else:
-            display.stop()
+            display.stop(**kwargs)
         return None
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.

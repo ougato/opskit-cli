@@ -1,5 +1,6 @@
 """One transient installation status, suspended around interactive questions."""
 from contextlib import contextmanager
+import time
 
 from rich.console import Group
 from rich.live import Live
@@ -62,20 +63,30 @@ class WaitingDisplay:
         self.status = None
         self.suspended = 0
 
-    def start(self, message=""):
+    def start(self, message="", *, failed_label=None):
         if (not isinstance(message, str) or len(message) > 200
                 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in message)):
             raise ValueError("invalid waiting message")
         if len(self.messages) >= 8:
             raise ValueError("too many nested waiting scopes")
-        self.messages.append(message)
+        if failed_label is not None and (not isinstance(failed_label, str) or not 1 <= len(failed_label) <= 40
+                or not failed_label.isprintable()):
+            raise ValueError("invalid progress failure label")
+        self.messages.append((message, failed_label, time.monotonic()))
         self._refresh()
 
-    def stop(self):
+    def stop(self, *, failed=False):
         if not self.messages:
             raise ValueError("no active waiting scope")
-        self.messages.pop()
+        message, failed_label, started = self.messages.pop()
         self._refresh()
+        if failed_label is not None:
+            from rich.markup import escape
+            from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line
+            width = max(_global_step_width(), _display_width(message) + 2)
+            row = _render_line(escape(message), None if failed else 100, time.monotonic() - started,
+                               _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
+            self.console.print(Text.from_markup(row), soft_wrap=True)
 
     def _refresh(self):
         from core.cli import non_interactive
@@ -84,7 +95,27 @@ class WaitingDisplay:
                 self.status.stop()
                 self.status = None
             return
-        message = Text(self.messages[-1], no_wrap=True, overflow="ellipsis")
+        label, failed_label, started = self.messages[-1]
+        if self.status is not None and (failed_label is not None or not isinstance(self.status, _InstallationStatus)):
+            self.status.stop()
+            self.status = None
+        if failed_label is not None:
+            from rich.live import Live
+            from rich.markup import escape
+            from core.progress import _display_width, _global_step_width, _render_pulse
+            from core.theme import get_color
+            width = max(_global_step_width(), _display_width(label) + 2)
+            color = get_color("progress.bar_active")
+
+            def render():
+                elapsed = time.monotonic() - started
+                return Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed, color, width))
+
+            self.status = Live(console=self.console, transient=True, refresh_per_second=10,
+                               redirect_stdout=False, redirect_stderr=False, get_renderable=render)
+            self.status.start(refresh=True)
+            return
+        message = Text(label, no_wrap=True, overflow="ellipsis")
         if self.status is None:
             self.status = _InstallationStatus(message, output_console=self.console)
             self.status.start()

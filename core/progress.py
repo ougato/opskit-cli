@@ -106,11 +106,12 @@ def _pad_desc(desc: str, width: int) -> str:
     return desc + " " * pad
 
 
-def _render_line(desc: str, pct: int, elapsed: float, color: str, width: int) -> str:
+def _render_line(desc: str, pct: int | None, elapsed: float, color: str, width: int, *, status: str = "") -> str:
     """统一渲染一行进度条文本（完成/失败态）"""
-    filled = int(_BAR_WIDTH * pct / 100)
+    filled = int(_BAR_WIDTH * (pct or 0) / 100)
     bar = _FILLED * filled + _EMPTY * (_BAR_WIDTH - filled)
-    return f"[{color}]{_pad_desc(desc, width)} {bar}  {pct:>4d}%  {elapsed:.2f}s[/{color}]"
+    value = status if pct is None else f"{pct:>4d}%"
+    return f"[{color}]{_pad_desc(desc, width)} {bar}  {value:>5}  {elapsed:.2f}s[/{color}]"
 
 
 def _render_pulse(desc: str, frame: int, elapsed: float, color: str, width: int) -> str:

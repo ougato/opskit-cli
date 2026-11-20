@@ -3,6 +3,12 @@
 import re
 from time import monotonic
 
+from rich.console import Group
+from rich.markup import escape
+from rich.text import Text
+
+from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line, _render_pulse
+from core.theme import get_color
 
 class ToolProgress:
     def __init__(self, spec, console, output):
@@ -39,6 +45,9 @@ class ToolProgress:
         self.diagnostic = False
         self.live = None
         self.finished = False
+        self.width = max(_global_step_width(), max(_display_width(label) + 2
+                         for label in [self.progress_label, *(name for name, _ in self.stages)]))
+        self.active_color = get_color("progress.bar_active")
 
     def __enter__(self):
         from rich.live import Live
@@ -57,21 +66,24 @@ class ToolProgress:
             self.live.stop()
 
     def render(self):
-        from rich.cells import cell_len
-        from rich.text import Text
-
         label = self.stages[self.index][0]
         elapsed = monotonic() - self.stage_started
-        position = int(elapsed * 10) % 32
-        position = min(position, 32 - position)
-        bar = "░" * position + "█" * 4 + "░" * (16 - position)
-        result = Text(f"{label}{' ' * max(2, 14 - cell_len(label))}{bar}        {elapsed:.2f}s")
-        if self.percent is not None:
-            filled = self.percent // 5
-            progress = "█" * filled + "░" * (20 - filled)
-            result.append(f"\n{self.progress_label}{' ' * max(2, 14 - cell_len(self.progress_label))}"
-                          f"{progress}  {self.percent:3d}%  {monotonic() - self.started:.2f}s")
-        return result
+        stage = Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed,
+                                             self.active_color, self.width))
+        if self.percent is None:
+            return stage
+        total = self._row(self.progress_label, self.percent, monotonic() - self.started, self.active_color)
+        return Group(stage, total)
+
+    def _row(self, label, percent, elapsed, color, *, status=""):
+        return Text.from_markup(_render_line(escape(label), percent, elapsed, color, self.width,
+                                            status=escape(status)))
+
+    def _emit(self, row):
+        if self.console.is_terminal:
+            self.console.print(row, soft_wrap=True)
+        else:
+            self.output(row.plain)
 
     def line(self, line):
         for index in range(self.index + 1, len(self.stages)):
@@ -93,13 +105,10 @@ class ToolProgress:
             self.diagnostic = False
 
     def _summary(self, success):
-        from rich.cells import cell_len
-
         label = self.stages[self.index][0]
         elapsed = monotonic() - self.stage_started
-        progress = "100%" if success else self.failed_label
-        bar = "█" * 20 if success else "░" * 20
-        self.output(f"{label}{' ' * max(2, 14 - cell_len(label))}{bar}  {progress:>4}  {elapsed:.2f}s")
+        self._emit(self._row(label, 100 if success else None, elapsed, _GREEN if success else _RED,
+                             status="" if success else self.failed_label))
 
     def finish(self, code):
         self.finished = True
@@ -107,4 +116,5 @@ class ToolProgress:
         self._summary(success)
         if success or self.percent is not None:
             percent = 100 if success else self.percent
-            self.output(f"{self.progress_label}  {percent}%  {monotonic() - self.started:.2f}s")
+            self._emit(self._row(self.progress_label, percent, monotonic() - self.started,
+                                 _GREEN if success else _RED))

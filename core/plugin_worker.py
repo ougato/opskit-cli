@@ -104,6 +104,21 @@ def _adapt_sdk(name: str):
             broker("ui.wait_stop")
     sdk.waiting = waiting
 
+    @contextmanager
+    def progress_step(message, failed_label):
+        broker("ui.wait_start", message, failed_label=failed_label)
+        try:
+            yield
+        except BaseException:
+            try:
+                broker("ui.wait_stop", failed=True)
+            except Exception:
+                pass
+            raise
+        else:
+            broker("ui.wait_stop")
+    sdk.progress_step = progress_step
+
     def owned_data(namespace: str) -> Path:
         if namespace != name:
             raise PermissionError("plugin namespace belongs to another identity")
