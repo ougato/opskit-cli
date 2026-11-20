@@ -137,7 +137,7 @@ waiting(message='') -> context manager
 
 `atomic_write_host_file(directory, relative, lock_name, expected_sha256, content)` 在目录读写授权下原子替换不超过 1 MiB 的普通文件。`relative` 为单个文件名，`lock_name` 为协作写入者共用的点号前缀锁目录。`expected_sha256=None` 表示要求目标不存在；返回 `{"written": false}` 时重新读取并合并后重试。
 
-Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷暂存文件并核对摘要，整目录一次发布。目标已存在时，只有全部文件和摘要一致才返回成功。
+Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷边复制边核对 SHA-256 和写入长度，发布前检查暂存文件的清单、身份、大小和修改时间，再原子发布整个目录。需要独立回读验证内容的调用方应另行校验。目标已存在时，只有全部文件和摘要一致才返回成功。
 
 发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。
 

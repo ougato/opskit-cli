@@ -13,7 +13,7 @@ import uuid
 from core.paths import data_dir
 from core.plugin_state import _directory, _remove_owned_tree
 from core.resource_lock import ResourceLock
-from core.plugin_host_tools import _ordinary, _grant, MAX_OUTPUT_BYTES, MAX_OUTPUT_ENTRIES
+from core.plugin_host_tools import _ordinary, _grant, MAX_OUTPUT_BYTES, MAX_OUTPUT_DEPTH, MAX_OUTPUT_ENTRIES
 from core.plugin_runtime_inventory import _read_file
 from core.secrets import atomic_write
 
@@ -107,11 +107,12 @@ def _mkdir(path, plugin, fingerprint, *, authority, check_identity, checkpoint):
 
 
 def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
-    from core.native_task_control import periodic_checkpoint
     """Publish a digest-bound copy to a new directory on the destination volume."""
     from io import BytesIO
 
     from core.host_file_access import open_bounded, source_path
+    from core.native_task_control import periodic_checkpoint
+    from core.plugin_tree import bounded_paths
 
     if (os.name != "nt" or set(parameters) - {"create_parents_from"} != {"source", "destination", "files"}
             or not isinstance(parameters["destination"], str)):
@@ -128,8 +129,12 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
             raise ValueError("invalid tree publication path")
         parent = root
         for part in parts[:-1]:
-            parent = _mkdir(parent / part, plugin, fingerprint, authority=authority,
-                            check_identity=check_identity, checkpoint=checkpoint)
+            child = parent / part
+            try:
+                parent = _ordinary(str(child), directory=True)
+            except FileNotFoundError:
+                parent = _mkdir(child, plugin, fingerprint, authority=authority,
+                                check_identity=check_identity, checkpoint=checkpoint)
     parent = _ordinary(str(destination.parent), directory=True)
     _, destination, identity = source_path(str(parent), destination.name)
     if destination == source:
@@ -188,6 +193,7 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
         staging.mkdir()
         staging_identity = tuple(_directory(staging))
         total = 0
+        written = {}
         try:
             for name, (original, expected_digest) in validated.items():
                 poll()
@@ -198,16 +204,38 @@ def _publish_tree(plugin, fingerprint, parameters, *, authority, check_identity,
                 incoming = BytesIO(original) if isinstance(original, bytes) else open_bounded(
                     original, source, MAX_OUTPUT_BYTES)
                 with incoming as stream, temporary.open("xb") as outgoing:
+                    length = 0
                     while body := stream.read(1024**2):
                         poll()
                         total += len(body)
                         if total > MAX_OUTPUT_BYTES:
                             raise ValueError("tree exceeds limit")
                         digest.update(body)
-                        outgoing.write(body)
+                        if outgoing.write(body) != len(body):
+                            raise OSError("short write during tree publication")
+                        length += len(body)
+                    outgoing.flush()
+                    info = os.fstat(outgoing.fileno())
+                    if info.st_size != length:
+                        raise OSError("staged file size differs from bytes written")
+                    written[name] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
                 if digest.hexdigest() != expected_digest:
                     raise ValueError("tree source changed during copy")
-            if _snapshot(staging, poll, expected)["files"] != len(expected):
+            check()
+            if tuple(_directory(staging)) != staging_identity:
+                raise ValueError("staging directory changed")
+            for entry in bounded_paths(staging, max_entries=MAX_OUTPUT_ENTRIES, max_depth=MAX_OUTPUT_DEPTH,
+                                       skip_dirs=frozenset(), checkpoint=poll):
+                info = entry.lstat()
+                if getattr(info, "st_file_attributes", 0) & 0x400:
+                    raise ValueError("unsafe staging entry")
+                if stat.S_ISDIR(info.st_mode):
+                    continue
+                identity_and_size = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or written.pop(entry.relative_to(staging).as_posix(), None) != identity_and_size):
+                    raise ValueError("staged tree differs from verified source")
+            if written or tuple(_directory(staging)) != staging_identity:
                 raise ValueError("staged tree differs from verified source")
             check()
             os.rename(staging, destination)

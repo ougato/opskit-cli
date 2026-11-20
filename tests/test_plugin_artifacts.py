@@ -134,6 +134,45 @@ def test_publish_tree_preserves_existing_archive_and_rejects_changed_source(tmp_
     assert list(tmp_path.glob(".opskit-tree-*")) == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite directory rename")
+@pytest.mark.parametrize("replace_file", [False, True])
+def test_new_tree_checks_staged_file_identity_without_readback(tmp_path, monkeypatch, context, replace_file):
+    from core import plugin_tree
+
+    content = b"built"
+    destination = tmp_path / "published"
+    params = {
+        "source": str(tmp_path),
+        "destination": str(destination),
+        "files": {
+            "index.html": {"content": base64.b64encode(content).decode("ascii"),
+                           "sha256": hashlib.sha256(content).hexdigest()},
+        },
+    }
+    walk = plugin_tree.bounded_paths
+
+    def staging_paths(root, **kwargs):
+        if replace_file:
+            replacement = root.parent / "replacement"
+            replacement.write_bytes(b"other")
+            replacement.replace(root / "index.html")
+        yield from walk(root, **kwargs)
+
+    def unexpected_readback(*args, **kwargs):
+        pytest.fail("new publication must not hash the staged tree again")
+
+    monkeypatch.setattr(plugin_tree, "bounded_paths", staging_paths)
+    monkeypatch.setattr(artifacts, "_snapshot", unexpected_readback)
+    if replace_file:
+        with pytest.raises(ValueError, match="staged tree differs"):
+            manage("publish_tree", params, context)
+        assert not destination.exists()
+    else:
+        manage("publish_tree", params, context)
+        assert (destination / "index.html").read_bytes() == content
+    assert list(tmp_path.glob(".opskit-tree-*")) == []
+
+
 def test_zip_entry_reads_only_requested_member_and_rejects_duplicates(tmp_path, context):
     from zipfile import ZipFile
 
