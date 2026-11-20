@@ -2,7 +2,17 @@
 import subprocess
 import sys
 import pytest
-from core.process import capture
+from core.process import capture, stream
+
+
+def test_stream_decodes_utf8_and_local_diagnostics():
+    program = (
+        "import sys; sys.stdout.buffer.write("
+        "'启动引擎\\n'.encode('utf-8') + '拒绝访问\\r\\n'.encode('cp936'))"
+    )
+    assert list(stream([sys.executable, "-c", program], timeout=5, fallback_encoding="cp936")) == [
+        "启动引擎", "拒绝访问",
+    ]
 
 
 def test_native_capture_closes_default_stdin():

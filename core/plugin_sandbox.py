@@ -506,7 +506,7 @@ def _broker(manifest, request: dict):
         from core.prompt import console
         context = dict(authority=authority, check_identity=identity, deadline=lambda: _invocations.deadline,
                        checkpoint=checkpoint,
-                       output=lambda line: console.print(line, markup=False, highlight=False))
+                       output=lambda line: console.print(line, markup=False, highlight=False, soft_wrap=True))
         if method == "host.execute":
             from core.plugin_host_tools import execute
             def output_start(header):
@@ -519,8 +519,12 @@ def _broker(manifest, request: dict):
                 with display.suspend() if display is not None else nullcontext():
                     clear_screen()
                     print_header(header)
-            return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
-                           output_start=output_start, **context)
+            display = getattr(_invocations, "wait_display", None)
+            from contextlib import nullcontext
+            progress_requested = isinstance(args[-1], dict) and "progress" in args[-1]
+            with display.suspend() if display is not None and progress_requested else nullcontext():
+                return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
+                               output_start=output_start, progress_console=console, **context)
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)

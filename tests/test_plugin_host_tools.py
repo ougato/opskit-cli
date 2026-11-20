@@ -60,6 +60,37 @@ def test_invalid_arguments_never_prompt(tmp_path, args, options):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeypatch, context):
+    from rich.console import Console
+
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+    def stream(*args, **kwargs):
+        yield "routine startup"
+        yield "begin script phase 17%"
+        yield "Error: script build failed"
+        yield "    at compile()"
+        return 34
+
+    monkeypatch.setattr(process, "stream", stream)
+    lines = []
+    context["output"] = lines.append
+    result = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {"progress": {
+        "stages": [["Launch"], ["Scripts", "begin script"]],
+        "progress_marker": "phase ",
+        "progress_label": "Engine",
+        "failed_label": "Failed",
+        "diagnostics": ["Error:"],
+        "success_codes": [0, 36],
+    }}, progress_console=Console(force_terminal=False), **context)
+    assert result["returncode"] == 34
+    assert lines[0].startswith("Launch") and "100%" in lines[0]
+    assert lines[1:3] == ["Error: script build failed", "    at compile()"]
+    assert lines[3].startswith("Scripts") and "Failed" in lines[3]
+    assert lines[4].startswith("Engine  17%")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
 def test_tool_scope_reuses_permanent_grant_and_rechecks_identity(tmp_path, monkeypatch):
     tool = tmp_path / "git.exe"
     tool.write_bytes(b"git")

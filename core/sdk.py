@@ -188,6 +188,9 @@ def artifact_info(directory: str, relative: str) -> dict:
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
+HOST_TOOL_PROGRESS = True
+
+
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
     """Execute an approved host tool with bounded input, output and execution time."""
     raise PermissionError("host tool API requires an isolated plugin worker")

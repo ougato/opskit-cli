@@ -202,17 +202,24 @@ def file_version(plugin, fingerprint, path, *, authority, check_identity, checkp
 
 
 def execute(plugin, fingerprint, executable, arguments, directory, options, *, authority,
-            check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None):
+            check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None,
+            progress_console=None):
     """Return raw exit status and a pending output token; success is plugin policy."""
     from core import plugin_artifacts as artifacts
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header"}
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header", "progress"}
             or ("capture_output" in options and type(options["capture_output"]) is not bool)
             or not isinstance(options.get("tool_dependencies", []), list)
             or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    progress = None
+    if "progress" in options:
+        if options.get("capture_output") or progress_console is None:
+            raise ValueError("progress requires streamed console output")
+        from core.plugin_tool_progress import ToolProgress
+        progress = ToolProgress(options["progress"], progress_console, output)
     header = options.get("output_header")
     if header is not None and (not isinstance(header, list) or not 1 <= len(header) <= 8
             or any(not isinstance(part, str) or not 1 <= len(part) <= 200
@@ -337,6 +344,9 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
             artifacts.pending(plugin, token, root, destination, live)
         from core.process import stream
         input_args = {"stdin_data": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}
+        if progress is not None and os.name == "nt":
+            import locale
+            input_args["fallback_encoding"] = locale.getencoding()
         total = 0
         captured = []
         captures_after = []
@@ -354,7 +364,8 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                 argv = [a.replace("{config_file}", str(config_file).replace("\\", "/")) for a in argv]
             if header is not None and output_start is not None:
                 output_start(header)
-            with host_work_scope() if host_work_scope is not None else nullcontext():
+            with (host_work_scope() if host_work_scope is not None else nullcontext(),
+                  progress if progress is not None else nullcontext()):
                 iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
                                   **input_args, timeout=timeout, checkpoint=live)
                 try:
@@ -378,8 +389,12 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                             if total > 16384:
                                 raise RuntimeError("captured host tool output limit exceeded")
                             captured.append(line)
+                        elif progress is not None:
+                            progress.line(line)
                         else:
                             output(line)
+                    if progress is not None:
+                        progress.finish(code)
                 finally:
                     iterator.close()
         live()
