@@ -913,17 +913,6 @@ def confirm(
             raise UserExit
 
 
-def _erase_input_character(buf: list[str], secret: bool) -> None:
-    """Erase the same number of terminal cells as the echoed character."""
-    if not buf:
-        return
-    character = buf.pop()
-    width = 1 if secret else cell_len(character)
-    if width:
-        sys.stdout.write('\x08' * width + ' ' * width + '\x08' * width)
-        sys.stdout.flush()
-
-
 def _read_line(secret: bool = False, *, initial: str = '') -> str:
     """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
@@ -933,15 +922,42 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
     """
     _check_input()
     buf = list(initial)
+    cursor = len(buf)
+
+    def display(characters):
+        return '*' * len(characters) if secret else ''.join(characters)
+
+    def edit(key):
+        nonlocal cursor
+        if key == 'LEFT' and cursor:
+            cursor -= 1
+            output = '\b' * cell_len(display(buf[cursor:cursor + 1]))
+        elif key == 'RIGHT' and cursor < len(buf):
+            output = display(buf[cursor:cursor + 1])
+            cursor += 1
+        elif key in ('\b', '\x7f') and cursor:
+            cursor -= 1
+            width = cell_len(display([buf.pop(cursor)]))
+            tail = display(buf[cursor:])
+            output = '\b' * width + tail + ' ' * width + '\b' * (cell_len(tail) + width)
+        elif len(key) == 1 and key >= ' ' and key != '\x7f':
+            tail = display(buf[cursor:])
+            buf.insert(cursor, key)
+            cursor += 1
+            output = display(key) + tail + '\b' * cell_len(tail)
+        else:
+            return
+        sys.stdout.write(output)
+        sys.stdout.flush()
+
     if initial:
-        sys.stdout.write('*' * len(initial) if secret else initial)
+        sys.stdout.write(display(initial))
         sys.stdout.flush()
     if os.name == 'nt':
         while True:
             ch = _getwch()
             if ch in ('\x00', '\xe0'):
-                # 导航键（方向/Home/End/Del 等）为双字符序列：吞掉第二字符并忽略
-                _getwch()
+                edit({'K': 'LEFT', 'M': 'RIGHT'}.get(_getwch(), ''))
                 continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
@@ -951,18 +967,11 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserExit
-            if ch in ('\x08', '\x7f'):
-                _erase_input_character(buf, secret)
-                continue
             if ch == CANCEL_KEY:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserCancel
-            if ch < ' ':
-                continue
-            buf.append(ch)
-            sys.stdout.write('*' if secret else ch)
-            sys.stdout.flush()
+            edit(ch)
     else:
         import select as _sel
         import termios
@@ -1001,34 +1010,30 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     raise UserExit
-                if ch in ('\x7f', '\x08'):
-                    _erase_input_character(buf, secret)
-                    continue
                 if ch == CANCEL_KEY:
                     # 与 _read_key_seq 对齐：ESC 后 50ms 内跟随 '[' / 'O' 视为
-                    # 导航键序列（方向 / Home / End / PgUp / Del 等），
-                    # 按 CSI 语法读到终止字节（'@'~'~'）为止吞掉整个序列并忽略，
-                    # 不多吞后续正常输入；只有单独的 ESC 才视为取消
+                    # 导航键序列。只消费当前序列，保留后续正常输入。
                     if _sel.select([fd], [], [], 0.05)[0]:
                         seq = _read_fd(fd, 1).decode(errors='ignore')
                         if seq == '[':
+                            code = ''
                             while _sel.select([fd], [], [], 0.05)[0]:
                                 b = _read_fd(fd, 1).decode(errors='ignore')
+                                code += b
                                 if not b or '@' <= b <= '~':
                                     break
+                            edit({'D': 'LEFT', 'C': 'RIGHT'}.get(code, ''))
                             continue
                         if seq == 'O':
                             if _sel.select([fd], [], [], 0.05)[0]:
-                                _read_fd(fd, 1)
+                                code = _read_fd(fd, 1)
+                                edit({b'D': 'LEFT', b'C': 'RIGHT'}.get(code, ''))
                             continue
                         # ESC + 其他字符（如 Alt 组合键）：忽略该字符，视为取消
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     raise UserCancel
-                if ch >= ' ':
-                    buf.append(ch)
-                    sys.stdout.write('*' if secret else ch)
-                    sys.stdout.flush()
+                edit(ch)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 

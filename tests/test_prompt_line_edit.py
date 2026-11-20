@@ -56,6 +56,18 @@ def test_initial_text_is_editable_and_can_be_cleared(monkeypatch):
     assert ' (p0/client)' not in output.getvalue()
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows console input')
+@pytest.mark.parametrize('secret', [False, True])
+def test_arrows_edit_inside_prefilled_version(monkeypatch, secret):
+    keys = iter(['\xe0', 'K', '\x00', 'K', '\b', '0', '\xe0', 'M', '\r'])
+    output = StringIO()
+    monkeypatch.setattr(prompt, '_getwch', lambda: next(keys))
+    monkeypatch.setattr(sys, 'stdout', output)
+    assert prompt._read_line(secret=secret, initial='1.1.2') == '1.0.2'
+    assert output.getvalue() == ('*****\b\b\b** \b\b\b***\b\b*\n' if secret
+                                 else '1.1.2\b\b\b.2 \b\b\b0.2\b\b.\n')
+
+
 @pytest.mark.parametrize('character', ['\b', '\r', '中'])
 def test_pending_key_after_release_event_is_detected(character):
     released = _InputRecord()
