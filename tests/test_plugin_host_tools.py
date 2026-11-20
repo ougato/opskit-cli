@@ -139,6 +139,45 @@ def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeyp
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+@pytest.mark.parametrize("process_code,success", [(36, True), (36, False), (34, False)])
+def test_deferred_tool_output_replays_raw_lines_only_on_failure(
+        tmp_path, monkeypatch, context, capsys, process_code, success):
+    from rich.console import Console
+    from core import prompt
+    from core.plugin_sandbox import _DeferredToolOutput
+
+    raw_lines = ["startup", "begin script", "Timing failed: sample", "",
+                 "Error: [BABEL] Note: sample", "    at compile()", "    at compile()"]
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+
+    def stream(*args, **kwargs):
+        yield from raw_lines
+        return process_code
+
+    monkeypatch.setattr(process, "stream", stream)
+    console = Console(force_terminal=False)
+    monkeypatch.setattr(prompt, "console", console)
+    output = []
+    context["output"] = output.append
+    journal = _DeferredToolOutput()
+    result = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {
+        "defer_output": True, "progress": {
+            "stages": [["Launch"], ["Scripts", "begin script"]],
+            "failed_label": "Failed", "diagnostics": ["error"], "success_codes": [36],
+            "quiet_prefixes": ["Timing failed: "], "compact_diagnostics": ["[BABEL] Note: "],
+        },
+    }, progress_console=console, deferred_output=journal.append, **context)
+    assert result["returncode"] == process_code
+    assert len(output) == 2
+    assert not capsys.readouterr().out
+    journal.finish(success)
+    assert capsys.readouterr().out.splitlines() == ([] if success else raw_lines)
+    journal.finish(False)
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
 def test_tool_scope_reuses_permanent_grant_and_rechecks_identity(tmp_path, monkeypatch):
     tool = tmp_path / "git.exe"
     tool.write_bytes(b"git")

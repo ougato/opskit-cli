@@ -171,6 +171,7 @@ def _adapt_sdk(name: str):
     sdk.artifact_batch_info = lambda directory, relatives: broker("host.artifact_batch_info", directory, relatives)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
+    sdk.finish_host_tool_output = lambda success: broker("host.finish_tool_output", success)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
     def host_path_info(path, directory=False, write=False, execute=False):
         if execute is not False:

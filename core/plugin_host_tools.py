@@ -203,17 +203,20 @@ def file_version(plugin, fingerprint, path, *, authority, check_identity, checkp
 
 def execute(plugin, fingerprint, executable, arguments, directory, options, *, authority,
             check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None,
-            progress_console=None):
+            progress_console=None, deferred_output=None):
     """Return raw exit status and a pending output token; success is plugin policy."""
     from core import plugin_artifacts as artifacts
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header", "progress"}
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header", "progress", "defer_output"}
             or ("capture_output" in options and type(options["capture_output"]) is not bool)
             or not isinstance(options.get("tool_dependencies", []), list)
             or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    defer = options.get("defer_output", False)
+    if type(defer) is not bool or (defer and (deferred_output is None or options.get("capture_output"))):
+        raise ValueError("invalid deferred output request")
     progress = None
     if "progress" in options:
         if options.get("capture_output") or progress_console is None:
@@ -385,7 +388,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                             code = completed.value
                             break
                         line_size = len(line.encode("utf-8"))
-                        total += line_size
+                        total += line_size + 1
                         if total > 16 * 1024**2:
                             raise RuntimeError("host tool output limit exceeded")
                         if capture_next:
@@ -394,7 +397,11 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                         if capture_after is not None and capture_after in line:
                             marker_count += 1
                             capture_next = True
-                        if options.get("capture_output"):
+                        if defer:
+                            deferred_output(line)
+                            if progress is not None:
+                                progress.line(line, show_diagnostics=False)
+                        elif options.get("capture_output"):
                             if total > 16384:
                                 raise RuntimeError("captured host tool output limit exceeded")
                             captured.append(line)

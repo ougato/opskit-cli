@@ -116,6 +116,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
 - `host_asar_directories(directory, relative, member)`：经所在目录读取授权后，列出 ASAR 压缩包中指定目录的直接子目录名称；不返回归档文件内容，目录项、名称及 ASAR 头均有上限并拒绝链接。
 - `list_host_files(directory, *, missing_ok=False)`：经目录读取授权后，递归返回排序后的普通文件相对路径，路径使用 `/`。启用 `missing_ok` 时，尚未创建的目录返回空列表。拒绝链接、重解析点、硬链接和特殊文件。最多遍历 65,536 项、64 层，返回的路径 UTF-8 总长度最多 1 MiB。文件内容和摘要分别通过各自的 SDK 接口读取。
 - `host_execute(executable, arguments, directory, options=None)`：Windows 宿主工具执行，绝对 `.exe` 路径、独立参数数组、绝对工作目录；不经过 shell。返回原始 `returncode`。
+  SDK 提供 `finish_host_tool_output(success)` 时，可设置 `defer_output: true`。宿主保留本次插件调用的工具输出，进度仍实时更新。等业务校验完成后传 `true` 丢弃输出，或传 `false` 在终端按原顺序回放。中断或调用退出时，未处理的输出由宿主回放。此选项与 `capture_output` 互斥。
   SDK 提供 `HOST_TOOL_STAGE_ONLY_PROGRESS` 时，可同时省略 `progress_marker` 和 `progress_label`，仅显示阶段动画和阶段结果。
   SDK 提供 `HOST_TOOL_COMPACT_DIAGNOSTICS` 时，可用 `quiet_prefixes` 省略已知的提示行，用 `compact_diagnostics` 将匹配字面标记的提示去重并收起 JavaScript 调用栈。
   当 SDK 提供 `HOST_TOOL_PROGRESS` 时，可传入 `progress` 描述实时输出。其字段为 `stages`（首项为 `[名称]`，后续为 `[名称, 开始标记]`，按顺序匹配行内字面文本）、`progress_marker`（后接整数和百分号的字面标记）、`progress_label`、`failed_label`、`diagnostics`（按行匹配的诊断字面标记，忽略大小写）和 `success_codes`（展示阶段完成状态的退出码）。终端显示当前阶段的动画与工具报告的进度；诊断行和其缩进续行保留原文。非交互输出保留阶段结束行与诊断，不重绘。此选项仅影响展示，与 `capture_output` 互斥，不改变授权范围或返回的工具退出码。

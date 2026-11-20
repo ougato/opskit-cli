@@ -185,6 +185,8 @@ def inspect_build_directory(project, build_directory):
 
 工具构建或安装需要进度动画时，先检查 SDK 是否提供 `HOST_TOOL_PROGRESS`，再向 `host_execute` 传入[进度描述](plugin-spec.md#宿主能力与多语言)。插件提供本地化阶段名称及第三方日志的字面标记，框架负责在宿主终端渲染。百分比来自工具输出，只有起止信号的阶段显示等待动画。插件代码自身的阶段可用 `progress_step(message, failed_label)` 显示同款动画。旧 SDK 可省略此选项以兼容原始输出流。
 
+若工具日志需要等业务结果确认后再显示，可检查 SDK 是否支持 `finish_host_tool_output` 并启用 `defer_output`。工具退出码、产物校验和归档等所需步骤均通过后，调用 `finish_host_tool_output(True)`。任一步骤失败则调用 `finish_host_tool_output(False)`，宿主回放当前尚未处理的日志。
+
 扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。
 
 `select` 对超过 9 项且从 1 起连续编号的选项自动分页，返回的仍是原始编号。需要保留对象、使用自定义按键或翻页后继续浏览时使用 `paged_select`。默认按 `p` / `n` 单键翻页，使用框架“上一页”“下一页”文案；`select` 的快捷键占用翻页键时会自动选择其他按键。分页 `page_size` 为 1..9；`choice_of(item, index_on_page)` 可省略 `key` 自动编号，也可提供不重复的单字符键，`0`、`p`、`n` 留给返回和翻页。`subtitle_of(page, total_pages)` 和 `initial_page` 的页码从 0 开始；后者可定位上次选择所在页，不会自动确认。未设置 `on_select` 时返回所选对象；设置时调用 `on_select(item)` 并继续浏览。0/Esc 返回 `None`。

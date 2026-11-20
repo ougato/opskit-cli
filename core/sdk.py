@@ -146,7 +146,7 @@ __all__ = [
     "artifact_info",
     "artifact_batch_info",
     "progress_step",
-    "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
+    "host_execute", "finish_host_tool_output", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
     "SDK_API_VERSION",
@@ -217,6 +217,11 @@ HOST_TOOL_COMPACT_DIAGNOSTICS = True
 
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
     """Execute an approved host tool with bounded input, output and execution time."""
+    raise PermissionError("host tool API requires an isolated plugin worker")
+
+
+def finish_host_tool_output(success: bool) -> None:
+    """Discard deferred output on success or replay it verbatim on failure."""
     raise PermissionError("host tool API requires an isolated plugin worker")
 
 

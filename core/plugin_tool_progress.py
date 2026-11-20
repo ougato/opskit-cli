@@ -96,7 +96,10 @@ class ToolProgress:
         else:
             self.output(row.plain)
 
-    def line(self, line):
+    def line(self, line, *, show_diagnostics=True):
+        if not show_diagnostics:
+            self._update_progress(line)
+            return
         if line.startswith(self.quiet_prefixes):
             return
         if self.compact_stack and (not line.strip() or line.startswith("    at ")):
@@ -113,6 +116,17 @@ class ToolProgress:
                         self.seen_compact.add(message)
                     self.output(message)
                 return
+        self._update_progress(line)
+        normalized = line.lower()
+        if any(marker in normalized for marker in self.diagnostics):
+            self.diagnostic = True
+            self.output(line)
+        elif self.diagnostic and (not line.strip() or line[:1].isspace() or line.startswith("Caused by:")):
+            self.output(line)
+        else:
+            self.diagnostic = False
+
+    def _update_progress(self, line):
         for index in range(self.index + 1, len(self.stages)):
             if self.stages[index][1] in line:
                 self._summary(True)
@@ -122,14 +136,6 @@ class ToolProgress:
         match = self.marker.search(line) if self.marker is not None else None
         if match and int(match[1]) <= 100:
             self.percent = int(match[1])
-        normalized = line.lower()
-        if any(marker in normalized for marker in self.diagnostics):
-            self.diagnostic = True
-            self.output(line)
-        elif self.diagnostic and (not line.strip() or line[:1].isspace() or line.startswith("Caused by:")):
-            self.output(line)
-        else:
-            self.diagnostic = False
 
     def _summary(self, success):
         label = self.stages[self.index][0]

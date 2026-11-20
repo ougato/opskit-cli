@@ -95,8 +95,9 @@ def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch
     from core import plugin_host_tools
     from core.cli import non_interactive
     monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
-    monkeypatch.setattr(prompt, "console", SimpleNamespace(is_terminal=terminal))
     events = []
+    monkeypatch.setattr(prompt, "console", SimpleNamespace(
+        is_terminal=terminal, print=lambda: events.append("blank")))
     monkeypatch.setattr(prompt, "clear_screen", lambda: events.append("clear"))
     monkeypatch.setattr(prompt, "print_header", lambda header: events.append(header))
     def execute(*args, **kwargs):
@@ -110,4 +111,23 @@ def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch
     finally:
         non_interactive.reset(token)
     assert result == "result"
-    assert events == (["clear", ["OpsKit", "Build"]] if expected else [])
+    assert events == (["clear", ["OpsKit", "Build"], "blank"] if expected else [])
+
+
+def test_deferred_output_uses_current_invocation_journal(caller, monkeypatch, capsys):
+    from core import plugin_host_tools
+
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
+    monkeypatch.setattr(sandbox._invocations, "tool_output", sandbox._DeferredToolOutput(), raising=False)
+
+    def execute(*args, **kwargs):
+        kwargs["deferred_output"]("    at failed()")
+        return {"returncode": 34}
+
+    monkeypatch.setattr(plugin_host_tools, "execute", execute)
+    result = sandbox._broker(caller, {"rpc_version": 1, "method": "host.execute",
+                                      "args": ["tool", [], "project", {"defer_output": True}]})
+    assert result["returncode"] == 34
+    assert not capsys.readouterr().out
+    sandbox._broker(caller, {"rpc_version": 1, "method": "host.finish_tool_output", "args": [False]})
+    assert capsys.readouterr().out == "    at failed()\n"

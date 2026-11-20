@@ -424,6 +424,29 @@ def _rename_state(source: Path, target: Path) -> None:
             time.sleep(0.1)
 
 
+class _DeferredToolOutput:
+    def __init__(self):
+        self.lines = []
+        self.bytes = 0
+
+    def append(self, line):
+        self.bytes += len(line.encode("utf-8")) + 1
+        if self.bytes > 32 * 1024**2:
+            raise RuntimeError("deferred host tool output limit exceeded")
+        self.lines.append(line)
+
+    def finish(self, success):
+        try:
+            if not success and self.lines:
+                from core.prompt import console
+
+                for line in self.lines:
+                    console.print(line, markup=False, highlight=False, soft_wrap=True)
+        finally:
+            self.lines.clear()
+            self.bytes = 0
+
+
 def _broker(manifest, request: dict):
     """Identity comes from this supervisor, never from the plugin's payload."""
     if (not isinstance(request, dict) or set(request) - {"rpc_version", "type", "method", "args", "kwargs"}
@@ -493,6 +516,14 @@ def _broker(manifest, request: dict):
             _check_live_authorizations()
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
+    if method == "host.finish_tool_output":
+        if kwargs or len(args) != 1 or type(args[0]) is not bool:
+            raise SandboxError("invalid deferred output result")
+        lines = getattr(_invocations, "tool_output", None)
+        if lines is None:
+            raise SandboxError("deferred output scope unavailable")
+        lines.finish(args[0])
+        return None
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version", "host.list_files"}:
         expected = 4 if method == "host.execute" else (1 if method in {"host.file_version", "host.list_files"} else 2)
         allowed = {"missing_ok"} if method == "host.list_files" else set()
@@ -526,9 +557,11 @@ def _broker(manifest, request: dict):
             display = getattr(_invocations, "wait_display", None)
             from contextlib import nullcontext
             progress_requested = isinstance(args[-1], dict) and "progress" in args[-1]
+            lines = getattr(_invocations, "tool_output", None)
             with display.suspend() if display is not None and progress_requested else nullcontext():
                 return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
-                               output_start=output_start, progress_console=console, **context)
+                               output_start=output_start, progress_console=console,
+                               deferred_output=lines.append if lines is not None else None, **context)
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)
@@ -909,6 +942,8 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             previous_authority = getattr(_invocations, "capability_authority", None)
             previous_preload = getattr(_invocations, "preload", None)
             previous_wait = getattr(_invocations, "wait_display", None)
+            previous_tool_output = getattr(_invocations, "tool_output", None)
+            tool_output = _DeferredToolOutput()
             _invocations.preload = _preload
             from core.plugin_capabilities import CapabilityAuthority
             from core.installation_progress import WaitingDisplay
@@ -918,15 +953,18 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             authority.suspend_wait = display.suspend
             _invocations.capability_authority = authority
             _invocations.wait_display = display
+            _invocations.tool_output = tool_output
             try:
                 return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
             finally:
                 try:
                     display.close()
+                    tool_output.finish(False)
                 finally:
                     authority.close()
                     _invocations.capability_authority = previous_authority
                     _invocations.wait_display = previous_wait
+                    _invocations.tool_output = previous_tool_output
                     _invocations.preload = previous_preload
                     _invocations.stack = stack
                     _invocations.authorizations = authorizations
