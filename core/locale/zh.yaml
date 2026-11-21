@@ -918,8 +918,9 @@ plugin_native:
   task:
     cancelled: "正在取消任务并回收进程；已产生的宿主文件或已发送的数据不会自动撤回。"
   upload:
-    starting: "正在准备并上传文件到 {host}…"
-    completed: "文件上传完成（{bytes} 字节）。"
+    title: "上传文件"
+    header: "上传封存"
+    failed: "上传失败"
   bootstrap:
     tools: "正在检查安装环境…"
     repair: "正在准备隔离 Python 环境…"

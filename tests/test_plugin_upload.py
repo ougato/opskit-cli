@@ -115,6 +115,7 @@ def test_revocation_reaps_silent_upload_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(upload, "_worker", _silent_worker)
     root = tmp_path / "project"
     root.mkdir()
+    (root / "build.bin").touch()
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
     required = authority.require
     monkeypatch.setattr(authority, "require", lambda scope, **kwargs:
@@ -147,7 +148,7 @@ def test_broker_rejects_upload_without_network_permission(monkeypatch):
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
-def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, monkeypatch, capsys, language):
+def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, monkeypatch, language):
     import datetime
     import http.server
     import ipaddress
@@ -174,19 +175,28 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     private_key.write_bytes(key.private_bytes(serialization.Encoding.PEM,
                             serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     content = b"known synthetic file\0" * 80000
-    received = []
+    received = {}
+    parallel_puts = threading.Barrier(2, timeout=5)
+    readback = set()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            body = received[0][1] if received else b""
-            self.send_response(200 if received else 404)
+            item = received.get(self.path.split("?")[0])
+            body = item[0] if item else b""
+            self.send_response(200 if item else 404)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            if item:
+                readback.add(self.path.split("?")[0])
             self.wfile.write(body)
 
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
-            received.append((self.path, body, self.headers["Content-MD5"]))
+            if self.path.startswith("/index.html?"):
+                assert readback == {"/build.bin", "/second.bin"}
+            else:
+                parallel_puts.wait()
+            received[self.path.split("?")[0]] = (body, self.headers["Content-MD5"])
             self.send_response(200)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -195,7 +205,7 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
             pass
 
     import socket
-    server = http.server.HTTPServer(("127.0.0.1", 443), Handler, bind_and_activate=False)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 443), Handler, bind_and_activate=False)
     try:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             server.allow_reuse_address = False
@@ -215,26 +225,57 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     root = tmp_path / "project"
     root.mkdir()
     (root / "build.bin").write_bytes(content)
+    (root / "second.bin").write_bytes(content)
+    (root / "index.html").write_bytes(content)
     authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
     required = authority.require
     monkeypatch.setattr(authority, "require", lambda scope, **kwargs:
                         required(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs))
     digest = hashlib.sha256(content).hexdigest()
     try:
-        result = upload.upload_file("demo", "a" * 64, str(root), "build.bin",
-                                    "https://127.0.0.1/object?synthetic-secret", digest, {},
-                                    verify_url="https://127.0.0.1/object?synthetic-read-secret",
+        import io
+        from contextlib import contextmanager
+        from core import plugin_upload_progress
+        from rich.console import Console
+        from core import prompt
+        output = io.StringIO()
+        console = Console(file=output, force_terminal=True, width=140)
+        monkeypatch.setattr(prompt, "console", console)
+        jobs = [
+            [name, f"https://127.0.0.1/{name}?synthetic-secret", digest, {},
+             f"https://127.0.0.1/{name}?synthetic-read-secret"]
+            for name in ("build.bin", "second.bin", "index.html")]
+        kwargs = dict(console=console, publish_last=1,
                                     authority=authority, check_identity=lambda *a: True,
                                     private_targets=["127.0.0.1:443"],
                                     deadline=time.monotonic() + 30, checkpoint=lambda: None)
+        result = upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs)
+        updates = []
+
+        @contextmanager
+        def capture_progress(console, total, files):
+            assert (total, files) == (3 * len(content), 3)
+            yield lambda *values: updates.append(values)
+
+        monkeypatch.setattr(plugin_upload_progress, "upload_progress", capture_progress)
+        assert upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs) == result
+        assert updates[-1] == (0, 3 * len(content), 3)
+        assert all(sent == 0 for sent, _, _ in updates)
+        received["/build.bin"] = (b"corrupt", "")
+        updates.clear()
+        with pytest.raises(RuntimeError, match="upload failed"):
+            upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs)
+        assert all(verified < 3 * len(content) for _, verified, _ in updates)
+        received["/build.bin"] = (content, received["/second.bin"][1])
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
         authority.close()
-    assert result == {"status": 200, "bytes": len(content), "sha256": digest}
-    assert received == [("/object?synthetic-secret", content,
-                         base64.b64encode(hashlib.md5(content, usedforsecurity=False).digest()).decode())]
-    logs = capsys.readouterr().out
-    assert i18n.t("plugin_native.upload.completed", bytes=len(content)) in logs
+    assert result == [{"status": 200, "bytes": len(content), "sha256": digest}] * 3
+    expected = (content, base64.b64encode(hashlib.md5(content, usedforsecurity=False).digest()).decode())
+    assert received == {"/build.bin": expected, "/second.bin": expected, "/index.html": expected}
+    logs = output.getvalue()
+    assert i18n.t("plugin_native.upload.title") in logs
+    assert "100%" in logs and "3/3" in logs and "/s" in logs
     assert "synthetic-secret" not in logs

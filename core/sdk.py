@@ -150,6 +150,7 @@ __all__ = [
     "host_execute", "finish_host_tool_output", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
+    "upload_files",
     "SDK_API_VERSION",
     "ModuleInfo",
     "t", "current_lang", "register_locale",
@@ -273,4 +274,9 @@ def https_request(url: str, method: str = "GET", headers: dict | None = None,
 def upload_file(directory: str, relative: str, url: str, sha256: str,
                 headers: dict | None = None, *, verify_url: str | None = None) -> dict:
     """PUT a checksum-bound file, optionally verifying it via a signed GET URL."""
+    raise PermissionError("upload API requires an isolated plugin worker")
+
+
+def upload_files(directory: str, files: list[list], *, publish_last: int = 0) -> list[dict]:
+    """Transfer a bounded batch of [relative, PUT URL, SHA256, headers, GET URL or None]."""
     raise PermissionError("upload API requires an isolated plugin worker")

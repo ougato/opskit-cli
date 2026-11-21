@@ -3,10 +3,14 @@ import base64
 import hashlib
 import http.client
 import json
+import os
 import re
 import socket
 import ssl
 import time
+from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from threading import Lock
 
 from core.host_file_access import open_bounded
 from core.host_file_access import source_path as _source
@@ -38,7 +42,7 @@ def _snapshot(root, source, identity, snapshot, expected):
     return size, base64.b64encode(md5.digest()).decode("ascii")
 
 
-def _put(url, headers, snapshot, size, md5, private_targets):
+def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda count: None):
     target = _validate(url, "PUT", headers, b"")
     from core.plugin_egress import allowed_addresses
     address = allowed_addresses(target.hostname, 443, private_targets)[0]
@@ -63,6 +67,7 @@ def _put(url, headers, snapshot, size, md5, private_targets):
                 if sent > size:
                     raise ValueError("upload snapshot changed")
                 connection.send(chunk)
+                sent_bytes(len(chunk))
         if sent != size:
             raise ValueError("upload snapshot changed")
         response = connection.getresponse()
@@ -111,43 +116,112 @@ def _verify(url, size, expected, private_targets):
             raw.close()
 
 
-def _worker(connection, workspace, root, source, identity, url, headers, expected, private_targets, verify_url=None):
+def _transfer(workspace, root, job, private_targets, sent_bytes):
+    index, source, identity, url, headers, expected, verify_url, declared_size = job
+    snapshot = workspace.root / f"{index}.bin"
+    try:
+        size, md5 = _snapshot(root, source, identity, snapshot, expected)
+        if size != declared_size:
+            raise ValueError("upload source size changed")
+        status = 200
+        if not verify_url or not _verify(verify_url, size, expected, private_targets):
+            status = _put(url, headers, snapshot, size, md5, private_targets, sent_bytes)
+            if verify_url and not _verify(verify_url, size, expected, private_targets):
+                raise ValueError("stored artifact missing after upload")
+        return {"status": status, "bytes": size, "sha256": expected}
+    finally:
+        snapshot.unlink(missing_ok=True)
+
+
+def _worker(connection, workspace, root, jobs, private_targets, publish_last):
     from network.worker import send
     from core.plugin_workspace import validate_binding
     from core.plugin_workspace_recovery import cleanup_lease
+
+    sent = 0
+    lock = Lock()
+
+    def sent_bytes(count):
+        nonlocal sent
+        with lock:
+            sent += count
+
     try:
         with cleanup_lease(workspace.root):
             validate_binding(workspace)
-            snapshot = workspace.root / "upload.bin"
-            size, md5 = _snapshot(root, source, identity, snapshot, expected)
-            status = 200
-            if not verify_url or not _verify(verify_url, size, expected, private_targets):
-                status = _put(url, headers, snapshot, size, md5, private_targets)
-                if verify_url and not _verify(verify_url, size, expected, private_targets):
-                    raise ValueError("stored artifact missing after upload")
-            send(connection, {"value": {"status": status, "bytes": size, "sha256": expected}})
+            workers = min(len(jobs), max(4, min(16, 2 * (os.cpu_count() or 1))))
+            pool = ThreadPoolExecutor(max_workers=workers)
+            try:
+                active = {}
+
+                def submit(job):
+                    active[pool.submit(_transfer, workspace, root, job, private_targets, sent_bytes)] = job[0]
+
+                def run_group(group):
+                    pending = iter(group)
+                    for _ in range(min(workers, len(group))):
+                        submit(next(pending))
+                    while active:
+                        completed, _ = wait(active, timeout=0.2, return_when=FIRST_COMPLETED)
+                        with lock:
+                            transferred = sent
+                        results = [[active.pop(future), future.result()] for future in completed]
+                        send(connection, {"sent": transferred, "results": results})
+                        for _ in results:
+                            job = next(pending, None)
+                            if job is not None:
+                                submit(job)
+
+                boundary = len(jobs) - publish_last
+                run_group(jobs[:boundary])
+                run_group(jobs[boundary:])
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
     except Exception:
         send(connection, {"error": True})
     finally:
         connection.close()
 
 
-def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, verify_url=None, *,
-                authority, check_identity, private_targets, deadline, checkpoint):
-    """Network permission is checked by the caller; directory access is broker-owned."""
-    destination = _validate(url, "PUT", headers, b"")
-    if verify_url is not None:
-        verification = _validate(verify_url, "GET", {}, b"")
-        if (verification.netloc, verification.path) != (destination.netloc, destination.path):
-            raise ValueError("upload verification must target the same object")
-    if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
-        raise ValueError("upload requires an exact SHA256")
-    root, source, identity = _source(directory, relative)
+def _prepare(directory, files):
+    if not isinstance(files, list) or not 1 <= len(files) <= 4096:
+        raise ValueError("upload batch must contain 1 to 4096 files")
+    jobs = []
+    sources = set()
+    targets = set()
+    for index, entry in enumerate(files):
+        if not isinstance(entry, list) or len(entry) != 5:
+            raise ValueError("invalid upload batch entry")
+        relative, url, sha256, headers, verify_url = entry
+        destination = _validate(url, "PUT", headers, b"")
+        if verify_url is not None:
+            verification = _validate(verify_url, "GET", {}, b"")
+            if (verification.netloc, verification.path) != (destination.netloc, destination.path):
+                raise ValueError("upload verification must target the same object")
+        if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise ValueError("upload requires an exact SHA256")
+        root, source, identity = _source(directory, relative)
+        target = (destination.netloc, destination.path)
+        if source in sources or target in targets:
+            raise ValueError("duplicate upload source or destination")
+        sources.add(source)
+        targets.add(target)
+        jobs.append((index, source, identity, url, headers, sha256, verify_url))
+    return root, jobs
+
+
+def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, authority, check_identity,
+                 private_targets, deadline, checkpoint, console=None, input_wait=nullcontext):
+    """Run a bounded batch with one directory grant and one supervised worker."""
+    root, jobs = _prepare(directory, files)
+    if type(publish_last) is not int or not 0 <= publish_last <= len(jobs):
+        raise ValueError("invalid final upload group")
     scope = CapabilityRequest(plugin, fingerprint, "directory.read", str(root))
     checkpoint()
     from core.prompt import guard_input
-    with guard_input(checkpoint):
+    with input_wait(), guard_input(checkpoint):
         authority.require(scope, check_identity=check_identity)
+    deadline = deadline() if callable(deadline) else deadline
     from core.native_task_control import task_checkpoint
     checkpoint = task_checkpoint(checkpoint)
 
@@ -159,29 +233,51 @@ def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, 
 
     from core.plugin_workspace import owned_workspace
     from network.worker import owned_process
-    from core.i18n import t
-    from core.prompt import console
+    from core.plugin_upload_progress import upload_progress
+    results = {}
+    sized_jobs = []
+    for job in jobs:
+        size = job[1].lstat().st_size
+        if not 0 <= size <= MAX_FILE:
+            raise ValueError("upload source exceeds limit")
+        sized_jobs.append((*job, size))
+    jobs = sized_jobs
+    total = sum(job[-1] for job in jobs)
+    sent = verified = 0
     live()
-    console.print(t("plugin_native.upload.starting", host=destination.hostname), markup=False)
-    with owned_workspace(timeout=min(15, deadline - time.monotonic()), cleanup_timeout=15) as workspace:
-        with owned_process(_worker, (workspace, root, source, identity, url, headers, sha256,
-                                    private_targets, verify_url), label="plugin file upload") as (receive, process):
-            while True:
-                live()
-                if receive.poll(0.05):
-                    message = json.loads(receive.recv_bytes(65536))
-                    if not isinstance(message, dict) or set(message) != {"value"}:
-                        raise RuntimeError("plugin file upload failed")
-                    result = message["value"]
-                    if (not isinstance(result, dict) or set(result) != {"status", "bytes", "sha256"}
-                            or type(result["status"]) is not int or not 200 <= result["status"] < 300
-                            or type(result["bytes"]) is not int or not 0 <= result["bytes"] <= MAX_FILE
-                            or result["sha256"] != sha256):
-                        raise ValueError("invalid upload worker result")
+    with upload_progress(console, total, len(jobs)) as progress:
+        with owned_workspace(timeout=min(15, deadline - time.monotonic()), cleanup_timeout=15) as workspace:
+            with owned_process(_worker, (workspace, root, jobs, private_targets, publish_last),
+                               label="plugin file upload") as (receive, process):
+                while len(results) < len(jobs):
                     live()
-                    break
-                if not process.is_alive():
-                    raise RuntimeError("plugin upload worker exited")
-    live()
-    console.print(t("plugin_native.upload.completed", bytes=result["bytes"]), markup=False)
-    return result
+                    if not receive.poll(0.1):
+                        if not process.is_alive():
+                            raise RuntimeError("plugin upload worker exited")
+                        continue
+                    message = json.loads(receive.recv_bytes(65536))
+                    if not isinstance(message, dict) or set(message) != {"sent", "results"}:
+                        raise RuntimeError("plugin file upload failed")
+                    new_sent = message["sent"]
+                    if type(new_sent) is not int or not sent <= new_sent <= total:
+                        raise ValueError("invalid upload byte count")
+                    sent = new_sent
+                    for index, result in message["results"]:
+                        if type(index) is not int or not 0 <= index < len(jobs) or index in results:
+                            raise ValueError("invalid upload result index")
+                        if (not isinstance(result, dict) or set(result) != {"status", "bytes", "sha256"}
+                                or type(result["status"]) is not int or not 200 <= result["status"] < 300
+                                or type(result["bytes"]) is not int or result["bytes"] != jobs[index][-1]
+                                or result["sha256"] != jobs[index][-3]):
+                            raise ValueError("invalid upload worker result")
+                        results[index] = result
+                        verified += result["bytes"]
+                    progress(sent, verified, len(results))
+        live()
+    return [results[index] for index in range(len(jobs))]
+
+
+def upload_file(plugin, fingerprint, directory, relative, url, sha256, headers, verify_url=None, **kwargs):
+    """Compatibility entry point using the same transfer pipeline."""
+    return upload_files(plugin, fingerprint, directory,
+                        [[relative, url, sha256, headers, verify_url]], **kwargs)[0]

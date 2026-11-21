@@ -919,8 +919,9 @@ plugin_native:
   task:
     cancelled: "Cancelling and stopping processes. Existing host files or transmitted bytes are not rolled back."
   upload:
-    starting: "Preparing and uploading file to {host}..."
-    completed: "File upload completed ({bytes} bytes)."
+    title: "Uploading files"
+    header: "Upload"
+    failed: "Upload failed"
   bootstrap:
     tools: "Checking the installation environment…"
     repair: "Preparing the isolated Python environment…"

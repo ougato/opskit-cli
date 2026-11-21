@@ -465,7 +465,7 @@ def _broker(manifest, request: dict):
         raise SandboxError("unsupported broker protocol version") from None
     tree_publication = (method == "host.artifacts" and not kwargs and len(args) == 2
                         and args[0] == "publish_tree" and isinstance(args[1], dict))
-    limit = TREE_PUBLICATION_REQUEST_LIMIT if tree_publication else 65536
+    limit = TREE_PUBLICATION_REQUEST_LIMIT if tree_publication or method == "host.upload_files" else 65536
     if len(plugin_json.dumps(request)) > limit:
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
@@ -484,8 +484,9 @@ def _broker(manifest, request: dict):
         return None
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.
-    if method == "host.upload_file":
-        if "network" not in manifest.permissions or kwargs or len(args) not in (5, 6):
+    if method in {"host.upload_file", "host.upload_files"}:
+        arity = (2, 3) if method == "host.upload_files" else (5, 6)
+        if "network" not in manifest.permissions or kwargs or len(args) not in arity:
             raise SandboxError("network capability not granted")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -499,10 +500,16 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        from core.plugin_upload import upload_file
-        return upload_file(manifest.name, fingerprint, *args, authority=authority,
-                           check_identity=identity, private_targets=private,
-                           deadline=_invocations.deadline, checkpoint=checkpoint)
+        from contextlib import nullcontext
+        from core.plugin_upload import upload_file, upload_files
+        from core.prompt import console
+        transfer = upload_files if method == "host.upload_files" else upload_file
+        display = getattr(_invocations, "wait_display", None)
+        with display.suspend() if display is not None else nullcontext():
+            return transfer(manifest.name, fingerprint, *args, authority=authority,
+                            check_identity=identity, private_targets=private,
+                            deadline=lambda: _invocations.deadline, checkpoint=checkpoint, console=console,
+                            input_wait=_input_wait_budget)
     if method == "host.https":
         if "network" not in manifest.permissions or kwargs or len(args) != 4:
             raise SandboxError("network capability not granted")
