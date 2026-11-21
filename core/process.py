@@ -159,13 +159,17 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
                 continue
             if chunk is None:
                 break
-            if fallback_encoding:
+            if not fallback_encoding:
+                yield chunk.rstrip("\n")
+                continue
+            # Match universal newlines in text mode, including Creator's
+            # standalone carriage return between a marker and its JSON.
+            lines = chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            for line in lines.removesuffix(b"\n").split(b"\n"):
                 try:
-                    chunk = chunk.decode("utf-8")
+                    yield line.decode("utf-8")
                 except UnicodeDecodeError:
-                    chunk = chunk.decode(fallback_encoding, errors="replace")
-                chunk = chunk.removesuffix("\r\n")
-            yield chunk.rstrip("\n")
+                    yield line.decode(fallback_encoding, errors="replace")
         remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
         while process.poll() is None:
             if checkpoint is not None:

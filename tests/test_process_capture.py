@@ -15,6 +15,16 @@ def test_stream_decodes_utf8_and_local_diagnostics():
     ]
 
 
+def test_stream_preserves_creator_marker_and_json_as_separate_lines():
+    program = (
+        "import sys; sys.stdout.buffer.write("
+        "b'Start build task, options:\\r{\"platform\":\"web-mobile\"}\\r\\n')"
+    )
+    assert list(stream([sys.executable, "-c", program], timeout=5, fallback_encoding="cp936")) == [
+        "Start build task, options:", '{"platform":"web-mobile"}',
+    ]
+
+
 def test_native_capture_closes_default_stdin():
     result = capture([sys.executable, "-c",
                       "import sys; assert sys.stdin.read()==''; print('identity')"], timeout=5)
