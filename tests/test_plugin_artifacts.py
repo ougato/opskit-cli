@@ -104,7 +104,7 @@ def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_pat
     (tmp_path / "key.pem").write_bytes(key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     public = key.public_key()
-    body = b'{"schemaVersion":1,"files":[]}'
+    body = b'{"schemaVersion":2,"files":[]}'
     params = {"directory": str(tmp_path), "file": "key.pem",
               "manifest": base64.b64encode(body).decode("ascii"),
               "public_key": base64.b64encode(public.public_bytes(
@@ -112,12 +112,12 @@ def test_sign_update_manifest_uses_domain_and_checks_expected_public_key(tmp_pat
     result = manage("sign_update_manifest", params, context)
     assert set(result) == {"signature"}
     public.verify(base64.b64decode(result["signature"]),
-                  b"game-update-manifest-v1\0" + body, ec.ECDSA(hashes.SHA256()))
+                  b"game-update-manifest-v2\0" + body, ec.ECDSA(hashes.SHA256()))
     assert manage("sign_update_manifest", params, context) == result
     assert manage("sign_update_manifest", {**params, **result}, context) == result
     with pytest.raises(ValueError, match="invalid update manifest signature"):
         manage("sign_update_manifest", {**params, **result, "manifest": base64.b64encode(
-            b'{"schemaVersion":1,"files":[{}]}').decode("ascii")}, context)
+            b'{"schemaVersion":2,"files":[{}]}').decode("ascii")}, context)
     with pytest.raises(ValueError, match="does not match"):
         manage("sign_update_manifest", {**params, "public_key": "YWJj"}, context)
 
@@ -197,7 +197,7 @@ def test_publish_tree_atomically_includes_generated_manifest(tmp_path, context):
     source.mkdir()
     (source / "payload.png").write_bytes(b"payload")
     destination = tmp_path / "patch"
-    manifest = b'{"schemaVersion":1}'
+    manifest = b'{"schemaVersion":2}'
     params = {
         "source": str(source), "destination": str(destination),
         "files": {

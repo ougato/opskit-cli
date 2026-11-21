@@ -394,7 +394,7 @@ def _sign_update_manifest(plugin, fingerprint, parameters, *, authority, check_i
     body = base64.b64decode(encoded, validate=True)
     manifest = json.loads(body)
     if (len(body) > limit or not isinstance(manifest, dict)
-            or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 1
+            or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 2
             or not isinstance(manifest.get("files"), list)):
         raise ValueError("invalid update manifest")
     expected_key = base64.b64decode(public, validate=True)
@@ -414,7 +414,7 @@ def _sign_update_manifest(plugin, fingerprint, parameters, *, authority, check_i
         raise ValueError("signing key does not match the build public key")
     checkpoint()
     authority.check(scope, check_identity=check_identity)
-    message = b"game-update-manifest-v1\0" + body
+    message = b"game-update-manifest-v2\0" + body
     algorithm = ec.ECDSA(hashes.SHA256())
     if "signature" in parameters:
         encoded_signature = parameters["signature"]
