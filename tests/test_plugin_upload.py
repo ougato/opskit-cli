@@ -314,3 +314,34 @@ def test_conflicting_put_requires_exact_readback(tmp_path, monkeypatch, matching
         assert (error.value.phase, error.value.reason, error.value.status) == ("put", "http", 412)
     assert calls == ["lookup", "put", "readback"]
     assert not (tmp_path / "0.bin").exists()
+
+
+def test_retries_missing_object_after_transient_put(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    source = tmp_path / "file.bin"
+    source.write_bytes(b"x")
+    identity = tmp_path.stat().st_dev, tmp_path.stat().st_ino
+    digest = hashlib.sha256(b"x").hexdigest()
+    calls = []
+    stored = False
+
+    def put(*args):
+        nonlocal stored
+        calls.append("put")
+        if calls.count("put") == 1:
+            raise upload.UploadFailure("put", "http", 503, retry_after="1")
+        stored = True
+        return 200
+
+    def verify(*args, phase):
+        calls.append(phase)
+        return stored
+
+    monkeypatch.setattr(upload, "_put", put)
+    monkeypatch.setattr(upload, "_verify", verify)
+    monkeypatch.setattr(upload.time, "sleep", lambda delay: calls.append(delay))
+    job = (0, source, identity, "put", {"if-none-match": "*"}, digest, "get", 1)
+    result = upload._transfer(SimpleNamespace(root=tmp_path), tmp_path, job, [], lambda _: None)
+    assert result["sha256"] == digest
+    assert calls == ["lookup", "put", "readback", 1, "lookup", "put", "readback"]

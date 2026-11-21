@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import os
+import random
 import re
 import socket
 import ssl
@@ -19,15 +20,18 @@ from core.native_sandbox import CapabilityRequest
 from core.plugin_http import _validate
 
 CHUNK = 1024**2
+ATTEMPTS = 3
+RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 UPLOAD_PHASES = frozenset({"snapshot", "lookup", "put", "readback"})
 UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "content"})
 
 
 class UploadFailure(RuntimeError):
-    def __init__(self, phase, reason, status=0, *, relative=None):
+    def __init__(self, phase, reason, status=0, *, relative=None, retry_after=None):
         super().__init__("plugin file upload failed")
         self.phase, self.reason, self.status = phase, reason, status
         self.relative = relative
+        self.retry_after = retry_after
 
 
 def _failure(phase, error):
@@ -96,7 +100,7 @@ def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda c
         response = connection.getresponse()
         # Do not follow redirects or surface potentially secret response bodies.
         if not 200 <= response.status < 300:
-            raise UploadFailure("put", "http", response.status)
+            raise UploadFailure("put", "http", response.status, retry_after=response.getheader("Retry-After"))
         if len(response.read(32769)) > 32768:
             raise ValueError("upload response exceeds limit")
         return response.status
@@ -124,7 +128,7 @@ def _verify(url, size, expected, private_targets, *, phase="lookup"):
         if response.status == 404:
             return False
         if response.status != 200:
-            raise UploadFailure(phase, "http", response.status)
+            raise UploadFailure(phase, "http", response.status, retry_after=response.getheader("Retry-After"))
         digest = hashlib.sha256()
         received = 0
         while chunk := response.read(min(CHUNK, size - received + 1)):
@@ -141,41 +145,77 @@ def _verify(url, size, expected, private_targets, *, phase="lookup"):
             raw.close()
 
 
+def _transient(error):
+    return error.reason in {"timeout", "network"} or error.status in RETRYABLE
+
+
+def _backoff(error, attempt):
+    delay = random.uniform(0.25, 0.5) * (2 ** attempt)
+    retry_after = error.retry_after
+    if retry_after:
+        try:
+            from email.utils import parsedate_to_datetime
+            if retry_after.isascii() and retry_after.isdecimal():
+                seconds = int(retry_after)
+            else:
+                seconds = parsedate_to_datetime(retry_after).timestamp() - time.time()
+        except (ValueError, TypeError, OverflowError):
+            seconds = 0
+        if seconds > 10:
+            raise error
+        delay = max(delay, seconds)
+    time.sleep(delay)
+
+
+def _readback(url, size, digest, private_targets, phase):
+    for attempt in range(ATTEMPTS):
+        try:
+            return _verify(url, size, digest, private_targets, phase=phase)
+        except (OSError, ValueError, http.client.HTTPException, UploadFailure) as error:
+            failure = _failure(phase, error)
+            if not _transient(failure) or attempt + 1 == ATTEMPTS:
+                raise failure from None
+            _backoff(failure, attempt)
+
+
 def _transfer(workspace, root, job, private_targets, sent_bytes):
     index, source, identity, url, headers, expected, verify_url, declared_size = job
     snapshot = workspace.root / f"{index}.bin"
-    phase = "snapshot"
     try:
-        size, md5 = _snapshot(root, source, identity, snapshot, expected)
-        if size != declared_size:
-            raise ValueError("upload source size changed")
+        try:
+            size, md5 = _snapshot(root, source, identity, snapshot, expected)
+            if size != declared_size:
+                raise ValueError("upload source size changed")
+        except (OSError, ValueError) as error:
+            raise _failure("snapshot", error) from None
+
+        def verify(phase):
+            return _readback(verify_url, size, expected, private_targets, phase)
+
         status = 200
-        phase = "lookup"
-        if not verify_url or not _verify(verify_url, size, expected, private_targets):
-            phase = "put"
-            try:
-                status = _put(url, headers, snapshot, size, md5, private_targets, sent_bytes)
-            except (OSError, http.client.HTTPException, UploadFailure) as error:
-                # An interrupted PUT or concurrent create may have stored the object.
-                # Only accept a fresh readback with the exact expected digest.
-                failure = _failure(phase, error)
-                recoverable = failure.reason in {"timeout", "network"} or failure.status in {
-                    409, 412, 429, 500, 502, 503, 504}
-                if not verify_url or not recoverable:
-                    raise
+        if not verify_url or not verify("lookup"):
+            conditional = any(key.lower() == "if-none-match" and value == "*"
+                              for key, value in headers.items())
+            for attempt in range(ATTEMPTS):
                 try:
-                    recovered = _verify(verify_url, size, expected, private_targets, phase="readback")
-                except (OSError, ValueError, http.client.HTTPException, UploadFailure):
-                    recovered = False
-                if not recovered:
-                    raise failure from None
-                return {"status": 200, "bytes": size, "sha256": expected}
-            phase = "readback"
-            if verify_url and not _verify(verify_url, size, expected, private_targets, phase=phase):
-                raise UploadFailure(phase, "http", 404)
+                    status = _put(url, headers, snapshot, size, md5, private_targets, sent_bytes)
+                except (OSError, ValueError, http.client.HTTPException, UploadFailure) as error:
+                    failure = _failure("put", error)
+                    transient = _transient(failure)
+                    if not verify_url or not (transient or failure.status in {409, 412}):
+                        raise failure from None
+                    if verify("readback"):
+                        break
+                    if not conditional or not transient or attempt + 1 == ATTEMPTS:
+                        raise failure from None
+                    _backoff(failure, attempt)
+                    if verify("lookup"):
+                        break
+                else:
+                    if verify_url and not verify("readback"):
+                        raise UploadFailure("readback", "http", 404)
+                    break
         return {"status": status, "bytes": size, "sha256": expected}
-    except (OSError, ValueError, http.client.HTTPException, UploadFailure) as error:
-        raise _failure(phase, error) from None
     finally:
         snapshot.unlink(missing_ok=True)
 
@@ -316,7 +356,7 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, autho
                     if not isinstance(message, dict) or set(message) != {"sent", "results", "failure"}:
                         raise RuntimeError("plugin file upload failed")
                     new_sent = message["sent"]
-                    if type(new_sent) is not int or not sent <= new_sent <= total:
+                    if type(new_sent) is not int or not sent <= new_sent <= ATTEMPTS * total:
                         raise ValueError("invalid upload byte count")
                     sent = new_sent
                     for index, result in message["results"]:
