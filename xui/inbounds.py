@@ -46,6 +46,13 @@ def reconcile(rows: list[dict], desired: dict) -> tuple[dict, int | None]:
         raise PanelError("XUI existing OpsKit client identity is missing or ambiguous")
     owned[0].update(enable=True, totalGB=0, expiryTime=0, limitIp=0, flow="xtls-rprx-vision")
     connection_values(existing)
+    reality = stream["realitySettings"]
+    wanted_reality = desired["streamSettings"]["realitySettings"]
+    destination_key = "target" if "target" in reality else "dest"
+    reality[destination_key] = wanted_reality["dest"]
+    if "dest" in reality:
+        reality["dest"] = wanted_reality["dest"]
+    reality["serverNames"] = deepcopy(wanted_reality["serverNames"])
     existing.update(enable=True, total=0, expiryTime=0, port=desired["port"])
     inbound_id = existing.get("id")
     if type(inbound_id) is not int or inbound_id <= 0:

@@ -27,8 +27,7 @@ XUI_STATE_FILE = XUI_CONFIG_DIR / "opskit-state.json"
 XUI_PENDING_INBOUNDS_FILE = XUI_CONFIG_DIR / "opskit-inbounds.json"
 XUI_TRAFFIC_HISTORY_FILE = XUI_CONFIG_DIR / "opskit-traffic.db"
 XUI_INSTALL_DIR = Path("/usr/local/x-ui")
-# Configuration, panel database and traffic history survive program uninstall.
-XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR]
+XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR, XUI_CONFIG_DIR, Path("/etc/systemd/system/x-ui.service.d")]
 XUI_ARTIFACT_FILES = [
     Path("/etc/systemd/system/x-ui.service"),
     Path("/usr/bin/x-ui"),

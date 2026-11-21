@@ -247,10 +247,10 @@ def test_extract_csrf_token_from_login_page() -> None:
     assert _extract_csrf_token(html) == "token-value"
 
 
-def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeypatch) -> None:
+def test_remove_xui_artifacts_removes_configuration_and_data(tmp_path, monkeypatch) -> None:
     from xui import constants, utils
 
-    assert constants.XUI_CONFIG_DIR not in constants.XUI_ARTIFACT_DIRS
+    assert constants.XUI_CONFIG_DIR in constants.XUI_ARTIFACT_DIRS
 
     install_dir = tmp_path / "usr-local-x-ui"
     config_dir = tmp_path / "etc-x-ui"
@@ -283,14 +283,14 @@ def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeyp
         return Result()
 
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
-    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir])
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
     monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     utils.remove_xui_artifacts()
 
     assert not install_dir.exists()
-    assert database.read_bytes() == b"user database"
+    assert not config_dir.exists()
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]
