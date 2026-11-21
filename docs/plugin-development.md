@@ -68,7 +68,8 @@
 ```python
 from core.sdk import upload_files
 
-receipts = upload_files(directory, [[relative, put_url, sha256, headers, get_url]])
+receipts = upload_files(directory, [[relative, put_url, sha256, headers, get_url]],
+                        breadcrumb=["OpsKit", "My Plugin", "Upload"])
 ```
 首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
 

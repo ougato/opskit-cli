@@ -13,7 +13,7 @@ from core.theme import get_color
 
 
 @contextmanager
-def upload_progress(console, total, files):
+def upload_progress(console, total, files, breadcrumb=None):
     if console is None:
         yield lambda *args: None
         return
@@ -57,7 +57,7 @@ def upload_progress(console, total, files):
         yield update
         return
     clear_screen()
-    print_header([t("plugin_native.upload.header")])
+    print_header(breadcrumb or [t("plugin_native.upload.header")])
     console.print()
     try:
         with Live(console=console, transient=True, refresh_per_second=10,

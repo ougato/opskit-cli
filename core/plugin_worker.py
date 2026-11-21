@@ -205,8 +205,8 @@ def _adapt_sdk(name: str):
         args = (directory, relative, url, sha256, headers or {})
         return broker("host.upload_file", *args, *((verify_url,) if verify_url is not None else ()))
     sdk.upload_file = upload_file
-    sdk.upload_files = lambda directory, files, *, publish_last=0: broker(
-        "host.upload_files", directory, files, publish_last)
+    sdk.upload_files = lambda directory, files, *, publish_last=0, breadcrumb=None: broker(
+        "host.upload_files", directory, files, publish_last, *((breadcrumb,) if breadcrumb else ()))
     sdk.request_plugin_install = lambda provider: broker("service.install_provider", provider)
 
     def open_menu(name, breadcrumb, context=None):

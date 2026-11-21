@@ -491,7 +491,7 @@ def _broker(manifest, request: dict):
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.
     if method in {"host.upload_file", "host.upload_files"}:
-        arity = (2, 3) if method == "host.upload_files" else (5, 6)
+        arity = (2, 3, 4) if method == "host.upload_files" else (5, 6)
         if "network" not in manifest.permissions or kwargs or len(args) not in arity:
             raise SandboxError("network capability not granted")
         authority = getattr(_invocations, "capability_authority", None)

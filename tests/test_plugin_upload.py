@@ -249,11 +249,13 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
                                     authority=authority, check_identity=lambda *a: True,
                                     private_targets=["127.0.0.1:443"],
                                     deadline=time.monotonic() + 30, checkpoint=lambda: None)
-        result = upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs)
+        title = ["OpsKit", "Cocos", "p0", "1.6.0", "Android"]
+        result = upload.upload_files("demo", "a" * 64, str(root), jobs, breadcrumb=title, **kwargs)
+        assert all(label in output.getvalue() for label in title)
         updates = []
 
         @contextmanager
-        def capture_progress(console, total, files):
+        def capture_progress(console, total, files, breadcrumb=None):
             assert (total, files) == (3 * len(content), 3)
             yield lambda *values: updates.append(values)
 

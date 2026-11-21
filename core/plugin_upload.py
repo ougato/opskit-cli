@@ -307,9 +307,15 @@ def _prepare(directory, files):
     return root, jobs
 
 
-def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, authority, check_identity,
+def upload_files(plugin, fingerprint, directory, files, publish_last=0, breadcrumb=None, *, authority, check_identity,
                  private_targets, deadline, checkpoint, console=None, input_wait=nullcontext):
     """Run a bounded batch with one directory grant and one supervised worker."""
+    if breadcrumb is not None and (
+        not isinstance(breadcrumb, list) or not 1 <= len(breadcrumb) <= 16
+        or any(not isinstance(label, str) or not 1 <= len(label) <= 256
+               or not label.isprintable() for label in breadcrumb)
+    ):
+        raise ValueError("invalid upload breadcrumb")
     root, jobs = _prepare(directory, files)
     if type(publish_last) is not int or not 0 <= publish_last <= len(jobs):
         raise ValueError("invalid final upload group")
@@ -342,7 +348,7 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, autho
     total = sum(job[-1] for job in jobs)
     sent = verified = 0
     live()
-    with upload_progress(console, total, len(jobs)) as progress:
+    with upload_progress(console, total, len(jobs), breadcrumb) as progress:
         with owned_workspace(timeout=min(15, deadline - time.monotonic()), cleanup_timeout=15) as workspace:
             with owned_process(_worker, (workspace, root, jobs, private_targets, publish_last),
                                label="plugin file upload") as (receive, process):
