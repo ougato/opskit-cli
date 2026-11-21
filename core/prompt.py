@@ -940,6 +940,10 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
             width = cell_len(display([buf.pop(cursor)]))
             tail = display(buf[cursor:])
             output = '\b' * width + tail + ' ' * width + '\b' * (cell_len(tail) + width)
+        elif key == 'DELETE' and cursor < len(buf):
+            width = cell_len(display([buf.pop(cursor)]))
+            tail = display(buf[cursor:])
+            output = tail + ' ' * width + '\b' * (cell_len(tail) + width)
         elif len(key) == 1 and key >= ' ' and key != '\x7f':
             tail = display(buf[cursor:])
             buf.insert(cursor, key)
@@ -957,7 +961,7 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
         while True:
             ch = _getwch()
             if ch in ('\x00', '\xe0'):
-                edit({'K': 'LEFT', 'M': 'RIGHT'}.get(_getwch(), ''))
+                edit({'K': 'LEFT', 'M': 'RIGHT', 'S': 'DELETE'}.get(_getwch(), ''))
                 continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
@@ -1022,7 +1026,7 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
                                 code += b
                                 if not b or '@' <= b <= '~':
                                     break
-                            edit({'D': 'LEFT', 'C': 'RIGHT'}.get(code, ''))
+                            edit({'D': 'LEFT', 'C': 'RIGHT', '3~': 'DELETE'}.get(code, ''))
                             continue
                         if seq == 'O':
                             if _sel.select([fd], [], [], 0.05)[0]:

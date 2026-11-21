@@ -68,6 +68,16 @@ def test_arrows_edit_inside_prefilled_version(monkeypatch, secret):
                                  else '1.1.2\b\b\b.2 \b\b\b0.2\b\b.\n')
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows console input')
+def test_delete_removes_character_under_cursor(monkeypatch):
+    keys = iter(['\xe0', 'S', '\xe0', 'K', '\xe0', 'K', '\xe0', 'S', '\xe0', 'M', '\r'])
+    output = StringIO()
+    monkeypatch.setattr(prompt, '_getwch', lambda: next(keys))
+    monkeypatch.setattr(sys, 'stdout', output)
+    assert prompt._read_line(initial='a中b') == 'ab'
+    assert output.getvalue() == 'a中b\b\b\bb  \b\b\bb\n'
+
+
 @pytest.mark.parametrize('character', ['\b', '\r', '中'])
 def test_pending_key_after_release_event_is_detected(character):
     released = _InputRecord()

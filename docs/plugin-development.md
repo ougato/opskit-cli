@@ -145,7 +145,7 @@ waiting(message='') -> context manager
 
 多选菜单每页最多显示 9 项，按 `n` 或 `p` 翻页时保留已勾选的项目。将 `subtitle` 传为空字符串可隐藏标题下的提示行。Windows 控制台中，方向键和空格每次按下只生效一次，松开后可以再次按下。
 
-`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。清空后回车使用 `default`，默认为空字符串。
+`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。左右方向键移动光标，Backspace 删除左侧字符，Delete 删除光标处字符。清空后回车使用 `default`，默认为空字符串。可清空的配置只传 `initial`。
 
 `atomic_write_host_file(directory, relative, lock_name, expected_sha256, content)` 在目录读写授权下原子替换不超过 1 MiB 的普通文件。`relative` 为单个文件名，`lock_name` 为协作写入者共用的点号前缀锁目录。`expected_sha256=None` 表示要求目标不存在；返回 `{"written": false}` 时重新读取并合并后重试。
 
