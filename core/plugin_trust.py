@@ -173,9 +173,41 @@ def _drop_service_edges(data, identity):
                     del grants[service]
 
 
+def _unchanged_service_edges(data, old, new, fingerprint):
+    """Collect approved edges whose declarations survive a verified update."""
+    old_uses = {item["service"]: item for item in old.uses}
+    new_uses = {item["service"]: item for item in new.uses}
+    edges = []
+    for caller, record in data.items():
+        grants = record.get("service_grants", {})
+        if not record.get("fingerprint") or not isinstance(grants, dict):
+            continue
+        for service, edge in grants.items():
+            if not isinstance(edge, dict):
+                continue
+            provider = edge.get("provider")
+            if (not isinstance(provider, str) or not edge.get("provider_fingerprint")
+                    or data.get(provider, {}).get("fingerprint") != edge["provider_fingerprint"]):
+                continue
+            if provider == old.name:
+                old_contract = old.service_contracts.get(service)
+                if not old_contract or old_contract != new.service_contracts.get(service):
+                    continue
+            if caller == old.name:
+                old_requirement = old_uses.get(service)
+                if not old_requirement or old_requirement != new_uses.get(service):
+                    continue
+            if caller == old.name or provider == old.name:
+                edges.append((caller, service, {
+                    **edge, "provider_fingerprint": fingerprint if provider == old.name else edge["provider_fingerprint"],
+                }))
+    return edges
+
+
 @_serialized_mutation
 def grant(name: str, fingerprint: str, version: str, source: str = "", branch: str | None = None, *,
-          installation_receipt: str | None = None, source_commit: str | None = None) -> None:
+          installation_receipt: str | None = None, source_commit: str | None = None,
+          verified_update=None) -> None:
     """记录用户对插件当前内容的信任。
 
     branch 为 None 时保留记录中的安装分支。
@@ -185,6 +217,15 @@ def grant(name: str, fingerprint: str, version: str, source: str = "", branch: s
             or not isinstance(source_commit, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source_commit) is None):
         raise ValueError("invalid native installation receipt")
     data = _load()
+    edges = []
+    if verified_update is not None:
+        old, new, previous_fingerprint = verified_update
+        previous = data.get(name, {})
+        if (installation_receipt is None or not source or previous.get("source") != source
+                or not previous_fingerprint or previous.get("fingerprint") != previous_fingerprint
+                or old.name != name or new.name != name):
+            raise ValueError("invalid verified service grant update")
+        edges = _unchanged_service_edges(data, old, new, fingerprint)
     _drop_service_edges(data, name)
     if branch is None:
         branch = (data.get(name) or {}).get("branch")
@@ -200,6 +241,8 @@ def grant(name: str, fingerprint: str, version: str, source: str = "", branch: s
     if branch:
         record["branch"] = branch
     data[name] = record
+    for caller, service, edge in edges:
+        data[caller].setdefault("service_grants", {})[service] = edge
     _save(data)
     _log.info("plugin %s: trusted (version %s)", name, version)
 
