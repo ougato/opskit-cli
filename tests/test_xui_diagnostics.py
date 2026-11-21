@@ -3,6 +3,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler
 import sqlite3
+import subprocess
 import threading
 
 import pytest
@@ -34,6 +35,21 @@ def test_real_diagnostic_state_is_bounded_read_only_and_contains_no_secrets(tmp_
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before
     path.write_bytes(b" " * 65537)
     assert diagnostics.read_state(timeout=5) == {}
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), subprocess.TimeoutExpired("x-ui", 10)])
+def test_version_timeout_keeps_installation_detectable(monkeypatch, error):
+    from core import process
+
+    def timed_out(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(utils, "is_service_active", lambda **kwargs: True)
+    monkeypatch.setattr(process, "capture", timed_out)
+
+    assert utils.detect_xui_version() == constants.XUI_INSTALLED_VERSION
+    with pytest.raises(type(error)):
+        utils.detect_xui_version(strict=True)
 
 
 def test_missing_diagnostic_state_does_not_create_file(tmp_path, monkeypatch):

@@ -199,7 +199,11 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
     if is_service_active(timeout=budget.remaining()) or command_exists(XUI_COMMAND):
         try:
             from core.process import capture
-            result = capture([XUI_BINARY_COMMAND, "-v"], timeout=budget.remaining())
+            result = capture(
+                [XUI_BINARY_COMMAND, "-v"],
+                timeout=budget.remaining(),
+                cwd=Path(XUI_BINARY_COMMAND).parent,
+            )
             budget.remaining()
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
@@ -207,7 +211,8 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
                 if match:
                     return match.group(0)
         except (TimeoutError, subprocess.TimeoutExpired):
-            raise
+            if strict:
+                raise
         except OSError:
             pass
         return None if strict else XUI_INSTALLED_VERSION
