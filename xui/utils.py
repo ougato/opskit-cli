@@ -85,7 +85,6 @@ from xui.constants import (
     XUI_INSTALL_SCRIPT_INPUT,
     XUI_SERVICE,
     XUI_STATE_FILE,
-    XUI_XRAY_CANDIDATES,
     XUI_COOKIE_SEPARATOR,
     XUI_CSRF_META_MARKER,
 )
@@ -254,38 +253,29 @@ def install_xui_script(*, checkpoint=None) -> None:
 
 
 def generate_reality_keypair() -> tuple[str, str]:
-    for candidate in XUI_XRAY_CANDIDATES:
-        if not command_exists(candidate):
-            continue
-        result = subprocess.run(
-            [candidate, "x25519"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-        if result.returncode != 0:
-            continue
-        private_key = ""
-        public_key = ""
-        for line in result.stdout.splitlines():
-            lower = line.lower()
-            if "private" in lower:
-                private_key = line.split(":", 1)[-1].strip()
-            if "public" in lower or lower.startswith("password:"):
-                public_key = line.split(":", 1)[-1].strip()
-        if private_key and public_key:
-            return private_key, public_key
-    return "", ""
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+    private_key = X25519PrivateKey.generate()
+    raw = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    private = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return private, reality_public_key(private)
 
 def reality_public_key(private_key: str) -> str:
     """Derive the share-link key from the authoritative existing private key."""
     import base64
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
     try:
         raw = base64.urlsafe_b64decode(private_key + "=" * (-len(private_key) % 4))
-        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes_raw()
+        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )
     except (ValueError, TypeError):
         raise InstallError("XUI existing Reality private key is invalid") from None
     return base64.urlsafe_b64encode(public).decode("ascii").rstrip("=")

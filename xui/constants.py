@@ -119,14 +119,6 @@ SS_TCP_LISTEN_ARGS = "-tln"
 JOURNALCTL_COMMAND = "journalctl"
 JOURNAL_NO_PAGER_ARG = "--no-pager"
 
-XUI_XRAY_CANDIDATES = [
-    "xray",
-    "/usr/local/bin/xray",
-    "/usr/local/x-ui/bin/xray",
-    "/usr/local/x-ui/bin/xray-linux-amd64",
-    "/usr/local/x-ui/Xray-linux-amd64",
-]
-
 DEFAULT_PANEL_HOST = "127.0.0.1"
 DEFAULT_PANEL_BASE_PATH = ""
 DEFAULT_PANEL_PORT = 54321
