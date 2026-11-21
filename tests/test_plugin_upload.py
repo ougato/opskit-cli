@@ -347,3 +347,49 @@ def test_retries_missing_object_after_transient_put(monkeypatch, tmp_path):
     result = upload._transfer(SimpleNamespace(root=tmp_path), tmp_path, job, [], lambda _: None)
     assert result["sha256"] == digest
     assert calls == ["lookup", "put", "readback", 1, "lookup", "put", "readback"]
+
+
+@pytest.mark.parametrize("remote_state", ["same", "missing", "conflict"])
+def test_kodo_stat_lookup_controls_put(tmp_path, monkeypatch, remote_state):
+    from types import SimpleNamespace
+    from urllib.parse import quote
+
+    source = tmp_path / "demo.apk"
+    content = b"hello"
+    source.write_bytes(content)
+    key = "prefix/demo.apk"
+    entry = base64.urlsafe_b64encode(f"bucket:{key}".encode()).decode()
+    descriptor = {"kind": "kodo-stat", "url": f"https://rs.qiniuapi.com/stat/{entry}",
+                  "headers": {"authorization": "Qiniu synthetic:signature"}}
+    url = "https://bucket.s3.cn-south-1.qiniucs.com/" + quote(key)
+    digest = hashlib.sha256(content).hexdigest()
+    root, jobs = upload._prepare(str(tmp_path), [[source.name, url, digest, {}, descriptor]])
+    calls = []
+
+    def verify(spec, size, checksum, private, *, phase):
+        assert spec == descriptor
+        assert size == len(content)
+        assert checksum == base64.urlsafe_b64encode(b"\x16" + hashlib.sha1(content).digest()).decode()
+        calls.append(phase)
+        if phase == "lookup" and remote_state == "conflict":
+            raise upload.UploadFailure(phase, "conflict")
+        return phase == "readback" or remote_state == "same"
+
+    def put(*args):
+        calls.append("put")
+        return 200
+
+    monkeypatch.setattr(upload, "_verify", verify)
+    monkeypatch.setattr(upload, "_put", put)
+    workspace = SimpleNamespace(root=tmp_path)
+    job = (*jobs[0], len(content))
+    if remote_state == "conflict":
+        with pytest.raises(upload.UploadFailure) as caught:
+            upload._transfer(workspace, root, job, [], lambda n: None)
+        assert caught.value.reason == "conflict"
+    else:
+        assert upload._transfer(workspace, root, job, [], lambda n: None)["sha256"] == digest
+    assert calls == (["lookup", "put", "readback"] if remote_state == "missing" else ["lookup"])
+
+    with pytest.raises(ValueError, match="same Kodo object"):
+        upload._prepare(str(tmp_path), [[source.name, url + ".different", digest, {}, descriptor]])

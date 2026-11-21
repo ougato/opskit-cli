@@ -12,6 +12,7 @@ import time
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from threading import Lock
+from urllib.parse import unquote
 
 from core.host_file_access import open_bounded
 from core.host_file_access import source_path as _source
@@ -23,7 +24,7 @@ CHUNK = 1024**2
 ATTEMPTS = 3
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 UPLOAD_PHASES = frozenset({"snapshot", "lookup", "put", "readback"})
-UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "content"})
+UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "content", "conflict"})
 
 
 class UploadFailure(RuntimeError):
@@ -110,9 +111,27 @@ def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda c
             raw.close()
 
 
+def _qetag(snapshot, size):
+    block_size = 4 * CHUNK
+    with snapshot.open("rb") as source:
+        if size <= block_size:
+            value = b"\x16" + hashlib.sha1(source.read(block_size)).digest()
+        else:
+            combined = hashlib.sha1()
+            while block := source.read(block_size):
+                combined.update(hashlib.sha1(block).digest())
+            value = b"\x96" + combined.digest()
+    return base64.urlsafe_b64encode(value).decode("ascii")
+
+
 def _verify(url, size, expected, private_targets, *, phase="lookup"):
-    """Stream and compare the stored bytes without exposing them to the plugin."""
-    target = _validate(url, "GET", {}, b"")
+    """Check the stored object using Kodo metadata or a stream of the original bytes."""
+    stat = isinstance(url, dict)
+    headers = {"Accept-Encoding": "identity"}
+    if stat:
+        headers.update(url["headers"])
+        url = url["url"]
+    target = _validate(url, "GET", {k: v for k, v in headers.items() if k != "Accept-Encoding"}, b"")
     from core.plugin_egress import allowed_addresses
     address = allowed_addresses(target.hostname, 443, private_targets)[0]
     connection = http.client.HTTPSConnection(target.hostname, 443, timeout=10)
@@ -123,12 +142,24 @@ def _verify(url, size, expected, private_targets, *, phase="lookup"):
         connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=target.hostname)
         raw = None
         path = (target.path or "/") + ("?" + target.query if target.query else "")
-        connection.request("GET", path, headers={"Accept-Encoding": "identity"})
+        connection.request("GET", path, headers=headers)
         response = connection.getresponse()
-        if response.status == 404:
+        if response.status == (612 if stat else 404):
             return False
         if response.status != 200:
             raise UploadFailure(phase, "http", response.status, retry_after=response.getheader("Retry-After"))
+        if stat:
+            body = response.read(16385)
+            if len(body) > 16384:
+                raise ValueError("Kodo stat response exceeds limit")
+            metadata = json.loads(body)
+            if (not isinstance(metadata, dict) or type(metadata.get("fsize")) is not int
+                    or not isinstance(metadata.get("hash"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{28}", metadata["hash"])):
+                raise ValueError("invalid Kodo stat response")
+            if metadata["fsize"] != size or metadata["hash"] != expected:
+                raise UploadFailure(phase, "conflict")
+            return True
         digest = hashlib.sha256()
         received = 0
         while chunk := response.read(min(CHUNK, size - received + 1)):
@@ -189,8 +220,10 @@ def _transfer(workspace, root, job, private_targets, sent_bytes):
         except (OSError, ValueError) as error:
             raise _failure("snapshot", error) from None
 
+        verification_hash = _qetag(snapshot, size) if isinstance(verify_url, dict) else expected
+
         def verify(phase):
-            return _readback(verify_url, size, expected, private_targets, phase)
+            return _readback(verify_url, size, verification_hash, private_targets, phase)
 
         status = 200
         if not verify_url or not verify("lookup"):
@@ -280,6 +313,22 @@ def _worker(connection, workspace, root, jobs, private_targets, publish_last):
         connection.close()
 
 
+def _validate_kodo_stat(spec, destination):
+    if (set(spec) != {"kind", "url", "headers"} or spec["kind"] != "kodo-stat"
+            or not isinstance(spec["headers"], dict) or set(spec["headers"]) != {"authorization"}):
+        raise ValueError("invalid Kodo stat descriptor")
+    target = _validate(spec["url"], "GET", spec["headers"], b"")
+    bucket = re.fullmatch(r"(.+)\.s3\.(?:cn|us|ap)-[a-z0-9-]+\.qiniucs\.com", destination.hostname)
+    if (not bucket or target.netloc != "rs.qiniuapi.com" or target.query
+            or not spec["headers"]["authorization"].startswith("Qiniu ")):
+        raise ValueError("invalid Kodo stat endpoint")
+    entry = base64.urlsafe_b64encode(
+        (bucket[1] + ":" + unquote(destination.path.removeprefix("/"), errors="strict")).encode()
+    ).decode("ascii")
+    if target.path != "/stat/" + entry:
+        raise ValueError("upload verification must target the same Kodo object")
+
+
 def _prepare(directory, files):
     if not isinstance(files, list) or not 1 <= len(files) <= 4096:
         raise ValueError("upload batch must contain 1 to 4096 files")
@@ -291,7 +340,9 @@ def _prepare(directory, files):
             raise ValueError("invalid upload batch entry")
         relative, url, sha256, headers, verify_url = entry
         destination = _validate(url, "PUT", headers, b"")
-        if verify_url is not None:
+        if isinstance(verify_url, dict):
+            _validate_kodo_stat(verify_url, destination)
+        elif verify_url is not None:
             verification = _validate(verify_url, "GET", {}, b"")
             if (verification.netloc, verification.path) != (destination.netloc, destination.path):
                 raise ValueError("upload verification must target the same object")

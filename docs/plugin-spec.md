@@ -128,7 +128,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
   显式迁移使用 `adopt`：`{resource, directory, snapshot, required_files, completed_ns}`；snapshot 包括 `identity`、`parent_identity`、`inventory_sha256`、`bytes`，宿主重新核验全部字段后才接管，不能用插件提交的摘要直接删除目录。
 - `https_request(url, method, headers, body)` 是受限 HTTPS RPC，需要 network 权限。请求与响应各限 1 MiB，返回 `status`、`body` 和 `etag`。响应没有有效的强 ETag 时，`etag` 为 `None`。
-- `upload_files(directory, files, *, publish_last=0, breadcrumb=None)`：通用批量上传，最多 4096 项且受 RPC 大小限制。每项为 `[relative, put_url, sha256, headers, get_url_or_none]`，结果按输入顺序返回。可选 `breadcrumb` 沿用调用方的进度页标题。尾部 `publish_last` 项等前一组校验通过后才开始。宿主限制并发，统一显示已完成字节的百分比和最近两秒实际发送的正文速率。提供 GET 地址时，回读校验成功才计入进度。失败后已上传的对象可能保留。
+- `upload_files(directory, files, *, publish_last=0, breadcrumb=None)`：通用批量上传，最多 4096 项且受 RPC 大小限制。每项为 `[relative, put_url, sha256, headers, verification]`。七牛可传 `{"kind": "kodo-stat", "url": stat_url, "headers": {"authorization": token}}`，宿主核对地址是否指向同一桶和对象，并核对大小和 QETag。其他存储传签名 GET URL，或在无需远端校验时传 `None`，结果按输入顺序返回。可选 `breadcrumb` 沿用调用方的进度页标题。尾部 `publish_last` 项等前一组校验通过后才开始。宿主限制并发，统一显示已完成字节的百分比和最近两秒实际发送的正文速率。提供 GET 地址时，回读校验成功才计入进度。失败后已上传的对象可能保留。
 - `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 

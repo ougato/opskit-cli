@@ -63,7 +63,7 @@
 
 以 Cocos 为例，游戏级输出目录和保留数量覆盖插件级默认值，重置游戏设置后重新继承默认值。客户端版本与渠道由选中分支的 `env/environment.json` 提供，构建版本可通过菜单或命令行指定。插件 README 应明确每一项的实际生效来源。
 
-上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 按 `HOST_ARTIFACT_BATCH_LIMIT` 分批读取元数据，结果按输入顺序返回。将摘要随相对路径和签名地址传给 `upload_files`，单文件也可使用 `upload_file`。宿主会重新核对摘要并统一显示进度，插件无需逐文件打印。插件应使用所选目录的相对路径生成对象键。
+上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 按 `HOST_ARTIFACT_BATCH_LIMIT` 分批读取元数据，结果按输入顺序返回。将摘要随相对路径和签名地址传给 `upload_files`，单文件也可使用 `upload_file`。宿主会重新核对摘要并统一显示进度，插件无需逐文件打印。插件应使用所选目录的相对路径生成对象键。七牛配置可使用 `kodo-stat` 描述符校验同一对象的大小和服务端 QETag，宿主仍先核对本地 SHA-256。校验不请求产物正文。
 
 ```python
 from core.sdk import upload_files
