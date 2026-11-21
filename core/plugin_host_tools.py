@@ -277,10 +277,15 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         raise ValueError("host executable backend unavailable")
     root = _ordinary(directory, directory=True)
     dependencies = [_ordinary(path) for path in options.get("tool_dependencies", [])]
-    if any(path.suffix.lower() != ".exe" for path in dependencies):
-        raise ValueError("host tool dependencies must be executables")
+    java_jar = (arguments[1] if tool.name.casefold() == "java.exe" and len(arguments) >= 2
+                and arguments[0] == "-jar" else None)
+    if any(path.suffix.lower() != ".exe" and not (
+            path.suffix.lower() == ".jar" and str(path) == java_jar) for path in dependencies):
+        raise ValueError("invalid host tool dependency")
+    search_dependencies = [path for path in dependencies if path.suffix.lower() == ".exe"]
     dependency_ids = [_identity(path) for path in dependencies]
-    dependency_records = [{"executable": str(path), "search_directory": str(path.parent),
+    dependency_records = [{"executable": str(path),
+                           **({"search_directory": str(path.parent)} if path in search_dependencies else {}),
                            "sha256": hashlib.sha256(_read_file(path, Path(path.anchor), 256 * 1024**2)).hexdigest()}
                           for path in dependencies]
     base = options.get("output_parent")
@@ -387,7 +392,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                 output_start(header)
             with (host_work_scope() if host_work_scope is not None else nullcontext(),
                   progress if progress is not None else nullcontext()):
-                iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
+                iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, search_dependencies),
                                   **input_args, timeout=timeout, checkpoint=poll_stream)
                 try:
                     while True:

@@ -586,3 +586,37 @@ def test_find_adb_in_sdk_environment_and_default_location(tmp_path, monkeypatch,
     assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(explicit)
     explicit.unlink()
     assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(default)
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_java_jar_dependency_binds_only_launched_jar_without_path_injection(tmp_path, monkeypatch, context):
+    java = tmp_path / "java.exe"
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    jar = lib / "signer.jar"
+    java.write_bytes(b"java")
+    jar.write_bytes(b"jar")
+    require = context["authority"].require
+    scopes = []
+
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+
+    def stream(*args, **kwargs):
+        assert str(lib) not in kwargs["env"]["PATH"].split(os.pathsep)
+        yield "verified"
+        return 0
+
+    monkeypatch.setattr(context["authority"], "require", record)
+    monkeypatch.setattr(process, "stream", stream)
+    options = {"tool_dependencies": [str(jar)], "capture_output": True}
+    with pytest.raises(ValueError, match="invalid host tool dependency"):
+        tools.execute("demo", "a" * 64, str(java), ["-jar", str(lib / "other.jar")],
+                      str(tmp_path), options, **context)
+    result = tools.execute("demo", "a" * 64, str(java), ["-jar", str(jar)],
+                           str(tmp_path), options, **context)
+    assert result["captured_output"] == "verified"
+    dependency, = scopes[0]["tool_dependencies"]
+    assert dependency["executable"] == str(jar)
+    assert len(dependency["sha256"]) == 64
+    assert "search_directory" not in dependency
