@@ -1,6 +1,6 @@
 """Minimal SDK 4 plugin with the same action for menu and CLI."""
 from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, register_locale, select, t, waiting
-from core.sdk import get_service, list_host_files, request_plugin_install
+from core.sdk import UserCancel, get_service, input_steps, list_host_files, request_plugin_install, text_input
 
 register_locale({
     "zh": {"example": {"title": "示例工具", "run": "执行任务",
@@ -41,6 +41,17 @@ def choose_item(items, initial_page=0):
                         subtitle_of=lambda page, total: "",
                         back_label=f"{get_icon('back')} {t('example.back')}",
                         initial_page=initial_page)
+
+
+def collect_fields(breadcrumb, first_label, second_label):
+    """Call from a menu loop and redraw that menu when this returns None."""
+    try:
+        return input_steps(
+            lambda previous: text_input(breadcrumb, first_label, initial=previous or ""),
+            lambda previous: text_input(breadcrumb, second_label, initial=previous or ""),
+        )
+    except UserCancel:
+        return None
 
 
 def entry():

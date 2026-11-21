@@ -247,3 +247,8 @@ Windows 验收需覆盖无 Docker 的准备/安装/运行、拒绝与撤权、�
 见[插件开发指南](plugin-development.md)和[原生升级指南](plugin-native-upgrade-guide.md)。SDK 版本与 RPC 传输版本独立；本次不递增 RPC 版本。任何第三方插件只能导入公开 `core.sdk`，不得导入框架私有模块。[SDK 3 业务分离记录](sdk3-business-separation.md)仅供历史迁移参考。
 
 交互输入的默认值由框架直接显示，不附加括号。需要让用户直接编辑上次输入或建议版本时，使用 `text_input(..., initial=value)`。
+
+
+### 输入界面的 ESC 返回
+
+`text_input` 在 ESC 时抛出 `UserCancel`。单步输入由直接打开它的菜单捕获，再重绘菜单。菜单中的 ESC 与「返回」都只离开本层。多步输入用 `input_steps(*steps)`，每个回调接收该字段上一次确认的值，首次进入接收 `None`。后续字段按 ESC 回到前一字段，首字段按 ESC 将 `UserCancel` 交还直接调用方。普通字段用 `initial` 提供可编辑的上一次值，敏感字段不预填明文。Ctrl+C 沿用框架的全局退出行为。完整表单提交前的草稿由调用方管理，已经逐项保存的配置在返回时保留。

@@ -275,3 +275,25 @@ def test_requirements_match_declared_native_fetch_and_security_dependencies():
     install = {req.name: req for req in map(Requirement, requirement_lines) if req.name}
     for name in ("dulwich", "anyio", "idna", "cryptography"):
         assert project[name].specifier == install[name].specifier
+
+def test_input_steps_esc_revisits_previous_answer_and_exits_at_first():
+    from core.sdk import UserCancel, input_steps
+
+    calls = []
+    answers = iter(["first", UserCancel(), "updated", "second"])
+
+    def field(previous):
+        calls.append(previous)
+        answer = next(answers)
+        if isinstance(answer, UserCancel):
+            raise answer
+        return answer
+
+    assert input_steps(field, field) == ("updated", "second")
+    assert calls == [None, None, "first", None]
+
+    def cancel(previous):
+        raise UserCancel()
+
+    with pytest.raises(UserCancel):
+        input_steps(cancel, field)

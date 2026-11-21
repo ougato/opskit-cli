@@ -139,7 +139,33 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
     return importlib.util.find_spec(import_name or package) is not None
 
 
+def input_steps(*steps):
+    """Run field callbacks with the previous answer, or None on the first visit.
+
+    ESC revisits the previous field. ESC on the first field propagates
+    UserCancel to the menu that opened the form.
+    """
+    answers = []
+    index = 0
+    while index < len(steps):
+        previous = answers[index] if index < len(answers) else None
+        try:
+            answer = steps[index](previous)
+        except UserCancel:
+            if index == 0:
+                raise
+            index -= 1
+            continue
+        if index == len(answers):
+            answers.append(answer)
+        else:
+            answers[index] = answer
+        index += 1
+    return tuple(answers)
+
+
 __all__ = [
+    "input_steps",
     "read_host_file",
     "read_host_files",
     "compare_write_host_file",

@@ -1059,7 +1059,7 @@ def text_input(
     *,
     initial: str = '',
 ) -> str:
-    """Powerline 风格文本输入。
+    """Powerline 风格文本输入，ESC 抛出 UserCancel，由调用方返回上一层。
 
     prompt     — 字段标签，显示在色块 pill 里
     hint       — 输入行提示（如默认值），显示在 ╰─ 右侧
