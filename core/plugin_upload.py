@@ -19,6 +19,29 @@ from core.native_sandbox import CapabilityRequest
 from core.plugin_http import _validate
 
 CHUNK = 1024**2
+UPLOAD_PHASES = frozenset({"snapshot", "lookup", "put", "readback"})
+UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "content"})
+
+
+class UploadFailure(RuntimeError):
+    def __init__(self, phase, reason, status=0, *, relative=None):
+        super().__init__("plugin file upload failed")
+        self.phase, self.reason, self.status = phase, reason, status
+        self.relative = relative
+
+
+def _failure(phase, error):
+    if isinstance(error, UploadFailure):
+        return error
+    if isinstance(error, TimeoutError):
+        reason = "timeout"
+    elif isinstance(error, ssl.SSLError):
+        reason = "tls"
+    elif phase != "snapshot" and isinstance(error, (OSError, http.client.HTTPException)):
+        reason = "network"
+    else:
+        reason = "content"
+    return UploadFailure(phase, reason)
 
 
 def _snapshot(root, source, identity, snapshot, expected):
@@ -72,8 +95,10 @@ def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda c
             raise ValueError("upload snapshot changed")
         response = connection.getresponse()
         # Do not follow redirects or surface potentially secret response bodies.
-        if len(response.read(32769)) > 32768 or not 200 <= response.status < 300:
-            raise RuntimeError("upload destination rejected request")
+        if not 200 <= response.status < 300:
+            raise UploadFailure("put", "http", response.status)
+        if len(response.read(32769)) > 32768:
+            raise ValueError("upload response exceeds limit")
         return response.status
     finally:
         connection.close()
@@ -81,7 +106,7 @@ def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda c
             raw.close()
 
 
-def _verify(url, size, expected, private_targets):
+def _verify(url, size, expected, private_targets, *, phase="lookup"):
     """Stream and compare the stored bytes without exposing them to the plugin."""
     target = _validate(url, "GET", {}, b"")
     from core.plugin_egress import allowed_addresses
@@ -99,7 +124,7 @@ def _verify(url, size, expected, private_targets):
         if response.status == 404:
             return False
         if response.status != 200:
-            raise ValueError("upload verification request failed")
+            raise UploadFailure(phase, "http", response.status)
         digest = hashlib.sha256()
         received = 0
         while chunk := response.read(min(CHUNK, size - received + 1)):
@@ -119,16 +144,38 @@ def _verify(url, size, expected, private_targets):
 def _transfer(workspace, root, job, private_targets, sent_bytes):
     index, source, identity, url, headers, expected, verify_url, declared_size = job
     snapshot = workspace.root / f"{index}.bin"
+    phase = "snapshot"
     try:
         size, md5 = _snapshot(root, source, identity, snapshot, expected)
         if size != declared_size:
             raise ValueError("upload source size changed")
         status = 200
+        phase = "lookup"
         if not verify_url or not _verify(verify_url, size, expected, private_targets):
-            status = _put(url, headers, snapshot, size, md5, private_targets, sent_bytes)
-            if verify_url and not _verify(verify_url, size, expected, private_targets):
-                raise ValueError("stored artifact missing after upload")
+            phase = "put"
+            try:
+                status = _put(url, headers, snapshot, size, md5, private_targets, sent_bytes)
+            except (OSError, http.client.HTTPException, UploadFailure) as error:
+                # An interrupted PUT or concurrent create may have stored the object.
+                # Only accept a fresh readback with the exact expected digest.
+                failure = _failure(phase, error)
+                recoverable = failure.reason in {"timeout", "network"} or failure.status in {
+                    409, 412, 429, 500, 502, 503, 504}
+                if not verify_url or not recoverable:
+                    raise
+                try:
+                    recovered = _verify(verify_url, size, expected, private_targets, phase="readback")
+                except (OSError, ValueError, http.client.HTTPException, UploadFailure):
+                    recovered = False
+                if not recovered:
+                    raise failure from None
+                return {"status": 200, "bytes": size, "sha256": expected}
+            phase = "readback"
+            if verify_url and not _verify(verify_url, size, expected, private_targets, phase=phase):
+                raise UploadFailure(phase, "http", 404)
         return {"status": status, "bytes": size, "sha256": expected}
+    except (OSError, ValueError, http.client.HTTPException, UploadFailure) as error:
+        raise _failure(phase, error) from None
     finally:
         snapshot.unlink(missing_ok=True)
 
@@ -165,16 +212,26 @@ def _worker(connection, workspace, root, jobs, private_targets, publish_last):
                         completed, _ = wait(active, timeout=0.2, return_when=FIRST_COMPLETED)
                         with lock:
                             transferred = sent
-                        results = [[active.pop(future), future.result()] for future in completed]
-                        send(connection, {"sent": transferred, "results": results})
+                        results = []
+                        failure = None
+                        for future in completed:
+                            index = active.pop(future)
+                            try:
+                                results.append([index, future.result()])
+                            except UploadFailure as error:
+                                failure = [index, error.phase, error.reason, error.status]
+                        send(connection, {"sent": transferred, "results": results, "failure": failure})
+                        if failure is not None:
+                            return False
                         for _ in results:
                             job = next(pending, None)
                             if job is not None:
                                 submit(job)
+                    return True
 
                 boundary = len(jobs) - publish_last
-                run_group(jobs[:boundary])
-                run_group(jobs[boundary:])
+                if run_group(jobs[:boundary]):
+                    run_group(jobs[boundary:])
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
     except Exception:
@@ -256,7 +313,7 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, autho
                             raise RuntimeError("plugin upload worker exited")
                         continue
                     message = json.loads(receive.recv_bytes(65536))
-                    if not isinstance(message, dict) or set(message) != {"sent", "results"}:
+                    if not isinstance(message, dict) or set(message) != {"sent", "results", "failure"}:
                         raise RuntimeError("plugin file upload failed")
                     new_sent = message["sent"]
                     if type(new_sent) is not int or not sent <= new_sent <= total:
@@ -273,6 +330,13 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, *, autho
                         results[index] = result
                         verified += result["bytes"]
                     progress(sent, verified, len(results))
+                    if message["failure"] is not None:
+                        index, phase, reason, status = message["failure"]
+                        if (type(index) is not int or not 0 <= index < len(jobs) or index in results
+                                or phase not in UPLOAD_PHASES or reason not in UPLOAD_REASONS
+                                or type(status) is not int or (status and not 100 <= status <= 599)):
+                            raise ValueError("invalid upload worker failure")
+                        raise UploadFailure(phase, reason, status, relative=files[index][0])
         live()
     return [results[index] for index in range(len(jobs))]
 

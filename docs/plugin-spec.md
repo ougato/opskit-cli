@@ -203,7 +203,7 @@ result = upload_file(project, "build/web-mobile/index.html", presigned_url, expe
 权限在等待、发送、清理后继续复核，撤权/超时/取消回收本次 worker；已经抵达服务器的
 字节不能撤回，失败后应通过对象存储状态核查再决定重试，不自动重试 PUT。
 HTTP 2xx 不等同于独立验证了远端存储的 SHA256；返回摘要表示经本地核对的发送内容。
-插件可用 `upload_files` 一次传入目录的相对文件清单和签名地址。宿主统一显示百分比、完成件数与正文传输速率，签名查询参数不参与展示。暂不支持分片上传、跨文件事务或自动签发 URL。
+插件可用 `upload_files` 一次传入目录的相对文件清单和签名地址。宿主统一显示百分比、完成件数与正文传输速率，签名查询参数不参与展示。暂不支持分片上传、跨文件事务或自动签发 URL。文件上传失败时，宿主只显示相对文件名、失败阶段和有限的错误类型或 HTTP 状态。PUT 结果不明确时只尝试回读核对摘要。
 
 `upload_file` targets presigned HTTPS PUT. The host copies a private snapshot and validates
 the complete expected SHA256 before streaming chunks; payloads never enter JSON RPC.
@@ -214,7 +214,7 @@ status, bytes and sha256, never response bodies or signed URLs. Revocation, canc
 and deadlines stop the owned worker; bytes already delivered cannot be recalled. Inspect
 remote object state before retrying an ambiguous failure; PUT is not automatically retried.
 A 2xx result is not independent verification of the stored object's SHA256. The returned
-digest describes locally verified outgoing content. Plugins can submit a directory file list and signed URLs through `upload_files`. The host shows progress, completed file count and payload rate. Signed queries are kept out of the display. Multipart uploads, cross-file transactions and automatic URL signing are outside this API.
+digest describes locally verified outgoing content. Plugins can submit a directory file list and signed URLs through `upload_files`. The host shows progress, completed file count and payload rate. Signed queries are kept out of the display. Multipart uploads, cross-file transactions and automatic URL signing are outside this API. Failures display the relative filename, upload phase and a bounded reason or HTTP status. An ambiguous PUT is resolved only by verifying the object digest.
 
 SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能安装和执行。旧版插件不进入管理列表，旧目录和数据不会自动删除。
 工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，

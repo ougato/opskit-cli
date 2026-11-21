@@ -507,15 +507,24 @@ def _broker(manifest, request: dict):
             _remaining()
             _check_live_authorizations()
         from contextlib import nullcontext
-        from core.plugin_upload import upload_file, upload_files
+        from core.plugin_upload import UploadFailure, upload_file, upload_files
         from core.prompt import console
         transfer = upload_files if method == "host.upload_files" else upload_file
         display = getattr(_invocations, "wait_display", None)
         with display.suspend() if display is not None else nullcontext():
-            return transfer(manifest.name, fingerprint, *args, authority=authority,
-                            check_identity=identity, private_targets=private,
-                            deadline=lambda: _invocations.deadline, checkpoint=checkpoint, console=console,
-                            input_wait=_input_wait_budget)
+            try:
+                return transfer(manifest.name, fingerprint, *args, authority=authority,
+                                check_identity=identity, private_targets=private,
+                                deadline=lambda: _invocations.deadline, checkpoint=checkpoint, console=console,
+                                input_wait=_input_wait_budget)
+            except UploadFailure as error:
+                from core.i18n import t
+                reason = t(f"plugin_native.upload.reason_{error.reason}", status=error.status)
+                relative = "".join(char if char.isprintable() else "?" for char in error.relative)
+                console.print(t("plugin_native.upload.diagnostic", file=relative,
+                                phase=t(f"plugin_native.upload.phase_{error.phase}"), reason=reason),
+                              markup=False, highlight=False)
+                raise
     if method == "host.https":
         if "network" not in manifest.permissions or kwargs or len(args) != 4:
             raise SandboxError("network capability not granted")

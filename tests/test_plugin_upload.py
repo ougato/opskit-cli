@@ -279,3 +279,38 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     assert i18n.t("plugin_native.upload.title") in logs
     assert "100%" in logs and "3/3" in logs and "/s" in logs
     assert "synthetic-secret" not in logs
+
+
+@pytest.mark.parametrize("matching_remote", [True, False])
+def test_conflicting_put_requires_exact_readback(tmp_path, monkeypatch, matching_remote):
+    from types import SimpleNamespace
+
+    payload = b"verified object"
+    digest = hashlib.sha256(payload).hexdigest()
+    root = tmp_path / "source"
+    root.mkdir()
+    source = root / "file.bin"
+    source.write_bytes(payload)
+    identity = root.stat().st_dev, root.stat().st_ino
+    workspace = SimpleNamespace(root=tmp_path)
+    calls = []
+
+    def reject(*args):
+        calls.append("put")
+        raise upload.UploadFailure("put", "http", 412)
+
+    def verify(*args, phase="lookup"):
+        calls.append(phase)
+        return phase == "readback" and matching_remote
+
+    monkeypatch.setattr(upload, "_verify", verify)
+    monkeypatch.setattr(upload, "_put", reject)
+    job = (0, source, identity, "put", {}, digest, "get", len(payload))
+    if matching_remote:
+        assert upload._transfer(workspace, root, job, [], lambda _: None)["sha256"] == digest
+    else:
+        with pytest.raises(upload.UploadFailure) as error:
+            upload._transfer(workspace, root, job, [], lambda _: None)
+        assert (error.value.phase, error.value.reason, error.value.status) == ("put", "http", 412)
+    assert calls == ["lookup", "put", "readback"]
+    assert not (tmp_path / "0.bin").exists()
