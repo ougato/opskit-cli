@@ -114,6 +114,9 @@ def list_files(plugin, fingerprint, directory, *, authority, check_identity, che
 
 
 def read_file(plugin, fingerprint, directory, relative, *, authority, check_identity, missing_ok=False):
+    if isinstance(directory, str) and directory.startswith("~/"):
+        from core.host_file_access import relative_host_path
+        directory = str(relative_host_path(Path.home(), directory[2:]))
     if (type(missing_ok) is not bool or not isinstance(directory, str) or not Path(directory).is_absolute()
             or not isinstance(relative, str) or not relative or "\\" in relative
             or any(ord(char) < 32 for char in directory + relative)):

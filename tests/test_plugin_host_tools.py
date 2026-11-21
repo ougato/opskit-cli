@@ -570,3 +570,19 @@ def test_project_grant_reuses_permission_and_starts_output_after_authorization(t
     monkeypatch.setattr(authority, "require", denied)
     with pytest.raises(PermissionError, match="execution grant required"):
         tools.execute("demo", "a" * 64, str(tool), [], str(root), {}, **context)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows host discovery")
+def test_find_adb_in_sdk_environment_and_default_location(tmp_path, monkeypatch, context):
+    explicit = tmp_path / "sdk" / "platform-tools" / "adb.exe"
+    default = tmp_path / "local" / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+    for candidate in (explicit, default):
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(b"fixture")
+    monkeypatch.setenv("ANDROID_HOME", str(explicit.parent.parent))
+    monkeypatch.setenv("ANDROID_SDK_ROOT", "")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(explicit)
+    explicit.unlink()
+    assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(default)

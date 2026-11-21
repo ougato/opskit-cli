@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 
 import pytest
 
@@ -37,7 +38,11 @@ def test_host_read_requires_exact_authorized_scope(tmp_path, monkeypatch):
         prompts.append(scope)
         return original(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs)
     monkeypatch.setattr(authority, "require", require)
-    reply = read_file("demo", "a" * 64, str(root), "config.json",
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    with pytest.raises(ValueError):
+        read_file("demo", "a" * 64, "~/../project", "config.json",
+                  authority=authority, check_identity=lambda *a: True)
+    reply = read_file("demo", "a" * 64, "~/project", "config.json",
                       authority=authority, check_identity=lambda *a: True)
     assert base64.b64decode(reply["content"]) == b'{"version":1}'
     assert read_file("demo", "a" * 64, str(root), "artifacts/index.json", missing_ok=True,

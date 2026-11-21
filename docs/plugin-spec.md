@@ -94,14 +94,14 @@ Both operations share the same scoped grant; once consent is reused within the i
 
 插件通过 SDK 请求能力，不直接扩大隔离目录：
 
-- `read_host_file(directory, relative, *, missing_ok=False)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。仅在指定 `missing_ok=True` 且文件缺失时返回 `None`。
+- `read_host_file(directory, relative, *, missing_ok=False)`：显式目录读取授权，单文件最多 1MiB，拒绝越界与链接。目录以 `~/` 开头时由宿主按当前用户主目录展开，仍对具体目标目录授权。仅在指定 `missing_ok=True` 且文件缺失时返回 `None`。
 - `read_host_files(directory, relatives)`：复用同一目录读取授权和路径校验，接受 1～64 个不同相对路径。每个文件最多 1 MiB，整批最多 8 MiB，按请求顺序返回字节。任一文件无法读取时整批失败。
 - `compare_write_host_file(directory, relative, expected_sha256, content)`：Windows 宿主现有普通文件的有界写入（最多 16KiB）。可使用显式目录读写授权；否则写入授权绑定文件路径及原、新内容摘要。独占打开后再次比对原始内容，再写入并读回验证；普通异常、撤权或取消时尝试在同一独占句柄内恢复原内容。拒绝链接、硬链接和路径越界。此接口不是断电原子事务，进程被强制终止或断电时可能需要人工检查文件；插件应在写入前明确说明并安排恢复流程。
 - `create_host_file(directory, relative, content)`：经目录读写授权或精确文件路径和内容摘要授权后创建新文件，最多 16KiB；只接受单级文件名，使用同目录临时文件并以不覆盖方式发布。授权撤销或普通错误时清理属于本次调用的文件，强制中止时临时文件可能遗留。
 - `host_artifacts("remove_verified_file", {directory, file, sha256})`：支持 `HOST_ARTIFACT_REMOVE_FILE` 的 Windows 宿主在目录读写授权下删除摘要匹配的单个普通文件，最多 1 MiB。宿主拒绝链接，删除前复核授权、文件身份和内容。普通错误时尝试恢复原路径。
 - `host_file_status(directory, relative)`：经目录读取授权后返回单级普通文件是否存在和 SHA-256；文件最多 16KiB，拒绝链接和硬链接。
 - `host_path_info(path, directory=False, write=False, execute=False)`：授权后验证绝对普通路径与目录身份。仅目录可传 `write=True` 显式申请包含子目录的读写授权；同时传 `execute=True` 可显式申请该目录树的读写和工具执行授权。该授权允许工作目录在目录树内的工具以当前用户权限运行，工具能够访问目录外文件；撤权、指纹及宿主身份检查仍有效。旧的读写授权不会升级为执行授权。
-- `host_find_executable(name, preferred="")`：Windows 上依次查找可选已配置路径、宿主 PATH、相邻的 `cmd`/`bin` 目录和常见安装目录中的同名 `.exe`；仅接受简单可执行文件名，跳过相对路径、链接、硬链接、超出执行大小限制及无效路径，不执行程序。返回绝对路径前请求目录读取授权并复核身份；找不到时返回空字符串，拒绝授权和取消不会自动继续搜索。执行仍需独立授权。
+- `host_find_executable(name, preferred="")`：Windows 上依次查找可选已配置路径、宿主 PATH、相邻的 `cmd`/`bin` 目录和常见安装目录中的同名 `.exe`；仅接受简单可执行文件名，跳过相对路径、链接、硬链接、超出执行大小限制及无效路径，不执行程序。返回绝对路径前请求目录读取授权并复核身份；查找 `adb.exe` 时也检查 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 和 Android SDK 默认安装目录。找不到时返回空字符串，拒绝授权和取消不会自动继续搜索。执行仍需独立授权。
 
 ```python
 from core.sdk import host_find_executable

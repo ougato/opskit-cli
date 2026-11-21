@@ -104,10 +104,19 @@ def find_executable(plugin, fingerprint, name, preferred, *, authority, check_id
         if Path(preferred).name.casefold() != name.casefold() or not Path(preferred).is_absolute():
             raise ValueError("invalid preferred executable path")
         add_candidate(Path(preferred))
+    if name.casefold() == "adb.exe":
+        for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+            root = Path(os.environ.get(variable, ""))
+            if root.is_absolute():
+                candidates.append(root / "platform-tools" / name)
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         entry = entry.strip().strip('"')
         if entry and Path(entry).is_absolute():
             add_candidate(Path(entry) / name)
+    if name.casefold() == "adb.exe":
+        root = Path(os.environ.get("LOCALAPPDATA", ""))
+        if root.is_absolute():
+            candidates.append(root / "Android" / "Sdk" / "platform-tools" / name)
     # Conventional per-machine and per-user installations, when PATH omits them.
     stem = name[:-4]
     for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
