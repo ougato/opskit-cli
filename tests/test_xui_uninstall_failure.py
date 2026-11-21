@@ -8,7 +8,7 @@ import pytest
 
 
 @pytest.mark.parametrize("action,fail_at", [(action, index)
-    for action, count in [("service", 3), ("timer", 5), ("artifacts", 3)]
+    for action, count in [("service", 3), ("timer", 4), ("artifacts", 3)]
     for index in range(1, count + 1)])
 def test_nonzero_stops_uninstall_at_failed_command(tmp_path, monkeypatch, action, fail_at):
     from xui import utils
@@ -19,6 +19,12 @@ def test_nonzero_stops_uninstall_at_failed_command(tmp_path, monkeypatch, action
 
     def root(command, **kwargs):
         calls.append(command)
+        if "disable" in command:
+            assert "--no-reload" in command
+        if "daemon-reload" in command:
+            assert action == "artifacts"
+            assert kwargs["timeout"] == utils.SYSTEMD_RELOAD_TIMEOUT
+            assert kwargs["timeout"] > utils.SERVICE_RESTART_TIMEOUT
         if len(calls) == fail_at:
             return subprocess.run([sys.executable, "-c", "raise SystemExit(7)"], **kwargs)
         return SimpleNamespace(returncode=0, stdout="loaded\n")

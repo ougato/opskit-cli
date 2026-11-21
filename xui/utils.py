@@ -50,6 +50,7 @@ from xui.constants import (
     SYSTEMCTL_ENABLE_NOW_ARG,
     SYSTEMCTL_START_ARG,
     SYSTEMCTL_STOP_ARG,
+    SYSTEMD_RELOAD_TIMEOUT,
     TRAFFIC_SERVICE_UNIT_CONTENT,
     TRAFFIC_SERVICE_UNIT_FILE,
     TRAFFIC_SNAPSHOT_CLI_ARGS,
@@ -543,12 +544,6 @@ def uninstall_traffic_timer() -> None:
     stop_and_disable_service(TRAFFIC_TIMER_UNIT)
     run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE)],
                 check=True, capture_output=True, timeout=SERVICE_RESTART_TIMEOUT)
-    if systemd_available():
-        run_as_root(
-            [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
 
 
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
@@ -570,7 +565,7 @@ def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
-        [SYSTEMCTL_COMMAND, "disable", service],
+        [SYSTEMCTL_COMMAND, "--no-reload", "disable", service],
         check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
@@ -585,7 +580,7 @@ def remove_xui_artifacts() -> None:
                     timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
-            [SYSTEMCTL_COMMAND, "daemon-reload"],
+            [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
             check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
+            timeout=SYSTEMD_RELOAD_TIMEOUT,
         )
