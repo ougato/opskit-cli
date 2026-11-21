@@ -54,14 +54,17 @@ def waiting(message: str = ""):
         display.close()
 
 
+HOST_COUNTED_PROGRESS = True
+
+
 @contextmanager
-def progress_step(message: str, failed_label: str):
-    """Use installation-style activity animation for one timed step."""
+def progress_step(message: str, failed_label: str, *, total: int | None = None):
+    """Show a timed stage, or yield an updater for a positive total."""
     from core.installation_progress import WaitingDisplay
     display = WaitingDisplay()
-    display.start(message, failed_label=failed_label)
+    display.start(message, failed_label=failed_label, total=total)
     try:
-        yield
+        yield display.update if total is not None else None
     except BaseException:
         display.stop(failed=True)
         raise
@@ -147,6 +150,7 @@ __all__ = [
     "artifact_info",
     "artifact_batch_info",
     "progress_step",
+    "HOST_COUNTED_PROGRESS",
     "host_execute", "finish_host_tool_output", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",

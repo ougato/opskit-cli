@@ -470,11 +470,17 @@ def _broker(manifest, request: dict):
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
+    if method == "ui.wait_update":
+        display = getattr(_invocations, "wait_display", None)
+        if display is None or len(args) != 1 or kwargs:
+            raise SandboxError("invalid progress update")
+        display.update(args[0])
+        return None
     if method in {"ui.wait_start", "ui.wait_stop"}:
         display = getattr(_invocations, "wait_display", None)
         starting = method == "ui.wait_start"
         if (display is None or len(args) != int(starting)
-                or set(kwargs) - ({"failed_label"} if starting else {"failed"})
+                or set(kwargs) - ({"failed_label", "total"} if starting else {"failed"})
                 or ("failed" in kwargs and type(kwargs["failed"]) is not bool)):
             raise SandboxError("invalid waiting scope")
         if method == "ui.wait_start":

@@ -1,6 +1,7 @@
 """One transient installation status, suspended around interactive questions."""
 from contextlib import contextmanager
 import time
+from dataclasses import dataclass
 
 from rich.console import Group
 from rich.live import Live
@@ -54,6 +55,15 @@ class _InstallationStatus:
             self.live.refresh()
 
 
+@dataclass
+class _WaitingStep:
+    label: str
+    failed_label: str | None
+    started: float
+    total: int | None
+    completed: int = 0
+
+
 class WaitingDisplay:
     """One host-owned, nestable transient wait indicator per invocation."""
 
@@ -63,7 +73,7 @@ class WaitingDisplay:
         self.status = None
         self.suspended = 0
 
-    def start(self, message="", *, failed_label=None):
+    def start(self, message="", *, failed_label=None, total=None):
         if (not isinstance(message, str) or len(message) > 200
                 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in message)):
             raise ValueError("invalid waiting message")
@@ -72,13 +82,24 @@ class WaitingDisplay:
         if failed_label is not None and (not isinstance(failed_label, str) or not 1 <= len(failed_label) <= 40
                 or not failed_label.isprintable()):
             raise ValueError("invalid progress failure label")
-        self.messages.append((message, failed_label, time.monotonic()))
+        if total is not None and (failed_label is None or type(total) is not int or total <= 0):
+            raise ValueError("invalid progress total")
+        self.messages.append(_WaitingStep(message, failed_label, time.monotonic(), total))
         self._refresh()
+
+    def update(self, completed):
+        step = self.messages[-1] if self.messages else None
+        if (step is None or step.total is None or type(completed) is not int
+                or not step.completed <= completed <= step.total):
+            raise ValueError("invalid progress count")
+        step.completed = completed
 
     def stop(self, *, failed=False):
         if not self.messages:
             raise ValueError("no active waiting scope")
-        message, failed_label, started = self.messages.pop()
+        step = self.messages.pop()
+        message, failed_label, started = step.label, step.failed_label, step.started
+        failed = failed or (step.total is not None and step.completed != step.total)
         self._refresh()
         if failed_label is not None:
             from rich.markup import escape
@@ -95,7 +116,8 @@ class WaitingDisplay:
                 self.status.stop()
                 self.status = None
             return
-        label, failed_label, started = self.messages[-1]
+        step = self.messages[-1]
+        label, failed_label, started = step.label, step.failed_label, step.started
         if self.status is not None and (failed_label is not None or not isinstance(self.status, _InstallationStatus)):
             self.status.stop()
             self.status = None
@@ -109,7 +131,10 @@ class WaitingDisplay:
 
             def render():
                 elapsed = time.monotonic() - started
-                return Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed, color, width))
+                if step.total is None:
+                    return Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed, color, width))
+                percentage = min(99, step.completed * 100 // step.total)
+                return Text.from_markup(_render_line(escape(label), percentage, elapsed, color, width))
 
             self.status = Live(console=self.console, transient=True, refresh_per_second=10,
                                redirect_stdout=False, redirect_stderr=False, get_renderable=render)

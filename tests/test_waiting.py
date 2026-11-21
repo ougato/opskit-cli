@@ -93,7 +93,7 @@ def test_broker_wait_requests_are_validated_and_cannot_leave_unbalanced_scope(mo
     def call(method, *args):
         return plugin_sandbox._broker(manifest, {"rpc_version": 1, "method": method, "args": list(args)})
     call("ui.wait_start", "")
-    assert display.messages == [""]
+    assert [step.label for step in display.messages] == [""]
     call("ui.wait_stop")
     assert display.messages == []
     with pytest.raises(ValueError):
@@ -142,3 +142,23 @@ def test_wait_display_renders_and_removes_transient_spinner():
     display.close()
     assert "\n" in active and "⠋" in active
     assert "\x1b[?25h" in output.getvalue()
+
+
+def test_counted_progress_rejects_invalid_updates_and_requires_all_items():
+    from io import StringIO
+    from rich.console import Console
+    output = StringIO()
+    display = installation_progress.WaitingDisplay(Console(file=output))
+    display.start("Download", failed_label="Failed", total=2)
+    display.update(1)
+    with pytest.raises(ValueError):
+        display.update(0)
+    with pytest.raises(ValueError):
+        display.update(3)
+    display.stop()
+    assert "Failed" in output.getvalue() and "100%" not in output.getvalue()
+
+    display.start("Download", failed_label="Failed", total=2)
+    display.update(2)
+    display.stop()
+    assert "100%" in output.getvalue()

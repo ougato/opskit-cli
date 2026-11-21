@@ -105,10 +105,11 @@ def _adapt_sdk(name: str):
     sdk.waiting = waiting
 
     @contextmanager
-    def progress_step(message, failed_label):
-        broker("ui.wait_start", message, failed_label=failed_label)
+    def progress_step(message, failed_label, *, total=None):
+        options = {} if total is None else {"total": total}
+        broker("ui.wait_start", message, failed_label=failed_label, **options)
         try:
-            yield
+            yield None if total is None else lambda completed: broker("ui.wait_update", completed)
         except BaseException:
             try:
                 broker("ui.wait_stop", failed=True)

@@ -122,7 +122,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
   SDK 提供 `HOST_TOOL_STAGE_ONLY_PROGRESS` 时，可同时省略 `progress_marker` 和 `progress_label`，仅显示阶段动画和阶段结果。
   SDK 提供 `HOST_TOOL_COMPACT_DIAGNOSTICS` 时，可用 `quiet_prefixes` 省略已知的提示行，用 `compact_diagnostics` 将匹配字面标记的提示去重并收起 JavaScript 调用栈。
   当 SDK 提供 `HOST_TOOL_PROGRESS` 时，可传入 `progress` 描述实时输出。其字段为 `stages`（首项为 `[名称]`，后续为 `[名称, 开始标记]`，按顺序匹配行内字面文本）、`progress_marker`（后接整数和百分号的字面标记）、`progress_label`、`failed_label`、`diagnostics`（按行匹配的诊断字面标记，忽略大小写）和 `success_codes`（展示阶段完成状态的退出码）。终端显示当前阶段的动画与工具报告的进度；诊断行和其缩进续行保留原文。非交互输出保留阶段结束行与诊断，不重绘。此选项仅影响展示，与 `capture_output` 互斥，不改变授权范围或返回的工具退出码。
-  SDK 的 `with progress_step(message, failed_label):` 为无细分百分比的插件阶段使用同款安装进度动画。正常退出显示 100%，异常退出显示失败状态。
+  SDK 的 `with progress_step(message, failed_label):` 为无细分百分比的插件阶段使用同款安装进度动画。正常退出显示 100%，异常退出显示失败状态。支持 `HOST_COUNTED_PROGRESS` 时，可以传入 `total=正整数` 并使用上下文返回的回调上报累计完成量。正常退出且完成量达到总数才显示 100%。
   options 支持 `output_parent`、布尔值 `capture_output`、`capture_after`、`tool_dependencies`、`stdin_base64`、`config_base64`、`timeout_seconds`、`output_header`。`output_header` 是可选的简短面包屑字符串列表，仅交互终端在授权完成并启动工具前清屏显示标题；重定向和非交互输出不清屏，且它不改变授权范围。`output_parent` 创建独立输出目录，并将参数中的 `{output_directory}` / `{output_name}` 替换为本次路径/名称，返回 `output: {id, directory}`，仅为待登记凭据。执行授权记录原始参数模板和输出父目录，而不是每次生成的随机目录名；模板以外的参数变化仍需要重新授权。`capture_output=true` 将合并的标准输出和标准错误作为 `captured_output` 返回插件（最多 16KiB，超限失败），不再流式显示；该选项纳入执行授权范围。`capture_after` 是最多 128 字符的单行标记，正常流式显示仍保留，且仅当标记恰好出现一次并有下一行时，将下一行作为 `captured_after` 返回（最多 16KiB，否则为 null）；标记纳入执行授权范围。`stdin_base64` 可提供最多 16KiB 的标准输入，执行授权绑定输入内容的长度及 SHA-256，默认不开放输入。`config_base64` 可提供至多 16KiB 的临时工具配置；必须在参数中使用 `{config_file}`，宿主在本次执行期间建立临时文件，正常退出时清理，执行授权绑定内容长度和摘要，参数模板保持稳定。宿主被强制终止时临时文件可能残留，调用方不可将秘密写入此配置。`timeout_seconds` 是 1..3600 的整数，默认为 300，显式值纳入授权范围。外部进程在独立的有限期限内运行时不消耗插件计算期限，但仍持续检查插件授权、工具授权和资源身份；超时或撤权会回收进程树。`tool_dependencies` 是至多 8 个普通绝对 `.exe` 路径，其父目录加入工具的 PATH；授权包含可执行文件路径、摘要和搜索目录，并在启动前重验文件。目录内其他程序也可能通过 PATH 被调用，故授权展示完整搜索目录。默认仍流式显示，不向插件返回内容，也不额外添加搜索目录。
 - `host_artifacts(action, parameters)`：插件隔离的产物凭据管理。`mkdir` 使用 `{directory}`，只允许在已存在的普通父目录下创建一级目录；`commit` 使用 `{id, required_files}`，要求本次目录非空、必需文件非空；可选 `expected_files` 将插件已验证文件的 SHA-256 与实际快照绑定。仅对宿主执行创建的 `opskit-{id}` 待登记目录，登记操作请求输出父目录的写入授权并验证目录及父目录身份，因而不受随机目录名影响；导入和删除仍请求具体产物目录的写入授权。`list` 使用 `{resource, keep}`，返回有效性、保留保护、清理候选和宿主计算的 `record_sha256`；`clean` 使用 `{id, record_sha256, keep}`，只删除自身有效且不受保留保护的凭据目录。
   `keep` 为 1..100。快照最多 2GiB / 65536 条目 / 64 层；拒绝链接、硬链接、身份或内容变化、未知目录和活动资源锁。执行和凭据操作共享工作目录资源锁。失败输出保持待登记，不自动清理。
@@ -203,8 +203,7 @@ result = upload_file(project, "build/web-mobile/index.html", presigned_url, expe
 权限在等待、发送、清理后继续复核，撤权/超时/取消回收本次 worker；已经抵达服务器的
 字节不能撤回，失败后应通过对象存储状态核查再决定重试，不自动重试 PUT。
 HTTP 2xx 不等同于独立验证了远端存储的 SHA256；返回摘要表示经本地核对的发送内容。
-目前不支持分片上传、跨文件事务、自动签发 URL 或上传整个目录；插件逐个调用固定接口。
-开始和完成摘要支持中英文，只展示目标主机，不输出签名查询参数。
+插件可用 `upload_files` 一次传入目录的相对文件清单和签名地址。宿主统一显示百分比、完成件数与正文传输速率，签名查询参数不参与展示。暂不支持分片上传、跨文件事务或自动签发 URL。
 
 `upload_file` targets presigned HTTPS PUT. The host copies a private snapshot and validates
 the complete expected SHA256 before streaming chunks; payloads never enter JSON RPC.
@@ -215,9 +214,7 @@ status, bytes and sha256, never response bodies or signed URLs. Revocation, canc
 and deadlines stop the owned worker; bytes already delivered cannot be recalled. Inspect
 remote object state before retrying an ambiguous failure; PUT is not automatically retried.
 A 2xx result is not independent verification of the stored object's SHA256. The returned
-digest describes locally verified outgoing content. Multipart uploads, cross-file transactions,
-URL signing and directory uploads are not included. Plugins invoke the bounded file API
-per object. Bilingual progress summaries display only the destination hostname.
+digest describes locally verified outgoing content. Plugins can submit a directory file list and signed URLs through `upload_files`. The host shows progress, completed file count and payload rate. Signed queries are kept out of the display. Multipart uploads, cross-file transactions and automatic URL signing are outside this API.
 
 SDK 源码摘要因接口变化而改变，已有插件须重新 prepare；SDK 1/2/3 插件必须升级到 4 才能安装和执行。旧版插件不进入管理列表，旧目录和数据不会自动删除。
 工作目录逻辑预留同步调整为每项 512MiB，最多 8 项，总预留上限 4GiB；包含保留目录，
