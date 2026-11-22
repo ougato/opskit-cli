@@ -105,6 +105,37 @@ def test_invalid_request_rejected_before_spawn(tmp_path, monkeypatch, kwargs):
             pytest.fail("invalid request accepted")
 
 
+@pytest.mark.parametrize(("length", "chunked", "expected"), [
+    (6, False, [(6, 0), (6, 2), (6, 6)]),
+    (None, False, []),
+    (6, True, []),
+])
+def test_download_counts_response_body(monkeypatch, length, chunked, expected):
+    from contextlib import contextmanager
+    from io import BytesIO
+
+    @contextmanager
+    def request(*args):
+        stream = BytesIO(b"abcdef")
+        stream.length = length
+        stream.chunked = chunked
+        yield stream
+
+    def receive(stream, destination, selection):
+        assert stream.read(2) == b"ab"
+        assert stream.read(10) == b"cdef"
+        assert stream.read(10) == b""
+        return "received"
+
+    monkeypatch.setattr(https, "_request", request)
+    monkeypatch.setattr(https, "advertisement", lambda *_: (None, b""))
+    monkeypatch.setattr(https, "receive_pack", receive)
+    reports = []
+    assert https._download("https://example.com/repo", None, False, None, None,
+                           lambda *counts: reports.append(counts)) == "received"
+    assert reports == expected
+
+
 def _silent_worker(connection, *args):
     time.sleep(60)
 

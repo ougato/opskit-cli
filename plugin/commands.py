@@ -512,7 +512,8 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
             progress("update_fetch")
         acquired = populate(record["source"], payload, branch=branch,
                             fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction,
-                            copy_progress=getattr(progress, "copy_files", None))
+                            copy_progress=getattr(progress, "copy_files", None),
+                            download_progress=getattr(progress, "download_bytes", None))
         if progress is not None:
             progress("update_verify")
         refreshed = load_manifest(payload)

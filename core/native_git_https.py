@@ -1,5 +1,5 @@
 """Supervised Git transport broker; credentials never enter Git or plugins."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import http.client
 import json
@@ -65,7 +65,7 @@ def _request(source, material, allow_private, method, suffix, body=b""):
             raw.close()
 
 
-def _download(source, profile, allow_private, destination, branch):
+def _download(source, profile, allow_private, destination, branch, report=None):
     source = remote_source(source)
     if source.kind == "ssh":
         from core.native_git_ssh import download
@@ -88,10 +88,29 @@ def _download(source, profile, allow_private, destination, branch):
             raw = response.read(MAX_ADVERTISEMENT + 1)
     selection, body = advertisement(raw, branch)
     with _request(source, material, allow_private, "POST", "/git-upload-pack", body) as response:
-        return receive_pack(response, destination, selection)
+        total = response.length
+        if response.chunked or total is None or total <= 0:
+            return receive_pack(response, destination, selection)
+        received = 0
+        if report:
+            report(total, received)
+
+        class CountedBody:
+            def read(self, size):
+                nonlocal received
+                chunk = response.read(size)
+                received += len(chunk)
+                if report and chunk:
+                    report(total, received)
+                return chunk
+
+        result = receive_pack(CountedBody(), destination, selection)
+        if received != total:
+            raise ValueError("incomplete Git HTTPS response")
+        return result
 
 
-def _worker(connection, source, profile, allow_private, output, branch):
+def _worker(connection, source, profile, allow_private, output, branch, show_progress=False):
     from network.worker import send
     try:
         with output:
@@ -99,7 +118,17 @@ def _worker(connection, source, profile, allow_private, output, branch):
             verify_private_file(output.fileno())
             output.seek(0)
             output.truncate()
-            value = _download(source, profile, allow_private, output, branch)
+            last_report = 0
+
+            def report(total, received):
+                nonlocal last_report
+                now = time.monotonic()
+                if received in (0, total) or now - last_report >= .1:
+                    send(connection, {"progress": [total, received]})
+                    last_report = now
+
+            value = _download(source, profile, allow_private, output, branch,
+                              report if show_progress else None)
         send(connection, {"value": value})
     except Exception as error:
         from core.native_git_ssh import SSHFailure
@@ -115,7 +144,7 @@ def _worker(connection, source, profile, allow_private, output, branch):
 
 @contextmanager
 def remote_pack(source, *, profile=None, allow_private=False, branch=None,
-                staging_parent, deadline, checkpoint):
+                staging_parent, deadline, checkpoint, download_progress=None):
     """Yield an authenticated transport snapshot, not trusted plugin content.
 
     Parent owns deadline/cancellation and the exclusively held output descriptor.
@@ -139,18 +168,42 @@ def remote_pack(source, *, profile=None, allow_private=False, branch=None,
     from core.process_file import _SpawnWritableFile
     from network.worker import owned_process
     with temporary_private_file() as output:
-        with owned_process(_worker, (source.url, profile, allow_private, _SpawnWritableFile(output.fileno()), branch),
-                           label="Git transport") as (receive, process):
+        with owned_process(_worker, (source.url, profile, allow_private, _SpawnWritableFile(output.fileno()), branch,
+                                    download_progress is not None),
+                           label="Git transport") as (receive, process), ExitStack() as progress_scope:
+            total = completed = None
+            update = None
             while True:
                 check()
                 if receive.poll(.05):
                     result = json.loads(receive.recv_bytes(65536))
+                    if isinstance(result, dict) and set(result) == {"progress"} and download_progress is not None:
+                        counts = result["progress"]
+                        if (not isinstance(counts, list) or len(counts) != 2
+                                or any(type(count) is not int for count in counts)):
+                            raise ValueError("invalid Git transfer progress")
+                        size, received = counts
+                        if not 0 <= received <= size <= MAX_PACK + 65536 or size == 0:
+                            raise ValueError("invalid Git transfer progress")
+                        if total is None:
+                            if received != 0:
+                                raise ValueError("invalid initial Git transfer progress")
+                            total = size
+                            update = progress_scope.enter_context(download_progress(total))
+                        elif size != total or received <= completed:
+                            raise ValueError("invalid cumulative Git transfer progress")
+                        completed = received
+                        if update is not None:
+                            update(completed)
+                        continue
                     if (isinstance(result, dict) and set(result) == {"error"}
                             and isinstance(result["error"], str) and result["error"] in TRANSFER_ERRORS):
                         raise NativeSandboxError(result["error"])
                     if not isinstance(result, dict) or set(result) != {"value"}:
                         raise RuntimeError("remote Git transfer failed")
                     value = result["value"]
+                    if total is not None and completed != total:
+                        raise ValueError("incomplete Git transfer progress")
                     break
                 if not process.is_alive():
                     raise RuntimeError("remote Git worker exited")

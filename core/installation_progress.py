@@ -217,13 +217,19 @@ class InstallationProgress:
                 return callback(*args, **kwargs)
         return ask
 
-    @contextmanager
     def copy_files(self, total):
+        return self._counted("update_copy", "update_copy_failed", total)
+
+    def download_bytes(self, total):
+        return self._counted("update_download", "update_download_failed", total)
+
+    @contextmanager
+    def _counted(self, label, failure, total):
         from core.cli import non_interactive
         from core.sdk import progress_step
         if not console.is_terminal or non_interactive.get():
             yield None
             return
-        with self.suspend(), progress_step(t("plugin_native.bootstrap.update_copy"),
-                                          t("plugin_native.bootstrap.update_copy_failed"), total=total) as update:
+        with self.suspend(), progress_step(t("plugin_native.bootstrap." + label),
+                                          t("plugin_native.bootstrap." + failure), total=total) as update:
             yield update

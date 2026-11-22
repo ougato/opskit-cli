@@ -953,6 +953,8 @@ plugin_native:
     update_fetch: "Fetch remote version"
     update_copy: "Copy candidate files"
     update_copy_failed: "Copy failed"
+    update_download: "Download Git response"
+    update_download_failed: "Download failed"
     update_verify: "Verify candidate version"
     update_publish: "Replace plugin files"
     tools: "Checking the installation environment…"

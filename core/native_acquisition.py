@@ -29,7 +29,7 @@ def source_identity(value):
 
 
 def populate(source, destination, *, branch=None, timeout=300, fetch_profile=None, allow_private=False,
-             fetch_interaction=None, copy_progress=None):
+             fetch_interaction=None, copy_progress=None, download_progress=None):
     """No host Git fallback, imports, grant or discoverable publication.
 
     Fetch, independent archive validation, private writes and manifest review all
@@ -81,7 +81,8 @@ def populate(source, destination, *, branch=None, timeout=300, fetch_profile=Non
                 try:
                     candidate_source, pack = stack.enter_context(remote_pack(
                         canonical, profile=profile, allow_private=allow_private, branch=branch,
-                        staging_parent=parent, deadline=deadline, checkpoint=remaining))
+                        staging_parent=parent, deadline=deadline, checkpoint=remaining,
+                        download_progress=download_progress))
                     break
                 except NativeSandboxError as error:
                     code = error.code
