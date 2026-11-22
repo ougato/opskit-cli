@@ -25,6 +25,7 @@ from typing import ClassVar
 from core.i18n import t
 from software.base import InstallError, InstallStep, Recipe
 from software._shared.mutation import versioned_mutation
+from software.install_location import record_location
 
 # 进度条占位推进上限：下载阶段无法获知真实百分比，用 ticker 线程推到此值后等真实完成
 _TICKER_MAX_PCT = 90
@@ -234,11 +235,15 @@ class VersionedTarballRecipe(Recipe):
             snap["installed_versions"] = installed
             snap["active_version"] = version
             snap[self._bin_dir_snap_key] = bin_dir
+            snap = record_location(self.key, snap)
             self._save_snapshot(snap)
 
             sp.step(t("software.step.verify"))
             fallback = shutil.which(self._shim_cmd) or self._shim_cmd
-            driver.install_shim(fallback)
+            # Windows activation creates either a junction or command shims.
+            # Creating the legacy shim first requires a same-volume relative route.
+            if info.os_type != "windows" or "install_location" not in snap:
+                driver.install_shim(fallback)
             driver.apply_version_link(bin_dir)
 
             self._verify_runnable(bin_dir)
@@ -281,7 +286,7 @@ class VersionedTarballRecipe(Recipe):
             previous_bin = self._switch_bin_dir(snap["active_version"])
         driver = self._get_driver()
         from software._shared.activation import activate_version, verify_command_version
-        activate_version(snap, {"active_version": version, self._bin_dir_snap_key: bin_dir},
+        activate_version(snap, {**snap, "active_version": version, self._bin_dir_snap_key: bin_dir},
                          save=self._save_snapshot,
                          apply=lambda: driver.apply_version_link(bin_dir),
                          restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(),

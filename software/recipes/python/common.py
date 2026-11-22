@@ -12,6 +12,7 @@ from software.base import InstallError
 from core.i18n import t
 from .constants import PYTHON_VERSIONS_FALLBACK, SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 
 # ─── 各发行版包管理器可直接安装的 Python minor 版本 ────────────────────────────
 _APT_VERSIONS: dict[str, list[str]] = {
@@ -122,7 +123,7 @@ def uv_bin_path() -> Path:
 
 def uv_python_dir() -> Path:
     from .constants import UV_PYTHON_SUBDIR
-    return Path.home() / UV_PYTHON_SUBDIR
+    return managed_root("python", Path.home() / UV_PYTHON_SUBDIR, load_snapshot())
 
 
 def shim_dir() -> Path:

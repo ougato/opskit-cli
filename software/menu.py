@@ -460,13 +460,28 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         except UserCancel:
             return
 
-    if not _install_disk_check(instance):
-        return
+    from software.base import InstallError
+    from software.install_location import DEVELOPMENT_TOOLS, select_location
 
-    clear_screen()
-    print_header([*breadcrumb, t("software.install")])
-    base_console.print()
-    r = execute_install(instance, version)
+    location = None
+    try:
+        if cls.key in DEVELOPMENT_TOOLS:
+            default_location = str(instance.disk_check_path())
+            location = text_input(breadcrumb=breadcrumb, prompt=t("software.install_location"),
+                                  default=default_location, hint=" ", initial=default_location)
+        with select_location(instance, location):
+            if not _install_disk_check(instance):
+                return
+            clear_screen()
+            print_header([*breadcrumb, t("software.install")])
+            base_console.print()
+            r = execute_install(instance, version)
+    except UserCancel:
+        return
+    except (OSError, ValueError, InstallError) as exc:
+        print_error(str(exc))
+        pause()
+        return
     if r.ok:
         print_success(t("install.success", name=_name, version=version, elapsed=r.elapsed))
     else:

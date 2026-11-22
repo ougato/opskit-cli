@@ -5,6 +5,7 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_GOLANG_FILE
 
 from software.base import InstallError
@@ -31,7 +32,7 @@ def _go_arch() -> str:
 def go_versions_dir() -> Path:
     """所有 Go 版本的根目录：~/.opskit/go/"""
     from .constants import GOLANG_PRIVATE_SUBDIR
-    return Path.home() / GOLANG_PRIVATE_SUBDIR
+    return managed_root("golang", Path.home() / GOLANG_PRIVATE_SUBDIR, load_snapshot())
 
 
 def go_version_dir(version: str) -> Path:

@@ -11,6 +11,7 @@ from typing import Callable, ClassVar
 from software.base import InstallError, InstallStep, Recipe
 from software._shared.mutation import versioned_mutation
 from software.registry import register
+from software.install_location import record_location
 from core.i18n import t
 from .common import (
     find_uv_python,
@@ -124,6 +125,10 @@ class PythonRecipe(Recipe):
         new_bin = self._install_with_uv(version, uv_bin, _progress) if uv_bin else None
 
         _progress(75)
+        from .constants import UV_PYTHON_SUBDIR
+        if not new_bin and self.disk_check_path() != Path.home() / UV_PYTHON_SUBDIR:
+            raise InstallError(t("software.python_error.install_failed", version=version))
+
         if not new_bin:
             new_bin = self._install_with_package_manager(version, major_minor)
 
@@ -205,7 +210,7 @@ class PythonRecipe(Recipe):
         # Refuse an incorrect interpreter before modifying links, shims or PATH.
         if not self._python_bin_matches(new_bin, version):
             raise InstallError(t("software.python_error.verify_failed"))
-        next_snap = dict(snap)
+        next_snap = dict(record_location(self.key, snap))
         installed = list(next_snap.get("installed_versions", []))
         if version not in installed:
             installed.append(version)

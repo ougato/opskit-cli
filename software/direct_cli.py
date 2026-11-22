@@ -117,13 +117,14 @@ def register(sw_app: typer.Typer, translate, host: SoftwareHost):
         name: str = typer.Argument(None, help=_ct("sw_name_install")),
         token: str = typer.Option("", "--token", "-t", help=_ct("sw_token")),
         version: str = typer.Option("", "--version", "-v", help=_ct("sw_version")),
+        install_location: str = typer.Option(None, "--install-location", help=_ct("sw_install_location")),
         token_file: str = typer.Option("", "--token-file", help="Read WireGuard token from file or - for stdin"),
         config_file: str = typer.Option("", "--config", help="Official installation YAML"),
     ) -> None:
         if config_file:
             from core.cli import emit, fail
             from software.install_config import load_options, install
-            if token or token_file or version or not name:
+            if token or token_file or version or install_location is not None or not name:
                 fail("--config conflicts with token/version or missing software name", 2)
             try:
                 options = load_options(name, config_file)
@@ -153,9 +154,23 @@ def register(sw_app: typer.Typer, translate, host: SoftwareHost):
                 from core.cli import fail
                 fail("unable to read token input", 2)
         if name:
-            host._sw_action_by_name(name, "install", token=token or None, version=version or None)
+            from core.cli import fail
+            from software.base import InstallError
+            from software.install_location import select_location
+            if install_location is None:
+                host._sw_action_by_name(name, "install", token=token or None, version=version or None)
+                return
+            cls, instance = host._get_recipe_for_direct(name)
+            try:
+                with select_location(instance, install_location):
+                    host._install_direct(["OpsKit", host.t("menu.software")], cls, instance,
+                                         version=version or None, token=token or None)
+            except (OSError, ValueError, InstallError) as exc:
+                fail(str(exc), 2)
         else:
-            from core.cli import require_interaction
+            from core.cli import fail, require_interaction
+            if install_location is not None:
+                fail(host.t("software.install_location_requires_name"), 2)
             require_interaction()
             host._boot()
             from software.menu import show_install

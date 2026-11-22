@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_NODEJS_FILE
 
 from software.base import InstallError
@@ -55,7 +56,7 @@ def needs_compat_glibc() -> bool:
 def node_versions_dir() -> Path:
     """所有 Node 版本的根目录：~/.opskit/nodejs/"""
     from .constants import NODEJS_PRIVATE_SUBDIR
-    return Path.home() / NODEJS_PRIVATE_SUBDIR
+    return managed_root("nodejs", Path.home() / NODEJS_PRIVATE_SUBDIR, load_snapshot())
 
 
 def node_version_dir(version: str) -> Path:

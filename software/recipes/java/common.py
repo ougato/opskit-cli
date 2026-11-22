@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_JAVA_FILE
 
 from software.base import InstallError
@@ -41,7 +42,7 @@ def _java_os() -> str:
 def java_versions_dir() -> Path:
     """所有 JDK 版本的根目录：~/.opskit/java/"""
     from .constants import JAVA_PRIVATE_SUBDIR
-    return Path.home() / JAVA_PRIVATE_SUBDIR
+    return managed_root("java", Path.home() / JAVA_PRIVATE_SUBDIR, load_snapshot())
 
 
 def java_version_dir(version: str) -> Path:

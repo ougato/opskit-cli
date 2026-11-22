@@ -119,6 +119,10 @@ opskit plugin disk-policy --minimum-free-mib 4096
 
 指定名称的 `software install/uninstall/upgrade/switch` 已统一结构化结果，进度送往 stderr；这些入口不执行菜单启动初始化或隐式应用平台更新。编排位于 software/lifecycle_cli.py，执行仍复用菜单的 software.actions。版本型 install/upgrade 要求 --version；switch 只能选择本地已安装版本，upgrade 目标已安装时复用 switch。版本标识拒绝路径分隔符、控制字符等不安全输入。uninstall 要求 --version 或 --all（多版本软件），两者互斥；单版本软件拒绝这两个选项。无交互卸载要求全局 --yes。参数或能力不支持在依赖安装之前拒绝；安装后无法 detect 不再报成功。software manage 保持交互专属，脚本调用模块的具体管理命令。
 
+Python、Node.js、Go 和 Java 支持 `software install NAME --version VERSION --install-location DIRECTORY`。目录可以包含空格，命令行中用引号包住整个路径。安装菜单在选择版本后预填该工具的托管目录，直接回车使用预填值。指定新位置时输入绝对路径或以 `~` 开头的用户目录，目标须为空目录或尚未创建。各工具的版本共用一个托管目录，已有托管版本时继续使用该目录。省略 CLI 参数时自动使用当前托管目录或原有默认目录。
+
+`software capabilities NAME` 的 `custom_install_location` 表示该工具是否接受此选项，`install_location` 显示当前平台的托管目录。
+
 `software diagnose NAME` 调用所属模块的只读报告，不执行平台 boot 或旧菜单。当前支持 rustdesk/tailscale/xui/wg_server/wg_client；平台或能力不支持提前拒绝。专用 diagnose 与软件入口共享报告；不健康/空检查返回 ok=false、退出 1，保留 checks。RustDesk 普通诊断不读取或输出连接密钥内容、不写状态、不查询公网。报告目前是基础检查，完整监听、API/TLS、路由和连通性仍待补齐。
 
 RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/hbbr 可执行文件归属。只读取系统 socket/process 表，不发送探测流量。权限不足或无法验证归属返回失败原因，不把缺乏可见性断言为“端口已关闭”。当前检查未覆盖可选 WebSocket、外部防火墙/公网可达性或安装产物可信性。

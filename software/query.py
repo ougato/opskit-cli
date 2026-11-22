@@ -1,4 +1,5 @@
 """Read-only official software inventory and capability descriptions."""
+from software.install_location import DEVELOPMENT_TOOLS
 from software.registry import all_recipes, get
 from core.platform import get_platform
 
@@ -9,6 +10,7 @@ def capabilities(cls):
     return {"name": cls.key, "platforms": cls.platforms, "category": cls.category,
             "requires_root": cls.requires_root, "group": cls.has_submenu,
             "install_version": cls.has_install_version_selection and not wizard and not cls.has_submenu,
+            "custom_install_location": cls.key in DEVELOPMENT_TOOLS,
             "upgrade": cls.has_upgrade, "switch": cls.has_switch,
             "diagnose": cls.has_diagnose, "manage": cls.has_manage,
             "install_mode": "group" if cls.has_submenu else "token" if cls.key == "wg_client" else "config" if config_install else "interactive_wizard" if wizard else "version" if cls.has_install_version_selection else "system",
@@ -52,4 +54,7 @@ def register(app):
         cls = get(name.lower())
         if cls is None:
             fail("unknown official software", 2)
-        emit(capabilities(cls))
+        info = capabilities(cls)
+        if info["custom_install_location"] and get_platform().os_type in cls.platforms:
+            info["install_location"] = str(cls().disk_check_path())
+        emit(info)
