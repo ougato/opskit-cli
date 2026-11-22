@@ -520,7 +520,11 @@ def _pick(subtitle_key: str, all_label: str = ""):
 def _update_all() -> None:
     """逐个更新插件，每个结果确认后继续"""
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), t("plugin.update_all")]
-    for manifest in commands.manifests():
+    clear_screen()
+    print_header(crumb)
+    with waiting(t("plugin.loading_inventory")):
+        manifests = commands.manifests()
+    for manifest in manifests:
         _update_one(manifest, [*crumb, _display_name(manifest)])
         pause()
 
@@ -545,7 +549,8 @@ def _update_one(manifest, crumb) -> None:
         else:
             print_error(t("plugin.update_failed", error=msg))
         return
-    refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
+    with waiting(t("plugin.loading_inventory")):
+        refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     if refreshed is None:
         print_error(t("plugin.install_no_manifest"))
         return

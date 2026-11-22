@@ -192,7 +192,8 @@ class InstallationProgress:
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
         message = Text(t(key, branch=name), no_wrap=True, overflow="ellipsis")
         # Redirected output stays clean; final success/error remains available.
-        if not console.is_terminal:
+        from core.cli import non_interactive
+        if not console.is_terminal or non_interactive.get():
             return
         if self.status is None:
             self.status = _InstallationStatus(message)

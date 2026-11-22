@@ -272,7 +272,10 @@ def register(app, translate=None):
         emit(describe(manifest))
 
     def update_result(manifest, fetch_profile, allow_private):
-        ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private, automatic=True)
+        from core.installation_progress import InstallationProgress
+        with InstallationProgress() as progress:
+            ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
+                                         automatic=True, progress=progress)
         result = {"name": manifest.name, "status": status if ok else "failed"}
         if not ok:
             result["error"] = (t("plugin.update_not_git", name=manifest.name) if status == "not_git"
