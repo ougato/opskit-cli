@@ -1,7 +1,8 @@
 """Trusted permission inspection and revocation in the existing plugin menu."""
 from core.i18n import t
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied, _key, capability_info_lines
-from core.prompt import select, confirm, pause, UserCancel
+from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
+from core.sdk import waiting
 from core.theme import print_info, print_error, print_success, get_icon
 from rich.markup import escape
 
@@ -11,7 +12,10 @@ def entry():
     breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.permissions")]
     try:
         while True:
-            grants = authority.list_grants()
+            clear_screen()
+            print_header(breadcrumb)
+            with waiting(t("plugin_native.permissions_help")):
+                grants = authority.list_grants()
             if not grants:
                 print_info(t("plugin_native.no_grants"))
                 pause()
@@ -29,8 +33,12 @@ def entry():
             details.append("ID: " + _key(request))
             if confirm(breadcrumb, t("confirm_ui.revoke"),
                        info_lines=details):
-                authority.revoke(request)
+                clear_screen()
+                print_header(breadcrumb)
+                with waiting(t("confirm_ui.revoke")):
+                    authority.revoke(request)
                 print_success(t("plugin_native.revoked"))
+                pause()
     except (KeyboardInterrupt, UserCancel):
         return
     except CapabilityDenied as error:
