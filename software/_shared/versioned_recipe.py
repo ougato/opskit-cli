@@ -286,7 +286,7 @@ class VersionedTarballRecipe(Recipe):
             previous_bin = self._switch_bin_dir(snap["active_version"])
         driver = self._get_driver()
         from software._shared.activation import activate_version, verify_command_version
-        activate_version(snap, {**snap, "active_version": version, self._bin_dir_snap_key: bin_dir},
+        activate_version(snap, {"active_version": version, self._bin_dir_snap_key: bin_dir},
                          save=self._save_snapshot,
                          apply=lambda: driver.apply_version_link(bin_dir),
                          restore=lambda: driver.apply_version_link(previous_bin) if previous_bin else driver.restore_original(),

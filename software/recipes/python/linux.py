@@ -61,6 +61,7 @@ class LinuxDriver(PlatformDriver):
     # ─── symlink / PATH ───────────────────────────────────────────────────────
 
     def apply_version_link(self, new_bin: str) -> None:
+        from software._shared import shell_path
         symlink_path, has_root = self._symlink_target()
         from .constants import SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END
         target = Path(new_bin)
@@ -68,6 +69,7 @@ class LinuxDriver(PlatformDriver):
             raise InstallError("Python route requires an existing absolute interpreter path")
         self._change_link(symlink_path, target, lambda: None if has_root else
                           self._ensure_local_bin_in_path(SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END))
+        shell_path.prepend_process_path(str(Path(symlink_path).parent))
 
     def restore_original(
         self, symlink_path: str, original_target: str | None, had_local_bin_path: bool,

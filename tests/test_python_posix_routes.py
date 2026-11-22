@@ -1,5 +1,6 @@
 """POSIX Python links preserve commands and compensate profile failures."""
 from pathlib import Path
+import os
 
 import pytest
 
@@ -11,6 +12,7 @@ from software.recipes.python.linux import LinuxDriver
 @pytest.fixture
 def routing(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
     driver = LinuxDriver()
     link = tmp_path / "local-bin/python3"
     monkeypatch.setattr(driver, "_symlink_target", lambda: (str(link), False))
@@ -19,6 +21,13 @@ def routing(tmp_path, monkeypatch):
         target.write_bytes(b"inert interpreter")
     link.parent.mkdir()
     return driver, link, targets
+
+
+def test_switched_python_is_available_to_current_process(routing, symlink_capable):
+    driver, link, (_, target) = routing
+    driver.apply_version_link(str(target))
+    assert link.resolve() == target
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(link.parent)
 
 
 def test_regular_existing_command_never_deleted(routing):
