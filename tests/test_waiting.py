@@ -32,6 +32,26 @@ def test_wait_display_nests_suspends_and_cleans_up(monkeypatch):
                       ("create", "second"), ("start",), ("update", "first"), ("stop",)]
 
 
+def test_nested_plugin_wait_cleanup_preserves_caller(monkeypatch):
+    display = installation_progress.WaitingDisplay(SimpleNamespace(is_terminal=False))
+    display.start("caller")
+    monkeypatch.setattr(plugin_sandbox._invocations, "wait_display", display, raising=False)
+    monkeypatch.setattr(plugin_sandbox._invocations, "wait_floor", display.depth, raising=False)
+    monkeypatch.setattr(plugin_sandbox, "check_authorization", lambda _: "fingerprint")
+    monkeypatch.setattr(plugin_sandbox, "_remaining", lambda: 1)
+
+    with pytest.raises(plugin_sandbox.SandboxError, match="no active waiting scope"):
+        plugin_sandbox._broker(None, {
+            "rpc_version": plugin_sandbox.plugin_json.RPC_VERSION,
+            "method": "ui.wait_stop",
+        })
+
+    display.start("service")
+    display.restore(1)
+    assert display.depth == 1
+    assert display.messages[0].label == "caller"
+
+
 @pytest.mark.parametrize("terminal,noninteractive", [(False, False), (True, True)])
 def test_wait_display_is_silent_without_interactive_terminal(monkeypatch, terminal, noninteractive):
     monkeypatch.setattr(installation_progress, "_InstallationStatus", lambda *a, **k: pytest.fail("unexpected animation"))

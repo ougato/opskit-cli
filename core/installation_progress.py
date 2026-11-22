@@ -157,9 +157,17 @@ class WaitingDisplay:
             self.suspended -= 1
             self._refresh()
 
+    @property
+    def depth(self):
+        return len(self.messages)
+
+    def restore(self, depth):
+        if self.depth > depth:
+            del self.messages[depth:]
+            self._refresh()
+
     def close(self):
-        self.messages.clear()
-        self._refresh()
+        self.restore(0)
 
 
 class InstallationProgress:

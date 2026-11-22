@@ -472,7 +472,8 @@ def _broker(manifest, request: dict):
     _remaining()
     if method == "ui.wait_update":
         display = getattr(_invocations, "wait_display", None)
-        if display is None or len(args) != 1 or kwargs:
+        if (display is None or len(args) != 1 or kwargs
+                or display.depth <= getattr(_invocations, "wait_floor", 0)):
             raise SandboxError("invalid progress update")
         display.update(args[0])
         return None
@@ -486,6 +487,9 @@ def _broker(manifest, request: dict):
         if method == "ui.wait_start":
             display.start(args[0], **kwargs)
         else:
+            floor = getattr(_invocations, "wait_floor", 0)
+            if floor and display.depth <= floor:
+                raise SandboxError("no active waiting scope for this plugin")
             display.stop(**kwargs)
         return None
     # check_authorization already checks this identity together with every
@@ -974,6 +978,7 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             previous_authority = getattr(_invocations, "capability_authority", None)
             previous_preload = getattr(_invocations, "preload", None)
             previous_wait = getattr(_invocations, "wait_display", None)
+            previous_wait_floor = getattr(_invocations, "wait_floor", 0)
             previous_tool_output = getattr(_invocations, "tool_output", None)
             tool_output = _DeferredToolOutput()
             _invocations.preload = _preload
@@ -981,7 +986,9 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             from core.installation_progress import WaitingDisplay
             from core.prompt import console
             authority = CapabilityAuthority()
-            display = WaitingDisplay(output_console=console)
+            display = previous_wait if previous_wait is not None else WaitingDisplay(output_console=console)
+            wait_floor = display.depth
+            _invocations.wait_floor = wait_floor
             authority.suspend_wait = display.suspend
             _invocations.capability_authority = authority
             _invocations.wait_display = display
@@ -990,12 +997,13 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
                 return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
             finally:
                 try:
-                    display.close()
+                    display.restore(wait_floor)
                     tool_output.finish(False)
                 finally:
                     authority.close()
                     _invocations.capability_authority = previous_authority
                     _invocations.wait_display = previous_wait
+                    _invocations.wait_floor = previous_wait_floor
                     _invocations.tool_output = previous_tool_output
                     _invocations.preload = previous_preload
                     _invocations.stack = stack
