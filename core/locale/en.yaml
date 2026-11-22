@@ -934,6 +934,11 @@ plugin_native:
     reason_network: "Network connection interrupted"
     reason_content: "Content or checksum validation failed"
   bootstrap:
+    update_wait: "Wait for plugin to be idle"
+    update_check: "Check installed plugin"
+    update_fetch: "Fetch remote version"
+    update_verify: "Verify candidate version"
+    update_publish: "Replace plugin files"
     tools: "Checking the installation environment…"
     repair: "Preparing the isolated Python environment…"
     runtime: "Preparing the plugin runtime…"

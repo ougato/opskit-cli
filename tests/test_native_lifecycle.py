@@ -67,7 +67,10 @@ def test_automatic_update_prepares_published_bytes_before_reporting_success(inst
             raise ValueError("runtime preparation failed")
 
     monkeypatch.setattr("core.plugin_runtime_manager.prepare_update", prepare)
-    ok, status = commands._update_locked(load_manifest(root), automatic=True)
+    phases = []
+    ok, status = commands._update_locked(load_manifest(root), automatic=True,
+                                         progress=lambda phase: phases.append(phase))
+    assert phases == ["update_check", "update_fetch", "update_verify", "update_publish", "runtime"]
     assert ok is prepare_ok and len(observed) == 1
     if prepare_ok:
         assert status == "updated" and trusted_record("demo")["installation_receipt"] == observed[0]

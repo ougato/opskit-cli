@@ -162,7 +162,7 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
             if not fallback_encoding:
                 yield chunk.rstrip("\n")
                 continue
-            # Match universal newlines in text mode, including Creator's
+            # Match universal newlines in text mode, including a tool's
             # standalone carriage return between a marker and its JSON.
             lines = chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
             for line in lines.removesuffix(b"\n").split(b"\n"):

@@ -182,7 +182,8 @@ class InstallationProgress:
             self.status.stop()
 
     def __call__(self, phase, name=""):
-        if phase not in {"fetch", "tools", "repair", "runtime"}:
+        if phase not in {"fetch", "tools", "repair", "runtime",
+                         "update_wait", "update_check", "update_fetch", "update_verify", "update_publish"}:
             return
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
         message = Text(t(key, branch=name), no_wrap=True, overflow="ellipsis")

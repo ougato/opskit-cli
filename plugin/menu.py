@@ -503,8 +503,14 @@ def _update_all() -> None:
 def _update_one(manifest, crumb) -> None:
     clear_screen()
     print_header(crumb)
+    from core.installation_progress import InstallationProgress
     try:
-        ok, msg = commands.update(manifest, automatic=True, **_update_fetch_options(manifest))
+        with InstallationProgress() as progress:
+            progress("update_wait")
+            options = _update_fetch_options(manifest)
+            if "fetch_interaction" in options:
+                options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
+            ok, msg = commands.update(manifest, automatic=True, progress=progress, **options)
     except UserCancel:
         print_info(t("plugin.update_cancelled", name=_display_name(manifest)))
         return

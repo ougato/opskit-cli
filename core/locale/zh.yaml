@@ -933,6 +933,11 @@ plugin_native:
     reason_network: "网络连接中断"
     reason_content: "内容或摘要校验失败"
   bootstrap:
+    update_wait: "等待插件空闲"
+    update_check: "检查已安装插件"
+    update_fetch: "获取远程版本"
+    update_verify: "校验候选版本"
+    update_publish: "替换插件文件"
     tools: "正在检查安装环境…"
     repair: "正在准备隔离 Python 环境…"
     runtime: "正在准备插件运行环境…"
