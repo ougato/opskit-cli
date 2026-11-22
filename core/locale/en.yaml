@@ -537,7 +537,9 @@ tailscale:
     login_title: "Tailscale login"
     login_done: "Logged in"
     down_done: "Tailscale disconnected"
+    down_failed: "Tailscale disconnect failed"
     restart_done: "tailscaled restarted"
+    restart_failed: "tailscaled failed to restart or is inactive"
   diagnose:
     title: "Tailscale diagnostics"
     installed: "Installed"

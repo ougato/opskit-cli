@@ -269,11 +269,23 @@ def _start_service() -> None:
     _run_root([SYSTEMCTL_COMMAND, "enable", "--now", TAILSCALED_SERVICE], check=False)
 
 
+def disconnect() -> None:
+    try:
+        _run_root([TAILSCALE_COMMAND, "down"])
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(t("tailscale.output.down_failed")) from exc
+
+
 def restart_service() -> None:
-    if _is_darwin():
-        _run_root([BREW_COMMAND, BREW_SERVICES_SUBCOMMAND, "restart", TAILSCALE_BREW_FORMULA], check=False)
-        return
-    _run_root([SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE], check=False)
+    command = ([BREW_COMMAND, BREW_SERVICES_SUBCOMMAND, "restart", TAILSCALE_BREW_FORMULA]
+               if _is_darwin() else [SYSTEMCTL_COMMAND, "restart", TAILSCALED_SERVICE])
+    try:
+        _run_root(command)
+        active = is_service_active()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(t("tailscale.output.restart_failed")) from exc
+    if not active:
+        raise RuntimeError(t("tailscale.output.restart_failed"))
 
 
 def start_login(*, advertise_exit_node: bool = True, timeout: float = TAILSCALE_UP_TIMEOUT_SECONDS) -> str:
@@ -588,13 +600,13 @@ def manage_client() -> None:
                 print_action_title(breadcrumb, trailing_blank=False)
                 print_warning(t("tailscale.output.auth_url_missing"))
             pause()
-        elif key == "3":
+        elif key in {"3", "4"}:
             print_action_title(breadcrumb, trailing_blank=False)
-            _run_root([TAILSCALE_COMMAND, "down"], check=False)
-            print_success(t("tailscale.output.down_done"))
-            pause()
-        elif key == "4":
-            print_action_title(breadcrumb, trailing_blank=False)
-            restart_service()
-            print_success(t("tailscale.output.restart_done"))
+            action, label = (disconnect, "down") if key == "3" else (restart_service, "restart")
+            try:
+                action()
+            except RuntimeError as exc:
+                print_warning(str(exc))
+            else:
+                print_success(t(f"tailscale.output.{label}_done"))
             pause()

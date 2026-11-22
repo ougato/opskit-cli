@@ -536,7 +536,9 @@ tailscale:
     login_title: "Tailscale 登录"
     login_done: "已登录"
     down_done: "Tailscale 已断开"
+    down_failed: "Tailscale 断开失败"
     restart_done: "tailscaled 已重启"
+    restart_failed: "tailscaled 重启失败或服务未运行"
   diagnose:
     title: "Tailscale 诊断"
     installed: "已安装"
