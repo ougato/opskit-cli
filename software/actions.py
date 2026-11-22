@@ -47,14 +47,22 @@ class ActionResult:
 def execute_install(instance, version: str) -> ActionResult:
     """执行安装并检测结果；无法检测安装结果时不能报告成功。"""
     from core.privilege import ensure_root_for_action
+    from software.install_location import clear_pending_location, remember_pending_location
     start = time.monotonic()
     try:
         ensure_root_for_action(instance, "install")
+        key = getattr(instance, "key", "")
+        remember_pending_location(key)
         instance.install(version)
         _invalidate_installed(instance)
         detected = instance.detect()
         if not detected:
             raise RuntimeError("installed software was not detected after installation")
+        try:
+            clear_pending_location(key)
+        except OSError:
+            # The committed install location already identifies this directory.
+            pass
         return ActionResult(ok=True, version=detected, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001 — 统一交给调用方的反馈出口处理
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)

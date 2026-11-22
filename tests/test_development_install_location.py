@@ -1,6 +1,7 @@
 from contextlib import nullcontext
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -87,3 +88,35 @@ def test_menu_prefills_editable_default_and_preflights_input(tmp_path, monkeypat
     monkeypatch.setattr(menu, "clear_screen", lambda: None)
     monkeypatch.setattr(menu, "pause", lambda: None)
     menu._do_install_version_picker(["OpsKit"], GoRecipe, recipe)
+
+
+def test_failed_install_can_retry_only_its_own_location(tmp_path, monkeypatch):
+    from software import actions
+    from software._shared import mutation
+    from software.base import InstallError
+    from software.install_location import select_location
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(mutation, "versioned_mutation_scope", nullcontext)
+    selected = tmp_path / "custom python"
+    other = tmp_path / "unrelated files"
+    other.mkdir()
+    (other / "readme.txt").touch()
+
+    def fail_after_writing(version):
+        (selected / "partial-download").touch()
+        raise InstallError("download stopped")
+
+    recipe = SimpleNamespace(
+        key="python", requires_root=False, disk_check_path=lambda: tmp_path / "default",
+        installed_versions=list, install=fail_after_writing, detect=lambda: "3.14.8",
+    )
+    with select_location(recipe, str(selected)):
+        assert not actions.execute_install(recipe, "3.14.8").ok
+    with pytest.raises(InstallError):
+        with select_location(recipe, str(other)):
+            pytest.fail("unrelated directory should not be selected")
+    recipe.install = lambda version: None
+    with select_location(recipe, str(selected)):
+        assert actions.execute_install(recipe, "3.14.8").ok
+    assert not (tmp_path / ".opskit/snapshots/python-pending-install-location.json").exists()

@@ -166,7 +166,7 @@ class PythonRecipe(Recipe):
         on_progress(25)
         try:
             result = capture(
-                [uv_bin, "python", "install", version], env=env,
+                [uv_bin, "python", "install", "--no-bin", "--no-registry", version], env=env,
                 timeout=UV_PYTHON_TIMEOUT, max_bytes=1024 * 1024,
                 stdin=subprocess.DEVNULL,
             )

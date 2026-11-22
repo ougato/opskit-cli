@@ -21,7 +21,7 @@ def test_uv_install_uses_private_directory_budget_and_closed_stdin(tmp_path, mon
     progress = []
     assert recipe.PythonRecipe()._install_with_uv("3.12.13", "private-uv", progress.append) == "managed-python"
     command, options = observed[0]
-    assert command == ["private-uv", "python", "install", "3.12.13"]
+    assert command == ["private-uv", "python", "install", "--no-bin", "--no-registry", "3.12.13"]
     assert options["stdin"] == subprocess.DEVNULL
     assert options["max_bytes"] == 1024 * 1024
     assert options["timeout"] == 1800

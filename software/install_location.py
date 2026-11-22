@@ -2,8 +2,10 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+import stat
 
 from core.i18n import t
+from software._shared.snapshot import SnapshotStore
 from software.base import InstallError
 
 
@@ -24,6 +26,41 @@ def record_location(key: str, snapshot: dict) -> dict:
     if selected is not None and selected[0] == key:
         return {**snapshot, "install_location": str(selected[1])}
     return snapshot
+
+
+def _pending_location(key: str) -> SnapshotStore:
+    return SnapshotStore(".opskit/snapshots", f"{key}-pending-install-location.json")
+
+
+def _location_identity(path: Path) -> dict:
+    metadata = path.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or getattr(metadata, "st_reparse_tag", 0)
+            or path.resolve() != path):
+        raise InstallError(t("software.install_location_invalid"))
+    return {"install_location": str(path), "device": metadata.st_dev, "inode": metadata.st_ino}
+
+
+def _validate_new_location(key: str, path: Path) -> None:
+    if path.exists():
+        identity = _location_identity(path)
+        if any(path.iterdir()) and (not identity["inode"] or _pending_location(key).load() != identity):
+            raise InstallError(t("software.install_location_not_empty"))
+
+
+def remember_pending_location(key: str) -> None:
+    selected = _selected.get()
+    if selected is None or selected[0] != key:
+        return
+    path = selected[1]
+    path.mkdir(parents=True, exist_ok=True)
+    _validate_new_location(key, path)
+    _pending_location(key).save(_location_identity(path))
+
+
+def clear_pending_location(key: str) -> None:
+    selected = _selected.get()
+    if selected is not None and selected[0] == key:
+        _pending_location(key).delete()
 
 
 def parse_location(value: str) -> Path:
@@ -57,8 +94,7 @@ def select_location(instance, value: str | None):
             return
         if instance.installed_versions():
             raise InstallError(t("software.install_location_in_use", path=current))
-        if path.exists() and any(path.iterdir()):
-            raise InstallError(t("software.install_location_not_empty"))
+        _validate_new_location(instance.key, path)
         token = _selected.set((instance.key, path))
         try:
             yield

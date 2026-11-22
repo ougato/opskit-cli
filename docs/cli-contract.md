@@ -123,6 +123,8 @@ Python、Node.js、Go 和 Java 支持 `software install NAME --version VERSION -
 
 `software capabilities NAME` 的 `custom_install_location` 表示该工具是否接受此选项，`install_location` 显示当前平台的托管目录。
 
+下载安装失败后，可以对同一个目录重试。OpsKit 会核对失败时记录的目录身份，再使用其中留下的安装文件。
+
 `software diagnose NAME` 调用所属模块的只读报告，不执行平台 boot 或旧菜单。当前支持 rustdesk/tailscale/xui/wg_server/wg_client；平台或能力不支持提前拒绝。专用 diagnose 与软件入口共享报告；不健康/空检查返回 ok=false、退出 1，保留 checks。RustDesk 普通诊断不读取或输出连接密钥内容、不写状态、不查询公网。报告目前是基础检查，完整监听、API/TLS、路由和连通性仍待补齐。
 
 RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/hbbr 可执行文件归属。只读取系统 socket/process 表，不发送探测流量。权限不足或无法验证归属返回失败原因，不把缺乏可见性断言为“端口已关闭”。当前检查未覆盖可选 WebSocket、外部防火墙/公网可达性或安装产物可信性。
