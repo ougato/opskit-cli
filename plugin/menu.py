@@ -266,12 +266,16 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool
     if manifest.api_version != PLUGIN_API_VERSION:
         print_error(t("plugin_native.errors.sdk_required"))
         return False
-    record = commands.trusted_record(manifest.name) or {}
-    shown_source = source or record.get("source", "")
-    shown_branch = branch if branch is not None else record.get("branch")
-    fingerprint = commands.compute_fingerprint(manifest.root)
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
+    clear_screen()
+    print_header([*crumb, t("confirm_ui.trust")])
+    with waiting(t("plugin_native.lifecycle.fingerprint_wait")):
+        record = commands.trusted_record(manifest.name) or {}
+        fingerprint = commands.compute_fingerprint(manifest.root)
     if not fingerprint:
         raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
+    shown_source = source or record.get("source", "")
+    shown_branch = branch if branch is not None else record.get("branch")
     lines = _summary_lines(manifest)
     lines.append(t("confirm_ui.trust_detail"))
     if shown_source:
@@ -280,14 +284,17 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool
         lines.append(f"{t('plugin.col_branch')}: {escape(shown_branch)}")
     lines.append(f"{t('plugin.col_fingerprint')}: {fingerprint}")
     if not confirm(
-        breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
+        breadcrumb=crumb,
         prompt=t("confirm_ui.trust"),
         theme_key=_THEME_KEY,
         info_lines=lines,
         require_explicit=True,
     ):
         return False
-    commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
+    clear_screen()
+    print_header([*crumb, t("confirm_ui.trust")])
+    with waiting(t("plugin_native.lifecycle.trust_save_wait")):
+        commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
     return True
 
 

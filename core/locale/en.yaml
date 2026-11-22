@@ -1106,6 +1106,8 @@ plugin_native:
     repository_invalid: "invalid repository or branch"
     remove_cancelled: "plugin removal cancelled"
     fingerprint_mismatch: "fingerprint does not match current plugin content"
+    fingerprint_wait: "Reading trust record and computing the plugin fingerprint"
+    trust_save_wait: "Checking the fingerprint and saving plugin trust"
     checksum_mismatch: "plugin checksum mismatch"
     changed: "plugin changed during authorization"
     authorize_service_help: "Approve the caller's exact declared service contract"

@@ -1105,6 +1105,8 @@ plugin_native:
     repository_invalid: "仓库或分支无效"
     remove_cancelled: "已取消移除插件"
     fingerprint_mismatch: "指纹与当前插件内容不匹配"
+    fingerprint_wait: "读取信任记录并计算插件指纹"
+    trust_save_wait: "复核指纹并保存插件信任"
     checksum_mismatch: "插件校验和不匹配"
     changed: "授权期间插件内容发生变化"
     authorize_service_help: "批准调用方声明的指定服务契约"
