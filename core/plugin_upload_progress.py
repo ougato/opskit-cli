@@ -35,7 +35,7 @@ def upload_progress(console, total, files, breadcrumb=None):
         while len(samples) > 1 and samples[1][0] <= now - 2:
             samples.popleft()
         since, previous = samples[0]
-        rate = decimal((sent - previous) / max(now - since, 0.001))
+        rate = decimal(round((sent - previous) / max(now - since, 0.001)))
         elapsed = now - started
         percentage = (verified * 100 // total) if total else (completed * 100 // files)
         if completed < files:
