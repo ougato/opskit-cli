@@ -470,27 +470,32 @@ def _broker(manifest, request: dict):
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
-    if method == "ui.wait_update":
+    if method in {"ui.wait_start", "ui.wait_stop", "ui.progress_start", "ui.progress_update", "ui.progress_stop"}:
         display = getattr(_invocations, "wait_display", None)
-        if (display is None or len(args) != 1 or kwargs
-                or display.depth <= getattr(_invocations, "wait_floor", 0)):
-            raise SandboxError("invalid progress update")
-        display.update(args[0])
-        return None
-    if method in {"ui.wait_start", "ui.wait_stop"}:
-        display = getattr(_invocations, "wait_display", None)
-        starting = method == "ui.wait_start"
-        if (display is None or len(args) != int(starting)
-                or set(kwargs) - ({"failed_label", "total"} if starting else {"failed"})
-                or ("failed" in kwargs and type(kwargs["failed"]) is not bool)):
+        floor = getattr(_invocations, "wait_floor", 0)
+        if display is None:
             raise SandboxError("invalid waiting scope")
-        if method == "ui.wait_start":
+        if method == "ui.wait_start" and len(args) == 1 and not kwargs:
+            display.start(args[0])
+        elif (method == "ui.progress_start" and len(args) == 1
+              and set(kwargs) == {"total", "failed_label"}
+              and type(kwargs["total"]) is int and isinstance(kwargs["failed_label"], str)):
             display.start(args[0], **kwargs)
-        else:
-            floor = getattr(_invocations, "wait_floor", 0)
+        elif (method == "ui.progress_update" and len(args) == 1 and not kwargs
+              and display.depth > floor and display.counting):
+            display.update(args[0])
+        elif method in {"ui.wait_stop", "ui.progress_stop"} and not args:
             if floor and display.depth <= floor:
                 raise SandboxError("no active waiting scope for this plugin")
-            display.stop(**kwargs)
+            if method == "ui.wait_stop" and not kwargs and not display.counting:
+                display.stop()
+            elif (method == "ui.progress_stop" and display.counting and set(kwargs) <= {"failed"}
+                  and type(kwargs.get("failed", False)) is bool):
+                display.stop(**kwargs)
+            else:
+                raise SandboxError("invalid waiting scope")
+        else:
+            raise SandboxError("invalid waiting scope")
         return None
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.

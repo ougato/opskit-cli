@@ -182,3 +182,32 @@ def test_counted_progress_rejects_invalid_updates_and_requires_all_items():
     display.update(2)
     display.stop()
     assert "100%" in output.getvalue()
+
+
+def test_broker_keeps_counted_progress_separate_from_waiting(monkeypatch):
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    display = installation_progress.WaitingDisplay(Console(file=output))
+    monkeypatch.setattr(plugin_sandbox._invocations, "wait_display", display, raising=False)
+    monkeypatch.setattr(plugin_sandbox, "check_authorization", lambda _: "fingerprint")
+    monkeypatch.setattr(plugin_sandbox, "_remaining", lambda: 1)
+
+    def call(method, *args, **kwargs):
+        return plugin_sandbox._broker(None, {
+            "rpc_version": plugin_sandbox.plugin_json.RPC_VERSION,
+            "method": method, "args": list(args), "kwargs": kwargs,
+        })
+
+    with pytest.raises(plugin_sandbox.SandboxError):
+        call("ui.wait_start", "Download", total=2, failed_label="Failed")
+    with pytest.raises(plugin_sandbox.SandboxError):
+        call("ui.progress_start", "Download", failed_label="Failed")
+    call("ui.progress_start", "Download", total=2, failed_label="Failed")
+    with pytest.raises(plugin_sandbox.SandboxError):
+        call("ui.wait_stop")
+    call("ui.progress_update", 2)
+    call("ui.progress_stop")
+    assert "100%" in output.getvalue()
+    assert display.depth == 0

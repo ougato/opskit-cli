@@ -203,7 +203,9 @@ def inspect_build_directory(project, build_directory):
 
 `host_execute` 默认按具体命令授权；显式项目读写及执行授权也覆盖在其目录树中启动的工具。`output_header` 可传入面包屑列表，让交互终端在授权结束、工具输出开始前清屏并显示标题，非交互模式不会清屏。确需反复调用同一工具时，可在 options 中设置 `authorization_scope: "tool"`，请求按插件指纹、工具路径和摘要授权，允许该插件在任意工作目录使用任意参数运行该工具；宿主会明确显示这一范围。工具范围不支持 `output_parent`、`config_base64` 或 `tool_dependencies`。插件指纹变化需重新授权；按工具授权时工具内容变化也需重新授权。项目读写及执行授权不绑定单个工具，旧的命令授权不会自动扩大。
 
-工具构建或安装需要进度动画时，先检查 SDK 是否提供 `HOST_TOOL_PROGRESS`，再向 `host_execute` 传入[进度描述](plugin-spec.md#宿主能力与多语言)。插件提供本地化阶段名称及第三方日志的字面标记，框架负责在宿主终端渲染。百分比来自工具输出，只有起止信号的阶段显示等待动画。插件代码自身的阶段可用 `progress_step(message, failed_label)` 显示同款动画。旧 SDK 可省略此选项以兼容原始输出流。下载等能准确计数的插件阶段先检查 `HOST_COUNTED_PROGRESS`，再使用 `with progress_step(label, failed_label, total=len(files)) as update:`。每项实际成功落盘后调用 `update(done)`，失败时保留未完成状态。
+菜单过渡时优先进入下一页。已知目标页时先显示标题，再执行该页的任务。必须先完成读取、授权或探测才能确定下一页时，在当前页面下用 `with waiting(label):` 显示彩色点阵和正在执行的动作。无法测量完成量的阶段也使用此调用。
+
+任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
 
 若工具日志需要等业务结果确认后再显示，可检查 SDK 是否支持 `finish_host_tool_output` 并启用 `defer_output`。工具退出码、产物校验和归档等所需步骤均通过后，调用 `finish_host_tool_output(True)`。任一步骤失败则调用 `finish_host_tool_output(False)`，宿主回放当前尚未处理的日志。
 
