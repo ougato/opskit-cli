@@ -888,6 +888,8 @@ plugin_native:
     saved: Space threshold saved.
     failed: Space configuration refused; check configuration and available capacity.
     details: 'Minimum free: {minimum} MiB; no filesystem quota.'
+    reading: Reading disk policy
+    saving: Saving disk policy
     invalid: Minimum free space must be an integer from 256 to 1048576 MiB.
     low_space: 'Insufficient space at {path}: need {required} MiB, available {available} MiB. This is a check, not a hard quota.'
     help: Inspect or configure framework disk headroom; no filesystem hard quota.

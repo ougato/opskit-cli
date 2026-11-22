@@ -887,6 +887,8 @@ plugin_native:
     saved: 空间阈值已保存。
     failed: 空间设置被拒绝，请检查配置和剩余容量。
     details: 最低剩余：{minimum} MiB；不提供磁盘硬配额。
+    reading: 读取磁盘策略
+    saving: 保存磁盘策略
     invalid: 最低剩余空间必须为 256..1048576 MiB 的整数。
     low_space: '{path} 剩余空间不足：至少需要 {required} MiB，当前 {available} MiB。这是空间检查，不是磁盘硬配额。'
     help: 查看或设置插件框架最低剩余空间，不提供文件系统硬配额。
