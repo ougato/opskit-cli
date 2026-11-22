@@ -46,11 +46,11 @@ def select_location(instance, value: str | None):
         return
     if instance.key not in DEVELOPMENT_TOOLS:
         raise InstallError(t("software.install_location_unsupported"))
+    path = parse_location(value)
 
     from software._shared.mutation import versioned_mutation_scope
 
     with versioned_mutation_scope():
-        path = parse_location(value)
         current = instance.disk_check_path().resolve()
         if path == current:
             yield
