@@ -216,3 +216,14 @@ class InstallationProgress:
             with self.suspend():
                 return callback(*args, **kwargs)
         return ask
+
+    @contextmanager
+    def copy_files(self, total):
+        from core.cli import non_interactive
+        from core.sdk import progress_step
+        if not console.is_terminal or non_interactive.get():
+            yield None
+            return
+        with self.suspend(), progress_step(t("plugin_native.bootstrap.update_copy"),
+                                          t("plugin_native.bootstrap.update_copy_failed"), total=total) as update:
+            yield update

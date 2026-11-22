@@ -88,6 +88,7 @@ opskit --yes plugin remove my_plugin
 
 - `update NAME` 与 `update --all` 二选一。更新使用安装时记录的来源和分支。私有凭据和私网放行请用单个插件命令指定
 - `update --all` 按顺序处理所有已安装插件，单项失败后继续，最终返回 `plugins` 结果列表及 `failed` 计数。有失败项时退出 1，参数错误退出 2。使用 `opskit --output json plugin update --all` 可在脚本中读取完整结果
+- 交互终端在复制候选版本时，按已复制文件数显示该步骤的百分比。更新成功以完整性校验和发布结果为准。无总量的更新阶段显示彩色等待点阵
 - `updated` 表示已装入新内容，`unchanged` 表示内容相同。两者均可通过 `authorization_required` 判断是否需要授信
 - `downgrade` 表示已装入较低版本，保留待授信状态并计入需要处理的条目。核对版本和指纹后可显式授信。内容校验拒绝或更新失败时，结果包含 `error`
 - 交互菜单在当轮确认待授信版本，按任意键继续下一个。CLI 将确认留给显式的 `plugin trust`，便于脚本审查每个指纹

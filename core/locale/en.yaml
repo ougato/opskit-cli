@@ -951,6 +951,8 @@ plugin_native:
     update_wait: "Wait for plugin to be idle"
     update_check: "Check installed plugin"
     update_fetch: "Fetch remote version"
+    update_copy: "Copy candidate files"
+    update_copy_failed: "Copy failed"
     update_verify: "Verify candidate version"
     update_publish: "Replace plugin files"
     tools: "Checking the installation environment…"

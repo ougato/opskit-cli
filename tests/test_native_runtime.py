@@ -1,8 +1,31 @@
 import os
+from contextlib import contextmanager
 
 import pytest
 
 from core.native_runtime import inventory, stage, verify
+
+
+def test_stage_counts_each_copied_file(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("a", "b"):
+        (source / name).write_text(name)
+    destination = tmp_path / "destination"
+    updates = []
+
+    @contextmanager
+    def progress(total):
+        assert total == 2
+
+        def update(count):
+            assert len(list(destination.iterdir())) == count
+            updates.append(count)
+
+        yield update
+
+    stage(source, destination, inventory(source), copy_progress=progress)
+    assert updates == [1, 2]
 
 
 def test_runtime_snapshot_binds_bytes_and_file_set(tmp_path):

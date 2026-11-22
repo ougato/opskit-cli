@@ -950,6 +950,8 @@ plugin_native:
     update_wait: "等待插件空闲"
     update_check: "检查已安装插件"
     update_fetch: "获取远程版本"
+    update_copy: "复制候选文件"
+    update_copy_failed: "复制失败"
     update_verify: "校验候选版本"
     update_publish: "替换插件文件"
     tools: "正在检查安装环境…"
