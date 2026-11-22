@@ -5,6 +5,7 @@ from rich.markup import escape
 
 from core.i18n import current_lang, t
 from core.prompt import select, text_input, confirm, pause, clear_screen, print_header, UserCancel, console
+from core.sdk import waiting
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
 from plugin import commands
@@ -166,10 +167,12 @@ def _group_menu(group_id: str) -> None:
 
 def _manage() -> None:
     """插件管理主循环：安装 / 更新 / 卸载"""
-    # Discovery may have started in the root menu, even if this menu did not
-    # receive a local preload handle. Retire it before changing plugin sources.
     from core.plugin_entry_preload import cancel_pending
-    cancel_pending(wait=True)
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
+    destinations = {
+        "1": "plugin.install", "2": "plugin.update", "3": "plugin.remove",
+        "4": "plugin_native.permissions", "5": "plugin_native.maintenance",
+    }
     while True:
         choices = [
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
@@ -180,7 +183,7 @@ def _manage() -> None:
         ]
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -191,6 +194,13 @@ def _manage() -> None:
         if key is None:
             break
         try:
+            if key not in destinations:
+                continue
+            clear_screen()
+            print_header([*crumb, t(destinations[key])])
+            # Discovery may have started in the root menu.
+            with waiting(t("plugin_native.bootstrap.update_wait")):
+                cancel_pending(wait=True)
             if key == "1":
                 _install()
             elif key == "2":
@@ -440,7 +450,8 @@ def _pick(subtitle_key: str, all_label: str = ""):
     """选择一个已安装插件：与插件工具入口一致的分组结构 —
     先显示入口名（group），进入后再显示组内插件显示名；未分组插件直接显示。
     all_label 非空时列表第一项为该文案，选中返回哨兵 _ALL"""
-    manifests = commands.manifests()
+    with waiting(t("plugin.loading_inventory")):
+        manifests = commands.manifests()
     if not manifests:
         clear_screen()
         print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key)])

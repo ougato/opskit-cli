@@ -36,6 +36,20 @@ def test_update_all_never_opens_trust_confirmation(monkeypatch):
     assert len(errors) == 2 and len(successes) == 1 and len(notices) == 1
 
 
+def test_manage_shows_destination_before_waiting_for_preload(monkeypatch):
+    from core import plugin_entry_preload
+
+    events = []
+    keys = iter(["2", None])
+    monkeypatch.setattr(menu, "select", lambda **kwargs: events.append("list") or next(keys))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda crumb: events.append(crumb[-1]))
+    monkeypatch.setattr(plugin_entry_preload, "cancel_pending", lambda *, wait: events.append(("cancel", wait)))
+    monkeypatch.setattr(menu, "_update", lambda: events.append("update"))
+    menu._manage()
+    assert events == ["list", menu.t("plugin.update"), ("cancel", True), "update", "list"]
+
+
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_management_and_maintenance_structure(monkeypatch, language):
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
