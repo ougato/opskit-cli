@@ -14,8 +14,14 @@ from core.plugin_trust import compute_fingerprint, invalidate
 from plugin import commands
 
 
+def _inventory():
+    from core.sdk import waiting
+    with waiting(t("plugin.loading_inventory")):
+        return commands.manifests()
+
+
 def resolve(name):
-    matches = [item for item in commands.manifests() if item.name == name]
+    matches = [item for item in _inventory() if item.name == name]
     if len(matches) != 1:
         fail(t("plugin_native.lifecycle.not_found"), 2)
     return matches[0]
@@ -248,7 +254,7 @@ def register(app, translate=None):
     @app.command("list", help=translate("lifecycle.list_help"))
     @guarded
     def list_plugins():
-        emit([describe(item) for item in commands.manifests()])
+        emit([describe(item) for item in _inventory()])
 
     @app.command("show", help=translate("lifecycle.show_help"))
     @guarded
@@ -305,7 +311,7 @@ def register(app, translate=None):
             emit(result)
             return
 
-        results = [update_result(item, fetch_profile, allow_private) for item in commands.manifests()]
+        results = [update_result(item, fetch_profile, allow_private) for item in _inventory()]
         failures = sum("error" in result for result in results)
         report = {"plugins": results, "failed": failures}
         if failures:
