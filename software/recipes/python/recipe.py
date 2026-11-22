@@ -36,10 +36,8 @@ class PythonRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
-    def disk_check_paths(self) -> tuple[Path | None, ...]:
-        # uv may be unavailable, in which case a package manager or source
-        # build selects a different target. The route is not known here.
-        return (None,)
+    def disk_check_path(self) -> Path:
+        return uv_python_dir()
 
     def detect(self) -> str | None:
         return get_driver().detect_active()
@@ -156,10 +154,10 @@ class PythonRecipe(Recipe):
         on_progress: Callable[[int], None],
     ) -> str | None:
         from core.process import capture
-        from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
+        from .constants import UV_PYTHON_TIMEOUT
 
         env = os.environ.copy()
-        env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
+        env["UV_PYTHON_INSTALL_DIR"] = str(self.disk_check_path())
         on_progress(25)
         try:
             result = capture(
