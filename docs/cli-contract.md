@@ -2,6 +2,8 @@
 
 `plugin run NAME -- ARGS` 的插件发现与执行共享同一总期限和受监督reader，发现耗时不能在进入invoke时重新获得完整预算。invoke仍重新读取启用/信任/授权及较短配置期限；路由不再在主进程重复读取启用配置。ARGS的大小写、顺序、重复参数与插件--help继续原样传递，未引入插件业务专属的平台参数。源码专项及实际产物范围以[最新台账](validation-status-20261015.md)为准。
 
+插件 CLI 通过 SDK 显示的等待、计数进度和上传传输诊断写入 stderr，包括嵌套的插件服务调用。插件业务结果可通过 stdout 单独收集。
+
 平台维护命令 `plugin inspect-workspaces [--limit 256]` 返回 `{entries: [{token, kind}], unknown}`，kind为directory/unsafe。limit范围1..256，全扫描最多4096项；结果仅是只读观察，不建立所有权、不授权删除，不读取目录内容、不调用Docker。缺失命名空间保持不存在；失败/超限1、参数错误2、取消130。详见[资源元数据恢复](plugin-resource-metadata-recovery.md)。
 
 全局 `--output text|json`；JSON 输出为 `{schema_version: 1, ok, data, error}`，连续采样/逐跳输出使用 JSON Lines。`--non-interactive` 拒绝输入和菜单，`--yes` 只批准普通确认。尚未迁移的软件与管理命令仍需补齐统一输出，不代表全部 CLI 已完成。

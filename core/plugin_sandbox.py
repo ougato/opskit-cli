@@ -520,6 +520,8 @@ def _broker(manifest, request: dict):
         from core.prompt import console
         transfer = upload_files if method == "host.upload_files" else upload_file
         display = getattr(_invocations, "wait_display", None)
+        if display is not None:
+            console = display.console
         with display.suspend() if display is not None else nullcontext():
             try:
                 return transfer(manifest.name, fingerprint, *args, authority=authority,
@@ -991,7 +993,13 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             from core.installation_progress import WaitingDisplay
             from core.prompt import console
             authority = CapabilityAuthority()
-            display = previous_wait if previous_wait is not None else WaitingDisplay(output_console=console)
+            if previous_wait is not None:
+                display = previous_wait
+            else:
+                if action == "cli":
+                    from rich.console import Console
+                    console = Console(stderr=True)
+                display = WaitingDisplay(output_console=console)
             wait_floor = display.depth
             _invocations.wait_floor = wait_floor
             authority.suspend_wait = display.suspend
