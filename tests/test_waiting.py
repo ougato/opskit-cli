@@ -212,6 +212,29 @@ def test_counted_progress_rejects_invalid_updates_and_requires_all_items():
     assert "100%" in output.getvalue()
 
 
+def test_counted_progress_renders_real_intermediate_state_in_terminal():
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, force_interactive=True,
+                      legacy_windows=False, color_system="truecolor", width=100,
+                      _environ={"TERM": "xterm"})
+    display = installation_progress.WaitingDisplay(console)
+    display.start("Verify files", failed_label="Failed", total=4)
+    try:
+        assert "0%" in output.getvalue()
+        display.update(2)
+        display.status.refresh()
+        assert "50%" in output.getvalue()
+        display.stop(failed=True)
+    finally:
+        display.close()
+    rendered = output.getvalue()
+    assert "Failed" in rendered and "100%" not in rendered
+    assert "\x1b[?25h" in rendered
+
+
 def test_broker_keeps_counted_progress_separate_from_waiting(monkeypatch):
     from io import StringIO
     from rich.console import Console
