@@ -423,6 +423,7 @@ xui:
     install_script_exit: "3x-ui 安装脚本退出，退出码 {code}"
     install_script_timeout: "3x-ui 安装脚本在 {seconds} 秒后超时"
     link_format_conflict: "--raw 和 --mihomo 只能选一个"
+    journal_failed: "无法读取 X-UI 服务日志"
     invalid_link: "已保存的 VLESS REALITY 链接格式无效"
     download_script_fail: "X-UI 安装脚本下载失败，请检查网络：{url}"
   output:

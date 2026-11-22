@@ -1,7 +1,8 @@
 """Official XUI management with explicit sensitive export."""
 import typer
 from core.cli import emit, fail, guarded
-from xui import utils, traffic, constants
+from xui import utils, traffic
+from xui.journal import service_logs
 
 
 def register(app, context_settings):
@@ -72,20 +73,7 @@ def register(app, context_settings):
     @guarded
     def logs(lines: int = typer.Option(80, "--lines", min=1, max=10000), follow: bool = typer.Option(False, "--follow")):
         supported()
-        from core.process import stream
-        from core.secrets import redact
-        command = [constants.JOURNALCTL_COMMAND, "-u", constants.XUI_SERVICE, "-n", str(lines), constants.JOURNAL_NO_PAGER_ARG]
-        if follow:
-            command.append("-f")
-        iterator = stream(command, timeout=None if follow else 30)
-        try:
-            while True:
-                try:
-                    line = next(iterator)
-                except StopIteration as done:
-                    if done.value:
-                        fail("journal query failed")
-                    break
-                emit({"line": redact(line)})
-        finally:
-            iterator.close()
+        from contextlib import closing
+        with closing(service_logs(lines, follow=follow)) as entries:
+            for line in entries:
+                emit({"line": line})

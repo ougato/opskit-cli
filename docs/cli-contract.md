@@ -159,7 +159,7 @@ Windows任务使用独立产物副本及随机脚本目录，helper持有暂存�
 
 `software install xui --config FILE` 要求显式 host，支持 panel_port/panel_user/panel_base_path/vless_port/sni/dest。密码从 panel_password_file 读取；未提供时生成并要求 credentials_output_file。路径相对配置目录解析，敏感导出拒绝覆盖。安装要求 Linux/systemd，API 或服务配置失败不报成功。
 
-`xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`，状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。默认导出 JSON，加 `--raw` 导出单行 VLESS URI 文本。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
+`xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`。菜单与命令行共用日志读取和逐行脱敏，读取失败显示错误。状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。默认导出 JSON，加 `--raw` 导出单行 VLESS URI 文本。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
 
 敏感导出要求已有的受保护目标目录：POSIX目录由当前有效用户所有，group/other不可写；macOS还拒绝目录扩展ACL。Windows目录所有者须为当前用户/SYSTEM/Administrators，其他主体可有读取权限但不可有写入、删除或改权限的授权；最终父目录不能为重解析点。共享可写目录明确拒绝，不自动修改用户目录权限。先完成JSON序列化，再在目录内创建私密暂存文件，写入及同步完成后以不覆盖方式发布，已有文件、链接或目录保持原样。POSIX使用目录描述符及原子link；Windows创建时即指定私密ACL，并使用文件句柄相对目录重命名及失败删除。发布前后及最终同步后重查目录身份和权限；Windows在规范化路径之前拒绝末尾点/空格、保留设备名及备用数据流文件名。普通失败清理仅处理本次对象；POSIX目录一旦失去保护，保留私密暂存文件，避免按名称清理误删替换对象，恢复机制仍开放。同账户恶意写入者、管理员、网络文件系统和断电后孤立暂存文件的完整恢复仍未验收，不能等同于整个安装/服务事务已完成。
 
