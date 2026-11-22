@@ -111,7 +111,8 @@ def _render_line(desc: str, pct: int | None, elapsed: float, color: str, width: 
     filled = int(_BAR_WIDTH * (pct or 0) / 100)
     bar = _FILLED * filled + _EMPTY * (_BAR_WIDTH - filled)
     value = status if pct is None else f"{pct:>4d}%"
-    return f"[{color}]{_pad_desc(desc, width)} {bar}  {value:>5}  {elapsed:.2f}s[/{color}]"
+    suffix = f"  {status}" if pct is not None and status else ""
+    return f"[{color}]{_pad_desc(desc, width)} {bar}  {value:>5}  {elapsed:.2f}s{suffix}[/{color}]"
 
 
 def _render_pulse(desc: str, frame: int, elapsed: float, color: str, width: int) -> str:

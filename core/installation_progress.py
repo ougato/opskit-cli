@@ -106,7 +106,8 @@ class WaitingDisplay:
             from rich.markup import escape
             from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line
             width = max(_global_step_width(), _display_width(message) + 2)
-            row = _render_line(escape(message), None if failed else 100, time.monotonic() - started,
+            percentage = min(99, step.completed * 100 // step.total) if failed else 100
+            row = _render_line(escape(message), percentage, time.monotonic() - started,
                                _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
             self.console.print(Text.from_markup(row), soft_wrap=True)
 

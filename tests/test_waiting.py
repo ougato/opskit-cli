@@ -176,7 +176,8 @@ def test_counted_progress_rejects_invalid_updates_and_requires_all_items():
     with pytest.raises(ValueError):
         display.update(3)
     display.stop()
-    assert "Failed" in output.getvalue() and "100%" not in output.getvalue()
+    assert "Failed" in output.getvalue() and "50%" in output.getvalue()
+    assert "100%" not in output.getvalue()
 
     display.start("Download", failed_label="Failed", total=2)
     display.update(2)
