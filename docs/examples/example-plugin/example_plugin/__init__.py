@@ -1,14 +1,14 @@
 """Minimal SDK 4 plugin with the same action for menu and CLI."""
-from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, register_locale, select, t, waiting
+from core.sdk import ModuleInfo, get_icon, paged_select, print_error, print_success, progress_step, register_locale, select, t, waiting
 from core.sdk import UserCancel, get_service, input_steps, list_host_files, request_plugin_install, text_input
 
 register_locale({
     "zh": {"example": {"title": "示例工具", "run": "执行任务",
                        "back": "返回", "storage": "云端配置", "info": "操作：运行示例任务", "done": "任务已完成", "usage": "用法：--hello",
-                       "invalid": "参数无效，请使用 --help 查看用法"}},
+                       "working": "处理项目", "failed": "处理失败", "invalid": "参数无效，请使用 --help 查看用法"}},
     "en": {"example": {"title": "Example tool", "run": "Run task",
                        "back": "Back", "storage": "Cloud configuration", "info": "Operation: Run the example task", "done": "Task completed", "usage": "Usage: --hello",
-                       "invalid": "Invalid arguments; use --help for usage"}},
+                       "working": "Process items", "failed": "Processing failed", "invalid": "Invalid arguments; use --help for usage"}},
 })
 
 
@@ -25,13 +25,23 @@ def open_storage_configuration(breadcrumb):
     """Open configuration from a menu that needs the declared storage service."""
     if not request_plugin_install("storage_hub"):
         return False
-    return get_service("storage").open_menu(breadcrumb, {"configure": True})
+    return get_service("storage").open_menu(breadcrumb, {"action": "navigate", "destination": "configuration"})
 
 
 def run_waiting(task):
     """Run a local callable while the host displays its waiting indicator."""
     with waiting():
         return task()
+
+
+def run_counted(items, process_item):
+    """Advance only after each item has been processed successfully."""
+    if not items:
+        return
+    with progress_step(t("example.working"), t("example.failed"), total=len(items)) as update:
+        for index, item in enumerate(items, start=1):
+            process_item(item)
+            update(index)
 
 
 def choose_item(items, initial_page=0):

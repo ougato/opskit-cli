@@ -68,3 +68,21 @@ def test_example_waiting_scope_wraps_the_task(monkeypatch):
     spec.loader.exec_module(module)
     assert module.run_waiting(lambda: events.append("task") or 42) == 42
     assert events == ["start", "task", "stop"]
+
+
+def test_example_counts_completed_items(monkeypatch):
+    from contextlib import contextmanager
+
+    events = []
+
+    @contextmanager
+    def progress(label, failed_label, *, total):
+        assert total == 2
+        yield lambda count: events.append(("progress", count))
+
+    monkeypatch.setattr(sdk, "progress_step", progress)
+    spec = importlib.util.spec_from_file_location("example_progress_test", EXAMPLE / "example_plugin" / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.run_counted(["first", "second"], lambda item: events.append(("processed", item)))
+    assert events == [("processed", "first"), ("progress", 1), ("processed", "second"), ("progress", 2)]

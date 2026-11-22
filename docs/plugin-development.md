@@ -8,7 +8,7 @@
 
 1. **创建独立仓库**：复制[示例清单](examples/example-plugin/plugin.yaml)和[示例入口](examples/example-plugin/example_plugin/__init__.py)，将名称、版本、Python 包名和中英文显示名称改为自己的内容。外部插件只导入 `core.sdk` 的公开接口。
 2. **声明入口与平台**：在 `plugin.yaml` 设置 SDK 版本、入口包和支持平台；按实际需要声明权限。插件可声明分组，框架负责在“插件工具”中发现、分组和显示入口。清单字段及校验以[插件规范](plugin-spec.md)为准。
-3. **组织业务**：实现 `register()` 返回带 `entry` 的 `ModuleInfo`；需要命令行时实现 `cli(argv)`。菜单与命令行调用同一业务函数，CLI 所需参数显式提供，错误返回非零状态。示例中的 `_run()` 同时被菜单和 `cli()` 调用。
+3. **组织业务**：实现 `register()` 返回带 `entry` 的 `ModuleInfo`；为每个可执行菜单操作实现对应的 `cli(argv)` 入口。菜单与命令行调用同一业务函数，CLI 所需参数显式提供，错误返回非零状态。示例中的 `_run()` 同时被菜单和 `cli()` 调用。
 4. **实现交互和文案**：用 `register_locale()` 注册插件命名空间的中英文文案；菜单调用 SDK 的选择、输入和确认接口，使用主题图标、面包屑和信息行。按本页[交互接口](#交互接口)处理返回、取消、分页和等待，不自行绘制授权界面。
 5. **接入资源**：插件配置和记录放在自身 `plugin_data_dir()`；宿主目录、文件、工具、网络或产物通过相应 SDK 请求。先确定所需访问范围，再处理授权拒绝、取消、撤权和执行失败；业务确认与宿主授权分别处理。跨插件复用须声明服务契约并由操作者授权。
 6. **安装与运行**：提交到自己的 Git 仓库后，从“插件工具 → 插件管理”安装、审核并信任；Windows x64 安装链路会自动准备基础运行环境。命令行安装保留独立授信步骤。插件的菜单入口在“插件工具”下，命令行通过 `opskit plugin run <插件名> -- <插件参数>` 调用。详见[采集、审核与更新](plugin-spec.md#采集审核与更新)。
@@ -246,6 +246,7 @@ def edit_path(breadcrumb, current):
 | 文案 | `t(key, **kwargs)`, `current_lang()`, `register_locale(catalog)` | 注册 `{语言: 嵌套字典}`，使用插件自己的命名空间；不覆盖平台文案。 |
 | 主题 | `get_color(token)`, `get_icon(token)`, `print_success(msg, elapsed=None)`, `print_error(msg)`, `print_warning(msg)`, `print_info(msg, *, show_icon=True)` | 复用平台主题和状态输出。 |
 | 菜单 | `select`, `select_input`, `multi_select`, `paged_select`, `confirm`, `text_input`, `pause`, `clear_screen`, `print_header`, `waiting`, `UserCancel`, `console` | 签名、取消及非交互语义见上节。 |
+| 进度 | `waiting(message)`, `progress_step(message, failed_label, *, total)` | 分别显示彩色点阵和按真实完成量计算的百分比。 |
 | 跨插件服务 | `get_service(name)`, `open_service_menu(name, breadcrumb, context=None)` | 前者返回远程代理，实际调用时核验；后者调用已授权服务的 `open_menu`。缺少提供方、契约或授权时调用失败，不自动安装。 |
 | 状态和路径 | `plugin_data_dir(namespace)`, `data_dir()`, `cache_dir()`, `log_dir()`, `plugins_dir()` | 使用自身 `plugin_data_dir` 保存持久业务状态；名称必须与清单中的插件身份完全一致。其他路径是本次隔离工作区内路径或只读插件快照，不代表宿主路径或持久授权。 |
 | 状态格式 | `load_yaml(path)`, `save_yaml(path, data)`, `get_logger(name='opskit')` | 在自身可访问的隔离路径内读写；注意不要记录敏感信息。 |
@@ -266,9 +267,9 @@ def edit_path(breadcrumb, current):
 ```yaml
 uses:
   - service: storage
-    provider: storage_plugin
-    api_version: 1
-    methods: [read, open_menu]
+    provider: storage_hub
+    api_version: 6
+    methods: [open_menu]
 ```
 
 操作者先分别审核调用方和提供方及其指纹，再使用 `opskit plugin authorize-service` 授权精确的调用边。插件更新、指纹变化或撤权后不能沿用旧授权；每次调用都重新验证。`get_service` 不表示提供方已经可用，访问方法或 `service_api_version` 时才会进行实际 RPC 和校验。
@@ -282,20 +283,19 @@ if request_plugin_install("storage_hub"):
     get_service("storage").open_menu(breadcrumb, {
         "action": "navigate",
         "destination": "configuration",
-        "configure_upload_root": True,
     })
 ```
 
 这是一次交互式服务调用。菜单结束后控制权回到调用方，保存与否按提供方契约读取。需要使用选择结果时直接调用服务代理。提供方沿用宿主绑定的调用方身份及隔离状态，调用方传递业务选项即可。宿主继续处理安装、授信和资源授权。
 
-当业务操作允许在缺少配置时打开设置，提供方可以提供显式选项，例如 `select_profile` 的 `configure_if_missing`。它复用同一个设置菜单，返回后重新读取配置。没有可用配置或用户取消时结束当前业务操作。非交互调用使用显式配置和业务参数。
+调用方发现配置缺失时，可显式请求打开设置。返回后重新读取配置。没有可用配置或用户取消时结束当前操作。非交互调用使用显式配置和业务参数。
 
 ## 发布前检查
 
 1. 校验清单、菜单四字规则、主题图标宽度，以及中英文的键和占位符。
 2. 测试返回、Esc、Ctrl+C、空输入、分页超过九项、非交互与 `--yes`，覆盖失败、撤权及数据保留。
 3. 审核依赖和插件来源，准备匹配当前 SDK 摘要的隔离运行时；内容变化需重新审核授信。只生成 `CHECKSUMS.yaml` 不等于签名或授权。
-4. 分别测试源码、实际 Windows 原生沙盒和发布包；宿主工具、网络服务、目标平台及另一台机器都需要各自的真实验收，不能以模拟测试代替。
+4. 为可执行菜单维护操作与命令的对应关系，逐项运行 `opskit plugin run <插件> -- …`，记录成功、错误或取消的结果。分别测试源码、实际 Windows 原生沙盒和发布包。宿主工具、网络服务、目标平台及另一台机器都需要各自的真实验收，不能以模拟测试代替。
 
 在框架源码检出中运行 `python -m pytest -q tests/test_plugin_developer_example.py tests/test_plugin_sdk4.py tests/test_plugin_framework_menu.py`，可检查示例的中英文菜单、命令行和框架交互契约。这不是第三方插件的完整自动审核：插件维护者还需针对自己的动态菜单、实际图标、授权目标和业务命令执行上述检查，并在实际终端验证图标占位。
 
