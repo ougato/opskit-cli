@@ -870,6 +870,7 @@ network:
   public_ip_failed: "获取公网 IP 失败"
 
 plugin_native:
+  maintenance_scan: "检查维护记录"
   back: "返回"
   run_help: "运行插件自己的命令：plugin run 名称 -- 参数"
   maintenance: 插件维护

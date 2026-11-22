@@ -871,6 +871,7 @@ network:
   public_ip_failed: "Failed to get public IP"
 
 plugin_native:
+  maintenance_scan: "Inspect maintenance records"
   back: "Back"
   run_help: "Run a plugin's own CLI: plugin run NAME -- ARGS"
   maintenance: Plugin maintenance

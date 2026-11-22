@@ -1,14 +1,18 @@
 """Explicit, identity-bound cleanup of abandoned native workspaces."""
 from core import plugin_workspace_recovery as recovery
 from core.i18n import t
-from core.prompt import select, confirm, pause, UserCancel
+from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
+from core.sdk import waiting
 from core.theme import print_info, print_error, print_success, get_icon
 
 
 def entry():
     breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance"), t("plugin_native.workspace_recovery.menu")]
     try:
-        records = recovery.inspect()
+        clear_screen()
+        print_header(breadcrumb)
+        with waiting(t("plugin_native.maintenance_scan")):
+            records = recovery.inspect()
         confirmed = [item for item in records if item["valid"]]
         if len(confirmed) != len(records):
             print_info(t("plugin_native.workspace_recovery.uncertain"))
@@ -25,7 +29,10 @@ def entry():
         if confirm(breadcrumb, t("confirm_ui.workspace"), info_lines=[
                 t("confirm_ui.workspace_detail"), t("plugin_native.workspace_recovery.details", directory=item["directory"],
                   transaction=item["transaction"], digest=item["record_sha256"])]):
-            recovery.recover(item["transaction"], item["record_sha256"])
+            clear_screen()
+            print_header(breadcrumb)
+            with waiting(t("confirm_ui.workspace")):
+                recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.workspace_recovery.completed"))
             pause()
     except (KeyboardInterrupt, UserCancel):

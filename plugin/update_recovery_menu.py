@@ -3,14 +3,18 @@ from rich.markup import escape
 
 from core.i18n import t
 from core import plugin_update_recovery as recovery
-from core.prompt import select, confirm, pause, UserCancel
+from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
+from core.sdk import waiting
 from core.theme import print_error, print_info, print_success, get_icon
 
 
 def entry():
     breadcrumb = ["OpsKit", t("menu.plugin"), t("plugin.manage"), t("plugin_native.maintenance"), t("plugin_native.update_recovery.menu")]
     try:
-        records = recovery.inspect()
+        clear_screen()
+        print_header(breadcrumb)
+        with waiting(t("plugin_native.maintenance_scan")):
+            records = recovery.inspect()
         valid = [item for item in records if item["valid"]]
         if len(valid) != len(records):
             print_info(t("plugin_native.update_recovery.invalid"))
@@ -28,7 +32,10 @@ def entry():
                      directory=escape(item["directory"]), transaction=item["transaction"],
                      digest=item["record_sha256"])]
         if confirm(breadcrumb, t("confirm_ui.rollback"), info_lines=[*details, t("confirm_ui.rollback_detail")]):
-            recovery.recover(item["transaction"], item["record_sha256"])
+            clear_screen()
+            print_header(breadcrumb)
+            with waiting(t("confirm_ui.rollback")):
+                recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.update_recovery.completed"))
             pause()
     except (KeyboardInterrupt, UserCancel):
