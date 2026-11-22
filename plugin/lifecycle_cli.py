@@ -264,8 +264,11 @@ def register(app, translate=None):
                 allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
         if url.startswith("-") or branch.startswith("-"):
             fail(t("plugin_native.lifecycle.repository_invalid"), 2)
-        manifest, error = commands.install(url, branch or None, alias or None,
-                                           fetch_profile=fetch_profile, allow_private=allow_private, automatic=True)
+        from core.installation_progress import InstallationProgress
+        with InstallationProgress() as progress:
+            manifest, error = commands.install(url, branch or None, alias or None,
+                                               fetch_profile=fetch_profile, allow_private=allow_private,
+                                               automatic=True, progress=progress)
         if manifest is None:
             # Git output may include URLs and credentials; only expose stable categories.
             fail(acquisition_error(error, "acquisition_failed"))

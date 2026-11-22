@@ -84,6 +84,8 @@ opskit --yes plugin remove my_plugin
 
 用 `list` 返回的清单名称更新、授信及卸载。上例的 `SHA256` 替换为 `show` 返回的指纹，`--as` 只指定本机安装目录。
 
+交互终端执行 `plugin install` 时会显示安装阶段和等待动画，适用于环境检查、仓库采集、运行环境准备。JSON 输出只包含结构化结果。
+
 ### 更新结果
 
 - `update NAME` 与 `update --all` 二选一。更新使用安装时记录的来源和分支。私有凭据和私网放行请用单个插件命令指定
