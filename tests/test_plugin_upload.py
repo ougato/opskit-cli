@@ -159,6 +159,7 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
     from core import i18n
+    host = "127.0.0.2"
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OpsKit synthetic upload test")])
@@ -168,7 +169,7 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
             .not_valid_before(now - datetime.timedelta(minutes=1))
             .not_valid_after(now + datetime.timedelta(hours=1))
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]),
                            critical=False).sign(key, hashes.SHA256()))
     certificate, private_key = tmp_path / "ca.pem", tmp_path / "key.pem"
     certificate.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
@@ -205,7 +206,7 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
             pass
 
     import socket
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 443), Handler, bind_and_activate=False)
+    server = http.server.ThreadingHTTPServer((host, 443), Handler, bind_and_activate=False)
     try:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             server.allow_reuse_address = False
@@ -242,15 +243,17 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
         console = Console(file=output, force_terminal=True, width=140)
         monkeypatch.setattr(prompt, "console", console)
         jobs = [
-            [name, f"https://127.0.0.1/{name}?synthetic-secret", digest, {},
-             f"https://127.0.0.1/{name}?synthetic-read-secret"]
+            [name, f"https://{host}/{name}?synthetic-secret", digest, {},
+             f"https://{host}/{name}?synthetic-read-secret"]
             for name in ("build.bin", "second.bin", "index.html")]
-        kwargs = dict(console=console, publish_last=1,
+        verified_files = []
+        kwargs = dict(console=console, publish_last=1, on_verified=verified_files.append,
                                     authority=authority, check_identity=lambda *a: True,
-                                    private_targets=["127.0.0.1:443"],
+                                    private_targets=[f"{host}:443"],
                                     deadline=time.monotonic() + 30, checkpoint=lambda: None)
         title = ["OpsKit", "Cocos", "p0", "1.6.0", "Android"]
         result = upload.upload_files("demo", "a" * 64, str(root), jobs, breadcrumb=title, **kwargs)
+        assert verified_files[-1] == 3
         assert all(label in output.getvalue() for label in title)
         updates = []
 
@@ -260,14 +263,18 @@ def test_real_tls_upload_checks_received_bytes_and_bilingual_summary(tmp_path, m
             yield lambda *values: updates.append(values)
 
         monkeypatch.setattr(plugin_upload_progress, "upload_progress", capture_progress)
+        verified_files.clear()
         assert upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs) == result
+        assert verified_files[-1] == 3
         assert updates[-1] == (0, 3 * len(content), 3)
         assert all(sent == 0 for sent, _, _ in updates)
         received["/build.bin"] = (b"corrupt", "")
         updates.clear()
+        verified_files.clear()
         with pytest.raises(RuntimeError, match="upload failed"):
             upload.upload_files("demo", "a" * 64, str(root), jobs, **kwargs)
         assert all(verified < 3 * len(content) for _, verified, _ in updates)
+        assert all(count < 3 for count in verified_files)
         received["/build.bin"] = (content, received["/second.bin"][1])
     finally:
         server.shutdown()
