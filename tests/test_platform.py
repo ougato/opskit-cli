@@ -99,7 +99,6 @@ def test_recipe_disk_check_uses_declared_target_or_returns_unknown(tmp_path, mon
 
 def test_python_install_checks_disk_before_creating_target(tmp_path, monkeypatch):
     from pathlib import Path
-    from core import platform as host
     from software.disk import check_recipe_disk_space
     from software.recipes.python.recipe import PythonRecipe
 

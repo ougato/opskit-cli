@@ -126,7 +126,7 @@ class WaitingDisplay:
         if failed_label is not None:
             from rich.live import Live
             from rich.markup import escape
-            from core.progress import _display_width, _global_step_width
+            from core.progress import _display_width, _global_step_width, _render_line
             from core.theme import get_color
             width = max(_global_step_width(), _display_width(label) + 2)
             color = get_color("progress.bar_active")
