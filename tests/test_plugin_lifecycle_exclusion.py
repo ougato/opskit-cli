@@ -130,7 +130,8 @@ def test_management_waits_for_root_preload_to_release_real_lock(tmp_path, monkey
     monkeypatch.setattr(preload, '_active', session)
     monkeypatch.setattr(preload, '_discovery', None)
     monkeypatch.setattr(preload, '_discovery_cancel', None)
-    monkeypatch.setattr(menu, '_pick', lambda *args: manifest)
+    picking = threading.Event()
+    monkeypatch.setattr(menu, '_pick', lambda *args: picking.set() or manifest)
     monkeypatch.setattr(menu, '_display_name', lambda *args: 'demo')
     monkeypatch.setattr(menu, 'confirm', lambda **kwargs: True)
     monkeypatch.setattr(menu, 'pause', lambda: None)
@@ -147,12 +148,13 @@ def test_management_waits_for_root_preload_to_release_real_lock(tmp_path, monkey
         assert acquired.wait(30)
         thread.start()
         assert cleanup.wait(30)
-        assert not entered.wait(.2)
+        assert entered.is_set()
+        assert not picking.wait(.2)
         assert root.exists()
         allow_cleanup.set()
         thread.join(30)
         assert not thread.is_alive()
-        assert entered.is_set() and not root.exists() and not failures
+        assert picking.is_set() and not root.exists() and not failures
     finally:
         allow_cleanup.set()
         session.cancel(wait=True)

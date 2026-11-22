@@ -61,8 +61,12 @@ def entry() -> None:
 
 def _entry() -> None:
     """插件工具主循环：每次进入实时重新扫描插件目录（热插拔），同 group 插件聚合为一个入口"""
+    crumb = [*_BREADCRUMB, t("menu.plugin")]
     while True:
-        pairs = commands.loaded_plugins()
+        clear_screen()
+        print_header(crumb)
+        with waiting(t("plugin.loading_inventory")):
+            pairs = commands.loaded_plugins()
         ungrouped, groups = _grouped(pairs)
         choices = [{"key": "1", "label": f"{get_icon('plugin_manage')} {t('plugin.manage')}"}]
         items: list[tuple[str, object]] = []          # ("plugin", pair) | ("group", gid)
@@ -89,7 +93,7 @@ def _entry() -> None:
                     preload.prepare_caller_inspector()
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin")],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -124,7 +128,7 @@ def _entry() -> None:
                     else:
                         if preload is not None:
                             preload.cancel()
-                        _group_menu(payload)
+                        _group_menu(payload, _group_display(groups[payload])[1])
         except (KeyboardInterrupt, UserCancel):
             pass
         finally:
@@ -132,14 +136,17 @@ def _entry() -> None:
                 preload.cancel()
 
 
-def _group_menu(group_id: str) -> None:
+def _group_menu(group_id: str, group_label: str) -> None:
     """分组子菜单：列出该 group 下全部插件（每轮循环重新扫描，热插拔）"""
     while True:
-        pairs = commands.loaded_plugins()
+        crumb = [*_BREADCRUMB, t("menu.plugin"), group_label]
+        clear_screen()
+        print_header(crumb)
+        with waiting(t("plugin.loading_inventory")):
+            pairs = commands.loaded_plugins()
         members = [(m, info) for m, info in pairs if m.group == group_id]
         if not members:
             break
-        _icon, group_label = _group_display(members)
         choices = []
         for i, (_manifest, info) in enumerate(members):
             icon = info.icon or get_icon("plugin")
@@ -147,7 +154,7 @@ def _group_menu(group_id: str) -> None:
             choices.append({"key": str(i + 1), "label": f"{escape(icon)} {escape(label)}"})
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), group_label],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -567,7 +574,11 @@ def _remove() -> None:
         return
     from core.resource_lock import ResourceBusyError
     try:
-        commands.remove(manifest)
+        clear_screen()
+        print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.remove"),
+                      _display_name(manifest)])
+        with waiting(t("confirm_ui.uninstall")):
+            commands.remove(manifest)
     except ResourceBusyError:
         print_error(t("plugin_native.lifecycle.plugin_busy"))
         pause()
