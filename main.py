@@ -321,11 +321,16 @@ register_plugin_commands(plugin_app, _ct)
 @plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help=_ct("plugin_native_run_help"))
 def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     from plugin.cli import run_plugin
+    from core.i18n import t
     from core.plugin import PluginInventoryError
     from core.plugin_sandbox import SandboxError
     from core.native_sandbox import NativeSandboxError
+    from core.resource_lock import ResourceBusyError
     try:
         code = run_plugin(name, list(ctx.args))
+    except ResourceBusyError:
+        _direct_fail(t("plugin_native.lifecycle.plugin_busy"), _EXIT_RUNTIME)
+        return
     except (SandboxError, PluginInventoryError, NativeSandboxError) as exc:
         _direct_fail(str(exc), _EXIT_RUNTIME)
         return

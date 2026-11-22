@@ -8,6 +8,22 @@ from core import config, plugin_sandbox as sandbox
 from plugin import cli, commands
 
 
+def test_plugin_run_reports_busy_without_traceback(monkeypatch):
+    from typer.testing import CliRunner
+    from core.resource_lock import ResourceBusyError
+    import main
+
+    def busy(*args):
+        raise ResourceBusyError("native runtime catalog is busy")
+
+    monkeypatch.setattr(cli, "run_plugin", busy)
+    result = CliRunner().invoke(main.app, ["plugin", "run", "demo", "--", "--help"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, SystemExit)
+    assert "native runtime catalog" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_discovery_cost_cannot_grant_a_fresh_execution_budget(monkeypatch):
     config.save_config({'plugin': {'sandbox': {'timeout': 1}}})
     clock = [100.0]
