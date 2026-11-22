@@ -33,6 +33,8 @@
 
 ## 开发约定
 
+每项菜单业务操作都提供可独立运行的命令，包括查看、编辑配置、检查及执行任务。菜单和命令调用同一业务入口，命令显式接收菜单中需要选择或输入的值。交付前实际运行对应 OpsKit 命令并检查结果，已有菜单缺少命令时一并补齐。纯导航项的验收由其下的业务命令覆盖。
+
 - 插件是独立仓库，代码仅依赖公开的 `core.sdk`，不导入其他 `core.*` 内部模块。SDK 版本、服务业务版本和 RPC 传输版本彼此独立。
 - `plugin.yaml` 的 `api_version` 必须是整数 `4`，不能是字符串、浮点数或布尔值。旧版插件不进入管理列表、不能执行或提供服务；升级后重新安装、审核、授信并准备匹配当前 SDK 的运行时。旧目录和数据不会自动删除。
 - 所有面向用户的菜单、提示、结果、错误和帮助提供中文与英文，语言键和插值参数一致。中文固定菜单操作名使用四个汉字，“返回”使用两个汉字；动态游戏名、路径等不是固定操作名。图标通过 `get_icon(token)` 获取，并在目标终端检查占位和对齐，不使用 `🗮`。
@@ -162,6 +164,8 @@ SDK 提供 `HOST_ARTIFACT_PUBLISH_NESTED` 时，目标可位于源根目录下�
 `HOST_ARTIFACT_COMMIT_HASHES` 可用时，给产物 `commit` 传入 `include_file_hashes: true`，可在目录读取授权下取得校验时计算的完整 `file_hashes`。超过 128 个文件或路径超出限制时省略该字段，调用方可继续按批读取摘要。发布时仍会校验复制内容。
 
 `host_artifacts("zip_entry", {"directory": directory, "file": file, "member": member})` 在目录读取授权下返回指定 ZIP 成员的 Base64 内容。成员必须唯一，最大 1 MiB；该操作不解压到宿主磁盘。
+
+`host_artifacts("zip_inventory", {"directory": directory, "file": file, "sha256": digest, "prefix": prefix})` 在目录读取授权下返回指定前缀下的 ZIP 成员及其 SHA-256。前缀以斜杠结尾，例如 `assets/`。宿主核对归档摘要并限制读取范围，直接从 ZIP 读取成员内容。
 
 `host_artifacts("sign_update_manifest", {"directory": directory, "file": file, "manifest": manifest, "public_key": public_key})` 在目录读取授权下为 v1 更新清单签名。传入 Base64 清单和包内公钥的 Base64 SPKI DER 编码。宿主确认 P-256 私钥与公钥对应，并使用固定签名域和 SHA-256 生成 Base64 DER 签名。提供已有 `signature` 时，宿主验签后返回原签名。私钥保留在宿主。
 

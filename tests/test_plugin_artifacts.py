@@ -36,6 +36,21 @@ def test_read_verified_file_rejects_changed_large_config(tmp_path, context):
         manage("read_verified_file", {**params, "sha256": "0" * 64}, context)
 
 
+def test_zip_inventory_verifies_archive_and_hashes_only_requested_prefix(tmp_path, context):
+    from zipfile import ZipFile
+
+    root = tmp_path / "game.apk"
+    with ZipFile(root, "w") as archive:
+        archive.writestr("assets/src/settings.json", b"{}")
+        archive.writestr("classes.dex", b"outside")
+    params = {"directory": str(tmp_path), "file": root.name, "prefix": "assets/",
+              "sha256": hashlib.sha256(root.read_bytes()).hexdigest()}
+    assert manage("zip_inventory", params, context) == {
+        "src/settings.json": {"size": 2, "sha256": hashlib.sha256(b"{}").hexdigest()}}
+    with pytest.raises(ValueError, match="archive digest differs"):
+        manage("zip_inventory", {**params, "sha256": "0" * 64}, context)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows no-overwrite file rename")
 def test_remove_verified_file_requires_the_expected_content(tmp_path, context):
     target = tmp_path / "old.txt"

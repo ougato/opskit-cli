@@ -288,6 +288,56 @@ def _zip_entry(plugin, fingerprint, parameters, *, authority, check_identity, ch
     return {"content": base64.b64encode(body).decode("ascii")}
 
 
+def _zip_inventory(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from stat import S_ISLNK
+    from zipfile import ZipFile
+    from core.host_file_access import MAX_ARTIFACT_BYTES, open_bounded, source_path
+
+    if set(parameters) != {"directory", "file", "sha256", "prefix"}:
+        raise ValueError("invalid ZIP inventory request")
+    expected, prefix = parameters["sha256"], parameters["prefix"]
+    if (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)
+            or not isinstance(prefix, str) or not re.fullmatch(r"(?:[A-Za-z0-9_-]+/)+", prefix)):
+        raise ValueError("invalid ZIP inventory bounds")
+    directory, archive, identity = source_path(parameters["directory"], parameters["file"])
+    scope = _grant(plugin, fingerprint, "directory.read", str(directory), authority, check_identity, checkpoint)
+    if source_path(parameters["directory"], parameters["file"])[2] != identity:
+        raise ValueError("ZIP directory changed")
+
+    def digest(stream):
+        value = hashlib.sha256()
+        size = 0
+        while chunk := stream.read(1024**2):
+            checkpoint()
+            value.update(chunk)
+            size += len(chunk)
+        return {"size": size, "sha256": value.hexdigest()}
+
+    files = {}
+    with open_bounded(archive, directory, MAX_ARTIFACT_BYTES) as stream, ZipFile(stream) as package:
+        stream.seek(0)
+        if digest(stream)["sha256"] != expected:
+            raise ValueError("ZIP archive digest differs")
+        members = [item for item in package.infolist()
+                   if item.filename.startswith(prefix) and not item.is_dir()]
+        if len(members) > 10_000 or sum(item.file_size for item in members) > 2 * 1024**3:
+            raise ValueError("ZIP inventory exceeds limits")
+        for item in members:
+            name = item.filename[len(prefix):]
+            if (not name or name in files or "\\" in name or ":" in name
+                    or any(part in {"", ".", ".."} for part in name.split("/"))
+                    or S_ISLNK(item.external_attr >> 16)):
+                raise ValueError("invalid ZIP inventory entry")
+            with package.open(item) as member:
+                files[name] = digest(member)
+        stream.seek(0)
+        if digest(stream)["sha256"] != expected:
+            raise ValueError("ZIP archive changed")
+    checkpoint()
+    authority.check(scope, check_identity=check_identity)
+    return files
+
+
 def _read_verified_file(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
     from core.host_file_access import open_bounded, source_path
 
@@ -507,6 +557,9 @@ def manage(plugin, fingerprint, action, parameters, *, authority, check_identity
     if action == "zip_entry":
         return _zip_entry(plugin, fingerprint, parameters, authority=authority,
                           check_identity=check_identity, checkpoint=checkpoint)
+    if action == "zip_inventory":
+        return _zip_inventory(plugin, fingerprint, parameters, authority=authority,
+                              check_identity=check_identity, checkpoint=checkpoint)
     if action == "sign_update_manifest":
         return _sign_update_manifest(plugin, fingerprint, parameters, authority=authority,
                                      check_identity=check_identity, checkpoint=checkpoint)
