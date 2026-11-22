@@ -501,7 +501,8 @@ def _broker(manifest, request: dict):
     # active caller, service edge and network grant in the invocation.
     if method in {"host.upload_file", "host.upload_files"}:
         arity = (2, 3, 4) if method == "host.upload_files" else (5, 6)
-        if "network" not in manifest.permissions or kwargs or len(args) not in arity:
+        allowed = {"progress_offset"} if method == "host.upload_files" else set()
+        if "network" not in manifest.permissions or set(kwargs) - allowed or len(args) not in arity:
             raise SandboxError("network capability not granted")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -522,12 +523,21 @@ def _broker(manifest, request: dict):
         display = getattr(_invocations, "wait_display", None)
         if display is not None:
             console = display.console
-        with display.suspend() if display is not None else nullcontext():
+        options = {}
+        if "progress_offset" in kwargs:
+            offset = kwargs["progress_offset"]
+            if (type(offset) is not int or offset < 0 or display is None or not display.counting
+                    or display.depth <= getattr(_invocations, "wait_floor", 0)):
+                raise SandboxError("invalid upload progress scope")
+            display.update(offset)
+            options["on_verified"] = lambda count: display.update(offset + count)
+        with display.suspend() if display is not None and not options else nullcontext():
             try:
                 return transfer(manifest.name, fingerprint, *args, authority=authority,
                                 check_identity=identity, private_targets=private,
-                                deadline=lambda: _invocations.deadline, checkpoint=checkpoint, console=console,
-                                input_wait=_input_wait_budget)
+                                deadline=lambda: _invocations.deadline, checkpoint=checkpoint,
+                                console=None if options else console,
+                                input_wait=_input_wait_budget, **options)
             except UploadFailure as error:
                 from core.i18n import t
                 reason = t(f"plugin_native.upload.reason_{error.reason}", status=error.status)

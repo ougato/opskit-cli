@@ -204,8 +204,11 @@ def _adapt_sdk(name: str):
         args = (directory, relative, url, sha256, headers or {})
         return broker("host.upload_file", *args, *((verify_url,) if verify_url is not None else ()))
     sdk.upload_file = upload_file
-    sdk.upload_files = lambda directory, files, *, publish_last=0, breadcrumb=None: broker(
-        "host.upload_files", directory, files, publish_last, *((breadcrumb,) if breadcrumb else ()))
+    def upload_files(directory, files, *, publish_last=0, breadcrumb=None, progress_offset=None):
+        options = {} if progress_offset is None else {"progress_offset": progress_offset}
+        return broker("host.upload_files", directory, files, publish_last,
+                      *((breadcrumb,) if breadcrumb else ()), **options)
+    sdk.upload_files = upload_files
     sdk.request_plugin_install = lambda provider: broker("service.install_provider", provider)
 
     def open_menu(name, breadcrumb, context=None):

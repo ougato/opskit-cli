@@ -304,6 +304,6 @@ def upload_file(directory: str, relative: str, url: str, sha256: str,
 
 
 def upload_files(directory: str, files: list[list], *, publish_last: int = 0,
-                 breadcrumb: list[str] | None = None) -> list[dict]:
+                 breadcrumb: list[str] | None = None, progress_offset: int | None = None) -> list[dict]:
     """Transfer a bounded batch of [relative, PUT URL, SHA256, headers, GET URL or None]."""
     raise PermissionError("upload API requires an isolated plugin worker")

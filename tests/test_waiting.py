@@ -149,6 +149,33 @@ def test_broker_suspends_wait_while_rendering_a_menu(monkeypatch):
     assert events == ["start", "stop", "menu", "start", "stop"]
 
 
+def test_upload_batches_report_cumulative_verified_files(monkeypatch):
+    from core import plugin_upload
+
+    display = installation_progress.WaitingDisplay(SimpleNamespace(is_terminal=False))
+    monkeypatch.setattr(plugin_sandbox._invocations, "wait_display", display, raising=False)
+    monkeypatch.setattr(plugin_sandbox._invocations, "capability_authority", object(), raising=False)
+    monkeypatch.setattr(plugin_sandbox, "check_authorization", lambda _: "a" * 64)
+    monkeypatch.setattr(plugin_sandbox, "_remaining", lambda: 100)
+    monkeypatch.setattr(plugin_sandbox, "_read_sandbox_setting", lambda *_: [])
+    seen = []
+
+    def transfer(*args, console, on_verified, **kwargs):
+        assert console is None
+        for count in (1, 2):
+            on_verified(count)
+            seen.append(display.messages[-1].completed)
+
+    monkeypatch.setattr(plugin_upload, "upload_files", transfer)
+    manifest = SimpleNamespace(name="demo", permissions=["network"])
+    display.start("Uploading", total=4, failed_label="Failed")
+    for offset in (0, 2):
+        plugin_sandbox._broker(manifest, {"rpc_version": 1, "method": "host.upload_files",
+                                        "args": ["folder", []], "kwargs": {"progress_offset": offset}})
+    assert seen == [1, 2, 3, 4]
+    display.close()
+
+
 def test_wait_display_renders_and_removes_transient_spinner():
     from io import StringIO
     from rich.console import Console

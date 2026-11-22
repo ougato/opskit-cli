@@ -210,6 +210,8 @@ def inspect_build_directory(project, build_directory):
 
 任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。失败时保留最后显示的百分比，并附上失败状态。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
 
+分批调用 `upload_files` 时，可以用一个以文件总数为单位的 `progress_step` 包住所有批次。给每批传入 `progress_offset`，值为之前各批已完成的文件数。宿主收到校验结果后直接更新累计数。
+
 若工具日志需要等业务结果确认后再显示，可检查 SDK 是否支持 `finish_host_tool_output` 并启用 `defer_output`。工具退出码、产物校验和归档等所需步骤均通过后，调用 `finish_host_tool_output(True)`。任一步骤失败则调用 `finish_host_tool_output(False)`，宿主回放当前尚未处理的日志。
 
 扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。

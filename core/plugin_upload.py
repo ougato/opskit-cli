@@ -359,7 +359,7 @@ def _prepare(directory, files):
 
 
 def upload_files(plugin, fingerprint, directory, files, publish_last=0, breadcrumb=None, *, authority, check_identity,
-                 private_targets, deadline, checkpoint, console=None, input_wait=nullcontext):
+                 private_targets, deadline, checkpoint, console=None, input_wait=nullcontext, on_verified=None):
     """Run a bounded batch with one directory grant and one supervised worker."""
     if breadcrumb is not None and (
         not isinstance(breadcrumb, list) or not 1 <= len(breadcrumb) <= 16
@@ -427,6 +427,8 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, breadcru
                         results[index] = result
                         verified += result["bytes"]
                     progress(sent, verified, len(results))
+                    if on_verified is not None:
+                        on_verified(len(results))
                     if message["failure"] is not None:
                         index, phase, reason, status = message["failure"]
                         if (type(index) is not int or not 0 <= index < len(jobs) or index in results
