@@ -8,7 +8,7 @@ from rich.live import Live
 from rich.text import Text
 
 from core.i18n import t
-from core.progress import _GREEN, _RED, _global_step_width, _render_line, _render_pulse
+from core.progress import _GREEN, _RED, _global_step_width, _render_line
 from core.theme import get_color
 
 
@@ -40,12 +40,7 @@ def upload_progress(console, total, files, breadcrumb=None):
         percentage = (verified * 100 // total) if total else (completed * 100 // files)
         if completed < files:
             percentage = min(99, percentage)
-        line = (_render_pulse(label, int(elapsed * 10), elapsed, color, width)
-                if not completed and not failed
-                else _render_line(label, percentage, elapsed, color, width))
-        text = Text.from_markup(line)
-        if not completed and not failed:
-            text.append("  0%", style=color)
+        text = Text.from_markup(_render_line(label, percentage, elapsed, color, width))
         text.append(f"  {completed}/{files}  {rate}/s", style=color)
         if failed:
             text.append("  " + t("plugin_native.upload.failed"), style=color)
