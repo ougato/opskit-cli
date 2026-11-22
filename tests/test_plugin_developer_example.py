@@ -56,8 +56,8 @@ def test_example_waiting_scope_wraps_the_task(monkeypatch):
     from contextlib import contextmanager
     events = []
     @contextmanager
-    def waiting():
-        events.append("start")
+    def waiting(label):
+        events.append(("start", label))
         try:
             yield
         finally:
@@ -66,8 +66,8 @@ def test_example_waiting_scope_wraps_the_task(monkeypatch):
     spec = importlib.util.spec_from_file_location("example_waiting_test", EXAMPLE / "example_plugin" / "__init__.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.run_waiting(lambda: events.append("task") or 42) == 42
-    assert events == ["start", "task", "stop"]
+    assert module.run_waiting("Read settings", lambda: events.append("task") or 42) == 42
+    assert events == [("start", "Read settings"), "task", "stop"]
 
 
 def test_example_counts_completed_items(monkeypatch):

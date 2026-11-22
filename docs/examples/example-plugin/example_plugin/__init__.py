@@ -28,9 +28,9 @@ def open_storage_configuration(breadcrumb):
     return get_service("storage").open_menu(breadcrumb, {"action": "navigate", "destination": "configuration"})
 
 
-def run_waiting(task):
+def run_waiting(label, task):
     """Run a local callable while the host displays its waiting indicator."""
-    with waiting():
+    with waiting(label):
         return task()
 
 
