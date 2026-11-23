@@ -3,7 +3,7 @@ from __future__ import annotations
 
 # ─── 版本 ───────────────────────────────────────────────────────────────────
 APP_NAME = "OpsKit"
-APP_VERSION = 17
+APP_VERSION = 1
 # ─── 目录名 ──────────────────────────────────────────────────────────────────
 DIR_CONFIG = "config"
 DIR_DATA = "data"

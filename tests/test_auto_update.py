@@ -719,7 +719,7 @@ class TestHealthRollback:
         from core.constants import APP_VERSION
         hpath = tmp_path / "update_health.json"
         hpath.write_text(
-            json.dumps({"build": APP_VERSION - 1, "confirmed": False, "fails": 5}), encoding="utf-8")
+            json.dumps({"build": APP_VERSION + 1, "confirmed": False, "fails": 5}), encoding="utf-8")
         with self._patch_health(hpath), patch("core.updater.rollback") as rb:
             assert _check_health() is False
             rb.assert_not_called()

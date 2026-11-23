@@ -111,6 +111,7 @@ def test_real_running_image_defers_rollback_until_another_process_can_restore(tm
     import json
     import sysconfig
     from core import updater, update_target_state
+    monkeypatch.setattr(updater, "APP_VERSION", 2)
 
     target = tmp_path / "application.exe"
     shutil.copy2(sys._base_executable, target)
@@ -140,6 +141,7 @@ import json, sys
 from pathlib import Path
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
 from core import updater, update_target_state
+updater.APP_VERSION = 2
 updater._is_frozen = lambda: True
 updater._self_path = lambda: Path(sys.executable)
 target = updater._self_path()
