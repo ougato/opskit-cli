@@ -366,7 +366,9 @@ def _install_with_progress(url, branch=None, alias=None):
     options = _fetch_options(url, user_entered=True)
     with InstallationProgress() as progress:
         if "fetch_interaction" in options:
-            options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
+            crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.install")]
+            options["fetch_interaction"] = progress.interaction(
+                options["fetch_interaction"], restore_page=lambda: _draw_progress_page(crumb))
         result = commands.install(url, branch, alias, automatic=True, progress=progress, **options)
         progress.finish(failed=result[0] is None)
         return result
@@ -539,16 +541,21 @@ def _update_all() -> None:
         pause()
 
 
-def _update_one(manifest, crumb) -> None:
+def _draw_progress_page(crumb) -> None:
     clear_screen()
     print_header(crumb)
+
+
+def _update_one(manifest, crumb) -> None:
+    _draw_progress_page(crumb)
     from core.installation_progress import InstallationProgress
     try:
         with InstallationProgress() as progress:
             progress("update_wait")
             options = _update_fetch_options(manifest)
             if "fetch_interaction" in options:
-                options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
+                options["fetch_interaction"] = progress.interaction(
+                    options["fetch_interaction"], restore_page=lambda: _draw_progress_page(crumb))
             ok, msg = commands.update(manifest, automatic=True, progress=progress, **options)
             progress.finish(failed=not ok)
             if ok:

@@ -73,6 +73,7 @@ class WaitingDisplay:
         self.status = None
         self.suspended = 0
         self.after_progress = False
+        self.completed_rows: list[Text] | None = None
 
     def start(self, message="", *, failed_label=None, total=None):
         if (not isinstance(message, str) or len(message) > 200
@@ -113,7 +114,10 @@ class WaitingDisplay:
             percentage = (min(99, step.completed * 100 // step.total) if step.total is not None else None) if failed else 100
             row = _render_line(message, percentage, time.monotonic() - started,
                                _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
-            self.console.print(Text.from_markup(row), soft_wrap=True)
+            rendered = Text.from_markup(row)
+            if self.completed_rows is not None:
+                self.completed_rows.append(rendered)
+            self.console.print(rendered, soft_wrap=True)
             self.after_progress = True
         self._refresh()
 
@@ -221,10 +225,19 @@ class InstallationProgress:
     def suspend(self):
         return self.display.suspend()
 
-    def interaction(self, callback):
+    def interaction(self, callback, *, restore_page=None):
+        if restore_page is not None and self.display.completed_rows is None:
+            self.display.completed_rows = []
+
         def ask(*args, **kwargs):
             with self.suspend():
-                return callback(*args, **kwargs)
+                try:
+                    return callback(*args, **kwargs)
+                finally:
+                    if restore_page is not None:
+                        restore_page()
+                        for row in self.display.completed_rows:
+                            self.display.console.print(row, soft_wrap=True)
         return ask
 
     def copy_files(self, total):
