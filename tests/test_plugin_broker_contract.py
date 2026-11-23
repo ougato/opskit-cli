@@ -132,7 +132,7 @@ def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch
     monkeypatch.setattr(prompt, "console", SimpleNamespace(
         is_terminal=terminal, print=lambda: events.append("blank")))
     monkeypatch.setattr(prompt, "clear_screen", lambda: events.append("clear"))
-    monkeypatch.setattr(prompt, "print_header", lambda header: events.append(header))
+    monkeypatch.setattr(prompt, "_render_header", lambda header: events.append(header))
     def execute(*args, **kwargs):
         kwargs["output_start"](["OpsKit", "Build"])
         return "result"
