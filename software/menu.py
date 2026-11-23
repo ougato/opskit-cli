@@ -394,7 +394,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
-    base_console.print()
     try:
         r = execute_install(instance, version)
     except KeyboardInterrupt:
@@ -474,7 +473,6 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
                 return
             clear_screen()
             print_header([*breadcrumb, t("software.install")])
-            base_console.print()
             r = execute_install(instance, version)
     except UserCancel:
         return
@@ -542,7 +540,6 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
 
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
-        base_console.print()
         with suppress_pause():
             r = execute_uninstall(instance, version_to_remove)
         if r.ok:
@@ -569,7 +566,6 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     if not getattr(cls, "has_wizard", False):
         print_header([*breadcrumb, t("software.uninstall")])
-        base_console.print()
     try:
         with suppress_pause():
             r = execute_uninstall(instance)
@@ -735,7 +731,6 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     already = new_version in upg_installed_set
     if not already:
         # 未安装 → 走安装升级流程
-        base_console.print()
     r = execute_upgrade(instance, new_version, already_installed=already)
     if r.ok:
         if r.switched:
@@ -916,7 +911,6 @@ def show_install() -> None:
     clear_screen()
     _iname = recipe_display_name(cls)
     print_header(["OpsKit", t("menu.software"), t("software.install")])
-    base_console.print()
     import time as _time
     from core.privilege import ensure_root_for_action, PrivilegeError
     _t0 = _time.monotonic()
@@ -1069,7 +1063,6 @@ def show_uninstall() -> None:
 
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.uninstall")])
-    base_console.print()
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "uninstall")
@@ -1175,7 +1168,6 @@ def show_upgrade() -> None:
 
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.upgrade")])
-    base_console.print()
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "upgrade")

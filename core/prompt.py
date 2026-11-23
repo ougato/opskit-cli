@@ -464,6 +464,7 @@ def clear_screen() -> None:
 def print_header(breadcrumb: list[str]) -> None:
     """在清屏后渲染 Powerline 分段色块面包屑标题（复用 select 菜单的通用标题样式）"""
     _render_header(breadcrumb)
+    console.print()
 
 
 # Keep Ctrl+C local while rendering and running on_ready, before the first read.

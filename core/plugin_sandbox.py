@@ -600,7 +600,6 @@ def _broker(manifest, request: dict):
                 with display.suspend() if display is not None else nullcontext():
                     clear_screen()
                     print_header(header)
-                    console.print()
             display = getattr(_invocations, "wait_display", None)
             from contextlib import nullcontext
             progress_requested = isinstance(args[-1], dict) and "progress" in args[-1]

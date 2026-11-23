@@ -53,7 +53,6 @@ def upload_progress(console, total, files, breadcrumb=None):
         return
     clear_screen()
     print_header(breadcrumb or [t("plugin_native.upload.header")])
-    console.print()
     try:
         with Live(console=console, transient=True, refresh_per_second=10,
                   redirect_stdout=False, redirect_stderr=False,
