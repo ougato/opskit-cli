@@ -103,10 +103,11 @@ def test_remove_verified_file_restores_the_original_on_revocation(tmp_path, cont
         return check(scope, **options)
 
     monkeypatch.setattr(authority, "check", revoke_after_move)
-    with pytest.raises(CapabilityDenied, match="missing_or_revoked"):
+    with pytest.raises(CapabilityDenied) as error:
         manage("remove_verified_file", {
             "directory": str(tmp_path), "file": target.name, "sha256": hashlib.sha256(b"old").hexdigest(),
         }, context)
+    assert error.value.code == "missing_or_revoked"
     assert target.read_bytes() == b"old"
     assert not list(tmp_path.glob(".opskit-removed-*"))
 

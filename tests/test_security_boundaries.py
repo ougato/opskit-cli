@@ -149,7 +149,7 @@ def test_mirror_download_progress_restarts_at_each_source(tmp_path, monkeypatch)
         status_code = 200
         headers = {"content-length": "4000"}
 
-        def iter_bytes(self, size):
+        def iter_bytes(self):
             yield b"x" * 2000
             if self.url == sources[1]:
                 yield b"y" * 2000
