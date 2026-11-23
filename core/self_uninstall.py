@@ -183,7 +183,7 @@ def execute(request):
 def run(*, purge, dry_run):
     from core.cli import emit, fail, non_interactive, output_mode
     from core.prompt import confirm, is_auto_yes, select
-    from core.theme import print_info
+    from core.theme import get_icon, print_info
 
     mode = "full" if purge else "program"
     title = ["OpsKit", t("self_uninstall.title")]
@@ -194,8 +194,8 @@ def run(*, purge, dry_run):
             # Validate the execution origin before offering any destructive choices.
             plan("program")
             choice = select(title, "", [
-                {"key": "1", "label": "📦 " + t("self_uninstall.program")},
-                {"key": "2", "label": "🗑️ " + t("self_uninstall.full")},
+                {"key": "1", "label": get_icon("software") + " " + t("self_uninstall.program")},
+                {"key": "2", "label": get_icon("uninstall_full") + " " + t("self_uninstall.full")},
             ], back_label=t("menu.back"))
             if choice not in {"1", "2"}:
                 return
