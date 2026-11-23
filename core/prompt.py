@@ -475,15 +475,21 @@ def finish_screen_transition() -> None:
 
 
 def clear_screen() -> None:
-    """Clear the current screen before drawing another one."""
+    """Clear the viewport and scrollback before drawing another screen."""
     finish_screen_transition()
     _menu_visible.set(False)
     from core.cli import non_interactive
-    if not non_interactive.get():
-        if os.name == 'nt':
-            console.clear()
-        else:
-            os.system('clear')
+    if non_interactive.get() or not console.file.isatty():
+        return
+    if os.name != 'nt':
+        os.system('clear')
+    elif console.legacy_windows:
+        os.system('cls')
+    else:
+        # Windows Terminal pushes the old viewport into scrollback on ED 2.
+        # Erase scrollback after clearing the viewport.
+        console.file.write('\x1b[2J\x1b[3J\x1b[H')
+        console.file.flush()
 
 
 def print_header(breadcrumb: list[str], *, terminal_only: bool = False) -> None:
