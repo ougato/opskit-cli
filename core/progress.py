@@ -151,6 +151,11 @@ class _LiveTicker:
         with self._lock:
             self._pct = max(0, min(100, pct))
 
+    @property
+    def percentage(self) -> int | None:
+        with self._lock:
+            return self._pct if self._pct >= 0 else None
+
     def _run(self) -> None:
         while not self._stop_event.wait(0.1):
             elapsed = time.monotonic() - self._start
@@ -219,7 +224,7 @@ class MultiStepProgress:
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self._restore_sigint()
         if self._live is not None:
-            self._finish_current(failed=exc_type is not None)
+            self._finish_current(failed=exc_type is not None or self._interrupted)
         # 屏蔽期间收到过 Ctrl+C：正常退出时转为 KeyboardInterrupt，让上层中止并返回菜单
         if self._interrupted and exc_type is None:
             raise KeyboardInterrupt
@@ -295,8 +300,10 @@ class MultiStepProgress:
 
     def _finish_current(self, failed: bool) -> None:
         """停止 ticker → 关闭 Live → print 固定行"""
+        percentage = None
         if self._ticker is not None:
             self._ticker.stop()
+            percentage = self._ticker.percentage
             self._ticker = None
         if self._live is None:
             return
@@ -305,7 +312,9 @@ class MultiStepProgress:
         self._live = None
 
         if failed:
-            line = _render_line(self._current_desc, 50, elapsed, _RED, self._desc_width)
+            from core.i18n import t
+            line = _render_line(self._current_desc, percentage, elapsed, _RED, self._desc_width,
+                                status=t("progress.failed"))
         else:
             line = _render_line(self._current_desc, 100, elapsed, _GREEN, self._desc_width)
         console.print(line)

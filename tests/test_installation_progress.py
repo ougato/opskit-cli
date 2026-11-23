@@ -4,6 +4,28 @@ import pytest
 from core import installation_progress as ui
 
 
+@pytest.mark.parametrize("percentage", [None, 37])
+def test_recipe_failure_keeps_only_measured_percentage(monkeypatch, percentage):
+    from io import StringIO
+    from rich.console import Console
+    from core import progress
+    from core.i18n import t
+
+    output = StringIO()
+    monkeypatch.setattr(progress, "console", Console(file=output, width=100))
+    with pytest.raises(OSError):
+        with progress.MultiStepProgress() as stages:
+            stages.step("Download")
+            if percentage is not None:
+                stages.set_step_pct(percentage)
+            raise OSError("download interrupted")
+
+    rendered = output.getvalue()
+    assert t("progress.failed") in rendered
+    assert "50%" not in rendered
+    assert ("37%" in rendered) is (percentage is not None)
+
+
 def test_install_progress_uses_activity_rows_and_preserves_cancellation(monkeypatch):
     from io import StringIO
     from rich.console import Console
