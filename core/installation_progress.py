@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 
 from rich.console import Group
+from rich.console import Group
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
@@ -30,15 +31,17 @@ class _ColorSpinner(Spinner):
 
 
 class _InstallationStatus:
-    def __init__(self, message, output_console=None):
+    def __init__(self, message, output_console=None, *, separate=False):
         self.spinner = _ColorSpinner(message)
+        self.separate = separate
         self.live = None
         self.output_console = output_console if output_console is not None else console
 
     def start(self):
         if self.live is not None:
             return
-        self.live = Live(self.spinner, console=self.output_console,
+        renderable = Group(Text(""), self.spinner) if self.separate else self.spinner
+        self.live = Live(renderable, console=self.output_console,
                          refresh_per_second=12.5, transient=True)
         self.live.start(refresh=True)
 
@@ -70,6 +73,7 @@ class WaitingDisplay:
         self.messages = []
         self.status = None
         self.suspended = 0
+        self.after_progress = False
 
     def start(self, message="", *, failed_label=None, total=None):
         if (not isinstance(message, str) or len(message) > 200
@@ -99,8 +103,10 @@ class WaitingDisplay:
         step = self.messages.pop()
         message, failed_label, started = step.label, step.failed_label, step.started
         failed = failed or (step.total is not None and step.completed != step.total)
-        self._refresh()
         if failed_label is not None:
+            if self.status is not None:
+                self.status.stop()
+                self.status = None
             from rich.markup import escape
             from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line
             width = max(_global_step_width(), _display_width(message) + 2)
@@ -108,6 +114,8 @@ class WaitingDisplay:
             row = _render_line(escape(message), percentage, time.monotonic() - started,
                                _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
             self.console.print(Text.from_markup(row), soft_wrap=True)
+            self.after_progress = True
+        self._refresh()
 
     def _refresh(self):
         from core.cli import non_interactive
@@ -140,7 +148,8 @@ class WaitingDisplay:
             return
         message = Text(label, no_wrap=True, overflow="ellipsis")
         if self.status is None:
-            self.status = _InstallationStatus(message, output_console=self.console)
+            self.status = _InstallationStatus(message, output_console=self.console,
+                                               separate=self.after_progress)
             self.status.start()
         else:
             self.status.update(message)
@@ -228,6 +237,11 @@ class InstallationProgress:
         if not console.is_terminal or non_interactive.get():
             yield None
             return
-        with self.suspend(), progress_step(t("plugin_native.bootstrap." + label),
-                                          t("plugin_native.bootstrap." + failure), total=total) as update:
-            yield update
+        with self.suspend():
+            try:
+                with progress_step(t("plugin_native.bootstrap." + label),
+                                   t("plugin_native.bootstrap." + failure), total=total) as update:
+                    yield update
+            finally:
+                if self.status is not None:
+                    self.status.separate = True

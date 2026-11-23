@@ -194,6 +194,32 @@ def test_wait_display_renders_and_removes_transient_spinner(monkeypatch):
     assert "\x1b[?25h" in output.getvalue()
 
 
+def test_waiting_separator_after_completed_progress(monkeypatch):
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, force_interactive=True,
+                      legacy_windows=False, width=100, _environ={"TERM": "xterm"})
+    monkeypatch.setattr(installation_progress, "console", console)
+    with installation_progress.InstallationProgress() as progress:
+        progress("update_wait")
+        with progress.copy_files(1) as update:
+            update(1)
+        assert progress.status.separate
+        assert "100%" in output.getvalue()
+
+    display = installation_progress.WaitingDisplay(console)
+    display.start("Copy", failed_label="Failed", total=1)
+    display.update(1)
+    display.stop()
+    offset = len(output.getvalue())
+    display.start("Prepare")
+    active = output.getvalue()[offset:]
+    display.close()
+    assert active.count("\n") == 1 and "Prepare" in active
+
+
 def test_counted_progress_rejects_invalid_updates_and_requires_all_items():
     from io import StringIO
     from rich.console import Console

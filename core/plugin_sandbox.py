@@ -708,6 +708,8 @@ def _broker(manifest, request: dict):
         from contextlib import nullcontext
         with (display.suspend() if display is not None else nullcontext()), prompt.guard_input(checkpoint):
             checkpoint()
+            if display is not None and method != "pause":
+                display.after_progress = False
             value = getattr(prompt, method)(*args, **kwargs)
             checkpoint()
             return value
