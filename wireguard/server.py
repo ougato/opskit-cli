@@ -338,8 +338,8 @@ def install_server(options: dict | None = None) -> dict | None:
         "wireguard.step.install_wg",
         "wireguard.step.install_xray",
     ]
-    if nginx_mode == "install":
-        step_keys.append("wireguard.step.install_nginx")
+    nginx_step = "wireguard.step.install_nginx" if nginx_mode == "install" else "wireguard.step.prepare_nginx"
+    step_keys.append(nginx_step)
     step_keys += [
         "wireguard.step.issue_cert",
         "wireguard.step.config_nginx",
@@ -379,13 +379,11 @@ def install_server(options: dict | None = None) -> dict | None:
         install_xray()
 
         # ── 安装 / 配置 nginx（根据场景自动选择 install / append）───────────────────
-        if nginx_mode == "install":
-            sp.step(t("wireguard.step.install_nginx"))
+        sp.step(t(nginx_step))
         _setup_nginx(
             os_id=os_id, nginx_mode=nginx_mode,
             sni=sni, ws_port=XRAY_WS_PORT,
             cert_dir=ACME_CERT_DIR, ws_path=XRAY_WS_PATH,
-            sp=sp,
         )
 
         sp.step(t("wireguard.step.issue_cert"))
@@ -1498,7 +1496,7 @@ def _check_port_443() -> tuple:
     return result
 
 
-def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str, sp=None) -> None:
+def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: str, ws_path: str) -> None:
     """根据场景初始化 nginx 配置。
     nginx_mode:
       "install" — 无 nginx，复用 NginxRecipe._do_install 安装并删除默认站点
@@ -1513,7 +1511,7 @@ def _setup_nginx(os_id: str, nginx_mode: str, sni: str, ws_port: int, cert_dir: 
 
     if nginx_mode == "install":
         from software.recipes.nginx.recipe import NginxRecipe
-        NginxRecipe()._do_install(on_progress=sp.set_step_pct if sp else None)
+        NginxRecipe()._do_install()
         from core.paths import nginx_sites_enabled_dir, nginx_conf_dir
         run_as_root(["rm", "-f", str(nginx_sites_enabled_dir() / "default"),
                      str(nginx_conf_dir() / "default.conf")], check=False, capture_output=True)

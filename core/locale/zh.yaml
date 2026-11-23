@@ -637,6 +637,7 @@ wireguard:
     install_wg: "安装 WireGuard..."
     install_xray: "安装 Xray..."
     install_nginx: "安装 Nginx..."
+    prepare_nginx: "准备 Nginx..."
     config_nginx: "配置 Nginx WS+TLS 反代..."
     issue_cert: "申请 TLS 证书（acme.sh）..."
     gen_keys: "生成密钥对..."

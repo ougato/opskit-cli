@@ -637,6 +637,7 @@ wireguard:
     install_wg: "Installing WireGuard..."
     install_xray: "Installing Xray..."
     install_nginx: "Installing Nginx..."
+    prepare_nginx: "Preparing Nginx..."
     config_nginx: "Configuring Nginx WS+TLS reverse proxy..."
     issue_cert: "Issuing TLS certificate (acme.sh)..."
     gen_keys: "Generating key pairs..."

@@ -10,56 +10,15 @@ from typing import Iterator
 from rich.console import Console
 from rich.live import Live
 from rich.progress import (
-    BarColumn,
-    DownloadColumn,
     Progress,
-    ProgressColumn,
     SpinnerColumn,
-    Task,
-    TaskID,
     TextColumn,
-    TransferSpeedColumn,
 )
 from rich.text import Text
 
 from core.theme import get_color
 
 console = Console()
-
-
-# ─── 自定义秒数列（x.xxs 格式）─────────────────────────────────────────────────
-
-class _SecondsElapsedColumn(ProgressColumn):
-    """显示已用秒数，格式：x.xxs"""
-
-    def render(self, task: Task) -> Text:
-        elapsed = task.finished_time if task.finished else task.elapsed
-        if elapsed is None:
-            return Text("0.00s", style="dim")
-        return Text(f"{elapsed:.2f}s", style="dim")
-
-
-def _make_download_progress() -> Progress:
-    """创建下载进度条（文件大小 + 速度显示）"""
-    bar_color = get_color("progress.bar_complete")
-    remaining_color = get_color("progress.bar_remaining")
-    pct_color = get_color("progress.percentage")
-    muted = get_color("muted")
-
-    return Progress(
-        SpinnerColumn(style=bar_color),
-        TextColumn(f"[{muted}]{{task.description}}[/{muted}]"),
-        BarColumn(
-            complete_style=bar_color,
-            finished_style=bar_color,
-            style=remaining_color,
-        ),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        TextColumn(f"[{pct_color}]{{task.percentage:>3.0f}}%[/{pct_color}]"),
-        console=console,
-        transient=False,
-    )
 
 
 # ─── 多行步骤进度管理器（方案 B）───────────────────────────────────────────────
@@ -336,89 +295,6 @@ class MultiStepProgress:
         if self._live is not None:
             self._finish_current(failed=False)
         self.check_interrupt()
-
-    @property
-    def elapsed(self) -> float:
-        return time.monotonic() - self._start_time
-
-
-# ─── 向后兼容：StepProgress 内部转发给 MultiStepProgress ──────────────────────
-
-class StepProgress:
-    """
-    向后兼容包装，内部使用 MultiStepProgress。
-    新代码请直接使用 MultiStepProgress。
-
-    用法：
-        with StepProgress(total=5) as sp:
-            sp.step("配置仓库源")
-            sp.step("下载安装包")
-            sp.complete()
-    """
-
-    def __init__(self, total: int, description: str = "") -> None:
-        self._total = total
-        self._description = description
-        self._impl = MultiStepProgress()
-
-    def __enter__(self) -> "StepProgress":
-        self._impl.__enter__()
-        return self
-
-    def __exit__(self, *args) -> bool:
-        return self._impl.__exit__(*args)
-
-    def step(self, desc: str) -> None:
-        self._impl.step(desc)
-
-    def complete(self) -> None:
-        self._impl.complete()
-
-    @property
-    def elapsed(self) -> float:
-        return self._impl.elapsed
-
-
-# ─── 下载进度上下文管理器 ─────────────────────────────────────────────────────
-
-class DownloadProgress:
-    """
-    下载进度管理器，支持字节级进度更新。
-
-    用法：
-        with DownloadProgress("nginx-1.25.4.tar.gz", total=15_000_000) as dp:
-            for chunk in response.iter_bytes():
-                dp.update(len(chunk))
-    """
-
-    def __init__(self, description: str, total: int | None = None) -> None:
-        self._description = description
-        self._total = total
-        self._progress = _make_download_progress()
-        self._task: TaskID | None = None
-        self._start_time: float = 0.0
-
-    def __enter__(self) -> "DownloadProgress":
-        self._progress.start()
-        self._task = self._progress.add_task(
-            self._description,
-            total=self._total,
-        )
-        self._start_time = time.monotonic()
-        return self
-
-    def __exit__(self, *_) -> None:
-        self._progress.stop()
-
-    def update(self, bytes_downloaded: int) -> None:
-        """更新已下载字节数"""
-        if self._task is not None:
-            self._progress.update(self._task, advance=bytes_downloaded)
-
-    def switch_source(self, new_description: str) -> None:
-        """切换源时更新描述（不重置进度）"""
-        if self._task is not None:
-            self._progress.update(self._task, description=new_description)
 
     @property
     def elapsed(self) -> float:
