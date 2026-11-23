@@ -372,7 +372,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         input_args = {"stdin_data": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}
         if progress is not None and os.name == "nt":
             import locale
-            input_args["fallback_encoding"] = locale.getencoding()
+            input_args["fallback_encoding"] = locale.getencoding() if hasattr(locale, "getencoding") else "mbcs"
         total = 0
         captured = []
         captures_after = []

@@ -1,6 +1,5 @@
 """Uninstall the active standalone OpsKit installation."""
 import errno
-import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -164,10 +163,9 @@ def execute(request):
             _edit_profile(profile, target.parent)
         state_path = update_target_state.path(target)
         if sys.platform == "win32":
+            from core.file_digest import file_digest
             from core.self_uninstall_windows import schedule
-            with target.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            return schedule(request, digest, state_path)
+            return schedule(request, file_digest(target), state_path)
         target.unlink()
         state_path.unlink(missing_ok=True)
     # Once the executable is gone, the updater no longer has a target.

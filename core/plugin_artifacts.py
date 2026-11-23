@@ -381,6 +381,7 @@ def _file_header(plugin, fingerprint, parameters, *, authority, check_identity, 
 
 
 def _remove_verified_file(plugin, fingerprint, parameters, *, authority, check_identity, checkpoint):
+    from core.file_digest import stream_digest
     from core.host_file_access import open_bounded, source_path
 
     if os.name != "nt" or set(parameters) != {"directory", "file", "sha256"}:
@@ -402,7 +403,7 @@ def _remove_verified_file(plugin, fingerprint, parameters, *, authority, check_i
     def inspect(path):
         with open_bounded(path, root, 1024**2) as stream:
             info = os.fstat(stream.fileno())
-            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+            if stream_digest(stream) != digest:
                 raise ValueError("file differs from expected content")
             return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
