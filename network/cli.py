@@ -2,13 +2,21 @@
 import ipaddress
 import socket
 import subprocess
+from contextlib import nullcontext
 
 import typer
 from core.cli import emit, fail, require_interaction, guarded, output_mode
 from core.i18n import t
 from core.prompt import console, print_header
-from core.sdk import progress_step
+from core.sdk import activity_step, progress_step
 from network import commands
+
+
+def _activity(title, action):
+    if output_mode.get() != "text" or not console.is_terminal:
+        return nullcontext()
+    print_header(["OpsKit", t("menu.network"), t(title)])
+    return activity_step(t(action), t("progress.failed"))
 
 
 def parse_ports(value):
@@ -138,14 +146,17 @@ def register(app):
             fail("URL must be HTTP(S) without credentials", 2)
         import httpx
         try:
-            emit(commands.download_measurement(url, duration))
+            with _activity("network.speed_test", "network.testing"):
+                result = commands.download_measurement(url, duration)
+            emit(result)
         except httpx.HTTPError as exc:
             fail(type(exc).__name__)
 
     @app.command("public-ip")
     @guarded
     def public_ip(timeout: float = typer.Option(10, "--timeout", min=0.1, max=60)):
-        result = commands.get_public_ip(timeout=timeout)
-        if result is None:
-            fail("public IP lookup failed")
+        with _activity("network.public_ip", "network.detecting_ip"):
+            result = commands.get_public_ip(timeout=timeout)
+            if result is None:
+                fail("public IP lookup failed")
         emit({"address": result})

@@ -14,7 +14,7 @@ from rich.table import Table
 
 from core.i18n import t
 from core.prompt import select, text_input, pause, UserCancel, clear_screen, print_header
-from core.sdk import progress_step
+from core.sdk import activity_step, progress_step
 from core.theme import get_color, get_icon, print_error
 from network.commands import COMMON_TCP_PORTS
 
@@ -345,24 +345,25 @@ def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
 def show_speed_test(pause_after: bool = True) -> None:
     clear_screen()
     from network.commands import speed_test_download
-    from core.progress import spinner
     from core.utils import fmt_bytes
 
     from core.constants import SPEED_TEST_URL
-    test_url = SPEED_TEST_URL
-
+    print_header(["OpsKit", t("menu.network"), t("network.speed_test")])
     cancel_event = threading.Event()
-    speed_ref: list = []
-
-    with _ctrlc_guard(cancel_event=cancel_event) as interrupted:
-        with spinner(t("network.testing"), raw=True):
-            speed_ref.append(speed_test_download(test_url, timeout=15, cancel_event=cancel_event))
-
-    if interrupted[0]:
+    try:
+        with _ctrlc_guard(cancel_event=cancel_event), activity_step(t("network.testing"), t("progress.failed")):
+            speed = speed_test_download(SPEED_TEST_URL, timeout=15, cancel_event=cancel_event)
+            if cancel_event.is_set():
+                raise UserCancel
+            if speed <= 0:
+                raise ValueError
+    except UserCancel:
         return
-
-    success = get_color("success")
-    console.print(f"\n[{success}]↓ {fmt_bytes(speed_ref[0] if speed_ref else 0)}/s[/{success}]")
+    except ValueError:
+        pass
+    else:
+        success = get_color("success")
+        console.print(f"\n[{success}]↓ {fmt_bytes(speed)}/s[/{success}]")
     if pause_after:
         pause()
 
@@ -370,25 +371,24 @@ def show_speed_test(pause_after: bool = True) -> None:
 def show_public_ip(pause_after: bool = True) -> None:
     clear_screen()
     from network.commands import get_public_ip, get_local_ip
-    from core.progress import spinner
-
+    print_header(["OpsKit", t("menu.network"), t("network.public_ip")])
     cancel_event = threading.Event()
-    local_ref: list = []
-    public_ref: list = []
-
-    with _ctrlc_guard(cancel_event=cancel_event) as interrupted:
-        with spinner(t("network.detecting_ip"), raw=True):
-            local_ref.append(get_local_ip())
-            public_ref.append(get_public_ip(cancel_event=cancel_event))
-
-    if interrupted[0]:
+    local = get_local_ip()
+    try:
+        with _ctrlc_guard(cancel_event=cancel_event), activity_step(t("network.detecting_ip"), t("progress.failed")):
+            public = get_public_ip(cancel_event=cancel_event)
+            if cancel_event.is_set():
+                raise UserCancel
+            if public is None:
+                raise ValueError
+    except UserCancel:
         return
+    except ValueError:
+        public = None
 
     success = get_color("success")
     muted = get_color("muted")
     title_color = get_color(f"modules.{_THEME_KEY}.title")
-    local = local_ref[0] if local_ref else "127.0.0.1"
-    public = public_ref[0] if public_ref else None
     console.print(f"\n[{title_color}]{t('network.local_ip')}:[/{title_color}] [{success}]{local}[/{success}]")
     if public:
         console.print(f"[{title_color}]{t('network.public_ip')}:[/{title_color}] [{success}]{public}[/{success}]")
