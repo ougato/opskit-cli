@@ -622,6 +622,31 @@ def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
     assert selected == ["fake9"]
 
 
+def test_redis_windows_download_tracks_bytes_and_resets_for_next_mirror(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    import httpx
+    from software.recipes.redis import common, constants
+    from software._shared import architecture
+
+    @contextmanager
+    def stream(method, url, **kwargs):
+        total = 4_000_000 if url == "first" else 2_000_000
+        yield httpx.Response(200, headers={"Content-Length": str(total)}, content=b"x" * 2_000_000)
+
+    monkeypatch.setattr(architecture, "require_windows_x64", lambda name: None)
+    monkeypatch.setattr(constants, "REDIS_DL_WINDOWS_URLS", ["first", "second"])
+    monkeypatch.setattr(common, "_pick_fastest_url", lambda urls: urls[0])
+    monkeypatch.setattr(httpx, "stream", stream)
+
+    progress = []
+    path = common.download_redis_windows("8.10.3", tmp_path / "redis", on_progress=progress.append)
+    assert path.stat().st_size == 2_000_000
+    assert progress[0] is None and progress.count(None) == 2
+    retry = progress.index(None, 1)
+    assert progress[retry - 1] == 50
+    assert progress[-1] == 99
+
+
 def test_redis_windows_versions_require_matching_install_archive(monkeypatch):
     import httpx
     from software._shared import version_resolver

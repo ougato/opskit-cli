@@ -91,7 +91,7 @@ class RedisRecipe(Recipe):
                 prefix="opskit-redis-", ignore_cleanup_errors=True
             ) as tmpdir:
                 if sys.platform == "win32":
-                    src = common.download_redis_windows(version, Path(tmpdir) / "redis")
+                    src = common.download_redis_windows(version, Path(tmpdir) / "redis", on_progress=sp.set_step_pct)
                 elif sys.platform == "darwin":
                     src = common.download_redis_macos(version, Path(tmpdir) / "redis")
                 else:

@@ -146,10 +146,10 @@ class _LiveTicker:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def set_pct(self, pct: int) -> None:
-        """外部调用：切换到真实百分比模式（0~100）"""
+    def set_pct(self, pct: int | None) -> None:
+        """Update a measured percentage, or resume activity when the total is unknown."""
         with self._lock:
-            self._pct = max(0, min(100, pct))
+            self._pct = -1 if pct is None else max(0, min(100, pct))
 
     @property
     def percentage(self) -> int | None:
@@ -326,8 +326,8 @@ class MultiStepProgress:
             self._finish_current(failed=False)
         self._start_live(desc)
 
-    def set_step_pct(self, pct: int) -> None:
-        """更新当前步骤的百分比（0~100），切换为真实百分比渲染模式"""
+    def set_step_pct(self, pct: int | None) -> None:
+        """Update the measured percentage or return to activity mode."""
         if self._ticker is not None:
             self._ticker.set_pct(pct)
 

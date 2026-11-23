@@ -263,7 +263,7 @@ def _pick_fastest_url(urls: list[str], probe_bytes: int = 65536) -> str:
     return reachable[0] if reachable else urls[0]
 
 
-def download_redis_windows(version: str, dest: Path) -> Path:
+def download_redis_windows(version: str, dest: Path, *, on_progress=None) -> Path:
     """Windows: redis-windows/redis-windows GitHub Releases zip（支持 6.x/7.x/8.x）
     先实际带宽测速选最快可达源，再单线程下载。
     """
@@ -283,19 +283,33 @@ def download_redis_windows(version: str, dest: Path) -> Path:
     ordered = [best_url] + [u for u in urls if u != best_url]
 
     for url in ordered:
+        if on_progress is not None:
+            on_progress(None)
         tmp = dest_zip.parent / (dest_zip.name + ".part")
         try:
             with _httpx.stream(
                 "GET", url,
                 timeout=_httpx.Timeout(connect=10, read=120, write=None, pool=None),
                 follow_redirects=True,
+                headers={"Accept-Encoding": "identity"},
             ) as resp:
-                if resp.status_code not in (200, 206):
+                if resp.status_code != 200:
                     continue
+                length = resp.headers.get("Content-Length", "")
+                total = int(length) if length.isascii() and length.isdecimal() else 0
+                if resp.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    total = 0
+                written = 0
+                last = None
                 with tmp.open("wb") as f:
                     for chunk in resp.iter_bytes(65536):
-                        f.write(chunk)
-            if tmp.exists() and tmp.stat().st_size > 1_000_000:
+                        written += f.write(chunk)
+                        if on_progress is not None and total:
+                            pct = min(99, written * 100 // total)
+                            if pct != last:
+                                on_progress(pct)
+                                last = pct
+            if written > 1_000_000 and (not total or written == total):
                 tmp.replace(dest_zip)
                 return dest_zip
         except Exception:
