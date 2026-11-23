@@ -731,6 +731,10 @@ def _broker(manifest, request: dict):
             _check_live_authorizations(extra=((manifest.name, fingerprint),))
 
         with guard_input(checkpoint):
+            display = getattr(_invocations, "wait_display", None)
+            if display is not None:
+                return request_install(manifest, fingerprint, args[0], checkpoint=checkpoint,
+                                       suspend_wait=display.suspend)
             return request_install(manifest, fingerprint, args[0], checkpoint=checkpoint)
     if method == "service.call":
         if (kwargs or len(args) != 4 or not isinstance(args[0], str)
@@ -1158,10 +1162,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
             if exit_requested:
                 return {"exit": True}
             try:
-                from contextlib import nullcontext
-                display = getattr(_invocations, "wait_display", None)
-                suspend = display.suspend() if display is not None and message.get("method") in {"service.call", "service.describe", "service.install_provider"} else nullcontext()
-                with suspend, input_wait_scope(_input_wait_budget):
+                with input_wait_scope(_input_wait_budget):
                     return {"value": _broker(manifest, message)}
             except UserCancel:
                 return {"cancel": True}

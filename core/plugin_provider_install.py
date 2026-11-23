@@ -1,4 +1,6 @@
 """Host-owned, interactive installation and authorization of declared providers."""
+
+from contextlib import nullcontext
 from pathlib import Path
 
 from rich.markup import escape
@@ -42,7 +44,7 @@ def _interactive():
         raise CapabilityDenied("provider_interaction_required")
 
 
-def request_install(caller, fingerprint, provider, *, checkpoint):
+def request_install(caller, fingerprint, provider, *, checkpoint, suspend_wait=nullcontext):
     from core.config import configuration_transaction
     from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
     from core.plugin_sandbox import SandboxError
@@ -78,7 +80,8 @@ def request_install(caller, fingerprint, provider, *, checkpoint):
         ])
         if not is_trusted(provider, digest):
             lines.append(t("plugin_native.provider.trust"))
-        return confirm(breadcrumb=["OpsKit", t("menu.plugin")],
+        with suspend_wait():
+            return confirm(breadcrumb=["OpsKit", t("menu.plugin")],
                        prompt=t("plugin_native.provider.install" if installing else "plugin_native.provider.approve"),
                        info_lines=lines, require_explicit=True)
 
@@ -102,7 +105,7 @@ def request_install(caller, fingerprint, provider, *, checkpoint):
         from core.installation_progress import InstallationProgress
         from core.prompt import UserCancel
 
-        with InstallationProgress() as progress:
+        with suspend_wait(), InstallationProgress() as progress:
             options = menu._fetch_options(source)
             if "fetch_interaction" in options:
                 options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
