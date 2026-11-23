@@ -49,7 +49,8 @@ def test_https_only_uses_local_credentials_after_denial(monkeypatch, explicit):
         calls.append(dict(material))
         if "authorization" not in material:
             raise SSHFailure("fetch_http_auth_failed")
-        yield io.BytesIO(b"fixture")
+        stream = io.BytesIO(b"fixture")
+        yield SimpleNamespace(read=stream.read, length=None, chunked=False)
     monkeypatch.setattr(transport, "_request", request)
     monkeypatch.setattr(transport, "authentication", lambda *a: SimpleNamespace(payload=lambda: {}))
     def lookup(source):
