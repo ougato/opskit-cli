@@ -58,6 +58,7 @@ def _live_loop_scoped(render_fn) -> None:
 
     _old_term = None
     _fd = -1
+    sampling_failed = False
     if os.name != 'nt':
         import tty
         import termios
@@ -96,8 +97,10 @@ def _live_loop_scoped(render_fn) -> None:
                     live.update(_grouped())
                     continue
                 break
-    except BaseException:
+    except KeyboardInterrupt:
         pass
+    except (OSError, RuntimeError):
+        sampling_failed = True
     finally:
         if _old_term is not None:
             import termios
@@ -111,6 +114,9 @@ def _live_loop_scoped(render_fn) -> None:
         else:
             import signal
             signal.signal(signal.SIGINT, _old_handler)
+    if sampling_failed:
+        print_error(t("monitor.live_sample_failed"))
+        pause()
 
 
 # ─── 菜单入口 ─────────────────────────────────────────────────────────────────

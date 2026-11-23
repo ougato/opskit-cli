@@ -770,6 +770,7 @@ wireguard:
 
 monitor:
   first_sample: "Read the first monitoring sample"
+  live_sample_failed: "Could not collect monitoring data"
   sample_disks: "Sample disks"
   disk_sample_failed: "Could not read disk partition data"
   overview: "Overview Dashboard"

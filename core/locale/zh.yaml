@@ -769,6 +769,7 @@ wireguard:
 
 monitor:
   first_sample: "读取首轮监控数据"
+  live_sample_failed: "监控数据采集失败"
   sample_disks: "采集磁盘数据"
   disk_sample_failed: "无法读取磁盘分区数据"
   overview: "概览仪表盘"
