@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 from abc import abstractmethod
 from pathlib import Path
 from typing import ClassVar
@@ -26,9 +25,6 @@ from core.i18n import t
 from software.base import InstallError, InstallStep, Recipe
 from software._shared.mutation import versioned_mutation
 from software.install_location import record_location
-
-# 进度条占位推进上限：下载阶段无法获知真实百分比，用 ticker 线程推到此值后等真实完成
-_TICKER_MAX_PCT = 90
 
 # 验证阶段实际运行二进制的超时秒数
 _VERIFY_RUN_TIMEOUT = 10
@@ -197,22 +193,7 @@ class VersionedTarballRecipe(Recipe):
             with tempfile.TemporaryDirectory(prefix=self._tmpdir_prefix, ignore_cleanup_errors=True) as tmpdir:
                 tarball = Path(tmpdir) / f"{self._tarball_stem.format(version=version)}{self._tarball_ext()}"
 
-                _stop_pct = threading.Event()
-
-                def _ticker():
-                    pct = 1
-                    while not _stop_pct.wait(1.0):
-                        if pct < _TICKER_MAX_PCT:
-                            pct += 1
-                        sp.set_step_pct(pct)
-
-                t_pct = threading.Thread(target=_ticker, daemon=True)
-                t_pct.start()
-                try:
-                    dl_result = self._download(version, tarball)
-                finally:
-                    _stop_pct.set()
-                    t_pct.join(timeout=2)
+                dl_result = self._download(version, tarball)
 
                 # _download 可能返回 Path（tarball）或 list[Path]（APT deb 包列表）
                 install_arg = dl_result if dl_result is not None else tarball

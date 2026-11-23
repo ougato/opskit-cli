@@ -1,7 +1,7 @@
 """NginxRecipe 主类：纯调度，零平台 if"""
 from __future__ import annotations
 
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from software.base import InstallError, InstallStep, Recipe
 from software.registry import register
@@ -42,25 +42,16 @@ class NginxRecipe(Recipe):
             InstallStep("software.step.install"),
         ]
 
-    def _do_install(self, on_progress: Callable[[int], None] | None = None) -> None:
-        """纯安装逻辑，无进度条。on_progress(pct) 上报 0~100 百分比。"""
+    def _do_install(self) -> None:
         from core.platform import get_platform
         info = get_platform()
         if info.os_type not in self.platforms:
             raise InstallError(t('software.nginx_error.platform_not_supported', platform=info.os_type))
-        if on_progress:
-            on_progress(20)
         driver = get_driver()
         driver.install_pkg()
-        if on_progress:
-            on_progress(80)
         driver.enable_service()
-        if on_progress:
-            on_progress(95)
         if not driver.detect():
             raise InstallError(t('software.nginx_error.verify_failed'))
-        if on_progress:
-            on_progress(100)
 
     def install(self, version: str) -> None:
         from core.progress import MultiStepProgress
@@ -68,7 +59,7 @@ class NginxRecipe(Recipe):
         descs = [t('software.step.install')]
         with MultiStepProgress(descs) as sp:
             sp.step(descs[0])
-            self._do_install(on_progress=sp.set_step_pct)
+            self._do_install()
             sp.complete()
 
     def uninstall(self, version: str | None = None) -> None:

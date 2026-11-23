@@ -329,17 +329,14 @@ def test_python_install_delegates_to_do_install(monkeypatch) -> None:
 
     seen: dict[str, object] = {}
 
-    def fake_do_install(self, version: str, on_progress=None) -> None:
+    def fake_do_install(self, version: str) -> None:
         seen["version"] = version
-        seen["has_progress"] = callable(on_progress)
-        if on_progress:
-            on_progress(100)
 
     monkeypatch.setattr(PythonRecipe, "_do_install", fake_do_install)
 
     PythonRecipe().install("3.12.13")
 
-    assert seen == {"version": "3.12.13", "has_progress": True}
+    assert seen == {"version": "3.12.13"}
 
 
 def test_python_package_manager_skips_build_only_versions(monkeypatch) -> None:
