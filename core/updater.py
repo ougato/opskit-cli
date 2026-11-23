@@ -1461,7 +1461,7 @@ def query_update_target(update_cfg: dict):
         _query_readonly.reset(token)
 
 
-def apply_verified_pending():
+def apply_verified_pending(*, expected_candidate_id=None):
     """Explicit application; no guessed build or source-mode replacement."""
     if not _is_frozen():
         raise ValueError("binary updates require a packaged executable")
@@ -1469,6 +1469,9 @@ def apply_verified_pending():
         cache = _load_check_cache()
         if not isinstance(cache, dict):
             raise RuntimeError("invalid update cache")
+        if expected_candidate_id is not None and cache.get("candidate_id") != expected_candidate_id:
+            from core.i18n import t
+            raise RuntimeError(t("update.install_candidate_changed"))
         version = cache.get("pending_version")
         if type(version) is not int or version <= APP_VERSION:
             raise RuntimeError("pending update version is missing or outdated")

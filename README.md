@@ -49,6 +49,8 @@ opskit.exe
 
 > **注意**：CMD 方式仅下载到当前目录，不配置 PATH，不支持热更新。完整安装请使用 PowerShell 命令。
 
+如果自动更新未完成，但打包程序还能启动，可运行 `opskit update install` 手动更新。脚本可用 `opskit --yes --output json update install`。Windows 返回 `scheduled` 时，在进程退出后替换，再运行 `opskit --version` 确认版本。
+
 安装路径：
 
 | 平台 | 路径 |

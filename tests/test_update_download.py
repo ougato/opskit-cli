@@ -64,6 +64,16 @@ def old_candidate():
     return old, updater._get_cache_path().read_bytes()
 
 
+def test_confirmed_version_change_does_not_stage_a_different_update(verified_transport, monkeypatch):
+    cfg, build, _, _ = verified_transport
+    monkeypatch.setattr(updater, "_download_update", lambda *args: pytest.fail("unconfirmed download"))
+    connection = Capture()
+    cache = updater._get_cache_path()
+    update_download._worker(connection, str(cache), time.monotonic() + 10, cfg, build + 1)
+    assert connection.result == {"ok": True, "data": {"available": False, "reason": "target_changed"}}
+    assert not cache.exists()
+
+
 def test_real_checksum_pipeline_publishes_one_complete_generation(verified_transport, monkeypatch):
     cfg, build, binary, _ = verified_transport
     old, before = old_candidate()

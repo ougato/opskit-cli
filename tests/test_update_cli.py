@@ -13,6 +13,61 @@ import main
 from core import update_cli, updater
 
 
+@pytest.mark.parametrize("scenario", ["scheduled", "applied", "no_update", "declined", "changed", "missing_yes"])
+def test_install_command_composes_existing_operations(monkeypatch, scenario):
+    from core import prompt, update_download
+
+    version = updater.APP_VERSION + 1
+    identity = "b" * 32
+    events = []
+    monkeypatch.setattr(main, "_boot", lambda: pytest.fail("manual update must not boot"))
+    monkeypatch.setattr(updater, "_is_frozen", lambda: True)
+
+    def check(*, timeout):
+        assert timeout == 3
+        events.append("check")
+        if scenario == "no_update":
+            return {"available": False, "reason": "no_eligible_update", "checksum_verified": False}
+        return {"available": True, "current_version": version - 1, "candidate_version": version}
+
+    def download(*, timeout, expected_version):
+        assert timeout == 7 and expected_version == version
+        events.append("download")
+        if scenario == "changed":
+            return {"available": False, "reason": "target_changed"}
+        return {"available": True, "candidate_id": identity}
+
+    def apply(*, expected_candidate_id):
+        assert expected_candidate_id == identity
+        events.append("apply")
+        return {"version": version, "state": scenario, "health_confirmed": False}
+
+    monkeypatch.setattr(update_cli, "check", check)
+    monkeypatch.setattr(update_download, "download", download)
+    monkeypatch.setattr(updater, "apply_verified_pending", apply)
+    if scenario == "declined":
+        monkeypatch.setattr(prompt, "confirm", lambda **kwargs: False)
+    args = ["--output", "json"]
+    if scenario != "missing_yes":
+        args.append("--yes")
+    result = CliRunner().invoke(main.app, args + [
+        "update", "install", "--check-timeout", "3", "--timeout", "7",
+    ])
+    payload = json.loads(result.stdout)
+    if scenario in {"applied", "scheduled"}:
+        assert result.exit_code == 0
+        assert payload["data"] == {"available": True, "checksum_verified": True, "version": version,
+                                   "state": scenario, "health_confirmed": False}
+        assert events == ["check", "download", "apply"]
+    elif scenario == "changed":
+        assert result.exit_code == 1 and events == ["check", "download"]
+    else:
+        assert events == ["check"]
+        assert result.exit_code == {"no_update": 0, "declined": 1, "missing_yes": 2}[scenario]
+        if scenario == "no_update":
+            assert payload["data"]["state"] == "no_update"
+
+
 @pytest.mark.parametrize("state", ["scheduled", "applied", "failed", "applied_recovery_incomplete"])
 def test_status_reports_whitelisted_job_result(tmp_path, monkeypatch, state):
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))

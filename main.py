@@ -378,7 +378,7 @@ from software.direct_cli import register as _register_software_cli, _EXIT_RUNTIM
 ) = _register_software_cli(sw_app, _ct, sys.modules[__name__])
 
 
-register_builtin_commands(app, sw_app, mon_app, net_app, _CONTEXT_SETTINGS)
+register_builtin_commands(app, sw_app, mon_app, net_app, _CONTEXT_SETTINGS, _ct)
 
 
 if __name__ == "__main__":

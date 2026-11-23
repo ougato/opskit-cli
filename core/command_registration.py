@@ -29,7 +29,7 @@ def register_plugin_commands(plugin_app: typer.Typer, translate: Callable[[str],
 
 def register_builtin_commands(app: typer.Typer, sw_app: typer.Typer,
                               mon_app: typer.Typer, net_app: typer.Typer,
-                              settings: dict) -> None:
+                              settings: dict, translate: Callable[[str], str]) -> None:
     """Register existing command implementations in their established order."""
     from monitor.cli import register as register_monitor
     register_monitor(mon_app)
@@ -48,4 +48,4 @@ def register_builtin_commands(app: typer.Typer, sw_app: typer.Typer,
     from network.cli import register as register_network
     register_network(net_app)
     from core.update_cli import register as register_update
-    register_update(app, settings)
+    register_update(app, settings, translate)

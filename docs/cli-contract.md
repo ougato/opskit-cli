@@ -160,6 +160,8 @@ Windows Redis 下载在响应提供可用文件长度时按已写入字节计算
 
 `update status [--timeout SECONDS]`（默认10秒）只读查询当前版本、二进制更新模式、待更新文件存在性及缓存版本，不boot、不创建配置/缓存；`pending_verification: not_checked`明确没有验证产物，存在文件不表示可安全应用。
 
+`opskit update install` 手动检查、确认、下载并应用正式更新。脚本使用 `opskit --yes --output json update install`。仅支持打包程序，沿用现有更新源、灰度、摘要和回滚策略。检查与下载各有独立超时，分别为 `--check-timeout`（默认30秒）和 `--timeout`（默认300秒），均不包含应用阶段。确认的版本与下载结果绑定，应用时再次核对候选身份。无可用更新正常退出，状态为 `no_update`。成功提交替换后返回 `applied`，Windows 返回 `scheduled`；两者返回时均未确认启动健康。可用 `update status` 查看进度。
+
 `update check [--timeout SECONDS]`（默认30秒）复用现有更新源/灰度策略，在受监督进程内查询，配置上限64 KiB、元数据上限256 KiB，拒绝压缩响应。检查不写更新缓存、不创建机器标识、不发送遥测；完整放量不需要新建身份，部分灰度缺已有身份时明确失败。网络/无效响应失败不作为“无更新”；无符合策略的版本返回available=false/reason=no_eligible_update，候选版本返回checksum_verified=false（此命令尚未下载/验证产物）。期限范围均0.1..3600秒，取消回收worker。显式download及索引任务reconcile已接入；完整应用/恢复事务仍未完成。
 
 `opskit --output json --yes update apply`只允许打包可执行程序模式；源码模式退出2且不创建数据。需要确认，JSON/无交互必须使用根级--yes。应用要求缓存中明确的、更高整数pending_version，普通完整产物及有效 SHA256 摘要，不猜版本。成功结果为version、state（Windows scheduled，其他平台applied）和health_confirmed=false；scheduled不代表替换已完成。同步替换使用原子操作，跨文件系统先校验暂存副本再提交；Unix替换后异常/取消尝试恢复已校验备份及重试产物。备份清理失败不会误报应用失败。目标级版本权威及索引任务reconcile已接入；仍缺真实断电、未索引/旧任务、完整marker凭据及退役；apply未提供总期限参数，不能标完整生产验收。

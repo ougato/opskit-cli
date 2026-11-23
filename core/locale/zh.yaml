@@ -106,6 +106,14 @@ update:
   success: "已更新到 v{version}"
   failed: "更新失败：{error}"
   rollback: "已回滚到 v{version}"
+  install_packaged_only: "手动更新需要使用 OpsKit 的打包可执行程序"
+  install_target: "当前 v{current}，将更新到 v{version}"
+  install_cancelled: "已取消更新"
+  install_candidate_changed: "更新候选已变化，请重新运行 opskit update install"
+  install_no_eligible_update: "当前没有可安装的更新"
+  install_rolled_back_version: "当前发布的版本曾被回滚，请等待更高版本"
+  install_scheduled: "已安排更新到 v{version}，退出后替换，请重新启动 OpsKit 确认"
+  install_applied: "已替换为 v{version}，请重新启动 OpsKit 确认"
 
 service:
   installing: "安装服务插件"
@@ -815,6 +823,9 @@ self_uninstall:
   removed: "卸载完成"
 
 cli:
+  update_install_help: "手动检查、下载、校验并应用 OpsKit 更新"
+  update_install_check_timeout: "检查更新的超时秒数"
+  update_install_download_timeout: "下载并校验更新的超时秒数"
   self_uninstall_help: "卸载 OpsKit 自身"
   self_uninstall_purge: "清理 OpsKit 插件和本地数据"
   self_uninstall_preview: "预览卸载范围"

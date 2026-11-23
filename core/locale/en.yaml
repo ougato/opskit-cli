@@ -106,6 +106,14 @@ update:
   success: "Updated to v{version}"
   failed: "Update failed: {error}"
   rollback: "Rolled back to v{version}"
+  install_packaged_only: "Manual updates require a packaged OpsKit executable"
+  install_target: "Current version v{current}. Install v{version}"
+  install_cancelled: "Update cancelled"
+  install_candidate_changed: "The update candidate changed. Run opskit update install again."
+  install_no_eligible_update: "No eligible update is available"
+  install_rolled_back_version: "The available version was rolled back. Wait for a newer release."
+  install_scheduled: "Update to v{version} scheduled for exit. Restart OpsKit to verify it."
+  install_applied: "Replaced the executable with v{version}. Restart OpsKit to verify it."
 
 service:
   installing: "Install service plugin"
@@ -816,6 +824,9 @@ self_uninstall:
   removed: "Uninstall complete"
 
 cli:
+  update_install_help: "Check, download, verify, and apply an OpsKit update"
+  update_install_check_timeout: "Update check timeout in seconds"
+  update_install_download_timeout: "Update download and verification timeout in seconds"
   self_uninstall_help: "Uninstall OpsKit itself"
   self_uninstall_purge: "Remove OpsKit plugins and local data"
   self_uninstall_preview: "Preview the uninstall scope"
