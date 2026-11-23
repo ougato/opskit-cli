@@ -130,7 +130,7 @@ The Windows host finds an ordinary executable in the preferred location, PATH or
 - `https_request(url, method, headers, body)` 是受限 HTTPS RPC，需要 network 权限。请求与响应各限 1 MiB，返回 `status`、`body` 和 `etag`。响应没有有效的强 ETag 时，`etag` 为 `None`。
 - `waiting(message)` 的文案应描述当前动作并按界面语言本地化。跨插件调用期间保持等待范围，实际授权、输入或传输渲染接管时暂停。菜单组件绘制标题，独立进度页由 `print_header` 绘制并留一个空行。
 
-- `upload_files(directory, files, *, publish_last=0, breadcrumb=None, progress_offset=None)`：通用批量上传，最多 4096 项且受 RPC 大小限制。每项为 `[relative, put_url, sha256, headers, verification]`。七牛可传 `{"kind": "kodo-stat", "url": stat_url, "headers": {"authorization": token}}`，宿主核对地址是否指向同一桶和对象，并核对大小和 QETag。其他存储传签名 GET URL，或在无需远端校验时传 `None`，结果按输入顺序返回。尾部 `publish_last` 项等前一组校验通过后才开始。宿主限制并发。默认显示已完成字节的百分比和最近两秒实际发送的正文速率，可用 `breadcrumb` 指定进度页标题。分批调用时，先在调用方创建一个以文件总数计量的 `progress_step`，各批传入此前已校验的文件数作为 `progress_offset`，从 0 开始。宿主在每批内直接更新同一个累计进度。配置远端校验时，校验成功才计入进度。失败后已上传的对象可能保留。
+- `upload_files(directory, files, *, publish_last=0, breadcrumb=None, progress_offset=None)`：通用批量上传，最多 4096 项且受 RPC 大小限制。每项为 `[relative, put_url, sha256, headers, verification]`。七牛可传 `{"kind": "kodo-stat", "url": stat_url, "headers": {"authorization": token}}`，宿主核对地址是否指向同一桶和对象，并核对大小和 QETag。其他存储传签名 GET URL，或在无需远端校验时传 `None`，结果按输入顺序返回。尾部 `publish_last` 项等前一组校验通过后才开始。宿主限制并发。默认显示已完成字节的百分比和最近两秒实际发送的正文速率，可用 `breadcrumb` 指定进度页标题，传入空列表时追加到调用方当前进度页。分批调用时，先在调用方创建一个以文件总数计量的 `progress_step`，各批传入此前已校验的文件数作为 `progress_offset`，从 0 开始。宿主在每批内直接更新同一个累计进度。配置远端校验时，校验成功才计入进度。失败后已上传的对象可能保留。
 - `upload_file(directory, relative, url, sha256, headers=None, *, verify_url=None)`：单文件 HTTPS PUT，最多 512MiB；`verify_url` 可传入同一对象的签名 GET URL，宿主流式回读并核对大小和 SHA-256。已有相同内容时复用对象；
   同时要求 network 权限和宿主目录读取授权，必须给出待上传内容的 SHA256。
 

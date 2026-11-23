@@ -24,7 +24,7 @@ CHUNK = 1024**2
 ATTEMPTS = 3
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
 UPLOAD_PHASES = frozenset({"snapshot", "lookup", "put", "readback"})
-UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "content", "conflict"})
+UPLOAD_REASONS = frozenset({"http", "timeout", "tls", "network", "destination", "content", "conflict"})
 
 
 class UploadFailure(RuntimeError):
@@ -42,6 +42,8 @@ def _failure(phase, error):
         reason = "timeout"
     elif isinstance(error, ssl.SSLError):
         reason = "tls"
+    elif phase != "snapshot" and isinstance(error, PermissionError):
+        reason = "destination"
     elif phase != "snapshot" and isinstance(error, (OSError, http.client.HTTPException)):
         reason = "network"
     else:
@@ -362,7 +364,7 @@ def upload_files(plugin, fingerprint, directory, files, publish_last=0, breadcru
                  private_targets, deadline, checkpoint, console=None, input_wait=nullcontext, on_verified=None):
     """Run a bounded batch with one directory grant and one supervised worker."""
     if breadcrumb is not None and (
-        not isinstance(breadcrumb, list) or not 1 <= len(breadcrumb) <= 16
+        not isinstance(breadcrumb, list) or len(breadcrumb) > 16
         or any(not isinstance(label, str) or not 1 <= len(label) <= 256
                or not label.isprintable() for label in breadcrumb)
     ):

@@ -51,8 +51,9 @@ def upload_progress(console, total, files, breadcrumb=None):
     if not console.is_terminal or non_interactive.get():
         yield update
         return
-    clear_screen()
-    print_header(breadcrumb or [t("plugin_native.upload.header")])
+    if breadcrumb != []:
+        clear_screen()
+        print_header(breadcrumb or [t("plugin_native.upload.header")])
     try:
         with Live(console=console, transient=True, refresh_per_second=10,
                   redirect_stdout=False, redirect_stderr=False,

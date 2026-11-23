@@ -948,6 +948,7 @@ plugin_native:
     reason_timeout: "Request timed out"
     reason_tls: "TLS connection failed"
     reason_network: "Network connection interrupted"
+    reason_destination: "Destination denied by network policy. Check whether DNS returned a proxy virtual address"
     reason_content: "Content or checksum validation failed"
   bootstrap:
     update_wait: "Wait for plugin to be idle"

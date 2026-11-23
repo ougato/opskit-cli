@@ -947,6 +947,7 @@ plugin_native:
     reason_timeout: "请求超时"
     reason_tls: "TLS 连接失败"
     reason_network: "网络连接中断"
+    reason_destination: "目标地址被网络规则拒绝，请检查 DNS 是否返回代理虚拟地址"
     reason_content: "内容或摘要校验失败"
   bootstrap:
     update_wait: "等待插件空闲"
