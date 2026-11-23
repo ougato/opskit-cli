@@ -135,6 +135,7 @@ def test_background_confirmation_contention_budget_is_bounded(health):
 
 @pytest.mark.parametrize("offset", [-1, 1])
 def test_other_build_health_is_retained_for_recovery(health, monkeypatch, offset):
+    monkeypatch.setattr(updater, "APP_VERSION", 2)
     record = updater._read_update_record(health)
     updater._write_update_record(health, {**record, "build": updater.APP_VERSION + offset})
     before = health.read_bytes()
