@@ -195,9 +195,11 @@ class InstallationProgress:
 
     def __call__(self, phase, name=""):
         if phase not in {"fetch", "tools", "repair", "runtime",
-                         "update_wait", "update_check", "update_fetch", "update_verify", "update_publish"}:
+                         "update_wait", "update_check", "update_fetch", "update_verify", "update_publish", "loading_inventory"}:
             return
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
+        if phase == "loading_inventory":
+            key = "plugin.loading_inventory"
         message = Text(t(key, branch=name), no_wrap=True, overflow="ellipsis")
         # Redirected output stays clean; final success/error remains available.
         from core.cli import non_interactive

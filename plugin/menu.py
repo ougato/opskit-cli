@@ -548,6 +548,9 @@ def _update_one(manifest, crumb) -> None:
             if "fetch_interaction" in options:
                 options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
             ok, msg = commands.update(manifest, automatic=True, progress=progress, **options)
+            if ok:
+                progress("loading_inventory")
+                refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     except UserCancel:
         print_info(t("plugin.update_cancelled", name=_display_name(manifest)))
         return
@@ -557,8 +560,6 @@ def _update_one(manifest, crumb) -> None:
         else:
             print_error(t("plugin.update_failed", error=msg))
         return
-    with waiting(t("plugin.loading_inventory")):
-        refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     if refreshed is None:
         print_error(t("plugin.install_no_manifest"))
         return

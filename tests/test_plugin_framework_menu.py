@@ -37,6 +37,45 @@ def test_opening_spinner_stops_before_plugin_renders(monkeypatch):
     assert events == ["waiting", "closed", "menu"]
 
 
+def test_update_inventory_keeps_the_gap_from_copy_progress(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from core import installation_progress
+
+    progress_contexts = []
+
+    class Progress:
+        def __enter__(self):
+            progress_contexts.append(self)
+            self.phases = []
+            self.active = True
+            return self
+
+        def __exit__(self, *exc):
+            self.active = False
+
+        def __call__(self, phase):
+            self.phases.append(phase)
+
+    manifest = SimpleNamespace(name="storage_hub", version="1.0.0")
+
+    def manifests():
+        progress, = progress_contexts
+        assert progress.active
+        assert progress.phases == ["update_wait", "loading_inventory"]
+        return [manifest]
+
+    monkeypatch.setattr(installation_progress, "InstallationProgress", Progress)
+    monkeypatch.setattr(menu, "waiting", lambda *args: nullcontext())
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda *args: {})
+    monkeypatch.setattr(menu, "_display_name", lambda item: item.name)
+    monkeypatch.setattr(menu.commands, "update", lambda *args, **kwargs: (True, "unchanged"))
+    monkeypatch.setattr(menu.commands, "manifests", manifests)
+    menu._update_one(manifest, ["OpsKit"])
+
+
 def test_update_all_never_opens_trust_confirmation(monkeypatch):
     from core.plugin import PluginManifest
 
