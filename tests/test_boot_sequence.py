@@ -61,7 +61,7 @@ class TestBootExecRestart:
 
         mock_execv.assert_called_once()
         args = mock_execv.call_args[0]
-        assert args[0] == sys.executable
+        assert args[0] == str(Path(sys.executable).resolve())
 
     def test_pyinstaller_restart_uses_fresh_archive_and_original_library_path(self, monkeypatch):
         from core.startup import _restart_after_update
@@ -73,7 +73,7 @@ class TestBootExecRestart:
         with patch("os.execve") as execute:
             _restart_after_update(["--lang", "en"])
         path, argv, env = execute.call_args.args
-        assert path == sys.executable
+        assert path == str(Path(sys.executable).resolve())
         assert argv == [path, "--post-update", "--lang", "en"]
         assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
         assert env["LD_LIBRARY_PATH"] == "/original"
