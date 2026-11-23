@@ -21,6 +21,11 @@ console = Console()
 _input_guard = ContextVar("prompt_input_guard", default=None)
 _input_wait_scope = ContextVar("prompt_input_wait_scope", default=None)
 _screen_transition = ContextVar("prompt_screen_transition", default=None)
+_menu_visible = ContextVar("prompt_menu_visible", default=False)
+
+
+def menu_visible() -> bool:
+    return _menu_visible.get()
 
 
 @contextmanager
@@ -445,6 +450,7 @@ def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
     console.print(f' {pipe}{_TEE}[/] [dim](0) {_pad_label(back_label)}[/]')
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
     sys.stdout.flush()
+    _menu_visible.set(True)
 
 
 def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
@@ -471,6 +477,7 @@ def finish_screen_transition() -> None:
 def clear_screen() -> None:
     """Clear the current screen before drawing another one."""
     finish_screen_transition()
+    _menu_visible.set(False)
     from core.cli import non_interactive
     if not non_interactive.get():
         if os.name == 'nt':
@@ -481,6 +488,7 @@ def clear_screen() -> None:
 
 def print_header(breadcrumb: list[str]) -> None:
     """在清屏后渲染 Powerline 分段色块面包屑标题（复用 select 菜单的通用标题样式）"""
+    _menu_visible.set(False)
     _render_header(breadcrumb)
     console.print()
 

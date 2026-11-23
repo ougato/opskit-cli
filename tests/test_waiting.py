@@ -194,6 +194,28 @@ def test_wait_display_renders_and_removes_transient_spinner(monkeypatch):
     assert "\x1b[?25h" in output.getvalue()
 
 
+def test_waiting_separator_after_menu_input(monkeypatch):
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, force_interactive=True,
+                      legacy_windows=False, width=100, _environ={"TERM": "xterm"})
+    monkeypatch.setattr(prompt, "console", console)
+    token = prompt._menu_visible.set(False)
+    display = installation_progress.WaitingDisplay(console)
+    try:
+        prompt._render_options([("4", "Plugins")])
+        console.print("4")
+        offset = len(output.getvalue())
+        display.start("Read installed plugins")
+        active = output.getvalue()[offset:]
+        assert active.count("\n") == 1 and "Read installed plugins" in active
+    finally:
+        display.close()
+        prompt._menu_visible.reset(token)
+
+
 def test_waiting_separator_after_completed_progress(monkeypatch):
     from io import StringIO
     from rich.console import Console

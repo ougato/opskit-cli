@@ -146,10 +146,11 @@ class WaitingDisplay:
                                redirect_stdout=False, redirect_stderr=False, get_renderable=render)
             self.status.start(refresh=True)
             return
+        from core.prompt import menu_visible
         message = Text(label, no_wrap=True, overflow="ellipsis")
         if self.status is None:
             self.status = _InstallationStatus(message, output_console=self.console,
-                                               separate=self.after_progress)
+                                               separate=self.after_progress or menu_visible())
             self.status.start()
         else:
             self.status.update(message)
@@ -203,7 +204,8 @@ class InstallationProgress:
         if not console.is_terminal or non_interactive.get():
             return
         if self.status is None:
-            self.status = _InstallationStatus(message)
+            from core.prompt import menu_visible
+            self.status = _InstallationStatus(message, separate=menu_visible())
             self.status.start()
         else:
             self.status.update(message)
