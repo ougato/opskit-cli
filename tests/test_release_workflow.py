@@ -13,22 +13,37 @@ def test_only_release_job_can_write_repository():
     assert workflow["permissions"] == {"contents": "read"}
     for name, job in workflow["jobs"].items():
         effective = job.get("permissions", workflow["permissions"])
-        assert effective == {"contents": "write" if name == "release" else "read"}
+        expected = {"contents": "write" if name == "release" else "read"}
+        if name == "test":
+            expected["actions"] = "read"
+        assert effective == expected
 
 
 def test_candidate_branch_builds_and_validates_without_publishing():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    assert workflow[True]["push"]["branches"] == ["release-check/v*"]
+    assert workflow[True]["push"] == {"branches": ["release"], "tags": ["v*"]}
     jobs = workflow["jobs"]
     assert jobs["release"]["if"] == "github.ref_type == 'tag'"
     assert jobs["notify-start"]["steps"][0]["if"] == "github.ref_type == 'tag'"
     candidate = jobs["release-check"]
     assert candidate["if"] == "github.ref_type == 'branch'"
-    assert candidate["needs"] == ["build"]
+    assert candidate["needs"] == ["test", "build"]
     commands = "\n".join(step.get("run", "") for step in candidate["steps"])
     assert "scripts/release_assets.py" in commands
     assert "--sync-installers --check" in commands
     assert "--publish" not in commands
+
+
+def test_tag_requires_matching_version_and_successful_release_commit():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["test"]
+    version = next(step for step in job["steps"] if step.get("id") == "version")
+    assert 'release_bump.py "v$build" --check' in version["run"]
+    assert '"$GITHUB_REF_NAME" != "v$build"' in version["run"]
+    gate = next(step for step in job["steps"] if step.get("if") == "github.ref_type == 'tag'")
+    assert 'git/ref/heads/release' in gate["run"]
+    assert '"$release_sha" != "$GITHUB_SHA"' in gate["run"]
+    assert '-f status=success -f head_sha="$GITHUB_SHA"' in gate["run"]
 
 
 def test_bootstrap_commit_uses_default_branch_after_release_upload():
