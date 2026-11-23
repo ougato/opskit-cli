@@ -461,12 +461,16 @@ def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
-def clear_screen() -> None:
-    """Clear the current screen before drawing another one."""
+def finish_screen_transition() -> None:
     on_render = _screen_transition.get()
     if on_render is not None:
         _screen_transition.set(None)
         on_render()
+
+
+def clear_screen() -> None:
+    """Clear the current screen before drawing another one."""
+    finish_screen_transition()
     from core.cli import non_interactive
     if not non_interactive.get():
         if os.name == 'nt':

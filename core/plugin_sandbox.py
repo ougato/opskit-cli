@@ -476,10 +476,14 @@ def _broker(manifest, request: dict):
         if display is None:
             raise SandboxError("invalid waiting scope")
         if method == "ui.wait_start" and len(args) == 1 and not kwargs:
+            from core.prompt import finish_screen_transition
+            finish_screen_transition()
             display.start(args[0])
         elif (method == "ui.progress_start" and len(args) == 1
               and set(kwargs) == {"total", "failed_label"}
               and type(kwargs["total"]) is int and isinstance(kwargs["failed_label"], str)):
+            from core.prompt import finish_screen_transition
+            finish_screen_transition()
             display.start(args[0], **kwargs)
         elif (method == "ui.progress_update" and len(args) == 1 and not kwargs
               and display.depth > floor and display.counting):
