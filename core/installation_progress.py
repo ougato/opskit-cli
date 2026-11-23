@@ -147,7 +147,7 @@ class WaitingDisplay:
             self.status.start(refresh=True)
             return
         from core.prompt import menu_visible
-        message = Text(label, no_wrap=True, overflow="ellipsis")
+        message = Text(label.strip() or t("prompt.waiting"), no_wrap=True, overflow="ellipsis")
         if self.status is None:
             self.status = _InstallationStatus(message, output_console=self.console,
                                                separate=self.after_progress or menu_visible())

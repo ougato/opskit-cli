@@ -194,7 +194,8 @@ def test_wait_display_renders_and_removes_transient_spinner(monkeypatch):
     assert "\x1b[?25h" in output.getvalue()
 
 
-def test_waiting_separator_after_menu_input(monkeypatch):
+@pytest.mark.parametrize("text_input", [False, True])
+def test_waiting_separator_after_menu_input(monkeypatch, text_input):
     from io import StringIO
     from rich.console import Console
 
@@ -205,8 +206,13 @@ def test_waiting_separator_after_menu_input(monkeypatch):
     token = prompt._menu_visible.set(False)
     display = installation_progress.WaitingDisplay(console)
     try:
-        prompt._render_options([("4", "Plugins")])
-        console.print("4")
+        if text_input:
+            monkeypatch.setattr(prompt, "_read_line", lambda **kwargs: "1.8.0")
+            monkeypatch.setattr(console, "clear", lambda: None)
+            assert prompt.text_input(["OpsKit", "Build"], "Version") == "1.8.0"
+        else:
+            prompt._render_options([("4", "Plugins")])
+            console.print("4")
         offset = len(output.getvalue())
         display.start("Read installed plugins")
         active = output.getvalue()[offset:]

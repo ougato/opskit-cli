@@ -1123,6 +1123,7 @@ def text_input(
         sys.stdout.write(_hint + ' ')
     sys.stdout.flush()
     raw = _read_line(secret=secret, initial=initial) if initial else _read_line(secret=secret)
+    _menu_visible.set(True)
     return raw if raw else default
 
 
