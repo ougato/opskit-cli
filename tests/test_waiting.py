@@ -331,7 +331,7 @@ def test_activity_progress_keeps_result_without_estimated_percentage(failed):
     display = installation_progress.WaitingDisplay(console)
     display.start("Check cache", failed_label="Failed")
     assert display.progressing and not display.counting
-    assert "Check cache" in output.getvalue()
+    assert "Check..." in output.getvalue()
     assert "%" not in output.getvalue()
     with pytest.raises(ValueError, match="invalid progress count"):
         display.update(1)

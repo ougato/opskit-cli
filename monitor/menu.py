@@ -59,17 +59,16 @@ def _live_loop_scoped(render_fn) -> None:
     _old_term = None
     _fd = -1
     sampling_failed = False
-    if os.name != 'nt':
-        import tty
-        import termios
-        _fd = sys.stdin.fileno()
-        if os.isatty(_fd):
+    try:
+        if os.name != 'nt' and sys.stdin.isatty():
+            import tty
+            import termios
             try:
+                _fd = sys.stdin.fileno()
                 _old_term = termios.tcgetattr(_fd)
-            except Exception:
+            except (OSError, termios.error):
                 _old_term = None
 
-    try:
         with waiting(t("monitor.first_sample")):
             initial = _grouped()
         if _stop[0]:

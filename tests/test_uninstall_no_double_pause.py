@@ -47,7 +47,6 @@ def _patch_common(monkeypatch, pause_counter: list[int]):
     monkeypatch.setattr(menu, "print_success", lambda *a, **k: None)
     monkeypatch.setattr(menu, "print_warning", lambda *a, **k: None)
     monkeypatch.setattr(menu, "report_failure", lambda *a, **k: None)
-    monkeypatch.setattr(menu.base_console, "print", lambda *a, **k: None)
 
 
 def test_wizard_uninstall_success_frame_pauses_once(monkeypatch):
