@@ -38,9 +38,7 @@ class _InstallationStatus:
     def start(self):
         if self.live is not None:
             return
-        # The separator belongs to the transient display: stopping it removes
-        # both lines, so a subsequent warning or error adds only its own gap.
-        self.live = Live(Group(Text(""), self.spinner), console=self.output_console,
+        self.live = Live(self.spinner, console=self.output_console,
                          refresh_per_second=12.5, transient=True)
         self.live.start(refresh=True)
 

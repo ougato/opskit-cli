@@ -176,7 +176,7 @@ def test_upload_batches_report_cumulative_verified_files(monkeypatch):
     display.close()
 
 
-def test_wait_display_renders_and_removes_transient_spinner():
+def test_wait_display_renders_and_removes_transient_spinner(monkeypatch):
     from io import StringIO
     from rich.console import Console
     output = StringIO()
@@ -184,10 +184,13 @@ def test_wait_display_renders_and_removes_transient_spinner():
                       legacy_windows=False, color_system="truecolor", width=100,
                       _environ={"TERM": "xterm"})
     display = installation_progress.WaitingDisplay(console)
+    from core import prompt
+    monkeypatch.setattr(prompt, "console", console)
+    prompt.print_header(["OpsKit", "Update", "Storage Hub"])
     display.start()
     active = output.getvalue()
     display.close()
-    assert "\n" in active and "⠋" in active
+    assert active.count("\n") == 2 and "⠋" in active
     assert "\x1b[?25h" in output.getvalue()
 
 
