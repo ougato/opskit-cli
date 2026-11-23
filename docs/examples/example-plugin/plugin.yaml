@@ -8,7 +8,7 @@ permissions: []
 uses:
   - service: storage
     provider: storage_hub
-    api_version: 2
+    api_version: 6
     methods: [open_menu]
 label:
   zh: 示例工具

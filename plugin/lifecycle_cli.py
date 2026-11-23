@@ -11,11 +11,18 @@ from core.cli import emit, fail, guarded, output_mode
 from core.i18n import t
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, invalidate
+from core.sdk import activity_step
 from plugin import commands
 
 
+def _inventory():
+    from core.sdk import waiting
+    with waiting(t("plugin.loading_inventory")):
+        return commands.manifests()
+
+
 def resolve(name):
-    matches = [item for item in commands.manifests() if item.name == name]
+    matches = [item for item in _inventory() if item.name == name]
     if len(matches) != 1:
         fail(t("plugin_native.lifecycle.not_found"), 2)
     return matches[0]
@@ -94,7 +101,9 @@ def register(app, translate=None):
                        record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_update_recovery import recover
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.rollback"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
 
@@ -117,7 +126,9 @@ def register(app, translate=None):
         from core.windows_profile_recovery import recover
         from core.native_sandbox import NativeSandboxError
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.profile"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except NativeSandboxError as error:
             fail(str(error), 1)
         except (OSError, ValueError, RuntimeError):
@@ -138,7 +149,9 @@ def register(app, translate=None):
                                  record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_workspace_recovery import recover
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.workspace"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
 
@@ -159,7 +172,9 @@ def register(app, translate=None):
                            record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.native_catalog_cleanup import collect
         try:
-            emit(collect(catalog, object_id, record_sha256))
+            with activity_step(t("confirm_ui.cache"), t("progress.failed")):
+                result = collect(catalog, object_id, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
 
@@ -248,7 +263,7 @@ def register(app, translate=None):
     @app.command("list", help=translate("lifecycle.list_help"))
     @guarded
     def list_plugins():
-        emit([describe(item) for item in commands.manifests()])
+        emit([describe(item) for item in _inventory()])
 
     @app.command("show", help=translate("lifecycle.show_help"))
     @guarded
@@ -264,15 +279,23 @@ def register(app, translate=None):
                 allow_private: bool = typer.Option(False, "--allow-private", help=translate("allow_private_help"))):
         if url.startswith("-") or branch.startswith("-"):
             fail(t("plugin_native.lifecycle.repository_invalid"), 2)
-        manifest, error = commands.install(url, branch or None, alias or None,
-                                           fetch_profile=fetch_profile, allow_private=allow_private, automatic=True)
+        from core.installation_progress import InstallationProgress
+        with InstallationProgress() as progress:
+            manifest, error = commands.install(url, branch or None, alias or None,
+                                               fetch_profile=fetch_profile, allow_private=allow_private,
+                                               automatic=True, progress=progress)
+            progress.finish(failed=manifest is None)
         if manifest is None:
             # Git output may include URLs and credentials; only expose stable categories.
             fail(acquisition_error(error, "acquisition_failed"))
         emit(describe(manifest))
 
     def update_result(manifest, fetch_profile, allow_private):
-        ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private, automatic=True)
+        from core.installation_progress import InstallationProgress
+        with InstallationProgress() as progress:
+            ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
+                                         automatic=True, progress=progress)
+            progress.finish(failed=not ok)
         result = {"name": manifest.name, "status": status if ok else "failed"}
         if not ok:
             result["error"] = (t("plugin.update_not_git", name=manifest.name) if status == "not_git"
@@ -299,7 +322,7 @@ def register(app, translate=None):
             emit(result)
             return
 
-        results = [update_result(item, fetch_profile, allow_private) for item in commands.manifests()]
+        results = [update_result(item, fetch_profile, allow_private) for item in _inventory()]
         failures = sum("error" in result for result in results)
         report = {"plugins": results, "failed": failures}
         if failures:
@@ -317,7 +340,8 @@ def register(app, translate=None):
         from core.prompt import confirm
         if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("confirm_ui.uninstall"), info_lines=[escape(name), t("confirm_ui.plugin_delete")]):
             fail(t("plugin_native.lifecycle.remove_cancelled"))
-        commands.remove(manifest)
+        with activity_step(t("confirm_ui.uninstall"), t("progress.failed")):
+            commands.remove(manifest)
         emit({"name": name, "removed": True, "state_preserved": True})
 
     @app.command("enable", help=translate("lifecycle.enable_help"))

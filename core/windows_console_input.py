@@ -54,6 +54,26 @@ def key_available():
     return _has_key(records[:count.value])
 
 
+def read_key_event():
+    """Read the next native input record, including key-up and repeat metadata."""
+    import msvcrt
+
+    handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    read = kernel.ReadConsoleInputW
+    read.argtypes = [wintypes.HANDLE, ctypes.POINTER(_InputRecord), wintypes.DWORD,
+                     ctypes.POINTER(wintypes.DWORD)]
+    read.restype = wintypes.BOOL
+    record = _InputRecord()
+    count = wintypes.DWORD()
+    if not read(handle, ctypes.byref(record), 1, ctypes.byref(count)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if count.value and record.event_type == 1:
+        key = record.event.key
+        return key.virtual_key, bool(key.key_down), key.character
+    return None
+
+
 @contextmanager
 def read_control_keys():
     """Keep Ctrl+C in the input queue instead of broadcasting to the console."""

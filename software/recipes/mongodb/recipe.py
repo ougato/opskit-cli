@@ -52,8 +52,8 @@ class MongoDBRecipe(VersionedTarballRecipe):
     def _bin_dir(self, version: str) -> Path:
         return mongo_bin_dir(version)
 
-    def _download(self, version: str, dest: Path):
-        return download_mongodb_tarball(version, dest)
+    def _download(self, version: str, dest: Path, *, on_progress=None):
+        return download_mongodb_tarball(version, dest, on_progress=on_progress)
 
     def _load_snapshot(self) -> dict:
         return load_snapshot()

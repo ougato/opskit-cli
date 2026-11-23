@@ -2,8 +2,12 @@
 import sys
 import time
 import inspect
+from contextlib import nullcontext
 import typer
 from core.cli import emit, fail, non_interactive, output_mode
+from core.i18n import t
+from core.prompt import print_header
+from core.sdk import activity_step
 from monitor import commands
 from monitor.process_sampling import ProcessSamplingError
 
@@ -42,6 +46,10 @@ def make_command(name):
             getattr(menu, {"dashboard": "show_dashboard", "cpu": "show_cpu_detail", "memory": "show_memory_detail", "network": "show_network_detail", "processes": "show_processes"}[name])()
             return
         samples = count or (0 if live else 1)
+        show_disk_progress = (name == "disk" and not live and sys.stdout.isatty()
+                              and not non_interactive.get() and output_mode.get() == "text")
+        if show_disk_progress:
+            print_header(["OpsKit", t("menu.monitor"), t("monitor.disk")])
         try:
             i = 0
             while samples == 0 or i < samples:
@@ -55,7 +63,9 @@ def make_command(name):
                     else:
                         data = commands.get_top_processes(limit, sort)
                 else:
-                    data = getattr(commands, {"dashboard": "get_snapshot", "cpu": "get_cpu", "memory": "get_mem", "disk": "get_disks", "network": "get_net"}[name])()
+                    scope = activity_step(t("monitor.sample_disks"), t("progress.failed")) if show_disk_progress else nullcontext()
+                    with scope:
+                        data = getattr(commands, {"dashboard": "get_snapshot", "cpu": "get_cpu", "memory": "get_mem", "disk": "get_disks", "network": "get_net"}[name])()
                     if interface:
                         data = [item for item in data if item.name == interface]
                         if not data:

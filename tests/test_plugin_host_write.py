@@ -6,7 +6,23 @@ import pytest
 
 from core.native_sandbox import GrantChoice
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied
-from core.plugin_host_write import compare_write, create_file
+from core.plugin_host_write import atomic_write, compare_write, create_file
+
+
+def test_atomic_write_supports_large_index_and_rejects_stale_digest(tmp_path, context):
+    path = tmp_path / "index.json"
+    content = b"x" * (32 * 1024)
+
+    def write(expected, body):
+        return atomic_write("demo", "a" * 64, str(tmp_path), path.name, ".index-lock",
+                            expected, base64.b64encode(body).decode(), **context)
+
+    assert write(None, content) == {"written": True}
+    assert write("0" * 64, b"stale") == {"written": False}
+    assert path.read_bytes() == content
+    assert write(hashlib.sha256(content).hexdigest(), b"current") == {"written": True}
+    assert path.read_bytes() == b"current"
+    assert not (tmp_path / ".index-lock").exists()
 
 
 @pytest.fixture

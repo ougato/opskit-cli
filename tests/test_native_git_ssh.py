@@ -169,7 +169,7 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     from core.cli_secrets import export_secret
     from core.native_fetch_catalog import FetchCatalog
     from core.plugin import load_manifest
-    from core.plugin_trust import trusted_record
+    from core.plugin_trust import compute_fingerprint, is_trusted, trusted_record
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OPSKIT_PLUGINS_DIR", str(tmp_path / "plugins"))
     monkeypatch.setattr(main, "_boot", lambda: pytest.fail("acquisition must not boot services"))
@@ -196,6 +196,8 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     record = trusted_record("native_example")
     assert record["source"] == url and not record["fingerprint"]
     assert "PRIVATE KEY" not in json.dumps(record) and "synthetic-passphrase" not in json.dumps(record)
+    trusted = call("trust", "native_example", "--fingerprint", compute_fingerprint(root))
+    assert trusted.exit_code == 0, trusted.output
     request_count = len(commands)
     assert call("update", "native_example", "--allow-private").exit_code == 1
     assert len(commands) == request_count  # No ambient key/profile reuse.
@@ -203,6 +205,7 @@ def test_real_ssh_pinned_host_encrypted_key_and_isolated_export(ssh_repository, 
     updated = call("update", "native_example", *options)
     assert updated.exit_code == 0, updated.output
     assert load_manifest(root).version == "1.1.0"
+    assert is_trusted("native_example", compute_fingerprint(root))
     assert not (root / ".git").exists()
     cli.configure("text", False)
 

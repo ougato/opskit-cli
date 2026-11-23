@@ -54,6 +54,32 @@ def waiting(message: str = ""):
         display.close()
 
 
+def progress_step(message: str, failed_label: str, *, total: int):
+    if type(total) is not int or total <= 0:
+        raise ValueError("invalid progress total")
+    return _progress_scope(message, failed_label, total=total)
+
+
+def activity_step(message: str, failed_label: str):
+    """Animate work of unknown duration and keep its result on the progress page."""
+    return _progress_scope(message, failed_label, total=None)
+
+
+@contextmanager
+def _progress_scope(message, failed_label, *, total):
+    """Show counted progress and yield an updater for a positive total."""
+    from core.installation_progress import WaitingDisplay
+    display = WaitingDisplay()
+    display.start(message, failed_label=failed_label, total=total)
+    try:
+        yield display.update
+    except BaseException:
+        display.stop(failed=True)
+        raise
+    else:
+        display.stop()
+
+
 def select(breadcrumb: list[str], subtitle: str, choices: list[dict], theme_key: str = 'root',
            show_shortcuts: list[tuple[str, str, str]] | None = None, back_label: str = '',
            description: str = '', info_lines: list[str] | None = None) -> str | None:
@@ -121,16 +147,48 @@ def ensure_python_package(package: str, import_name: str = "") -> bool:
     return importlib.util.find_spec(import_name or package) is not None
 
 
+def input_steps(*steps):
+    """Run field callbacks with the previous answer, or None on the first visit.
+
+    ESC revisits the previous field. ESC on the first field propagates
+    UserCancel to the menu that opened the form.
+    """
+    answers = []
+    index = 0
+    while index < len(steps):
+        previous = answers[index] if index < len(answers) else None
+        try:
+            answer = steps[index](previous)
+        except UserCancel:
+            if index == 0:
+                raise
+            index -= 1
+            continue
+        if index == len(answers):
+            answers.append(answer)
+        else:
+            answers[index] = answer
+        index += 1
+    return tuple(answers)
+
+
 __all__ = [
+    "input_steps",
     "read_host_file",
+    "read_host_files",
     "compare_write_host_file",
+    "atomic_write_host_file",
     "create_host_file",
     "host_file_status",
     "list_host_files",
     "artifact_info",
-    "host_execute", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
+    "artifact_batch_info",
+    "progress_step",
+    "activity_step",
+    "host_execute", "finish_host_tool_output", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",
+    "upload_files",
     "SDK_API_VERSION",
     "ModuleInfo",
     "t", "current_lang", "register_locale",
@@ -151,8 +209,19 @@ def read_host_file(directory: str, relative: str, *, missing_ok: bool = False) -
     raise PermissionError("host file API requires an isolated plugin worker")
 
 
+def read_host_files(directory: str, relatives: list[str]) -> list[bytes]:
+    """Read up to 64 ordinary files, with an aggregate limit of 8 MiB."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
 def compare_write_host_file(directory: str, relative: str, expected_sha256: str, content: bytes) -> dict:
     """Replace an unchanged bounded host file after exact write authorization."""
+    raise PermissionError("host file API requires an isolated plugin worker")
+
+
+def atomic_write_host_file(directory: str, relative: str, lock_name: str,
+                           expected_sha256: str | None, content: bytes) -> dict:
+    """Publish a bounded compare-and-replace under a cooperating directory lock."""
     raise PermissionError("host file API requires an isolated plugin worker")
 
 
@@ -171,7 +240,11 @@ def host_asar_directories(directory: str, relative: str, member: str) -> list[st
     raise PermissionError("host archive API requires an isolated plugin worker")
 
 
-def list_host_files(directory: str, *, missing_ok: bool = False) -> list[str]:
+HOST_FILE_LIST_SUBDIRECTORIES = True
+
+
+def list_host_files(directory: str, *, missing_ok: bool = False,
+                    subdirectories: list[str] | None = None) -> list[str]:
     """List ordinary files under an authorized host directory, or allow an absent directory."""
     raise PermissionError("host file listing requires an isolated plugin worker")
 
@@ -181,9 +254,33 @@ def artifact_info(directory: str, relative: str) -> dict:
     raise PermissionError("artifact API requires an isolated plugin worker")
 
 
+HOST_ARTIFACT_BATCH_LIMIT = 512
+
+
+def artifact_batch_info(directory: str, relatives: list[str]) -> list[dict]:
+    """Return ordered metadata for ordinary files under one authorized directory."""
+    raise PermissionError("artifact API requires an isolated plugin worker")
+
+
+HOST_TOOL_PROGRESS = True
+HOST_TOOL_STAGE_ONLY_PROGRESS = True
+HOST_TOOL_COMPACT_DIAGNOSTICS = True
+
+
 def host_execute(executable: str, arguments: list[str], directory: str, options: dict | None = None) -> dict:
     """Execute an approved host tool with bounded input, output and execution time."""
     raise PermissionError("host tool API requires an isolated plugin worker")
+
+
+def finish_host_tool_output(success: bool) -> None:
+    """Discard deferred output on success or replay it verbatim on failure."""
+    raise PermissionError("host tool API requires an isolated plugin worker")
+
+
+HOST_ARTIFACT_PUBLISH_PARENTS = True
+HOST_ARTIFACT_PUBLISH_NESTED = True
+HOST_ARTIFACT_REMOVE_FILE = True
+HOST_ARTIFACT_COMMIT_HASHES = True
 
 
 def host_artifacts(action: str, parameters: dict) -> dict | list:
@@ -215,4 +312,10 @@ def https_request(url: str, method: str = "GET", headers: dict | None = None,
 def upload_file(directory: str, relative: str, url: str, sha256: str,
                 headers: dict | None = None, *, verify_url: str | None = None) -> dict:
     """PUT a checksum-bound file, optionally verifying it via a signed GET URL."""
+    raise PermissionError("upload API requires an isolated plugin worker")
+
+
+def upload_files(directory: str, files: list[list], *, publish_last: int = 0,
+                 breadcrumb: list[str] | None = None, progress_offset: int | None = None) -> list[dict]:
+    """Transfer a bounded batch of [relative, PUT URL, SHA256, headers, GET URL or None]."""
     raise PermissionError("upload API requires an isolated plugin worker")

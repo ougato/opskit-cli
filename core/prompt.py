@@ -20,6 +20,21 @@ console = Console()
 
 _input_guard = ContextVar("prompt_input_guard", default=None)
 _input_wait_scope = ContextVar("prompt_input_wait_scope", default=None)
+_screen_transition = ContextVar("prompt_screen_transition", default=None)
+_menu_visible = ContextVar("prompt_menu_visible", default=False)
+
+
+def menu_visible() -> bool:
+    return _menu_visible.get()
+
+
+@contextmanager
+def screen_transition(on_render):
+    token = _screen_transition.set(on_render)
+    try:
+        yield
+    finally:
+        _screen_transition.reset(token)
 
 
 @contextmanager
@@ -65,11 +80,19 @@ def _getwch() -> str:
         return _read_windows_key()
 
 
-def _read_windows_key() -> str:
+def _read_windows_key(read=None) -> str:
     import msvcrt
     from core.cleanup import (_begin_console_input, _console_interrupt_pending,
                               _end_console_input)
 
+    from core.windows_console_input import key_available
+
+    if read is None:
+        read = msvcrt.getwch
+        def ready():
+            return msvcrt.kbhit() or (_input_guard.get() is not None and key_available())
+    else:
+        ready = key_available
     active = _begin_console_input()
     interrupted = False
     try:
@@ -79,25 +102,23 @@ def _read_windows_key() -> str:
             with _waiting_for_input():
                 while not _console_interrupt_pending():
                     if _input_guard.get() is not None:
-                        from core.windows_console_input import key_available
                         _check_input()
-                        if msvcrt.kbhit() or key_available():
+                        if ready():
                             break
-                    elif msvcrt.kbhit():
+                    elif ready():
                         break
                     time.sleep(0.05)
-            value = "\x03" if _console_interrupt_pending() else msvcrt.getwch()
+            value = "\x03" if _console_interrupt_pending() else read()
         elif _input_guard.get() is not None:
-            from core.windows_console_input import key_available
             with _waiting_for_input():
                 while True:
                     _check_input()
-                    if msvcrt.kbhit() or key_available():
+                    if ready():
                         break
                     time.sleep(0.05)
-            value = msvcrt.getwch()
+            value = read()
         else:
-            value = msvcrt.getwch()
+            value = read()
     finally:
         if active:
             interrupted = _end_console_input()
@@ -106,6 +127,32 @@ def _read_windows_key() -> str:
     if _input_guard.get() is not None and value in ("\x03", "\x04"):
         raise KeyboardInterrupt
     return value
+
+
+def _read_multi_select_key(pressed: set[int]) -> str:
+    if os.name != "nt" or not _stdin_is_tty():
+        return _read_key_seq()
+    from core.windows_console_input import read_key_event
+
+    def read():
+        event = read_key_event()
+        if event is None:
+            return ""
+        key, down, character = event
+        if not down:
+            pressed.discard(key)
+            return ""
+        if key in (0x26, 0x28, 0x20):  # Up, Down, Space
+            if key in pressed:
+                return ""
+            pressed.add(key)
+            return {0x26: "UP", 0x28: "DOWN", 0x20: " "}[key]
+        return character if character != "\x00" else ""
+
+    while True:
+        value = _read_windows_key(read)
+        if value:
+            return value
 
 
 def _read_fd(fd: int, count: int) -> bytes:
@@ -403,6 +450,7 @@ def _render_options(items: list[tuple[str, str]], back_label: str = '') -> None:
     console.print(f' {pipe}{_TEE}[/] [dim](0) {_pad_label(back_label)}[/]')
     sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
     sys.stdout.flush()
+    _menu_visible.set(True)
 
 
 def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
@@ -419,19 +467,40 @@ def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
 
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
+def finish_screen_transition() -> None:
+    on_render = _screen_transition.get()
+    if on_render is not None:
+        _screen_transition.set(None)
+        on_render()
+
+
 def clear_screen() -> None:
-    """清除终端屏幕（跨平台）"""
+    """Clear the viewport and scrollback before drawing another screen."""
+    finish_screen_transition()
+    _menu_visible.set(False)
     from core.cli import non_interactive
-    if not non_interactive.get():
-        if os.name == 'nt':
-            console.clear()
-        else:
-            os.system('clear')
+    if non_interactive.get() or not console.file.isatty():
+        return
+    if os.name != 'nt':
+        os.system('clear')
+    elif console.legacy_windows:
+        os.system('cls')
+    else:
+        # Windows Terminal pushes the old viewport into scrollback on ED 2.
+        # Erase scrollback after clearing the viewport.
+        console.file.write('\x1b[2J\x1b[3J\x1b[H')
+        console.file.flush()
 
 
-def print_header(breadcrumb: list[str]) -> None:
+def print_header(breadcrumb: list[str], *, terminal_only: bool = False) -> None:
     """在清屏后渲染 Powerline 分段色块面包屑标题（复用 select 菜单的通用标题样式）"""
+    if terminal_only:
+        from core.cli import non_interactive
+        if non_interactive.get() or not console.is_terminal:
+            return
+    _menu_visible.set(False)
     _render_header(breadcrumb)
+    console.print()
 
 
 # Keep Ctrl+C local while rendering and running on_ready, before the first read.
@@ -724,7 +793,7 @@ def multi_select(
 ) -> list[int] | None:
     """Powerline 风格多选菜单：↑↓ 移动光标、空格勾选、回车确认。
 
-    subtitle  — 标题下的提示 pill（与 text_input 的字段标签同款式）
+    subtitle  — 标题下的提示，传空字符串可隐藏
     options   — 选项文案列表
     all_index — 「全选」项下标（可选）：勾选它全选、取消它全不选；
                 其余项全部勾上时自动连带勾上，任一项取消时自动连带取消
@@ -737,20 +806,26 @@ def multi_select(
     require_interaction()
     cursor = 0
     checked: set[int] = set()
+    pressed: set[int] = set()
+    page_size = 9
+    total = len(options)
+    from core.i18n import t
+    from core.theme import get_icon
 
     def _render() -> None:
         clear_screen()
         _render_header(breadcrumb)
-        row2 = Text()
-        tee = Text(f' {_TEE} ')
-        tee.stylize(_PIPE_COLOR)
-        row2.append_text(tee)
-        row2.append_text(_cap_text(_INPUT_SEG))
-        row2.append_text(_seg_text(subtitle, _INPUT_SEG))
-        row2.append_text(_tail_text(_INPUT_SEG))
-        console.print(row2)
+        if subtitle:
+            row2 = Text(f' {_TEE} ', style=_PIPE_COLOR)
+            row2.append_text(_cap_text(_INPUT_SEG))
+            row2.append_text(_seg_text(subtitle, _INPUT_SEG))
+            row2.append_text(_tail_text(_INPUT_SEG))
+            console.print(row2)
         # Text 明文拼接（[ ] 不参与 rich 标记解析）；光标显示在括号内（[•]），勾选为 [✔]
-        for i, label in enumerate(options):
+        start = cursor // page_size * page_size
+        end = min(start + page_size, total)
+        for i in range(start, end):
+            label = options[i]
             row = Text()
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
@@ -766,19 +841,29 @@ def multi_select(
             row.append('] ')
             row.append(_pad_label(label), style='bold' if i == cursor else '')
             console.print(row)
+        navigation = []
+        if start:
+            navigation.append(('p', f"{get_icon('back')} {t('prompt.prev_page')}"))
+        if end < total:
+            navigation.append(('n', f"{get_icon('next_page')} {t('prompt.next_page')}"))
         if back_label:
+            navigation.append(('0', back_label))
+        for key, label in navigation:
             row = Text()
             tee = Text(f' {_TEE} ')
             tee.stylize(_PIPE_COLOR)
             row.append_text(tee)
-            row.append(f'(0) {_pad_label(back_label)}', style='dim')
+            row.append(f'({key}) {_pad_label(label)}', style='dim' if key == '0' else '')
             console.print(row)
-        sys.stdout.write(f' \033[{_PIPE_COLOR_ANSI}m{_BEND}\033[0m ')
-        sys.stdout.flush()
+        console.print(Text(f' {_BEND}', style=_PIPE_COLOR), end=' ')
 
     while True:
-        _render()
-        ch = _read_key_seq()
+        # Commit a whole frame before reading the next key. In a Windows
+        # terminal, individual row writes can leave the previous focus visible
+        # while the new title and rows are still being drawn.
+        with console:
+            _render()
+        ch = _read_multi_select_key(pressed)
         if not ch:
             if not _stdin_is_tty():
                 console.print()
@@ -788,6 +873,14 @@ def multi_select(
             cursor = (cursor - 1) % len(options)
         elif ch == 'DOWN':
             cursor = (cursor + 1) % len(options)
+        elif ch.lower() == 'n':
+            next_start = (cursor // page_size + 1) * page_size
+            if next_start < total:
+                cursor = next_start
+        elif ch.lower() == 'p':
+            previous_start = (cursor // page_size - 1) * page_size
+            if previous_start >= 0:
+                cursor = previous_start
         elif ch == ' ':
             if cursor in checked:
                 checked.discard(cursor)
@@ -857,17 +950,6 @@ def confirm(
             raise UserExit
 
 
-def _erase_input_character(buf: list[str], secret: bool) -> None:
-    """Erase the same number of terminal cells as the echoed character."""
-    if not buf:
-        return
-    character = buf.pop()
-    width = 1 if secret else cell_len(character)
-    if width:
-        sys.stdout.write('\x08' * width + ' ' * width + '\x08' * width)
-        sys.stdout.flush()
-
-
 def _read_line(secret: bool = False, *, initial: str = '') -> str:
     """读取一行文本输入（带回显，secret 时回显 *），Ctrl+C / ESC 安全。
 
@@ -877,15 +959,46 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
     """
     _check_input()
     buf = list(initial)
+    cursor = len(buf)
+
+    def display(characters):
+        return '*' * len(characters) if secret else ''.join(characters)
+
+    def edit(key):
+        nonlocal cursor
+        if key == 'LEFT' and cursor:
+            cursor -= 1
+            output = '\b' * cell_len(display(buf[cursor:cursor + 1]))
+        elif key == 'RIGHT' and cursor < len(buf):
+            output = display(buf[cursor:cursor + 1])
+            cursor += 1
+        elif key in ('\b', '\x7f') and cursor:
+            cursor -= 1
+            width = cell_len(display([buf.pop(cursor)]))
+            tail = display(buf[cursor:])
+            output = '\b' * width + tail + ' ' * width + '\b' * (cell_len(tail) + width)
+        elif key == 'DELETE' and cursor < len(buf):
+            width = cell_len(display([buf.pop(cursor)]))
+            tail = display(buf[cursor:])
+            output = tail + ' ' * width + '\b' * (cell_len(tail) + width)
+        elif len(key) == 1 and key >= ' ' and key != '\x7f':
+            tail = display(buf[cursor:])
+            buf.insert(cursor, key)
+            cursor += 1
+            output = display(key) + tail + '\b' * cell_len(tail)
+        else:
+            return
+        sys.stdout.write(output)
+        sys.stdout.flush()
+
     if initial:
-        sys.stdout.write('*' * len(initial) if secret else initial)
+        sys.stdout.write(display(initial))
         sys.stdout.flush()
     if os.name == 'nt':
         while True:
             ch = _getwch()
             if ch in ('\x00', '\xe0'):
-                # 导航键（方向/Home/End/Del 等）为双字符序列：吞掉第二字符并忽略
-                _getwch()
+                edit({'K': 'LEFT', 'M': 'RIGHT', 'S': 'DELETE'}.get(_getwch(), ''))
                 continue
             if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
@@ -895,18 +1008,11 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserExit
-            if ch in ('\x08', '\x7f'):
-                _erase_input_character(buf, secret)
-                continue
             if ch == CANCEL_KEY:
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 raise UserCancel
-            if ch < ' ':
-                continue
-            buf.append(ch)
-            sys.stdout.write('*' if secret else ch)
-            sys.stdout.flush()
+            edit(ch)
     else:
         import select as _sel
         import termios
@@ -945,34 +1051,30 @@ def _read_line(secret: bool = False, *, initial: str = '') -> str:
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     raise UserExit
-                if ch in ('\x7f', '\x08'):
-                    _erase_input_character(buf, secret)
-                    continue
                 if ch == CANCEL_KEY:
                     # 与 _read_key_seq 对齐：ESC 后 50ms 内跟随 '[' / 'O' 视为
-                    # 导航键序列（方向 / Home / End / PgUp / Del 等），
-                    # 按 CSI 语法读到终止字节（'@'~'~'）为止吞掉整个序列并忽略，
-                    # 不多吞后续正常输入；只有单独的 ESC 才视为取消
+                    # 导航键序列。只消费当前序列，保留后续正常输入。
                     if _sel.select([fd], [], [], 0.05)[0]:
                         seq = _read_fd(fd, 1).decode(errors='ignore')
                         if seq == '[':
+                            code = ''
                             while _sel.select([fd], [], [], 0.05)[0]:
                                 b = _read_fd(fd, 1).decode(errors='ignore')
+                                code += b
                                 if not b or '@' <= b <= '~':
                                     break
+                            edit({'D': 'LEFT', 'C': 'RIGHT', '3~': 'DELETE'}.get(code, ''))
                             continue
                         if seq == 'O':
                             if _sel.select([fd], [], [], 0.05)[0]:
-                                _read_fd(fd, 1)
+                                code = _read_fd(fd, 1)
+                                edit({b'D': 'LEFT', b'C': 'RIGHT'}.get(code, ''))
                             continue
                         # ESC + 其他字符（如 Alt 组合键）：忽略该字符，视为取消
                     sys.stdout.write('\r\n')
                     sys.stdout.flush()
                     raise UserCancel
-                if ch >= ' ':
-                    buf.append(ch)
-                    sys.stdout.write('*' if secret else ch)
-                    sys.stdout.flush()
+                edit(ch)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -998,7 +1100,7 @@ def text_input(
     *,
     initial: str = '',
 ) -> str:
-    """Powerline 风格文本输入。
+    """Powerline 风格文本输入，ESC 抛出 UserCancel，由调用方返回上一层。
 
     prompt     — 字段标签，显示在色块 pill 里
     hint       — 输入行提示（如默认值），显示在 ╰─ 右侧
@@ -1031,6 +1133,7 @@ def text_input(
         sys.stdout.write(_hint + ' ')
     sys.stdout.flush()
     raw = _read_line(secret=secret, initial=initial) if initial else _read_line(secret=secret)
+    _menu_visible.set(True)
     return raw if raw else default
 
 

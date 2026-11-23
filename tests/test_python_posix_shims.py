@@ -14,6 +14,7 @@ from software.recipes.python import common, linux, posix_shims
 @pytest.fixture
 def shims(tmp_path, monkeypatch):
     directory = tmp_path / "shims"
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(common, "shim_dir", lambda: directory)
     monkeypatch.setattr(linux, "PROFILE_D_SHIM_FILE", str(tmp_path / "system-profile"))
@@ -51,6 +52,7 @@ def test_late_profile_failure_compensates_entire_group(shims, monkeypatch, remov
 def test_new_wrapper_executable_and_fallback_safely_quoted(shims):
     driver, directory, fallback = shims
     driver.install_shim(fallback)
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(directory)
     for path in directory.iterdir():
         if os.name != "nt":
             assert path.stat().st_mode & stat.S_IXUSR
@@ -59,6 +61,7 @@ def test_new_wrapper_executable_and_fallback_safely_quoted(shims):
         assert "sed " not in body and "python.json" not in body
     driver.remove_shim()
     assert not directory.exists()
+    assert str(directory) not in os.environ["PATH"].split(os.pathsep)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="requires a native POSIX shell")

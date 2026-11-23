@@ -7,7 +7,7 @@ import socket
 import time
 
 
-def scan(host, ports, *, timeout, concurrency, total_timeout):
+def scan(host, ports, *, timeout, concurrency, total_timeout, on_progress=None):
     from network.commands import PortResult
     if not ports:
         return []
@@ -48,6 +48,8 @@ def scan(host, ports, *, timeout, concurrency, total_timeout):
                 pass
             connection.close()
             results.append(PortResult(host, port, "tcp", open_, (time.monotonic() - started) * 1000))
+            if on_progress is not None:
+                on_progress(len(results))
 
         try:
             while pending or not exhausted:

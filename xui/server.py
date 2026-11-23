@@ -10,6 +10,7 @@ import sys
 import time
 
 from rich.console import Console
+from rich.text import Text
 
 from core.i18n import t
 from core.privilege import run_as_root, write_root_file
@@ -38,8 +39,6 @@ from xui.constants import (
     APT_GET_COMMAND,
     CURL_COMMAND,
     HTTP_URL_TEMPLATE,
-    JOURNALCTL_COMMAND,
-    JOURNAL_NO_PAGER_ARG,
     LINUX_PLATFORMS,
     LOOPBACK_HOST,
     TRAFFIC_PERIOD_MONTH,
@@ -68,6 +67,7 @@ from xui.constants import (
     SERVICE_RESTART_TIMEOUT,
 )
 from xui.links import build_vless_link
+from xui.journal import service_logs
 from xui.templates import vless_reality_tcp_inbound
 from xui.inbounds import ensure_inbound, connection_values
 from xui.utils import (
@@ -631,7 +631,13 @@ def manage_nodes() -> None:
             pause()
         elif key == "3":
             print_action_title(breadcrumb)
-            subprocess.run([JOURNALCTL_COMMAND, "-u", XUI_SERVICE, "-n", XUI_LOG_LINES, JOURNAL_NO_PAGER_ARG], check=False)
+            from contextlib import closing
+            try:
+                with closing(service_logs(XUI_LOG_LINES)) as entries:
+                    for line in entries:
+                        console.print(Text(line))
+            except RuntimeError as exc:
+                print_warning(str(exc))
             pause()
         elif key == "4":
             print_action_title(breadcrumb)

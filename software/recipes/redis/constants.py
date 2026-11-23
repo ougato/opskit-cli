@@ -34,8 +34,8 @@ REDIS_DL_WINDOWS_URLS = [
     "https://github.moeyy.xyz/https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-msys2.zip",
     "https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-msys2.zip",
 ]
-# Windows fallback 版本（当用户选择的版本在 redis-windows 仓库不存在时使用）
-REDIS_WINDOWS_FALLBACK_VERSION = "7.4.9"
+REDIS_WINDOWS_RELEASES_API = "https://api.github.com/repos/redis-windows/redis-windows/releases"
+REDIS_WINDOWS_VERSIONS_FALLBACK = ["8.10.3", "8.10.2", "8.8.3"]
 
 # ─── macOS 下载：官方源码 tarball + make 编译 ─────────────────────────────────
 REDIS_DL_MACOS_URLS = [

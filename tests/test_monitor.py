@@ -20,6 +20,21 @@ from monitor.commands import (
 )
 
 
+def test_live_monitor_reports_initial_sampling_failure(monkeypatch):
+    from monitor import menu
+
+    events = []
+    monkeypatch.setattr(menu, "print_error", events.append)
+    monkeypatch.setattr(menu, "pause", lambda: events.append("pause"))
+
+    def unavailable():
+        raise TimeoutError("sampling deadline")
+
+    menu._live_loop(unavailable)
+
+    assert events == [menu.t("monitor.live_sample_failed"), "pause"]
+
+
 def test_get_cpu(tmp_path) -> None:
     cpu = get_cpu()
     assert isinstance(cpu, CpuInfo)

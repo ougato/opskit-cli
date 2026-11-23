@@ -1,4 +1,6 @@
 """Untrusted RPC envelopes cannot select identities or host-only callbacks."""
+import hashlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -90,15 +92,47 @@ def test_find_executable_dispatch_uses_host_identity(caller, monkeypatch):
         sandbox._broker(caller, request)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows tree publication")
+def test_large_tree_inventory_reaches_only_the_tree_publisher(caller, monkeypatch, tmp_path):
+    from core.native_sandbox import GrantChoice
+    from core.plugin_capabilities import CapabilityAuthority
+
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    source.mkdir()
+    (source / "file.bin").write_bytes(b"verified")
+    digest = hashlib.sha256(b"verified").hexdigest()
+    inventory = {"source": str(source), "destination": str(destination),
+                 "files": {f"assets/{number}/file.bin": {"source": "file.bin", "sha256": digest}
+                           for number in range(800)}}
+    request = {"rpc_version": 1, "method": "host.artifacts", "args": ["publish_tree", inventory]}
+    request["args"][0] = "mkdir"
+    with pytest.raises(sandbox.SandboxError, match="broker request too large"):
+        sandbox._broker(caller, request)
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    require = authority.require
+    monkeypatch.setattr(authority, "require",
+                        lambda scope, **kwargs: require(scope, prompt=lambda _: GrantChoice.ONCE, **kwargs))
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", authority, raising=False)
+    try:
+        request["args"][0] = "publish_tree"
+        assert sandbox._broker(caller, request) == {"directory": str(destination)}
+        files = list(destination.rglob("*.bin"))
+        assert len(files) == 800
+        assert all(path.read_bytes() == b"verified" for path in files)
+    finally:
+        authority.close()
+
+
 @pytest.mark.parametrize("terminal,noninteractive,expected", [(True, False, True), (False, False, False), (True, True, False)])
 def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch, terminal, noninteractive, expected):
     from core import plugin_host_tools
     from core.cli import non_interactive
     monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
-    monkeypatch.setattr(prompt, "console", SimpleNamespace(is_terminal=terminal))
     events = []
+    monkeypatch.setattr(prompt, "console", SimpleNamespace(
+        is_terminal=terminal, print=lambda: events.append("blank")))
     monkeypatch.setattr(prompt, "clear_screen", lambda: events.append("clear"))
-    monkeypatch.setattr(prompt, "print_header", lambda header: events.append(header))
+    monkeypatch.setattr(prompt, "_render_header", lambda header: events.append(header))
     def execute(*args, **kwargs):
         kwargs["output_start"](["OpsKit", "Build"])
         return "result"
@@ -110,4 +144,23 @@ def test_host_output_header_only_clears_interactive_terminal(caller, monkeypatch
     finally:
         non_interactive.reset(token)
     assert result == "result"
-    assert events == (["clear", ["OpsKit", "Build"]] if expected else [])
+    assert events == (["clear", ["OpsKit", "Build"], "blank"] if expected else [])
+
+
+def test_deferred_output_uses_current_invocation_journal(caller, monkeypatch, capsys):
+    from core import plugin_host_tools
+
+    monkeypatch.setattr(sandbox._invocations, "capability_authority", object(), raising=False)
+    monkeypatch.setattr(sandbox._invocations, "tool_output", sandbox._DeferredToolOutput(), raising=False)
+
+    def execute(*args, **kwargs):
+        kwargs["deferred_output"]("    at failed()")
+        return {"returncode": 34}
+
+    monkeypatch.setattr(plugin_host_tools, "execute", execute)
+    result = sandbox._broker(caller, {"rpc_version": 1, "method": "host.execute",
+                                      "args": ["tool", [], "project", {"defer_output": True}]})
+    assert result["returncode"] == 34
+    assert not capsys.readouterr().out
+    sandbox._broker(caller, {"rpc_version": 1, "method": "host.finish_tool_output", "args": [False]})
+    assert capsys.readouterr().out == "    at failed()\n"

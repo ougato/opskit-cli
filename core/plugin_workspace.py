@@ -202,7 +202,7 @@ def _allocate_worker(connection, request, buffer=None, length=0):
     import stat
     from core.plugin_state import _directory
     from core.plugin_state_budget import platform_state_guard
-    from core.plugin_workspace_budget import reserve_workspace, WorkspaceCapacityExhausted
+    from core.plugin_workspace_budget import reserve_workspace, WorkspaceCapacityExhausted, WorkspaceInventoryChanged
     from core.resource_lock import ResourceBusyError
     from network.worker import send
     stage = "namespace"
@@ -271,7 +271,7 @@ def _allocate_worker(connection, request, buffer=None, length=0):
                   "parent": parent_identity, "identity": identity}
     except WorkspaceCapacityExhausted:
         result = {"ok": False, "reason": "capacity"}
-    except ResourceBusyError:
+    except (ResourceBusyError, WorkspaceInventoryChanged):
         result = {"ok": False, "reason": "busy"}
     except (OSError, ValueError, RuntimeError) as exc:
         category = next(kind.__name__ for kind in (PermissionError, FileNotFoundError, OSError, ValueError, RuntimeError)

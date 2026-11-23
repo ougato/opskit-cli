@@ -1,7 +1,8 @@
 """Operator-reviewed collection of recorded, unused native cache objects."""
 from core import native_catalog_cleanup as cleanup
 from core.i18n import t
-from core.prompt import select, confirm, pause, UserCancel
+from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
+from core.sdk import activity_step, waiting
 from core.theme import print_info, print_error, print_success, get_icon
 
 
@@ -17,7 +18,10 @@ def entry():
         if kind not in {"1", "2", "3"}:
             return
         kind = {"1": "runtime", "2": "fetch", "3": "prepare"}[kind]
-        records = cleanup.inspect(kind)
+        clear_screen()
+        print_header(breadcrumb)
+        with waiting(t("plugin_native.maintenance_scan")):
+            records = cleanup.inspect(kind)
         candidates = [item for item in records if item["valid"] and not item["referenced"]]
         if any(not item["valid"] for item in records):
             print_info(t(prefix + "uncertain"))
@@ -34,7 +38,10 @@ def entry():
         if confirm(breadcrumb, t("confirm_ui.cache"), info_lines=[
                 t("confirm_ui.cache_detail"), t(prefix + "details", catalog=t(prefix + kind), object=item["object"],
                   digest=item["record_sha256"])]):
-            cleanup.collect(kind, item["object"], item["record_sha256"])
+            clear_screen()
+            print_header(breadcrumb)
+            with activity_step(t("confirm_ui.cache"), t("progress.failed")):
+                cleanup.collect(kind, item["object"], item["record_sha256"])
             print_success(t(prefix + "completed"))
             pause()
     except (KeyboardInterrupt, UserCancel):

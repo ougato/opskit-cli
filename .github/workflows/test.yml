@@ -3,7 +3,7 @@ name: Platform regression
 on:
   pull_request:
   push:
-    branches: [develop, main]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:

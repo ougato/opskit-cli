@@ -125,6 +125,8 @@ def require_reply(value):
         return value
     if fields == {"rpc_version", "cancel"} and value["cancel"] is True:
         return value
+    if fields == {"rpc_version", "exit"} and value["exit"] is True:
+        return value
     if (fields == {"rpc_version", "error"}
             and isinstance(value["error"], str) and value["error"]):
         return value

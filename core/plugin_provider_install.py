@@ -1,4 +1,6 @@
 """Host-owned, interactive installation and authorization of declared providers."""
+
+from contextlib import nullcontext
 from pathlib import Path
 
 from rich.markup import escape
@@ -10,8 +12,18 @@ from core.plugin_capabilities import CapabilityDenied
 
 # Only host-controlled sources can be invoked by a sandboxed plugin.
 _PROVIDERS = {
-    "storage_hub": ("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "develop", (0, 3, 1)),
+    "storage_hub": ("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "master", (0, 3, 1)),
 }
+
+
+def provider_update_branch(provider, source, branch):
+    if provider == "storage_hub" and branch in ("develop", "release"):
+        from core.native_acquisition import source_identity
+
+        official_source, master, _ = _PROVIDERS[provider]
+        if source == source_identity(official_source)[0]:
+            return master
+    return branch
 
 
 def _compatible(manifest, provider, requirement, minimum):
@@ -32,7 +44,7 @@ def _interactive():
         raise CapabilityDenied("provider_interaction_required")
 
 
-def request_install(caller, fingerprint, provider, *, checkpoint):
+def request_install(caller, fingerprint, provider, *, checkpoint, suspend_wait=nullcontext):
     from core.config import configuration_transaction
     from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
     from core.plugin_sandbox import SandboxError
@@ -68,7 +80,8 @@ def request_install(caller, fingerprint, provider, *, checkpoint):
         ])
         if not is_trusted(provider, digest):
             lines.append(t("plugin_native.provider.trust"))
-        return confirm(breadcrumb=["OpsKit", t("menu.plugin")],
+        with suspend_wait():
+            return confirm(breadcrumb=["OpsKit", t("menu.plugin")],
                        prompt=t("plugin_native.provider.install" if installing else "plugin_native.provider.approve"),
                        info_lines=lines, require_explicit=True)
 
@@ -92,7 +105,7 @@ def request_install(caller, fingerprint, provider, *, checkpoint):
         from core.installation_progress import InstallationProgress
         from core.prompt import UserCancel
 
-        with InstallationProgress() as progress:
+        with suspend_wait(), InstallationProgress() as progress:
             options = menu._fetch_options(source)
             if "fetch_interaction" in options:
                 options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
@@ -110,6 +123,7 @@ def request_install(caller, fingerprint, provider, *, checkpoint):
             try:
                 candidate, error = commands.install(source, branch, automatic=True,
                                                     progress=progress, review_candidate=review_install, **options)
+                progress.finish(failed=candidate is None)
             except UserCancel:
                 return False
         if candidate is None:

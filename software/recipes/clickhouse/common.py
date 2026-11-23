@@ -108,7 +108,7 @@ def fetch_versions() -> list[str]:
     return parse_release_versions(data)
 
 
-def download_clickhouse_tarball(version: str, dest: Path, progress_callback=None) -> Path:
+def download_clickhouse_tarball(version: str, dest: Path, on_progress=None) -> Path:
     from core import mirror
     from core.i18n import t
     from software.base import InstallError
@@ -125,7 +125,7 @@ def download_clickhouse_tarball(version: str, dest: Path, progress_callback=None
             urls=urls,
             dest=dest,
             cache_path=cache_path,
-            progress_callback=progress_callback,
+            on_progress=on_progress,
         )
     except Exception as e:
         raise InstallError(t("software.clickhouse_error.download_failed", version=version, error=e)) from e

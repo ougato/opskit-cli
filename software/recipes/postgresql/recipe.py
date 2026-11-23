@@ -4,7 +4,6 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
-import threading
 from pathlib import Path
 from typing import ClassVar
 
@@ -156,44 +155,25 @@ class PostgreSQLRecipe(Recipe):
 
             sp.step(t("software.step.download"))
 
-            _stop_pct = threading.Event()
-
-            def _ticker():
-                pct = 1
-                while not _stop_pct.wait(1.0):
-                    if pct < 90:
-                        pct += 1
-                    sp.set_step_pct(pct)
-
-            t_pct = threading.Thread(target=_ticker, daemon=True)
-            t_pct.start()
-            bin_dir: str = ""
-            try:
-                if sys.platform == "linux":
-                    # Linux 路线：deb 直接解压到版本目录，返回 bin_dir(Path)
-                    _bin = download_pgsql_tarball(version, Path("/dev/null"))
-                    bin_dir = str(_bin)
-                else:
-                    from core.paths import cache_dir
-
-                    work_base = cache_dir() / "work"
-                    work_base.mkdir(parents=True, exist_ok=True)
-                    with tempfile.TemporaryDirectory(
-                        prefix="opskit-pgsql-",
-                        dir=str(work_base),
-                        ignore_cleanup_errors=True,
-                    ) as tmpdir:
-                        tarball = Path(tmpdir) / f"postgresql-{version}{ext}"
-                        download_pgsql_tarball(version, tarball)
-                        bin_dir = str(driver.install_tarball(version, tarball))
-            finally:
-                _stop_pct.set()
-                t_pct.join(timeout=2)
-
-            sp.step(t("software.step.install"))
             if sys.platform == "linux":
-                # deb 已解压，driver.install_tarball 只做完整性校验
-                bin_dir = driver.install_tarball(version, Path(bin_dir))
+                # Linux 路线：deb 直接解压到版本目录，返回 bin_dir(Path)
+                _bin = download_pgsql_tarball(version, Path("/dev/null"))
+                sp.step(t("software.step.install"))
+                bin_dir = driver.install_tarball(version, _bin)
+            else:
+                from core.paths import cache_dir
+
+                work_base = cache_dir() / "work"
+                work_base.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(
+                    prefix="opskit-pgsql-",
+                    dir=str(work_base),
+                    ignore_cleanup_errors=True,
+                ) as tmpdir:
+                    tarball = Path(tmpdir) / f"postgresql-{version}{ext}"
+                    download_pgsql_tarball(version, tarball, on_progress=sp.set_step_pct)
+                    sp.step(t("software.step.install"))
+                    bin_dir = str(driver.install_tarball(version, tarball))
 
             snap = load_snapshot()
             if not snap:

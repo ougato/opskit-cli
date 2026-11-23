@@ -9,6 +9,17 @@ from core.plugin_capabilities import CapabilityDenied
 from plugin import commands, menu
 
 
+def test_storage_hub_update_migrates_only_the_official_legacy_source():
+    from core.native_acquisition import source_identity
+
+    source, _ = source_identity("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git")
+    assert guided.provider_update_branch("storage_hub", source, "develop") == "master"
+    assert guided.provider_update_branch("storage_hub", source, "release") == "master"
+    assert guided.provider_update_branch("storage_hub", source, "feature") == "feature"
+    assert guided.provider_update_branch("storage_hub", "ssh://git@example.com/storage-hub.git", "develop") == "develop"
+    assert guided.provider_update_branch("other", source, "develop") == "develop"
+
+
 @pytest.mark.parametrize("outcome", ["approved", "declined", "incorrect", "undeclared", "ready"])
 def test_provider_install_stays_in_host_control(tmp_path, monkeypatch, outcome):
     from core import prompt, plugin_trust
@@ -53,7 +64,7 @@ def test_provider_install_stays_in_host_control(tmp_path, monkeypatch, outcome):
         available = guided.request_install(caller, "a" * 64, provider, checkpoint=lambda: None)
         assert available == (outcome != "declined")
     if outcome in {"approved", "declined", "incorrect"}:
-        assert calls == [("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "develop")]
+        assert calls == [("git@git.icerror.top:mydea/opskit/plugin/storage-hub.git", "master")]
     else:
         assert not calls
     assert approve.call_count == (1 if outcome in {"approved", "declined"} else 0)

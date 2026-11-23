@@ -236,9 +236,10 @@ def test_update_all_reports_each_result_and_continues_after_failures(isolated, m
                  for name in statuses]
     calls = []
 
-    def update(manifest, *, fetch_profile, allow_private, automatic):
+    def update(manifest, *, fetch_profile, allow_private, automatic, progress):
         calls.append(manifest.name)
         assert fetch_profile is None and not allow_private and automatic
+        progress("update_check")
         return statuses[manifest.name]
 
     monkeypatch.setattr(commands, "manifests", lambda: manifests)

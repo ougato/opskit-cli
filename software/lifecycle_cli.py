@@ -8,6 +8,7 @@ from rich.markup import escape
 
 from core.cli import emit, fail
 from core.i18n import t
+from core.prompt import print_header
 from core.recipe_utils import recipe_display_name as _recipe_name
 
 def _is_multi_version(cls, instance):
@@ -41,6 +42,8 @@ def _check_disk_or_exit(instance):
 
 
 def _execute(cls, action, operation, *args, **kwargs):
+    print_header(["OpsKit", t("menu.software"), _recipe_name(cls), t(f"software.{action}")],
+                 terminal_only=True)
     with redirect_stdout(sys.stderr):
         result = operation(*args, **kwargs)
     if isinstance(result.error, typer.Exit):

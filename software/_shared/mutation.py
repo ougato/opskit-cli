@@ -3,6 +3,7 @@
 All versioned recipes share one lock: different software can modify the same
 PATH/profile files. Keep the file permanently; the OS releases locks on exit.
 """
+from contextlib import contextmanager, nullcontext
 from functools import wraps
 import os
 from pathlib import Path
@@ -43,6 +44,13 @@ system_mutation_lock = _system_resource.hold
 
 def _system_privileged():
     return os.name != "nt" and os.geteuid() == 0
+
+
+@contextmanager
+def versioned_mutation_scope():
+    with system_mutation_lock() if _system_privileged() else nullcontext():
+        with mutation_lock():
+            yield
 
 
 def system_mutation(operation):

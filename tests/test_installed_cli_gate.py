@@ -27,13 +27,15 @@ def test_installed_gate_output_and_reconcile_contract(tmp_path, monkeypatch, fai
                      "commands": [[]], "skipped_help": [], "absent_pid": 2147483647}
             return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
         code = 0
-        if "repair-state" in command or "--limit" in command or "--family" in command:
+        if any(argument in command for argument in ("repair-state", "--limit", "--family", "--install-location")):
             code = 2
         elif str(2147483647) in command:
             code = 1
         if command[-2:] == ["update", "reconcile"]:
             code = 0 if failure == "packaged_only" else 2
         data = {}
+        if command[-3:-1] == ["software", "capabilities"]:
+            data = {"custom_install_location": True, "install_location": str(environment / command[-1])}
         if "processes" in command and "--once" in command:
             data = [{"rate_schema_version": 2, "cpu_percent": None,
                      "rate_status": "initial" if code == 0 else "gone"}]
@@ -57,7 +59,7 @@ def test_installed_gate_output_and_reconcile_contract(tmp_path, monkeypatch, fai
     if os.name == "nt":
         monkeypatch.setattr(gate, "verify_windows_python_routes", lambda *a: {"fixture": True})
     if failure is None:
-        assert gate.verify(environment, output)["checks"] == 15
+        assert gate.verify(environment, output)["checks"] == 23
         assert (output / "verification.json").is_file()
     else:
         with pytest.raises((ValueError, RuntimeError)):

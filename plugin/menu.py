@@ -5,6 +5,7 @@ from rich.markup import escape
 
 from core.i18n import current_lang, t
 from core.prompt import select, text_input, confirm, pause, clear_screen, print_header, UserCancel, console
+from core.sdk import activity_step, waiting
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
 from plugin import commands
@@ -39,6 +40,19 @@ def _group_display(members) -> tuple[str, str]:
 
 
 def _run_entry(pair, preload=None):
+    from core.installation_progress import WaitingDisplay
+    from core.prompt import screen_transition
+
+    display = WaitingDisplay()
+    display.start(t("plugin.opening"))
+    try:
+        with screen_transition(display.close):
+            return _activate_entry(pair, preload)
+    finally:
+        display.close()
+
+
+def _activate_entry(pair, preload):
     manifest, info = pair
     if preload is None:
         return info.entry()
@@ -60,8 +74,10 @@ def entry() -> None:
 
 def _entry() -> None:
     """插件工具主循环：每次进入实时重新扫描插件目录（热插拔），同 group 插件聚合为一个入口"""
+    crumb = [*_BREADCRUMB, t("menu.plugin")]
     while True:
-        pairs = commands.loaded_plugins()
+        with waiting(t("plugin.loading_inventory")):
+            pairs = commands.loaded_plugins()
         ungrouped, groups = _grouped(pairs)
         choices = [{"key": "1", "label": f"{get_icon('plugin_manage')} {t('plugin.manage')}"}]
         items: list[tuple[str, object]] = []          # ("plugin", pair) | ("group", gid)
@@ -88,7 +104,7 @@ def _entry() -> None:
                     preload.prepare_caller_inspector()
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin")],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -123,7 +139,7 @@ def _entry() -> None:
                     else:
                         if preload is not None:
                             preload.cancel()
-                        _group_menu(payload)
+                        _group_menu(payload, _group_display(groups[payload])[1])
         except (KeyboardInterrupt, UserCancel):
             pass
         finally:
@@ -131,14 +147,15 @@ def _entry() -> None:
                 preload.cancel()
 
 
-def _group_menu(group_id: str) -> None:
+def _group_menu(group_id: str, group_label: str) -> None:
     """分组子菜单：列出该 group 下全部插件（每轮循环重新扫描，热插拔）"""
     while True:
-        pairs = commands.loaded_plugins()
+        crumb = [*_BREADCRUMB, t("menu.plugin"), group_label]
+        with waiting(t("plugin.loading_inventory")):
+            pairs = commands.loaded_plugins()
         members = [(m, info) for m, info in pairs if m.group == group_id]
         if not members:
             break
-        _icon, group_label = _group_display(members)
         choices = []
         for i, (_manifest, info) in enumerate(members):
             icon = info.icon or get_icon("plugin")
@@ -146,7 +163,7 @@ def _group_menu(group_id: str) -> None:
             choices.append({"key": str(i + 1), "label": f"{escape(icon)} {escape(label)}"})
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), group_label],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -159,17 +176,19 @@ def _group_menu(group_id: str) -> None:
         try:
             idx = int(key) - 1
             if 0 <= idx < len(members):
-                members[idx][1].entry()
+                _run_entry(members[idx])
         except (KeyboardInterrupt, UserCancel):
             pass
 
 
 def _manage() -> None:
     """插件管理主循环：安装 / 更新 / 卸载"""
-    # Discovery may have started in the root menu, even if this menu did not
-    # receive a local preload handle. Retire it before changing plugin sources.
     from core.plugin_entry_preload import cancel_pending
-    cancel_pending(wait=True)
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
+    destinations = {
+        "1": "plugin.install", "2": "plugin.update", "3": "plugin.remove",
+        "4": "plugin_native.permissions", "5": "plugin_native.maintenance",
+    }
     while True:
         choices = [
             {"key": "1", "label": f"{get_icon('install')} {t('plugin.install')}"},
@@ -180,7 +199,7 @@ def _manage() -> None:
         ]
         try:
             key = select(
-                breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
+                breadcrumb=crumb,
                 subtitle="",
                 choices=choices,
                 theme_key=_THEME_KEY,
@@ -191,6 +210,13 @@ def _manage() -> None:
         if key is None:
             break
         try:
+            if key not in destinations:
+                continue
+            clear_screen()
+            print_header([*crumb, t(destinations[key])])
+            # Discovery may have started in the root menu.
+            with waiting(t("plugin_native.bootstrap.update_wait")):
+                cancel_pending(wait=True)
             if key == "1":
                 _install()
             elif key == "2":
@@ -249,12 +275,16 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool
     if manifest.api_version != PLUGIN_API_VERSION:
         print_error(t("plugin_native.errors.sdk_required"))
         return False
-    record = commands.trusted_record(manifest.name) or {}
-    shown_source = source or record.get("source", "")
-    shown_branch = branch if branch is not None else record.get("branch")
-    fingerprint = commands.compute_fingerprint(manifest.root)
+    crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")]
+    clear_screen()
+    print_header([*crumb, t("confirm_ui.trust")])
+    with waiting(t("plugin_native.lifecycle.fingerprint_wait")):
+        record = commands.trusted_record(manifest.name) or {}
+        fingerprint = commands.compute_fingerprint(manifest.root)
     if not fingerprint:
         raise ValueError(t("plugin_native.lifecycle.fingerprint_mismatch"))
+    shown_source = source or record.get("source", "")
+    shown_branch = branch if branch is not None else record.get("branch")
     lines = _summary_lines(manifest)
     lines.append(t("confirm_ui.trust_detail"))
     if shown_source:
@@ -263,14 +293,17 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool
         lines.append(f"{t('plugin.col_branch')}: {escape(shown_branch)}")
     lines.append(f"{t('plugin.col_fingerprint')}: {fingerprint}")
     if not confirm(
-        breadcrumb=[*_BREADCRUMB, t("menu.plugin"), t("plugin.manage")],
+        breadcrumb=crumb,
         prompt=t("confirm_ui.trust"),
         theme_key=_THEME_KEY,
         info_lines=lines,
         require_explicit=True,
     ):
         return False
-    commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
+    clear_screen()
+    print_header([*crumb, t("confirm_ui.trust")])
+    with activity_step(t("plugin_native.lifecycle.trust_save_wait"), t("progress.failed")):
+        commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
     return True
 
 
@@ -333,8 +366,12 @@ def _install_with_progress(url, branch=None, alias=None):
     options = _fetch_options(url, user_entered=True)
     with InstallationProgress() as progress:
         if "fetch_interaction" in options:
-            options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
-        return commands.install(url, branch, alias, automatic=True, progress=progress, **options)
+            crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.install")]
+            options["fetch_interaction"] = progress.interaction(
+                options["fetch_interaction"], restore_page=lambda: _draw_progress_page(crumb))
+        result = commands.install(url, branch, alias, automatic=True, progress=progress, **options)
+        progress.finish(failed=result[0] is None)
+        return result
 
 
 def _fetch_options(source, *, user_entered=False):
@@ -440,11 +477,11 @@ def _pick(subtitle_key: str, all_label: str = ""):
     """选择一个已安装插件：与插件工具入口一致的分组结构 —
     先显示入口名（group），进入后再显示组内插件显示名；未分组插件直接显示。
     all_label 非空时列表第一项为该文案，选中返回哨兵 _ALL"""
-    manifests = commands.manifests()
+    with waiting(t("plugin.loading_inventory")):
+        manifests = commands.manifests()
     if not manifests:
         clear_screen()
         print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t(subtitle_key)])
-        console.print()
         console.print(t("plugin.empty"), style=get_color("muted"))
         pause()
         return None
@@ -495,16 +532,35 @@ def _pick(subtitle_key: str, all_label: str = ""):
 def _update_all() -> None:
     """逐个更新插件，每个结果确认后继续"""
     crumb = [*_BREADCRUMB, t("menu.plugin"), t("plugin.update"), t("plugin.update_all")]
-    for manifest in commands.manifests():
+    clear_screen()
+    print_header(crumb)
+    with waiting(t("plugin.loading_inventory")):
+        manifests = commands.manifests()
+    for manifest in manifests:
         _update_one(manifest, [*crumb, _display_name(manifest)])
         pause()
 
 
-def _update_one(manifest, crumb) -> None:
+def _draw_progress_page(crumb) -> None:
     clear_screen()
     print_header(crumb)
+
+
+def _update_one(manifest, crumb) -> None:
+    _draw_progress_page(crumb)
+    from core.installation_progress import InstallationProgress
     try:
-        ok, msg = commands.update(manifest, automatic=True, **_update_fetch_options(manifest))
+        with InstallationProgress() as progress:
+            progress("update_wait")
+            options = _update_fetch_options(manifest)
+            if "fetch_interaction" in options:
+                options["fetch_interaction"] = progress.interaction(
+                    options["fetch_interaction"], restore_page=lambda: _draw_progress_page(crumb))
+            ok, msg = commands.update(manifest, automatic=True, progress=progress, **options)
+            progress.finish(failed=not ok)
+            if ok:
+                progress("loading_inventory")
+                refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     except UserCancel:
         print_info(t("plugin.update_cancelled", name=_display_name(manifest)))
         return
@@ -514,7 +570,6 @@ def _update_one(manifest, crumb) -> None:
         else:
             print_error(t("plugin.update_failed", error=msg))
         return
-    refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)
     if refreshed is None:
         print_error(t("plugin.install_no_manifest"))
         return
@@ -550,7 +605,11 @@ def _remove() -> None:
         return
     from core.resource_lock import ResourceBusyError
     try:
-        commands.remove(manifest)
+        clear_screen()
+        print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.remove"),
+                      _display_name(manifest)])
+        with activity_step(t("confirm_ui.uninstall"), t("progress.failed")):
+            commands.remove(manifest)
     except ResourceBusyError:
         print_error(t("plugin_native.lifecycle.plugin_busy"))
         pause()

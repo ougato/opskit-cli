@@ -2,6 +2,8 @@
 
 `plugin run NAME -- ARGS` 的插件发现与执行共享同一总期限和受监督reader，发现耗时不能在进入invoke时重新获得完整预算。invoke仍重新读取启用/信任/授权及较短配置期限；路由不再在主进程重复读取启用配置。ARGS的大小写、顺序、重复参数与插件--help继续原样传递，未引入插件业务专属的平台参数。源码专项及实际产物范围以[最新台账](validation-status-20261015.md)为准。
 
+插件 CLI 通过 SDK 显示的等待、计数进度和上传传输诊断写入 stderr，包括嵌套的插件服务调用。插件业务结果可通过 stdout 单独收集。
+
 平台维护命令 `plugin inspect-workspaces [--limit 256]` 返回 `{entries: [{token, kind}], unknown}`，kind为directory/unsafe。limit范围1..256，全扫描最多4096项；结果仅是只读观察，不建立所有权、不授权删除，不读取目录内容、不调用Docker。缺失命名空间保持不存在；失败/超限1、参数错误2、取消130。详见[资源元数据恢复](plugin-resource-metadata-recovery.md)。
 
 全局 `--output text|json`；JSON 输出为 `{schema_version: 1, ok, data, error}`，连续采样/逐跳输出使用 JSON Lines。`--non-interactive` 拒绝输入和菜单，`--yes` 只批准普通确认。尚未迁移的软件与管理命令仍需补齐统一输出，不代表全部 CLI 已完成。
@@ -27,6 +29,14 @@ ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析�
 - `network port-scan HOST --ports 22,80,8000-8010 --timeout 0.5 --concurrency 16 --total-timeout 30`。端口范围 1..65535，并发最大 50；只支持 TCP。timeout 是单连接预算，total-timeout 包含一次 DNS 与全部连接，范围 0.1..3600 秒；耗尽返回错误，不把未扫描端口当关闭。数字 IP 跳过 DNS；主机名使用系统解析的首个排序地址，当前不逐个扫描所有地址。使用非阻塞套接字，超时/取消关闭在途连接，无扫描线程残留。DNS 进程回收耗时另计。
 - `network speed-test --url URL --duration 15`：预算包含进程启动、DNS、连接、跳转和读取。用原始响应字节计数，避免自动解压；最多 5 次跳转、1 GiB，达到字节上限返回 limit_reached。测量窗口结束时使用最后确认的累计字节（进度最多每 0.1 秒更新），elapsed_seconds 包含启动/请求与回收，速率据此计算。无数据/请求失败非零退出，不把空结果当成功。取消回收进程；菜单事件取消保留最后确认的速率。
 - `network public-ip --timeout 10`：整个候选 API 查询共用预算，响应最多 1 KiB，仅接受非压缩 IP 文本；超时或无有效结果非零退出。请求在独立进程中执行，父进程可取消和回收；必要回收耗时另计。
+
+端口扫描在菜单和交互终端中按已完成的探测数显示进度，开放和关闭的端口都计入。JSON 输出只包含扫描结果或错误。
+安装阶段若能获取实际字节数和总大小，按当前镜像已写入的字节数显示下载百分比。换源时清空前一源的进度，文件完整落盘后才完成下载阶段。包管理器、uv 等子进程未提供可测总量时，使用活动进度条显示动画和耗时。
+
+Ping、DNS 正反向解析、下载测速和公网 IP 查询在菜单和交互终端中使用活动进度条，执行期间显示动画和耗时，结束后保留结果行。JSON 输出保持纯数据。
+路由追踪也使用活动进度条，同时实时输出各跳的结果。到达目标时显示完成，未到达或中途出错时保留失败行。JSON 模式继续逐条输出节点和最终结果。
+
+监控实时页面在首轮采样时显示临时等待提示，数据就绪后切换到实时画面。采样异常时恢复原终端，显示错误并等待返回。磁盘菜单和交互终端的单次磁盘查询保留采样结果行。连续 CLI 采样和 JSON 输出直接返回数据。
 
 命令示例：`opskit --output json monitor memory --once`；`opskit --output json network dns localhost --family ipv4`。查询结果不会启动主菜单或后台更新。
 
@@ -82,13 +92,16 @@ opskit --yes plugin remove my_plugin
 
 用 `list` 返回的清单名称更新、授信及卸载。上例的 `SHA256` 替换为 `show` 返回的指纹，`--as` 只指定本机安装目录。
 
+交互终端执行 `plugin install` 时会显示安装阶段和等待动画，适用于环境检查、仓库采集、运行环境准备。JSON 输出只包含结构化结果。
+
 ### 更新结果
 
 - `update NAME` 与 `update --all` 二选一。更新使用安装时记录的来源和分支。私有凭据和私网放行请用单个插件命令指定
 - `update --all` 按顺序处理所有已安装插件，单项失败后继续，最终返回 `plugins` 结果列表及 `failed` 计数。有失败项时退出 1，参数错误退出 2。使用 `opskit --output json plugin update --all` 可在脚本中读取完整结果
-- `updated` 表示已装入新内容，`unchanged` 表示内容相同。两者均可通过 `authorization_required` 判断是否需要授信
-- `downgrade` 表示已装入较低版本，保留待授信状态并计入需要处理的条目。核对版本和指纹后可显式授信。内容校验拒绝或更新失败时，结果包含 `error`
-- 交互菜单在当轮确认待授信版本，按任意键继续下一个。CLI 将确认留给显式的 `plugin trust`，便于脚本审查每个指纹
+- 交互终端在复制候选版本时，按已复制文件数显示该步骤的百分比。更新成功以完整性校验和发布结果为准。无总量的更新阶段显示彩色等待点阵
+- HTTPS 拉取有明确的响应正文长度时，按已接收正文的字节数显示下载百分比。分块响应、无长度响应和 SSH 拉取继续显示等待点阵
+- `updated` 表示已装入新版，`unchanged` 表示内容相同。两种成功结果均保留已有信任，`authorization_required` 为 `false`
+- 当前安装需要授信、候选版本低于已安装版本、候选内容校验失败时，更新被拒绝，结果为 `failed` 并包含 `error`。当前安装需要授信时，用 `plugin show` 核对指纹，再执行 `plugin trust` 后重试
 
 ### 插件权限
 
@@ -113,15 +126,31 @@ opskit plugin disk-policy --minimum-free-mib 4096
 
 从对应的检查结果中取有效条目的 `transaction` 或 `object`、`record_sha256`，填入上表中对应的恢复或清理命令。缓存类型为 `runtime`、`fetch`、`prepare`，检查和清理使用同一类型。`--limit` 范围为 1–256，默认 256，超过查询上限会报错。磁盘最低剩余空间范围为 256–1048576 MiB，适用于框架写入前的检查。
 
+## 卸载 OpsKit
+
+`opskit uninstall` 是官方独立程序的卸载入口。通过此命令可以交互选择「程序卸载」和「完全卸载」。脚本使用全局 `--yes` 确认，`--purge` 额外删除标准位置的 OpsKit 插件和数据，`--dry-run` 只预览。已管理的软件文件及自定义目录保留。Windows 仅删除有安装记录的用户 PATH 项。JSON 的 `status` 为 `preview`、`removed` 或 `scheduled`。Windows 后台清理失败时，在 `failure_log` 指定的位置写入原因。
+
 ## 软件查询与偏好
 
 指定名称的 `software install/uninstall/upgrade/switch` 已统一结构化结果，进度送往 stderr；这些入口不执行菜单启动初始化或隐式应用平台更新。编排位于 software/lifecycle_cli.py，执行仍复用菜单的 software.actions。版本型 install/upgrade 要求 --version；switch 只能选择本地已安装版本，upgrade 目标已安装时复用 switch。版本标识拒绝路径分隔符、控制字符等不安全输入。uninstall 要求 --version 或 --all（多版本软件），两者互斥；单版本软件拒绝这两个选项。无交互卸载要求全局 --yes。参数或能力不支持在依赖安装之前拒绝；安装后无法 detect 不再报成功。software manage 保持交互专属，脚本调用模块的具体管理命令。
+
+Python、Node.js、Go 和 Java 支持 `software install NAME --version VERSION --install-location DIRECTORY`。目录可以包含空格，命令行中用引号包住整个路径。安装菜单在选择版本后预填该工具的托管目录，直接回车使用预填值。指定新位置时输入绝对路径或以 `~` 开头的用户目录，目标须为空目录或尚未创建。各工具的版本共用一个托管目录，已有托管版本时继续使用该目录。省略 CLI 参数时自动使用当前托管目录或原有默认目录。
+
+`software capabilities NAME` 的 `custom_install_location` 表示该工具是否接受此选项，`install_location` 显示当前平台的托管目录。
+
+下载安装失败后，可以对同一个目录重试。OpsKit 会核对失败时记录的目录身份，再使用其中留下的安装文件。
 
 `software diagnose NAME` 调用所属模块的只读报告，不执行平台 boot 或旧菜单。当前支持 rustdesk/tailscale/xui/wg_server/wg_client；平台或能力不支持提前拒绝。专用 diagnose 与软件入口共享报告；不健康/空检查返回 ok=false、退出 1，保留 checks。RustDesk 普通诊断不读取或输出连接密钥内容、不写状态、不查询公网。报告目前是基础检查，完整监听、API/TLS、路由和连通性仍待补齐。
 
 RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/hbbr 可执行文件归属。只读取系统 socket/process 表，不发送探测流量。权限不足或无法验证归属返回失败原因，不把缺乏可见性断言为“端口已关闭”。当前检查未覆盖可选 WebSocket、外部防火墙/公网可达性或安装产物可信性。
 
 `software list/search/installed/versions` 支持 JSON；list/search 支持 `--category` 与 `--platform linux|windows|darwin`。跨平台查询不运行外平台检测，安装状态为 null。`software capabilities NAME` 区分真实脚本化安装、交互向导和分类，未完成的向导不标为已支持。
+
+菜单读取可选版本时显示临时等待提示。交互终端直接查询版本，以及插件自动安装依赖时查询推荐版本，使用活动进度条并保留结果行。JSON 版本查询直接返回数据。
+Windows 的 Redis 版本列表以 Windows 发布仓库中可下载的 x64 MSYS2 安装包为准。
+Windows Redis 下载在响应提供可用文件长度时按已写入字节计算百分比。长度未知时显示活动动画，换源后重新计数，下载成功后才显示 100%。
+交互终端直接执行软件安装、卸载、升级或切换时，在阶段进度前显示一次软件及操作标题，并与第一行进度间隔一行。
+切换已安装版本使用活动进度条。升级目标已安装、只需切换时，沿用同一进度阶段。
 
 `software install wg_client --token-file FILE`，FILE 为 `-` 时从 stdin 读取；与 `--token` 互斥，拒绝空值和超过 64 KiB 的输入。 文件输入通过同一个描述符验证单硬链接普通文件、大小及身份，读取前后复核路径、文件大小及时间元数据；拒绝符号链接/重解析点及已观察到的替换或内容变更。POSIX打开使用nonblocking/no-follow，防止替换成FIFO后等待写入者；UTF-8编码错误返回固定提示，不包含内容。stdin保留字节上限。读取前后还会在同一描述符上核验私密权限：Linux要求当前有效用户所有且group/other权限位全部为0；macOS还拒绝所有存在的扩展ACL（包括限制性ACL），不尝试近似解释其顺序；Windows仅接受当前用户、SYSTEM或Administrators所有，DACL授权仅限这些主体和经核实owner的OWNER RIGHTS，不支持的ACE及权限查询失败明确拒绝。不自动chmod或修改ACL。该边界不防御管理员/同账户恶意写入者，不提供原子内容快照；父目录保护、网络文件系统及完整敏感导出事务仍待验收，可使用显式stdin避免文件权限兼容问题。
 
@@ -130,6 +159,8 @@ RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/h
 ## 已接入的安装配置与管理
 
 `update status [--timeout SECONDS]`（默认10秒）只读查询当前版本、二进制更新模式、待更新文件存在性及缓存版本，不boot、不创建配置/缓存；`pending_verification: not_checked`明确没有验证产物，存在文件不表示可安全应用。
+
+`opskit update install` 手动检查、确认、下载并应用正式更新。脚本使用 `opskit --yes --output json update install`。仅支持打包程序，沿用现有更新源、灰度、摘要和回滚策略。检查与下载各有独立超时，分别为 `--check-timeout`（默认30秒）和 `--timeout`（默认300秒），均不包含应用阶段。确认的版本与下载结果绑定，应用时再次核对候选身份。无可用更新正常退出，状态为 `no_update`。成功提交替换后返回 `applied`，Windows 返回 `scheduled`；两者返回时均未确认启动健康。可用 `update status` 查看进度。
 
 `update check [--timeout SECONDS]`（默认30秒）复用现有更新源/灰度策略，在受监督进程内查询，配置上限64 KiB、元数据上限256 KiB，拒绝压缩响应。检查不写更新缓存、不创建机器标识、不发送遥测；完整放量不需要新建身份，部分灰度缺已有身份时明确失败。网络/无效响应失败不作为“无更新”；无符合策略的版本返回available=false/reason=no_eligible_update，候选版本返回checksum_verified=false（此命令尚未下载/验证产物）。期限范围均0.1..3600秒，取消回收worker。显式download及索引任务reconcile已接入；完整应用/恢复事务仍未完成。
 
@@ -151,7 +182,7 @@ Windows任务使用独立产物副本及随机脚本目录，helper持有暂存�
 
 `software install xui --config FILE` 要求显式 host，支持 panel_port/panel_user/panel_base_path/vless_port/sni/dest。密码从 panel_password_file 读取；未提供时生成并要求 credentials_output_file。路径相对配置目录解析，敏感导出拒绝覆盖。安装要求 Linux/systemd，API 或服务配置失败不报成功。
 
-`xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`，状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。默认导出 JSON，加 `--raw` 导出单行 VLESS URI 文本。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
+`xui status/diagnose/traffic/logs`；日志支持 `--lines` 和 `--follow`。菜单与命令行共用日志读取和逐行脱敏，读取失败显示错误。状态掩码密码、私钥、UUID 和连接链接。`xui links --output-file FILE` 只向新建私有文件导出，stdout 不含链接。默认导出 JSON，加 `--raw` 导出单行 VLESS URI 文本。现有 systemd 快照隐藏入口仍被定时器调用，暂保留兼容。
 
 敏感导出要求已有的受保护目标目录：POSIX目录由当前有效用户所有，group/other不可写；macOS还拒绝目录扩展ACL。Windows目录所有者须为当前用户/SYSTEM/Administrators，其他主体可有读取权限但不可有写入、删除或改权限的授权；最终父目录不能为重解析点。共享可写目录明确拒绝，不自动修改用户目录权限。先完成JSON序列化，再在目录内创建私密暂存文件，写入及同步完成后以不覆盖方式发布，已有文件、链接或目录保持原样。POSIX使用目录描述符及原子link；Windows创建时即指定私密ACL，并使用文件句柄相对目录重命名及失败删除。发布前后及最终同步后重查目录身份和权限；Windows在规范化路径之前拒绝末尾点/空格、保留设备名及备用数据流文件名。普通失败清理仅处理本次对象；POSIX目录一旦失去保护，保留私密暂存文件，避免按名称清理误删替换对象，恢复机制仍开放。同账户恶意写入者、管理员、网络文件系统和断电后孤立暂存文件的完整恢复仍未验收，不能等同于整个安装/服务事务已完成。
 

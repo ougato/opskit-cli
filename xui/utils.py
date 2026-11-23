@@ -50,6 +50,7 @@ from xui.constants import (
     SYSTEMCTL_ENABLE_NOW_ARG,
     SYSTEMCTL_START_ARG,
     SYSTEMCTL_STOP_ARG,
+    SYSTEMD_RELOAD_TIMEOUT,
     TRAFFIC_SERVICE_UNIT_CONTENT,
     TRAFFIC_SERVICE_UNIT_FILE,
     TRAFFIC_SNAPSHOT_CLI_ARGS,
@@ -84,7 +85,6 @@ from xui.constants import (
     XUI_INSTALL_SCRIPT_INPUT,
     XUI_SERVICE,
     XUI_STATE_FILE,
-    XUI_XRAY_CANDIDATES,
     XUI_COOKIE_SEPARATOR,
     XUI_CSRF_META_MARKER,
 )
@@ -199,7 +199,11 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
     if is_service_active(timeout=budget.remaining()) or command_exists(XUI_COMMAND):
         try:
             from core.process import capture
-            result = capture([XUI_BINARY_COMMAND, "-v"], timeout=budget.remaining())
+            result = capture(
+                [XUI_BINARY_COMMAND, "-v"],
+                timeout=budget.remaining(),
+                cwd=Path(XUI_BINARY_COMMAND).parent,
+            )
             budget.remaining()
             output = (result.stdout or result.stderr).strip()
             if result.returncode == 0 and output:
@@ -207,7 +211,8 @@ def detect_xui_version(*, timeout: float = HTTP_TIMEOUT_SECONDS, strict: bool = 
                 if match:
                     return match.group(0)
         except (TimeoutError, subprocess.TimeoutExpired):
-            raise
+            if strict:
+                raise
         except OSError:
             pass
         return None if strict else XUI_INSTALLED_VERSION
@@ -248,38 +253,29 @@ def install_xui_script(*, checkpoint=None) -> None:
 
 
 def generate_reality_keypair() -> tuple[str, str]:
-    for candidate in XUI_XRAY_CANDIDATES:
-        if not command_exists(candidate):
-            continue
-        result = subprocess.run(
-            [candidate, "x25519"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-        if result.returncode != 0:
-            continue
-        private_key = ""
-        public_key = ""
-        for line in result.stdout.splitlines():
-            lower = line.lower()
-            if "private" in lower:
-                private_key = line.split(":", 1)[-1].strip()
-            if "public" in lower or lower.startswith("password:"):
-                public_key = line.split(":", 1)[-1].strip()
-        if private_key and public_key:
-            return private_key, public_key
-    return "", ""
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+    private_key = X25519PrivateKey.generate()
+    raw = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    private = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return private, reality_public_key(private)
 
 def reality_public_key(private_key: str) -> str:
     """Derive the share-link key from the authoritative existing private key."""
     import base64
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
     try:
         raw = base64.urlsafe_b64decode(private_key + "=" * (-len(private_key) % 4))
-        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes_raw()
+        public = X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )
     except (ValueError, TypeError):
         raise InstallError("XUI existing Reality private key is invalid") from None
     return base64.urlsafe_b64encode(public).decode("ascii").rstrip("=")
@@ -538,12 +534,6 @@ def uninstall_traffic_timer() -> None:
     stop_and_disable_service(TRAFFIC_TIMER_UNIT)
     run_as_root(["rm", "-f", str(TRAFFIC_TIMER_UNIT_FILE), str(TRAFFIC_SERVICE_UNIT_FILE)],
                 check=True, capture_output=True, timeout=SERVICE_RESTART_TIMEOUT)
-    if systemd_available():
-        run_as_root(
-            [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
-            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
-        )
 
 
 def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
@@ -565,7 +555,7 @@ def stop_and_disable_service(service: str = XUI_SERVICE) -> None:
         timeout=SERVICE_RESTART_TIMEOUT,
     )
     run_as_root(
-        [SYSTEMCTL_COMMAND, "disable", service],
+        [SYSTEMCTL_COMMAND, "--no-reload", "disable", service],
         check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=SERVICE_RESTART_TIMEOUT,
     )
@@ -580,7 +570,7 @@ def remove_xui_artifacts() -> None:
                     timeout=SERVICE_RESTART_TIMEOUT)
     if systemd_available():
         run_as_root(
-            [SYSTEMCTL_COMMAND, "daemon-reload"],
+            [SYSTEMCTL_COMMAND, SYSTEMCTL_DAEMON_RELOAD_ARG],
             check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=SERVICE_RESTART_TIMEOUT,
+            timeout=SYSTEMD_RELOAD_TIMEOUT,
         )

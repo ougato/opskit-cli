@@ -169,8 +169,8 @@ def test_install_prompt_keeps_default_on_input_line(monkeypatch, capsys, lang, l
     output = capsys.readouterr().out
     assert "{default}" not in output
     assert "54321" not in next(line for line in output.splitlines() if label in line)
-    assert output.count("(54321)") == 1
-    assert output.rstrip().endswith("(54321)")
+    assert output.count("54321") == 1
+    assert output.rstrip().endswith(" 54321")
 
 
 def test_esc_returns_from_install_wizard_without_failure(monkeypatch):

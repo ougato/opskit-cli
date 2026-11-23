@@ -204,23 +204,19 @@ def test_install_progress_does_not_print_package_names(monkeypatch, language):
     from core import i18n
     from core import installation_progress as ui
     monkeypatch.setattr(i18n, "_current", i18n._flatten(i18n._load_lang(language)))
-    seen = []
-    class Status:
-        def __init__(self, message):
-            assert message.style == ""
-            seen.append(str(message))
-        def start(self):
-            pass
-        def stop(self):
-            pass
-        def update(self, message):
-            seen.append(str(message))
-    monkeypatch.setattr(ui, "_InstallationStatus", Status)
-    monkeypatch.setattr(ui, "console", SimpleNamespace(is_terminal=True, print=lambda: None))
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, force_interactive=True,
+                      legacy_windows=False, width=100, _environ={"TERM": "xterm"})
+    monkeypatch.setattr(ui, "console", console)
     with ui.InstallationProgress() as progress:
         progress("download", "python-very-long-archive-name.zip")
-        assert seen == []
+        assert output.getvalue() == ""
         for phase in ("tools", "repair", "runtime"):
             progress(phase, "internal-name")
-    assert len(seen) == 3
-    assert not any("internal-name" in text or "plugin_native." in text for text in seen)
+    shown = output.getvalue()
+    assert shown.count("100%") == 3
+    assert "internal-name" not in shown
+    assert "plugin_native." not in shown

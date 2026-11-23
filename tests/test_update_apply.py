@@ -21,6 +21,7 @@ from core.file_digest import file_digest
 def verified_pending(tmp_path, monkeypatch):
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(updater, "_is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "APP_VERSION", 2)
     current = tmp_path / "current.exe"
     current.write_bytes(b"old-program")
     monkeypatch.setattr(updater, "_self_path", lambda: current)
@@ -52,6 +53,14 @@ def test_apply_requires_explicit_confirmation_before_mutation(monkeypatch):
     monkeypatch.setattr(updater, "apply_verified_pending", lambda: pytest.fail("unconfirmed mutation"))
     result = CliRunner().invoke(main.app, ["--output", "json", "update", "apply"])
     assert result.exit_code == 2
+
+
+def test_install_does_not_apply_a_superseding_pending_candidate(verified_pending, monkeypatch):
+    current, pending, _ = verified_pending
+    monkeypatch.setattr(updater, "_apply_owned_pending", lambda *args: pytest.fail("different candidate applied"))
+    with pytest.raises(RuntimeError):
+        updater.apply_verified_pending(expected_candidate_id="b" * 32)
+    assert current.read_bytes() == b"old-program" and pending.is_file()
 
 
 def test_changed_signed_artifact_is_not_applied(verified_pending, monkeypatch):

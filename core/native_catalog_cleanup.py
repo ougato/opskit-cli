@@ -55,24 +55,27 @@ def _inspect(root, kind, limit):
         return []
     result = []
     with os.scandir(directory) as entries:
+        names = []
         for index, entry in enumerate(entries):
-            if index >= 4096 or len(result) >= limit:
+            if index >= 4096:
                 raise ValueError("native catalog ownership inventory exceeds limit")
-            token = entry.name.removesuffix(".json")
-            try:
-                if not entry.name.endswith(".json"):
-                    raise ValueError("unknown ownership entry")
-                value, digest = ownership.read(root, token)
-                target = root / "objects" / token
-                if _directory(target.parent) != value["parent"]:
-                    raise ValueError("catalog parent changed")
-                if os.path.lexists(target):
-                    ownership.validate(root, token)
-                result.append({"object": token, "record_sha256": digest,
-                               "referenced": token in references, "valid": True})
-            except (OSError, ValueError, RuntimeError):
-                result.append({"object": token, "valid": False})
-    return sorted(result, key=lambda item: item["object"])
+            names.append(entry.name)
+    for name in sorted(names, key=lambda name: name.removesuffix(".json"))[:limit]:
+        token = name.removesuffix(".json")
+        try:
+            if not name.endswith(".json"):
+                raise ValueError("unknown ownership entry")
+            value, digest = ownership.read(root, token)
+            target = root / "objects" / token
+            if _directory(target.parent) != value["parent"]:
+                raise ValueError("catalog parent changed")
+            if os.path.lexists(target):
+                ownership.validate(root, token)
+            result.append({"object": token, "record_sha256": digest,
+                           "referenced": token in references, "valid": True})
+        except (OSError, ValueError, RuntimeError):
+            result.append({"object": token, "valid": False})
+    return result
 
 
 def _collect(root, kind, token, digest):

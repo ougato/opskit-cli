@@ -49,6 +49,8 @@ opskit.exe
 
 > **注意**：CMD 方式仅下载到当前目录，不配置 PATH，不支持热更新。完整安装请使用 PowerShell 命令。
 
+如果自动更新未完成，但打包程序还能启动，可运行 `opskit update install` 手动更新。脚本可用 `opskit --yes --output json update install`。Windows 返回 `scheduled` 时，在进程退出后替换，再运行 `opskit --version` 确认版本。
+
 安装路径：
 
 | 平台 | 路径 |
@@ -56,6 +58,21 @@ opskit.exe
 | Linux / macOS（root） | `/usr/local/bin/opskit` |
 | Linux / macOS（非 root） | `~/.local/bin/opskit` |
 | Windows | `%LOCALAPPDATA%\opskit\opskit.exe` |
+
+### 卸载 OpsKit
+
+卸载入口位于命令行。
+
+```sh
+opskit uninstall                  # 选择「📦 程序卸载」或「🗑️ 完全卸载」
+opskit --yes uninstall            # 仅卸载程序
+opskit --yes uninstall --purge    # 同时清理插件和本地数据
+opskit uninstall --purge --dry-run
+```
+
+两种方式均保留已安装的软件及其文件。程序卸载保留 OpsKit 的配置、插件和授权。完全卸载同时清除标准位置的插件、配置、授权、缓存和日志。实际清理范围以预览为准。
+
+Windows 在当前进程退出后删除程序。安装器登记的用户 PATH 项会一起移除。Linux 和 macOS 清除安装器写入的精确 shell 配置行。系统级安装需以管理员权限运行对应的程序。源码或包管理器安装请使用原安装方式卸载。
 
 ---
 
@@ -525,7 +542,7 @@ make clean  # 清理
 
 **构建依赖：**
 
-正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。向 GitHub 推送新的 `v*` 标签即可触发自动打包，无需配置发布签名密钥，安装与更新保留 SHA256 校验，流程见 [发布验收](docs/release-pipeline-security.md)。
+正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。在 `develop` 提交新版本号，合入并推送 `release`。GitHub 预检通过后，在同一提交打标签并推送到 GitHub。完整步骤见 [发布流水线](docs/release-pipeline-security.md)。
 
 Windows x64 还需 MSVC 14.3 或更新版本，以及预先核验的 Dependency Walker。编译器和辅助工具缺失时构建会失败，不自动下载。辅助工具使用独立的新缓存目录：
 

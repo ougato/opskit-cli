@@ -263,7 +263,7 @@ def _pick_fastest_url(urls: list[str], probe_bytes: int = 65536) -> str:
     return reachable[0] if reachable else urls[0]
 
 
-def download_redis_windows(version: str, dest: Path) -> Path:
+def download_redis_windows(version: str, dest: Path, *, on_progress=None) -> Path:
     """Windows: redis-windows/redis-windows GitHub Releases zip（支持 6.x/7.x/8.x）
     先实际带宽测速选最快可达源，再单线程下载。
     """
@@ -283,19 +283,33 @@ def download_redis_windows(version: str, dest: Path) -> Path:
     ordered = [best_url] + [u for u in urls if u != best_url]
 
     for url in ordered:
+        if on_progress is not None:
+            on_progress(None)
         tmp = dest_zip.parent / (dest_zip.name + ".part")
         try:
             with _httpx.stream(
                 "GET", url,
                 timeout=_httpx.Timeout(connect=10, read=120, write=None, pool=None),
                 follow_redirects=True,
+                headers={"Accept-Encoding": "identity"},
             ) as resp:
-                if resp.status_code not in (200, 206):
+                if resp.status_code != 200:
                     continue
+                length = resp.headers.get("Content-Length", "")
+                total = int(length) if length.isascii() and length.isdecimal() else 0
+                if resp.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    total = 0
+                written = 0
+                last = None
                 with tmp.open("wb") as f:
                     for chunk in resp.iter_bytes(65536):
-                        f.write(chunk)
-            if tmp.exists() and tmp.stat().st_size > 1_000_000:
+                        written += f.write(chunk)
+                        if on_progress is not None and total:
+                            pct = min(99, written * 100 // total)
+                            if pct != last:
+                                on_progress(pct)
+                                last = pct
+            if written > 1_000_000 and (not total or written == total):
                 tmp.replace(dest_zip)
                 return dest_zip
         except Exception:
@@ -332,9 +346,28 @@ def download_redis_macos(version: str, dest: Path) -> Path:
 # ─── 版本列表 ─────────────────────────────────────────────────────────────────
 
 def version_list() -> list[str]:
+    import re
+    import sys
     from core.constants import TIMEOUT_VERSION_FETCH
     from software._shared.version_resolver import resolve_versions
-    from .constants import REDIS_VERSIONS_API_URL, REDIS_VERSIONS_FALLBACK
+    from .constants import (REDIS_VERSIONS_API_URL, REDIS_VERSIONS_FALLBACK,
+                            REDIS_WINDOWS_RELEASES_API, REDIS_WINDOWS_VERSIONS_FALLBACK)
+
+    def _fetch_windows() -> list[str]:
+        import httpx
+        resp = httpx.get(REDIS_WINDOWS_RELEASES_API, params={"per_page": 100}, timeout=TIMEOUT_VERSION_FETCH)
+        resp.raise_for_status()
+        versions = set()
+        for item in resp.json():
+            tag = item.get("tag_name", "")
+            if item.get("draft") or item.get("prerelease") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", tag):
+                continue
+            if any(asset.get("name") == f"Redis-{tag}-Windows-x64-msys2.zip" for asset in item.get("assets", [])):
+                versions.add(tag)
+        return sorted(versions, key=lambda version: tuple(map(int, version.split("."))), reverse=True)
+
+    if sys.platform == "win32":
+        return resolve_versions("redis-windows", _fetch_windows, REDIS_WINDOWS_VERSIONS_FALLBACK)
 
     def _fetch() -> list[str]:
         import httpx

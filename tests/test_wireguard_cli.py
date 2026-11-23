@@ -84,3 +84,16 @@ def test_server_config_and_port_conflict_before_mutation(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="port 443"):
         server.install_server(options)
     assert not (tmp_path / "token.json").exists()
+
+
+def test_nginx_install_uses_activity_stage_without_percentage_callback(monkeypatch):
+    from software.recipes.nginx.recipe import NginxRecipe
+    from wireguard import server, utils
+
+    calls = []
+    monkeypatch.setattr(NginxRecipe, "_do_install", lambda self: calls.append("install"))
+    monkeypatch.setattr(server, "run_as_root", lambda *args, **kwargs: None)
+    monkeypatch.setattr(utils, "write_file", lambda *args: calls.append("configure"))
+
+    server._setup_nginx("debian", "install", "example.test", 443, "/unused", "/ws")
+    assert calls == ["install", "configure"]

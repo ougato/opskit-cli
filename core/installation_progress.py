@@ -1,5 +1,7 @@
 """One transient installation status, suspended around interactive questions."""
 from contextlib import contextmanager
+import time
+from dataclasses import dataclass
 
 from rich.console import Group
 from rich.live import Live
@@ -28,17 +30,17 @@ class _ColorSpinner(Spinner):
 
 
 class _InstallationStatus:
-    def __init__(self, message, output_console=None):
+    def __init__(self, message, output_console=None, *, separate=False):
         self.spinner = _ColorSpinner(message)
+        self.separate = separate
         self.live = None
         self.output_console = output_console if output_console is not None else console
 
     def start(self):
         if self.live is not None:
             return
-        # The separator belongs to the transient display: stopping it removes
-        # both lines, so a subsequent warning or error adds only its own gap.
-        self.live = Live(Group(Text(""), self.spinner), console=self.output_console,
+        renderable = Group(Text(""), self.spinner) if self.separate else self.spinner
+        self.live = Live(renderable, console=self.output_console,
                          refresh_per_second=12.5, transient=True)
         self.live.start(refresh=True)
 
@@ -53,6 +55,15 @@ class _InstallationStatus:
             self.live.refresh()
 
 
+@dataclass
+class _WaitingStep:
+    label: str
+    failed_label: str | None
+    started: float
+    total: int | None
+    completed: int = 0
+
+
 class WaitingDisplay:
     """One host-owned, nestable transient wait indicator per invocation."""
 
@@ -61,20 +72,53 @@ class WaitingDisplay:
         self.messages = []
         self.status = None
         self.suspended = 0
+        self.after_progress = False
+        self.completed_rows: list[Text] | None = None
 
-    def start(self, message=""):
+    def start(self, message="", *, failed_label=None, total=None):
         if (not isinstance(message, str) or len(message) > 200
                 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in message)):
             raise ValueError("invalid waiting message")
         if len(self.messages) >= 8:
             raise ValueError("too many nested waiting scopes")
-        self.messages.append(message)
+        if failed_label is not None and (not isinstance(failed_label, str) or not 1 <= len(failed_label) <= 40
+                or not failed_label.isprintable()):
+            raise ValueError("invalid progress failure label")
+        if (failed_label is not None or total is not None) and (
+                failed_label is None or (total is not None and (type(total) is not int or total <= 0))):
+            raise ValueError("invalid progress total")
+        self.messages.append(_WaitingStep(message, failed_label, time.monotonic(), total))
         self._refresh()
 
-    def stop(self):
+    def update(self, completed):
+        step = self.messages[-1] if self.messages else None
+        if (step is None or step.total is None or type(completed) is not int
+                or not step.completed <= completed <= step.total):
+            raise ValueError("invalid progress count")
+        step.completed = completed
+
+    def stop(self, *, failed=False):
         if not self.messages:
             raise ValueError("no active waiting scope")
-        self.messages.pop()
+        step = self.messages.pop()
+        message, failed_label, started = step.label, step.failed_label, step.started
+        failed = failed or (step.total is not None and step.completed != step.total)
+        from core.cli import output_mode
+        if failed_label is not None and output_mode.get() != "json":
+            if self.status is not None:
+                self.status.stop()
+                self.status = None
+            from rich.markup import escape
+            from core.progress import _GREEN, _RED, STEP_LABEL_WIDTH, _render_line
+            width = STEP_LABEL_WIDTH
+            percentage = (min(99, step.completed * 100 // step.total) if step.total is not None else None) if failed else 100
+            row = _render_line(message, percentage, time.monotonic() - started,
+                               _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
+            rendered = Text.from_markup(row)
+            if self.completed_rows is not None:
+                self.completed_rows.append(rendered)
+            self.console.print(rendered, soft_wrap=True)
+            self.after_progress = True
         self._refresh()
 
     def _refresh(self):
@@ -84,9 +128,34 @@ class WaitingDisplay:
                 self.status.stop()
                 self.status = None
             return
-        message = Text(self.messages[-1], no_wrap=True, overflow="ellipsis")
+        step = self.messages[-1]
+        label, failed_label, started = step.label, step.failed_label, step.started
+        if self.status is not None and (failed_label is not None or not isinstance(self.status, _InstallationStatus)):
+            self.status.stop()
+            self.status = None
+        if failed_label is not None:
+            from rich.live import Live
+            from core.progress import STEP_LABEL_WIDTH, _render_line, _render_pulse
+            from core.theme import get_color
+            width = STEP_LABEL_WIDTH
+            color = get_color("progress.bar_active")
+
+            def render():
+                elapsed = time.monotonic() - started
+                if step.total is None:
+                    return Text.from_markup(_render_pulse(label, int(elapsed * 10), elapsed, color, width))
+                percentage = min(99, step.completed * 100 // step.total)
+                return Text.from_markup(_render_line(label, percentage, elapsed, color, width))
+
+            self.status = Live(console=self.console, transient=True, refresh_per_second=10,
+                               redirect_stdout=False, redirect_stderr=False, get_renderable=render)
+            self.status.start(refresh=True)
+            return
+        from core.prompt import menu_visible
+        message = Text(label.strip() or t("prompt.waiting"), no_wrap=True, overflow="ellipsis")
         if self.status is None:
-            self.status = _InstallationStatus(message, output_console=self.console)
+            self.status = _InstallationStatus(message, output_console=self.console,
+                                               separate=self.after_progress or menu_visible())
             self.status.start()
         else:
             self.status.update(message)
@@ -101,48 +170,96 @@ class WaitingDisplay:
             self.suspended -= 1
             self._refresh()
 
+    @property
+    def progressing(self):
+        return bool(self.messages and self.messages[-1].failed_label is not None)
+
+    @property
+    def counting(self):
+        return bool(self.messages and self.messages[-1].total is not None)
+
+    @property
+    def depth(self):
+        return len(self.messages)
+
+    def restore(self, depth):
+        if self.depth > depth:
+            del self.messages[depth:]
+            self._refresh()
+
     def close(self):
-        self.messages.clear()
-        self._refresh()
+        self.restore(0)
 
 
 class InstallationProgress:
     def __init__(self):
-        self.status = None
+        self.display = WaitingDisplay()
+        self.phase = None
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        if self.status is not None:
-            self.status.stop()
+    def __exit__(self, exc_type, *_):
+        self.finish(failed=exc_type is not None)
+
+    def finish(self, *, failed=False):
+        if self.phase is not None:
+            self.display.stop(failed=failed)
+            self.phase = None
 
     def __call__(self, phase, name=""):
-        if phase not in {"fetch", "tools", "repair", "runtime"}:
+        if phase not in {"fetch", "tools", "repair", "runtime",
+                         "update_wait", "update_check", "update_fetch", "update_verify", "update_publish", "loading_inventory"}:
             return
+        from core.cli import non_interactive
+        if not self.display.console.is_terminal or non_interactive.get() or self.phase == phase:
+            return
+        self.finish()
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
-        message = Text(t(key, branch=name), no_wrap=True, overflow="ellipsis")
-        # Redirected output stays clean; final success/error remains available.
-        if not console.is_terminal:
-            return
-        if self.status is None:
-            self.status = _InstallationStatus(message)
-            self.status.start()
+        if phase == "loading_inventory":
+            self.display.start(t("plugin.loading_inventory"))
+        elif phase in {"update_wait", "update_check"}:
+            self.display.start(t(key))
         else:
-            self.status.update(message)
+            self.display.start(t(key, branch=name), failed_label=t("progress.failed"))
+        self.phase = phase
 
-    @contextmanager
     def suspend(self):
-        if self.status is not None:
-            self.status.stop()
-        try:
-            yield
-        finally:
-            if self.status is not None:
-                self.status.start()
+        return self.display.suspend()
 
-    def interaction(self, callback):
+    def interaction(self, callback, *, restore_page=None):
+        if restore_page is not None and self.display.completed_rows is None:
+            self.display.completed_rows = []
+
         def ask(*args, **kwargs):
             with self.suspend():
-                return callback(*args, **kwargs)
+                try:
+                    return callback(*args, **kwargs)
+                finally:
+                    if restore_page is not None:
+                        restore_page()
+                        for row in self.display.completed_rows:
+                            self.display.console.print(row, soft_wrap=True)
         return ask
+
+    def copy_files(self, total):
+        return self._counted("update_copy", "update_copy_failed", total)
+
+    def download_bytes(self, total):
+        return self._counted("update_download", "update_download_failed", total)
+
+    @contextmanager
+    def _counted(self, label, failure, total):
+        from core.cli import non_interactive
+        if not self.display.console.is_terminal or non_interactive.get():
+            yield None
+            return
+        self.display.start(t("plugin_native.bootstrap." + label),
+                           failed_label=t("plugin_native.bootstrap." + failure), total=total)
+        try:
+            yield self.display.update
+        except BaseException:
+            self.display.stop(failed=True)
+            raise
+        else:
+            self.display.stop()

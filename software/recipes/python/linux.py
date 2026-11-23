@@ -34,6 +34,7 @@ class LinuxDriver(PlatformDriver):
         with shim_files(directory, shim_text(fallback_bin, route), route) as verify:
             shell_path.inject_rc_path(str(directory), SHIM_MARKER_BEGIN, SHIM_MARKER_END, PROFILE_D_SHIM_FILE)
             verify()
+        shell_path.prepend_process_path(str(directory))
 
     def remove_shim(self) -> None:
         from .common import shim_dir
@@ -44,6 +45,9 @@ class LinuxDriver(PlatformDriver):
         with shim_files(directory, None, route) as verify:
             shell_path.remove_rc_path(SHIM_MARKER_BEGIN, SHIM_MARKER_END, PROFILE_D_SHIM_FILE)
             verify()
+        os.environ["PATH"] = os.pathsep.join(
+            path for path in os.environ.get("PATH", "").split(os.pathsep) if path != str(directory)
+        )
         try:
             directory.rmdir()
         except OSError:
@@ -57,6 +61,7 @@ class LinuxDriver(PlatformDriver):
     # ─── symlink / PATH ───────────────────────────────────────────────────────
 
     def apply_version_link(self, new_bin: str) -> None:
+        from software._shared import shell_path
         symlink_path, has_root = self._symlink_target()
         from .constants import SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END
         target = Path(new_bin)
@@ -64,6 +69,7 @@ class LinuxDriver(PlatformDriver):
             raise InstallError("Python route requires an existing absolute interpreter path")
         self._change_link(symlink_path, target, lambda: None if has_root else
                           self._ensure_local_bin_in_path(SYMLINK_MARKER_BEGIN, SYMLINK_MARKER_END))
+        shell_path.prepend_process_path(str(Path(symlink_path).parent))
 
     def restore_original(
         self, symlink_path: str, original_target: str | None, had_local_bin_path: bool,

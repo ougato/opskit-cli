@@ -47,14 +47,22 @@ class ActionResult:
 def execute_install(instance, version: str) -> ActionResult:
     """执行安装并检测结果；无法检测安装结果时不能报告成功。"""
     from core.privilege import ensure_root_for_action
+    from software.install_location import clear_pending_location, remember_pending_location
     start = time.monotonic()
     try:
         ensure_root_for_action(instance, "install")
+        key = getattr(instance, "key", "")
+        remember_pending_location(key)
         instance.install(version)
         _invalidate_installed(instance)
         detected = instance.detect()
         if not detected:
             raise RuntimeError("installed software was not detected after installation")
+        try:
+            clear_pending_location(key)
+        except OSError:
+            # The committed install location already identifies this directory.
+            pass
         return ActionResult(ok=True, version=detected, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001 — 统一交给调用方的反馈出口处理
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
@@ -66,11 +74,19 @@ def execute_switch(instance, version: str) -> ActionResult:
     start = time.monotonic()
     try:
         ensure_root_for_action(instance, "switch")
-        instance.switch(version)
-        _invalidate_installed(instance)
+        _switch_version(instance, version)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
+
+
+def _switch_version(instance, version: str) -> None:
+    from core.i18n import t
+    from core.sdk import activity_step
+
+    with activity_step(t("software.switch"), t("progress.failed")):
+        instance.switch(version)
+        _invalidate_installed(instance)
 
 
 def execute_upgrade(instance, version: str, already_installed: bool) -> ActionResult:
@@ -84,8 +100,7 @@ def execute_upgrade(instance, version: str, already_installed: bool) -> ActionRe
     try:
         ensure_root_for_action(instance, "upgrade")
         if already_installed and hasattr(instance, "switch"):
-            instance.switch(version)
-            _invalidate_installed(instance)
+            _switch_version(instance, version)
             return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start, switched=True)
         instance.upgrade(version)
         _invalidate_installed(instance)
@@ -131,16 +146,15 @@ def ensure_installed(key: str) -> bool:
     """插件 SDK 入口：检测软件是否已装，未装则用平台统一安装流程安装推荐版本。
 
     安全边界：只允许安装注册表内的配方（白名单），当前平台不支持直接失败，
-    插件无法借此执行任意安装逻辑。展示复用平台安装 UI（spinner 取版本 →
+    插件无法借此执行任意安装逻辑。展示复用平台安装 UI（查询版本 →
     recipe 自带 MultiStepProgress 进度 → 统一成功 / 失败反馈），与软件菜单
     安装流程一致。已装时静默返回 True，不重复安装。
     """
     from core.feedback import report_failure
     from core.i18n import t
     from core.platform import get_platform
-    from core.progress import spinner
+    from core.sdk import activity_step
     from core.recipe_utils import recipe_display_name
-    from core.theme import console as base_console
     from core.theme import print_error
     from core.theme import print_success
     from software import registry
@@ -157,15 +171,16 @@ def ensure_installed(key: str) -> bool:
         instance.activate()
         return True
     name = recipe_display_name(cls)
-    base_console.print()
-    with spinner(t("software.fetching_versions")):
-        try:
+    try:
+        with activity_step(t("software.fetching_versions"), t("progress.failed")):
             versions = instance.versions()
-        except Exception as e:  # noqa: BLE001
-            report_failure(e, fail_key="install.failed", name=name, software=key, action="versions")
-            return False
-    if not versions:
+            if not versions:
+                raise LookupError(t("software.no_versions"))
+    except LookupError:
         print_error(t("software.no_versions"))
+        return False
+    except Exception as e:  # noqa: BLE001
+        report_failure(e, fail_key="install.failed", name=name, software=key, action="versions")
         return False
     r = execute_install(instance, versions[0])
     if r.ok:

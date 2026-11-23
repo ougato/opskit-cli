@@ -24,6 +24,16 @@ def test_lookup_requires_exact_directory_version_and_regular_binary(tmp_path, mo
     assert common.find_uv_python("3.12.1") == str(exact / "python.exe")
 
 
+def test_uv_minor_alias_only_refers_to_matching_managed_patch(tmp_path, symlink_capable):
+    target = tmp_path / "cpython-3.14.8-linux-x86_64-gnu"
+    alias = tmp_path / "cpython-3.14-linux-x86_64-gnu"
+    target.mkdir()
+    alias.symlink_to(target.name, target_is_directory=True)
+    assert common.uv_installation_directories(tmp_path) == (target,)
+    target.rmdir()
+    assert common.uv_installation_directories(tmp_path) == ()
+
+
 @pytest.mark.parametrize("name,ignored", [
     ("cpython-3.14-windows-x86_64-none", True),
     ("cpython-3.14.7-windows-x86_64-none", False),

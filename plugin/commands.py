@@ -455,13 +455,16 @@ def rollback_install(manifest: PluginManifest) -> None:
 
 
 def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
-           allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
+           allow_private: bool = False, fetch_interaction=None, automatic: bool = False,
+           progress=None) -> tuple[bool, str]:
     """Exclude active invocations before reading or changing plugin sources."""
     from core.plugin_invocation_lock import hold
+    if progress is not None:
+        progress("update_wait")
     try:
         with hold(plugin=manifest.name, timeout=30):
             return _update_locked(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
-                                  fetch_interaction=fetch_interaction, automatic=automatic)
+                                  fetch_interaction=fetch_interaction, automatic=automatic, progress=progress)
     except (OSError, ValueError, RuntimeError) as exc:
         _log_install_failure("update_guard", exc)
         from core.resource_lock import ResourceBusyError
@@ -471,12 +474,15 @@ def update(manifest: PluginManifest, *, fetch_profile: str | None = None,
 
 
 def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None,
-                   allow_private: bool = False, fetch_interaction=None, automatic: bool = False) -> tuple[bool, str]:
+                   allow_private: bool = False, fetch_interaction=None, automatic: bool = False,
+                   progress=None) -> tuple[bool, str]:
     """Publish a verified update and advance trust for the same installation."""
     from core.native_acquisition import populate
     from core.native_sandbox import NativeSandboxError
     from core.plugin_state import _directory
     from core.plugin_trust import authorization_transaction, authorization_snapshot
+    if progress is not None:
+        progress("update_check")
     root = Path(manifest.root).absolute()
     if root.parent != plugins_dir().absolute():
         raise ValueError("update must target a direct installed plugin")
@@ -500,8 +506,16 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
     owned = _directory(work)
     payload, previous = work / "payload", work / "previous"
     try:
-        acquired = populate(record["source"], payload, branch=record.get("branch"),
-                            fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction)
+        from core.plugin_provider_install import provider_update_branch
+        branch = provider_update_branch(manifest.name, record["source"], record.get("branch"))
+        if progress is not None:
+            progress("update_fetch")
+        acquired = populate(record["source"], payload, branch=branch,
+                            fetch_profile=fetch_profile, allow_private=allow_private, fetch_interaction=fetch_interaction,
+                            copy_progress=getattr(progress, "copy_files", None),
+                            download_progress=getattr(progress, "download_bytes", None))
+        if progress is not None:
+            progress("update_verify")
         refreshed = load_manifest(payload)
         if refreshed is None or refreshed.name != manifest.name:
             raise ValueError("update plugin identity changed")
@@ -514,9 +528,13 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
             raise ValueError("installed plugin changed during acquisition")
         if before == acquired.receipt:
             if automatic:
+                if progress is not None:
+                    progress("runtime")
                 from core.plugin_runtime_manager import prepare_update
                 prepare_update(manifest, before)
             return True, "unchanged"
+        if progress is not None:
+            progress("update_publish")
         replacement = _directory(payload)
         with _installation_lock.hold(), authorization_transaction():
             with authorization_snapshot():
@@ -540,6 +558,8 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                 if _directory(root) != replacement or content_receipt(root) != acquired.receipt:
                     raise ValueError("update publication identity changed")
                 if automatic:
+                    if progress is not None:
+                        progress("runtime")
                     from core.plugin_runtime_manager import prepare_update
                     installed = load_manifest(root)
                     if installed is None or installed.name != manifest.name:
@@ -549,9 +569,10 @@ def _update_locked(manifest: PluginManifest, *, fetch_profile: str | None = None
                 if not fingerprint or fingerprint != acquired.fingerprint:
                     raise ValueError("authenticated update fingerprint changed")
                 from core.plugin_capabilities import CapabilityAuthority
-                with CapabilityAuthority().inherit_directory_reads(manifest.name, current_fingerprint, fingerprint):
-                    grant(manifest.name, fingerprint, refreshed.version, acquired.source, record.get("branch"),
-                          installation_receipt=acquired.receipt, source_commit=acquired.commit)
+                with CapabilityAuthority().inherit_directory_grants(manifest.name, current_fingerprint, fingerprint):
+                    grant(manifest.name, fingerprint, refreshed.version, acquired.source, branch,
+                          installation_receipt=acquired.receipt, source_commit=acquired.commit,
+                          verified_update=(current, refreshed, current_fingerprint))
             except BaseException:
                 # Only withdraw the exact newly published object. Never overwrite
                 # an independent writer, and retain old bytes if restoration fails.

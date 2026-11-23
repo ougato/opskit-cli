@@ -103,6 +103,13 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
         if not Path(provenance[name]).resolve().is_relative_to(environment):
             raise ValueError("CLI imported code outside the verification environment")
     cases = [(path + ["--help"], 0, False) for path in provenance["commands"]]
+    development_tools = ("golang", "java", "nodejs", "python")
+    for name in development_tools:
+        cases.extend([
+            (["--output", "json", "software", "capabilities", name], 0, True),
+            (["--output", "json", "--non-interactive", "software", "install", name, "--version",
+              "1.2.3", "--install-location", "relative-path"], 2, True),
+        ])
     cases.extend([
         (["--output", "json", "--version"], 0, True),
         (["--output", "json", "software", "list"], 0, True),
@@ -144,6 +151,10 @@ print(json.dumps({'main': main.__file__, 'core': core.__file__, 'commands': comm
                   or type(error["code"]) is not int or error["code"] != expected
                   or not isinstance(error["message"], str) or not error["message"].strip()):
                 raise ValueError("failed installed CLI returned an invalid error")
+            if "capabilities" in arguments and arguments[-1] in development_tools:
+                capability = payload["data"]
+                if capability["custom_install_location"] is not True or not Path(capability["install_location"]).is_absolute():
+                    raise ValueError("installed development tool has no absolute installation location")
             if "processes" in arguments and "--once" in arguments:
                 row = payload["data"][0]
                 if row["rate_schema_version"] != 2 or row["cpu_percent"] is not None:

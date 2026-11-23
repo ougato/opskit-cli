@@ -9,6 +9,31 @@ import time
 from contextlib import ExitStack, contextmanager
 
 
+_windows_spawn_lock = threading.Lock()
+
+
+def _start_process(process):
+    if os.name != "nt":
+        process.start()
+        return
+
+    import ctypes
+    from ctypes import wintypes
+
+    set_handler = ctypes.WinDLL("kernel32", use_last_error=True).SetConsoleCtrlHandler
+    set_handler.argtypes = [ctypes.c_void_p, wintypes.BOOL]
+    set_handler.restype = wintypes.BOOL
+    with _windows_spawn_lock:
+        # Children inherit this flag across interpreter startup and unpickling.
+        # A console-free host has no broadcast to suppress.
+        changed = set_handler(None, True)
+        try:
+            process.start()
+        finally:
+            if changed:
+                set_handler(None, False)
+
+
 def send(connection, message):
     encoded = json.dumps(message).encode("utf-8")
     if len(encoded) > 65536:
@@ -57,7 +82,7 @@ def owned_process(target, arguments, *, label):
         ready_read, ready_write = context.Pipe(duplex=False)
         process = context.Process(target=_owned_target,
                                   args=(transmit, lifetime_read, ready_read, os.getpid(), target, arguments), daemon=True)
-        process.start()
+        _start_process(process)
         if os.name == "nt":
             from core.windows_job import attach_running
             job = attach_running(process.sentinel)

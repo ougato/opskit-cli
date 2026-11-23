@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+plugin_root=$(git rev-parse --show-toplevel)
+framework_root=$(CDPATH= cd -- "$plugin_root/../../cli" && pwd)
+while read -r local_ref local_oid remote_ref remote_oid; do
+    [ "$local_ref" != "(delete)" ] || continue
+    case "$remote_ref" in
+        refs/heads/*|refs/tags/*)
+            (cd "$framework_root" && python -m scripts.check_plugin_release "$plugin_root" --ref "$local_oid")
+            ;;
+    esac
+done

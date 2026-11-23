@@ -2,10 +2,21 @@
 import ipaddress
 import socket
 import subprocess
+from contextlib import nullcontext
 
 import typer
-from core.cli import emit, fail, require_interaction, guarded
+from core.cli import emit, fail, require_interaction, guarded, output_mode
+from core.i18n import t
+from core.prompt import console, print_header
+from core.sdk import activity_step, progress_step
 from network import commands
+
+
+def _activity(title, action):
+    if output_mode.get() != "text" or not console.is_terminal:
+        return nullcontext()
+    print_header(["OpsKit", t("menu.network"), t(title)])
+    return activity_step(t(action), t("progress.failed"))
 
 
 def parse_ports(value):
@@ -44,10 +55,11 @@ def register(app):
     def ping(host: str = typer.Argument(None), count: int = typer.Option(4, "--count", min=1, max=10000), timeout: float = typer.Option(30, "--timeout", min=0.1, max=3600)):
         if missing_host(host, "show_ping"):
             return
-        result = commands.ping(host, count=count, timeout=timeout, strict=True)
-        if not result.reachable:
-            emit(result, error={"code": 1, "message": "ping target is unreachable"})
-            raise typer.Exit(1)
+        with _activity("network.ping", "network.ping"):
+            result = commands.ping(host, count=count, timeout=timeout, strict=True)
+            if not result.reachable:
+                emit(result, error={"code": 1, "message": "ping target is unreachable"})
+                raise typer.Exit(1)
         emit(result)
 
     @app.command("traceroute")
@@ -57,17 +69,25 @@ def register(app):
             return
         iterator = commands.traceroute(host, max_hops=max_hops, timeout=timeout, strict=True)
         try:
-            while True:
-                try:
-                    hop = next(iterator)
-                except StopIteration as done:
-                    result = {"event": "complete", **done.value}
-                    if not result["reached"]:
-                        emit(result, error={"code": 1, "message": "traceroute target was not reached"})
-                        raise typer.Exit(1)
-                    emit(result)
-                    break
-                emit({"host": host, "hop": hop})
+            from core.theme import console as progress_console
+            terminal = output_mode.get() == "text" and console.is_terminal
+            with _activity("network.traceroute", "network.traceroute"):
+                while True:
+                    try:
+                        hop = next(iterator)
+                    except StopIteration as done:
+                        result = {"event": "complete", **done.value}
+                        if not result["reached"]:
+                            raise LookupError from None
+                        break
+                    if terminal:
+                        progress_console.print(hop, markup=False, highlight=False)
+                    else:
+                        emit({"host": host, "hop": hop})
+            emit(result)
+        except LookupError:
+            emit(result, error={"code": 1, "message": "traceroute target was not reached"})
+            raise typer.Exit(1)
         except typer.Exit:
             raise
         except KeyboardInterrupt:
@@ -99,14 +119,16 @@ def register(app):
         if reverse:
             if family != "any":
                 fail("--family applies only to forward DNS; reverse DNS requires any", 2)
-            result = commands.dns_reverse(host, timeout=timeout)
-            if not result:
-                fail("PTR record not found")
+            with _activity("network.dns", "network.dns_reverse"):
+                result = commands.dns_reverse(host, timeout=timeout)
+                if not result:
+                    fail("PTR record not found")
             emit({"address": host, "hostname": result})
         else:
-            result = commands.dns_lookup(host, {"any": socket.AF_UNSPEC, "ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}[family], timeout=timeout)
-            if not result.addresses:
-                fail("DNS lookup failed")
+            with _activity("network.dns", "network.dns_forward"):
+                result = commands.dns_lookup(host, {"any": socket.AF_UNSPEC, "ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}[family], timeout=timeout)
+                if not result.addresses:
+                    fail("DNS lookup failed")
             emit(result)
 
     @app.command("port-scan")
@@ -115,7 +137,14 @@ def register(app):
         selected = parse_ports(ports) if ports else commands.COMMON_TCP_PORTS
         if missing_host(host, "show_port_scan"):
             return
-        emit(commands.scan_ports(host, selected, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout))
+        options = dict(timeout=timeout, concurrency=concurrency, total_timeout=total_timeout)
+        if output_mode.get() == "text" and console.is_terminal:
+            print_header(["OpsKit", t("menu.network"), t("network.port_scan")])
+            with progress_step(t("network.scanning"), t("progress.failed"), total=len(selected)) as update:
+                result = commands.scan_ports(host, selected, **options, on_progress=update)
+        else:
+            result = commands.scan_ports(host, selected, **options)
+        emit(result)
 
     @app.command("speed-test")
     @guarded
@@ -128,14 +157,17 @@ def register(app):
             fail("URL must be HTTP(S) without credentials", 2)
         import httpx
         try:
-            emit(commands.download_measurement(url, duration))
+            with _activity("network.speed_test", "network.testing"):
+                result = commands.download_measurement(url, duration)
+            emit(result)
         except httpx.HTTPError as exc:
             fail(type(exc).__name__)
 
     @app.command("public-ip")
     @guarded
     def public_ip(timeout: float = typer.Option(10, "--timeout", min=0.1, max=60)):
-        result = commands.get_public_ip(timeout=timeout)
-        if result is None:
-            fail("public IP lookup failed")
+        with _activity("network.public_ip", "network.detecting_ip"):
+            result = commands.get_public_ip(timeout=timeout)
+            if result is None:
+                fail("public IP lookup failed")
         emit({"address": result})

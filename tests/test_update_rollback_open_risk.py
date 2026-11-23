@@ -14,6 +14,14 @@ import pytest
 from core import update_target_state, updater
 
 
+_RUNNING_BUILD = 2
+
+
+@pytest.fixture(autouse=True)
+def rollback_release(monkeypatch):
+    monkeypatch.setattr(updater, "APP_VERSION", _RUNNING_BUILD)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows executable sharing behavior")
 def test_windows_running_executable_cannot_be_replaced(tmp_path):
     system_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
@@ -234,6 +242,7 @@ def test_windows_rollback_helper_rejects_health_confirmation_during_parent_wait(
 def _failed_decision_process(directory, ready, release, error_seen):
     os.environ["OPSKIT_DATA_DIR"] = directory
     from core import updater as child_updater
+    child_updater.APP_VERSION = _RUNNING_BUILD
     original = child_updater._write_update_record
     health = child_updater._get_health_path()
 
@@ -258,6 +267,7 @@ def _failed_decision_process(directory, ready, release, error_seen):
 def _confirm_process(directory, target, connection):
     os.environ["OPSKIT_DATA_DIR"] = directory
     from core import updater as child_updater
+    child_updater.APP_VERSION = _RUNNING_BUILD
     child_updater._self_path = lambda: Path(target)
     child_updater._is_frozen = lambda: True
     try:
@@ -269,6 +279,7 @@ def _confirm_process(directory, target, connection):
 def _check_process(directory, target, connection):
     os.environ["OPSKIT_DATA_DIR"] = directory
     from core import updater as child_updater
+    child_updater.APP_VERSION = _RUNNING_BUILD
     child_updater._self_path = lambda: Path(target)
     child_updater._is_frozen = lambda: True
     try:
@@ -451,9 +462,9 @@ def test_prepared_upgrade_can_still_confirm(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("phase,contents,from_build,to_build", [
-    ("prepared", b"not the recorded update", updater.APP_VERSION - 1, updater.APP_VERSION),
-    ("aborted", b"previous executable", updater.APP_VERSION - 1, updater.APP_VERSION),
-    ("applied", b"recorded update", updater.APP_VERSION, updater.APP_VERSION + 1),
+    ("prepared", b"not the recorded update", _RUNNING_BUILD - 1, _RUNNING_BUILD),
+    ("aborted", b"previous executable", _RUNNING_BUILD - 1, _RUNNING_BUILD),
+    ("applied", b"recorded update", _RUNNING_BUILD, _RUNNING_BUILD + 1),
 ])
 def test_upgrade_transaction_must_match_running_build_and_target(
     tmp_path, monkeypatch, phase, contents, from_build, to_build,

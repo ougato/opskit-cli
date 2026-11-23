@@ -87,7 +87,7 @@ def start(cmd: Sequence[str], *, cwd=None, env=None, stdin=None, binary=False, s
 
 
 def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=None, stdin=None,
-           stdin_data=None, checkpoint=None) -> Iterator[str]:
+           stdin_data=None, checkpoint=None, fallback_encoding=None) -> Iterator[str]:
     if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         raise ValueError("process timeout must be finite and positive")
     if stdin_data is not None and (not isinstance(stdin_data, bytes) or len(stdin_data) > 16384 or stdin is not None):
@@ -95,7 +95,8 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
     deadline = time.monotonic() + timeout if timeout is not None else None
     if checkpoint is not None:
         checkpoint()
-    process = start(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if stdin_data is not None else stdin)
+    process = start(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if stdin_data is not None else stdin,
+                    **({"binary": True} if fallback_encoding else {}))
     if process_ref is not None:
         process_ref.append(process)
     output: queue.Queue = queue.Queue(maxsize=32)
@@ -124,7 +125,7 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
     def writer() -> None:
         assert process.stdin is not None
         try:
-            process.stdin.buffer.write(stdin_data)
+            (process.stdin if fallback_encoding else process.stdin.buffer).write(stdin_data)
             process.stdin.buffer.flush()
         except (BrokenPipeError, OSError):
             pass
@@ -158,7 +159,17 @@ def stream(cmd: Sequence[str], *, cwd=None, env=None, timeout=None, process_ref=
                 continue
             if chunk is None:
                 break
-            yield chunk.rstrip("\n")
+            if not fallback_encoding:
+                yield chunk.rstrip("\n")
+                continue
+            # Match universal newlines in text mode, including a tool's
+            # standalone carriage return between a marker and its JSON.
+            lines = chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            for line in lines.removesuffix(b"\n").split(b"\n"):
+                try:
+                    yield line.decode("utf-8")
+                except UnicodeDecodeError:
+                    yield line.decode(fallback_encoding, errors="replace")
         remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
         while process.poll() is None:
             if checkpoint is not None:

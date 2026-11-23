@@ -184,24 +184,13 @@ def test_xui_state_redacts_sensitive_fields_and_uses_0600(tmp_path) -> None:
     assert vless["public_key"] == "pub"
 
 
-def test_generate_reality_keypair_uses_3x_ui_xray_binary(tmp_path, monkeypatch) -> None:
-    xray = tmp_path / "xray-linux-amd64"
-    xray.write_text(
-        "#!/bin/sh\n"
-        "echo 'PrivateKey: private-key'\n"
-        "echo 'Password (PublicKey): public-key'\n",
-        encoding="utf-8",
-    )
-    xray.chmod(0o755)
-
+def test_generated_reality_keypair_matches_existing_key_derivation() -> None:
     from xui import utils
 
-    monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", [str(xray)])
-    import os
-    if os.name == "nt":
-        import pytest
-        pytest.skip("Linux xray shell binary requires a Linux test host")
-    assert utils.generate_reality_keypair() == ("private-key", "public-key")
+    private, public = utils.generate_reality_keypair()
+    assert len(private) == len(public) == 43
+    assert utils.reality_public_key(private) == public
+    assert utils.generate_reality_keypair()[0] != private
 
 
 def test_panel_api_base_normalizes_trailing_slash() -> None:
@@ -258,10 +247,10 @@ def test_extract_csrf_token_from_login_page() -> None:
     assert _extract_csrf_token(html) == "token-value"
 
 
-def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeypatch) -> None:
+def test_remove_xui_artifacts_removes_configuration_and_data(tmp_path, monkeypatch) -> None:
     from xui import constants, utils
 
-    assert constants.XUI_CONFIG_DIR not in constants.XUI_ARTIFACT_DIRS
+    assert constants.XUI_CONFIG_DIR in constants.XUI_ARTIFACT_DIRS
 
     install_dir = tmp_path / "usr-local-x-ui"
     config_dir = tmp_path / "etc-x-ui"
@@ -294,28 +283,19 @@ def test_remove_xui_artifacts_preserves_configuration_and_data(tmp_path, monkeyp
         return Result()
 
     monkeypatch.setattr(utils, "systemd_available", lambda: True)
-    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir])
+    monkeypatch.setattr(utils, "XUI_ARTIFACT_DIRS", [install_dir, config_dir])
     monkeypatch.setattr(utils, "XUI_ARTIFACT_FILES", [service_file, command_link])
     monkeypatch.setattr(utils, "run_as_root", fake_run)
 
     utils.remove_xui_artifacts()
 
     assert not install_dir.exists()
-    assert database.read_bytes() == b"user database"
+    assert not config_dir.exists()
     assert not service_file.exists()
     assert not command_link.exists()
     assert calls == [["systemctl", "daemon-reload"]]
 
 
-@pytest.mark.parametrize("label", ["Public key", "Password (PublicKey)", "Password"])
-def test_reality_keypair_output_formats(monkeypatch, label):
-    from types import SimpleNamespace
-    from xui import utils
-    monkeypatch.setattr(utils, "XUI_XRAY_CANDIDATES", ["xray"])
-    monkeypatch.setattr(utils, "command_exists", lambda name: True)
-    monkeypatch.setattr(utils.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
-        returncode=0, stdout=f"PrivateKey: private-key\n{label}: public-key\nHash32: ignored\n"))
-    assert utils.generate_reality_keypair() == ("private-key", "public-key")
 
 
 @pytest.mark.parametrize("address,expected", [("0.0.0.0:443", True), ("[::]:443", True), ("0.0.0.0:4430", False)])

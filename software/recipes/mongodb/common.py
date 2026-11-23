@@ -75,9 +75,9 @@ def delete_snapshot() -> None:
 
 # ─── tarball 下载 ─────────────────────────────────────────────────────────────
 
-def download_mongodb_tarball(version: str, dest: Path) -> Path:
+def download_mongodb_tarball(version: str, dest: Path, *, on_progress=None) -> Path:
     """
-    赛马下载 MongoDB tarball，复用 core.mirror.download() 机制。
+    下载 MongoDB tarball，先探测镜像，再按顺序逐源下载。
     URL 列表来自 constants.py，国内镜像优先，最后一条作为 fallback。
     """
     import sys
@@ -107,6 +107,7 @@ def download_mongodb_tarball(version: str, dest: Path) -> Path:
         return mirror.download_file(
             urls=urls,
             dest=dest,
+            on_progress=on_progress,
         )
     except Exception as e:
         from core.i18n import t

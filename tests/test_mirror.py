@@ -2,11 +2,42 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from core import mirror as mir
+
+
+def test_download_switches_mirror_before_a_trickle_fills_a_buffer(tmp_path, monkeypatch):
+    clock = 0
+    slow_chunks = []
+    content = b"a" * 2048
+    urls = ["https://slow.example/file", "https://fast.example/file"]
+
+    class SlowBody(httpx.SyncByteStream):
+        def __iter__(self):
+            nonlocal clock
+            for _ in range(5):
+                clock += 1
+                slow_chunks.append(clock)
+                yield b"x"
+
+    def response(request):
+        if request.url.host == "slow.example":
+            return httpx.Response(200, headers={"Content-Length": "2048"}, stream=SlowBody())
+        return httpx.Response(200, content=content)
+
+    monkeypatch.setattr(mir, "time", SimpleNamespace(monotonic=lambda: clock))
+    monkeypatch.setattr(mir, "_probe_concurrent", lambda *args, **kwargs: list(zip(urls, range(2))))
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        monkeypatch.setattr(mir.httpx, "stream", client.stream)
+        result = mir.download_file(urls, tmp_path / "file", slow_window=2)
+
+    assert slow_chunks == [1, 2]
+    assert result.read_bytes() == content
 
 
 def test_load_sources_returns_dict(tmp_path) -> None:

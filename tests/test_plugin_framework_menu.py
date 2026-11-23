@@ -9,6 +9,76 @@ from core import i18n, theme
 from plugin import menu
 
 
+def test_opening_spinner_stops_before_plugin_renders(monkeypatch):
+    from core import installation_progress, prompt
+    from core.cli import non_interactive
+    from types import SimpleNamespace
+
+    events = []
+
+    class Display:
+        def start(self, label):
+            events.append("waiting")
+
+        def close(self):
+            if events[-1] == "waiting":
+                events.append("closed")
+
+    def entry():
+        prompt.clear_screen()
+        events.append("menu")
+
+    monkeypatch.setattr(installation_progress, "WaitingDisplay", Display)
+    token = non_interactive.set(True)
+    try:
+        menu._run_entry((None, SimpleNamespace(entry=entry)))
+    finally:
+        non_interactive.reset(token)
+    assert events == ["waiting", "closed", "menu"]
+
+
+def test_update_inventory_keeps_the_gap_from_copy_progress(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from core import installation_progress
+
+    progress_contexts = []
+
+    class Progress:
+        def __enter__(self):
+            progress_contexts.append(self)
+            self.phases = []
+            self.active = True
+            return self
+
+        def __exit__(self, *exc):
+            self.active = False
+
+        def __call__(self, phase):
+            self.phases.append(phase)
+
+        def finish(self, *, failed):
+            assert not failed
+
+    manifest = SimpleNamespace(name="storage_hub", version="1.0.0")
+
+    def manifests():
+        progress, = progress_contexts
+        assert progress.active
+        assert progress.phases == ["update_wait", "loading_inventory"]
+        return [manifest]
+
+    monkeypatch.setattr(installation_progress, "InstallationProgress", Progress)
+    monkeypatch.setattr(menu, "waiting", lambda *args: nullcontext())
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda *args: None)
+    monkeypatch.setattr(menu, "_update_fetch_options", lambda *args: {})
+    monkeypatch.setattr(menu, "_display_name", lambda item: item.name)
+    monkeypatch.setattr(menu.commands, "update", lambda *args, **kwargs: (True, "unchanged"))
+    monkeypatch.setattr(menu.commands, "manifests", manifests)
+    menu._update_one(manifest, ["OpsKit"])
+
+
 def test_update_all_never_opens_trust_confirmation(monkeypatch):
     from core.plugin import PluginManifest
 
@@ -34,6 +104,20 @@ def test_update_all_never_opens_trust_confirmation(monkeypatch):
     monkeypatch.setattr(menu.commands, "update", lambda item, **kwargs: statuses[item.name])
     menu._update_all()
     assert len(errors) == 2 and len(successes) == 1 and len(notices) == 1
+
+
+def test_manage_shows_destination_before_waiting_for_preload(monkeypatch):
+    from core import plugin_entry_preload
+
+    events = []
+    keys = iter(["2", None])
+    monkeypatch.setattr(menu, "select", lambda **kwargs: events.append("list") or next(keys))
+    monkeypatch.setattr(menu, "clear_screen", lambda: None)
+    monkeypatch.setattr(menu, "print_header", lambda crumb: events.append(crumb[-1]))
+    monkeypatch.setattr(plugin_entry_preload, "cancel_pending", lambda *, wait: events.append(("cancel", wait)))
+    monkeypatch.setattr(menu, "_update", lambda: events.append("update"))
+    menu._manage()
+    assert events == ["list", menu.t("plugin.update"), ("cancel", True), "update", "list"]
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

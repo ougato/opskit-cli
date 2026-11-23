@@ -66,9 +66,10 @@ def verify(root: Path, expected: dict[str, str], *, allow_empty=False) -> None:
         raise ValueError("native runtime content does not match prepared inventory")
 
 
-def stage(source: Path, destination: Path, expected: dict[str, str], *, allow_empty=False) -> None:
+def stage(source: Path, destination: Path, expected: dict[str, str], *, allow_empty=False, copy_progress=None) -> None:
     """Create a fresh owned snapshot and verify the copied bytes before use."""
     import shutil
+    from contextlib import nullcontext
     source, destination = absolute_path(source), absolute_path(destination)
     if destination.exists() or destination.is_symlink():
         raise ValueError("native runtime destination must not exist")
@@ -79,10 +80,13 @@ def stage(source: Path, destination: Path, expected: dict[str, str], *, allow_em
     for path in bounded_paths(source, max_entries=MAX_ENTRIES, skip_dirs=frozenset()):
         if path.is_dir():
             (destination / path.relative_to(source)).mkdir(parents=True, exist_ok=True)
-    for relative in expected:
-        original = source / relative
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Copy only names authenticated by the complete ordinary-file inventory.
-        shutil.copyfile(original, target, follow_symlinks=False)
+    with (copy_progress(len(expected)) if copy_progress and expected else nullcontext()) as update:
+        for count, relative in enumerate(expected, 1):
+            original = source / relative
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Copy only names authenticated by the complete ordinary-file inventory.
+            shutil.copyfile(original, target, follow_symlinks=False)
+            if update is not None:
+                update(count)
     verify(destination, expected, allow_empty=allow_empty)

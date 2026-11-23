@@ -28,7 +28,8 @@ def source_identity(value):
     return str(Path(value).absolute()), True
 
 
-def populate(source, destination, *, branch=None, timeout=300, fetch_profile=None, allow_private=False, fetch_interaction=None):
+def populate(source, destination, *, branch=None, timeout=300, fetch_profile=None, allow_private=False,
+             fetch_interaction=None, copy_progress=None, download_progress=None):
     """No host Git fallback, imports, grant or discoverable publication.
 
     Fetch, independent archive validation, private writes and manifest review all
@@ -80,7 +81,8 @@ def populate(source, destination, *, branch=None, timeout=300, fetch_profile=Non
                 try:
                     candidate_source, pack = stack.enter_context(remote_pack(
                         canonical, profile=profile, allow_private=allow_private, branch=branch,
-                        staging_parent=parent, deadline=deadline, checkpoint=remaining))
+                        staging_parent=parent, deadline=deadline, checkpoint=remaining,
+                        download_progress=download_progress))
                     break
                 except NativeSandboxError as error:
                     code = error.code
@@ -110,7 +112,7 @@ def populate(source, destination, *, branch=None, timeout=300, fetch_profile=Non
             prepared = prepare_candidate(response, workspace, timeout=remaining())
             review = review_candidate(response, workspace, prepared, timeout=remaining())
             expected = {item.path: item.sha256 for item in inventory.files}
-            stage(prepared.root, destination, expected)
+            stage(prepared.root, destination, expected, copy_progress=copy_progress)
             remaining()
             manifest = load_manifest(destination)
             if (manifest is None or _manifest_digest(manifest) != review.manifest_sha256

@@ -5,7 +5,7 @@ import stat
 
 import typer
 
-from core.cli import emit, guarded, fail
+from core.cli import emit, guarded, fail, output_mode
 from core.i18n import t
 
 
@@ -195,7 +195,7 @@ def _run_reconciliation(timeout, *, on_boot):
     return _result(run(_reconcile_worker, (on_boot,), timeout=timeout, label="update reconciliation"))
 
 
-def register(app, context_settings):
+def register(app, context_settings, translate):
     group = typer.Typer(context_settings=context_settings)
     app.add_typer(group, name="update")
 
@@ -228,6 +228,40 @@ def register(app, context_settings):
         if not updater._is_frozen():
             fail("binary updates require a packaged executable", 2)
         emit(download(timeout=timeout))
+
+    @group.command("install", help=translate("update_install_help"))
+    @guarded
+    def install_update(
+        check_timeout: float = typer.Option(30, "--check-timeout", min=.1, max=3600,
+                                           help=translate("update_install_check_timeout")),
+        timeout: float = typer.Option(300, "--timeout", min=.1, max=3600,
+                                      help=translate("update_install_download_timeout")),
+    ):
+        from core import updater
+        from core.prompt import confirm
+        from core.update_download import download
+
+        if not updater._is_frozen():
+            fail(t("update.install_packaged_only"), 2)
+        candidate = check(timeout=check_timeout)
+        if not candidate["available"]:
+            if output_mode.get() == "json":
+                emit({**candidate, "state": "no_update"})
+            else:
+                typer.echo(t("update.install_" + candidate["reason"]))
+            return
+        version = candidate["candidate_version"]
+        if not confirm(breadcrumb=["OpsKit"], prompt=t("confirm_ui.apply_update"),
+                       info_lines=[t("update.install_target", current=candidate["current_version"], version=version)]):
+            fail(t("update.install_cancelled"))
+        downloaded = download(timeout=timeout, expected_version=version)
+        if not downloaded["available"]:
+            fail(t("update.install_candidate_changed"))
+        result = updater.apply_verified_pending(expected_candidate_id=downloaded["candidate_id"])
+        if output_mode.get() == "json":
+            emit({"available": True, "checksum_verified": True, **result})
+        else:
+            typer.echo(t("update.install_" + result["state"], version=result["version"]))
 
     @group.command("reconcile")
     @guarded

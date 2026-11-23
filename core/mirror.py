@@ -612,7 +612,7 @@ def download_file(
     urls: list[str],
     dest: Path,
     cache_path: Path | None = None,
-    progress_callback=None,
+    on_progress=None,
     stall_timeout: int = TIMEOUT_STALL_SECS,
     min_speed_kbps: int = DOWNLOAD_MIN_SPEED_KBPS,
     slow_window: int = DOWNLOAD_SLOW_WINDOW,
@@ -627,6 +627,9 @@ def download_file(
        - 停滞超时：stall_timeout 秒无任何字节 → 切换下一源
        - 低速检测：slow_window 秒内 < min_speed_kbps KB/s → 切换
     4. 全部源失败 → IOError
+
+    on_progress 接收当前源的字节百分比，每次换源先传 None。
+    没有可比较的响应大小时保持活动动画，验证完成由调用方结束阶段。
 
     优于赛马方案：
     - 无 join(timeout) 上限，适合任意大小文件
@@ -664,7 +667,8 @@ def download_file(
 
     # 阶段二：逐源顺序尝试
     for url in ordered:
-        # 断点续传：读取已下载大小
+        if on_progress is not None:
+            on_progress(None)
         # Different mirrors may serve different content; never splice their bytes.
         tmp.unlink(missing_ok=True)
 
@@ -674,7 +678,7 @@ def download_file(
             last_chunk_time = time.monotonic()
 
             with httpx.stream(
-                "GET", url,
+                "GET", url, headers={"Accept-Encoding": "identity"},
                 timeout=httpx.Timeout(connect=TIMEOUT_HTTP, read=stall_timeout,
                                       write=TIMEOUT_HTTP, pool=TIMEOUT_HTTP),
                 follow_redirects=True,
@@ -686,13 +690,20 @@ def download_file(
                 completed = False
                 received = 0
                 expected_size = int(resp.headers.get("content-length", "0"))
+                measurable = expected_size > 0 and resp.headers.get("content-encoding", "identity").lower() == "identity"
+                last_pct = None
                 with tmp.open("wb") as f:
-                    for chunk in resp.iter_bytes(DOWNLOAD_CHUNK_SIZE):
+                    # Observe each received chunk so a trickle can trigger the
+                    # low-speed check before it fills a fixed-size buffer.
+                    for chunk in resp.iter_bytes():
                         f.write(chunk)
                         received += len(chunk)
                         window_bytes += len(chunk)
-                        if progress_callback:
-                            progress_callback(len(chunk))
+                        if on_progress is not None and measurable:
+                            pct = min(99, received * 100 // expected_size)
+                            if pct != last_pct:
+                                on_progress(pct)
+                                last_pct = pct
                         now = time.monotonic()
                         # 停滞超时
                         if now - last_chunk_time > stall_timeout:

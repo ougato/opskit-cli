@@ -36,6 +36,9 @@ def broker(method, *args, **kwargs):
     if reply.get("cancel"):
         from core.prompt import UserCancel
         raise UserCancel
+    if reply.get("exit"):
+        from core.prompt import UserExit
+        raise UserExit
     if reply.get("error"):
         raise PermissionError(reply["error"])
     return reply.get("value")
@@ -101,6 +104,26 @@ def _adapt_sdk(name: str):
             broker("ui.wait_stop")
     sdk.waiting = waiting
 
+    @contextmanager
+    def progress_step(message, failed_label, *, total):
+        broker("ui.progress_start", message, failed_label=failed_label, total=total)
+        try:
+            yield lambda completed: broker("ui.progress_update", completed)
+        except BaseException:
+            try:
+                broker("ui.progress_stop", failed=True)
+            except Exception:
+                pass
+            raise
+        else:
+            broker("ui.progress_stop")
+    sdk.progress_step = progress_step
+
+    def activity_step(message, failed_label):
+        return progress_step(message, failed_label, total=None)
+
+    sdk.activity_step = activity_step
+
     def owned_data(namespace: str) -> Path:
         if namespace != name:
             raise PermissionError("plugin namespace belongs to another identity")
@@ -129,23 +152,42 @@ def _adapt_sdk(name: str):
             raise ValueError("invalid host file response")
         return base64.b64decode(reply["content"], validate=True)
     sdk.read_host_file = read_host_file
+    def read_host_files(directory, relatives):
+        reply = broker("host.read_files", directory, relatives)
+        if not isinstance(reply, list) or len(reply) != len(relatives):
+            raise ValueError("invalid host file batch response")
+        return [base64.b64decode(content, validate=True) for content in reply]
+    sdk.read_host_files = read_host_files
     def compare_write_host_file(directory, relative, expected_sha256, content):
         if not isinstance(content, bytes):
             raise TypeError("host file content must be bytes")
         return broker("host.compare_write", directory, relative, expected_sha256,
                       base64.b64encode(content).decode("ascii"))
     sdk.compare_write_host_file = compare_write_host_file
+    def atomic_write_host_file(directory, relative, lock_name, expected_sha256, content):
+        if not isinstance(content, bytes):
+            raise TypeError("host file content must be bytes")
+        return broker("host.atomic_write", directory, relative, lock_name, expected_sha256,
+                      base64.b64encode(content).decode("ascii"))
+    sdk.atomic_write_host_file = atomic_write_host_file
     def create_host_file(directory, relative, content):
         if not isinstance(content, bytes):
             raise TypeError("host file content must be bytes")
         return broker("host.create_file", directory, relative, base64.b64encode(content).decode("ascii"))
     sdk.create_host_file = create_host_file
     sdk.host_file_status = lambda directory, relative: broker("host.file_status", directory, relative)
-    sdk.list_host_files = lambda directory, *, missing_ok=False: broker("host.list_files", directory, missing_ok=missing_ok)
+    def list_host_files(directory, *, missing_ok=False, subdirectories=None):
+        options = {"missing_ok": missing_ok}
+        if subdirectories is not None:
+            options["subdirectories"] = subdirectories
+        return broker("host.list_files", directory, **options)
+    sdk.list_host_files = list_host_files
     sdk.host_asar_directories = lambda directory, relative, member: broker("host.asar_directories", directory, relative, member)
     sdk.artifact_info = lambda directory, relative: broker("host.artifact_info", directory, relative)
+    sdk.artifact_batch_info = lambda directory, relatives: broker("host.artifact_batch_info", directory, relatives)
     sdk.host_execute = lambda executable, arguments, directory, options=None: broker(
         "host.execute", executable, arguments, directory, {} if options is None else options)
+    sdk.finish_host_tool_output = lambda success: broker("host.finish_tool_output", success)
     sdk.host_artifacts = lambda action, parameters: broker("host.artifacts", action, parameters)
     def host_path_info(path, directory=False, write=False, execute=False):
         if execute is not False:
@@ -167,6 +209,11 @@ def _adapt_sdk(name: str):
         args = (directory, relative, url, sha256, headers or {})
         return broker("host.upload_file", *args, *((verify_url,) if verify_url is not None else ()))
     sdk.upload_file = upload_file
+    def upload_files(directory, files, *, publish_last=0, breadcrumb=None, progress_offset=None):
+        options = {} if progress_offset is None else {"progress_offset": progress_offset}
+        return broker("host.upload_files", directory, files, publish_last,
+                      *((breadcrumb,) if breadcrumb is not None else ()), **options)
+    sdk.upload_files = upload_files
     sdk.request_plugin_install = lambda provider: broker("service.install_provider", provider)
 
     def open_menu(name, breadcrumb, context=None):

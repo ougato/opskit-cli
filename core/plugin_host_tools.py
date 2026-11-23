@@ -104,10 +104,19 @@ def find_executable(plugin, fingerprint, name, preferred, *, authority, check_id
         if Path(preferred).name.casefold() != name.casefold() or not Path(preferred).is_absolute():
             raise ValueError("invalid preferred executable path")
         add_candidate(Path(preferred))
+    if name.casefold() == "adb.exe":
+        for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+            root = Path(os.environ.get(variable, ""))
+            if root.is_absolute():
+                candidates.append(root / "platform-tools" / name)
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         entry = entry.strip().strip('"')
         if entry and Path(entry).is_absolute():
             add_candidate(Path(entry) / name)
+    if name.casefold() == "adb.exe":
+        root = Path(os.environ.get("LOCALAPPDATA", ""))
+        if root.is_absolute():
+            candidates.append(root / "Android" / "Sdk" / "platform-tools" / name)
     # Conventional per-machine and per-user installations, when PATH omits them.
     stem = name[:-4]
     for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
@@ -202,17 +211,27 @@ def file_version(plugin, fingerprint, path, *, authority, check_identity, checkp
 
 
 def execute(plugin, fingerprint, executable, arguments, directory, options, *, authority,
-            check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None):
+            check_identity, deadline, checkpoint, output, host_work_scope=None, output_start=None,
+            progress_console=None, deferred_output=None):
     """Return raw exit status and a pending output token; success is plugin policy."""
     from core import plugin_artifacts as artifacts
     from core.plugin_disk_policy import check_space
     if (not isinstance(arguments, list) or len(arguments) > 128
             or any(not isinstance(a, str) or len(a) > 16384 or any(ord(c) < 32 for c in a) for a in arguments)
-            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header"}
+            or not isinstance(options, dict) or set(options) - {"output_parent", "capture_output", "capture_after", "tool_dependencies", "stdin_base64", "config_base64", "timeout_seconds", "authorization_scope", "output_header", "progress", "defer_output"}
             or ("capture_output" in options and type(options["capture_output"]) is not bool)
             or not isinstance(options.get("tool_dependencies", []), list)
             or len(options.get("tool_dependencies", [])) > 8):
         raise ValueError("invalid host tool arguments")
+    defer = options.get("defer_output", False)
+    if type(defer) is not bool or (defer and (deferred_output is None or options.get("capture_output"))):
+        raise ValueError("invalid deferred output request")
+    progress = None
+    if "progress" in options:
+        if options.get("capture_output") or progress_console is None:
+            raise ValueError("progress requires streamed console output")
+        from core.plugin_tool_progress import ToolProgress
+        progress = ToolProgress(options["progress"], progress_console, output)
     header = options.get("output_header")
     if header is not None and (not isinstance(header, list) or not 1 <= len(header) <= 8
             or any(not isinstance(part, str) or not 1 <= len(part) <= 200
@@ -258,10 +277,15 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         raise ValueError("host executable backend unavailable")
     root = _ordinary(directory, directory=True)
     dependencies = [_ordinary(path) for path in options.get("tool_dependencies", [])]
-    if any(path.suffix.lower() != ".exe" for path in dependencies):
-        raise ValueError("host tool dependencies must be executables")
+    java_jar = (arguments[1] if tool.name.casefold() == "java.exe" and len(arguments) >= 2
+                and arguments[0] == "-jar" else None)
+    if any(path.suffix.lower() != ".exe" and not (
+            path.suffix.lower() == ".jar" and str(path) == java_jar) for path in dependencies):
+        raise ValueError("invalid host tool dependency")
+    search_dependencies = [path for path in dependencies if path.suffix.lower() == ".exe"]
     dependency_ids = [_identity(path) for path in dependencies]
-    dependency_records = [{"executable": str(path), "search_directory": str(path.parent),
+    dependency_records = [{"executable": str(path),
+                           **({"search_directory": str(path.parent)} if path in search_dependencies else {}),
                            "sha256": hashlib.sha256(_read_file(path, Path(path.anchor), 256 * 1024**2)).hexdigest()}
                           for path in dependencies]
     base = options.get("output_parent")
@@ -304,16 +328,19 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
         if error.code != "missing_or_revoked":
             raise
         scope = _grant(plugin, fingerprint, "tool.execute", resource, authority, check_identity, checkpoint)
-    from core.native_task_control import task_checkpoint
-    checkpoint = task_checkpoint(checkpoint, output=output)
+    from core.native_task_control import periodic_checkpoint, task_checkpoint
+    check_cancelled = task_checkpoint(lambda: None, output=output)
     next_check = 0.0
     def current_deadline():
         return deadline() if callable(deadline) else deadline
-    def live():
-        nonlocal next_check
-        checkpoint()
+    def check_running():
+        check_cancelled()
         if time.monotonic() >= current_deadline():
             raise TimeoutError("host tool deadline exceeded")
+    def live():
+        nonlocal next_check
+        check_running()
+        checkpoint()
         authority.check(scope, check_identity=check_identity)
         if (_identity(_ordinary(executable)) != tool_id
                 or _identity(_ordinary(directory, directory=True)) != root_id
@@ -325,6 +352,12 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
             if base:
                 check_space(base)
             next_check = time.monotonic() + 2
+    # Log bursts must not turn filesystem and authorization checks into
+    # backpressure on the child. Keep the normal idle polling interval.
+    revalidate_stream = periodic_checkpoint(live)
+    def poll_stream():
+        check_running()
+        revalidate_stream()
     with artifacts.resource_lock(root):
         live()
         if hashlib.sha256(_read_file(tool, Path(tool.anchor), 256 * 1024**2)).hexdigest() != digest:
@@ -337,6 +370,9 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
             artifacts.pending(plugin, token, root, destination, live)
         from core.process import stream
         input_args = {"stdin_data": stdin_data} if stdin_data is not None else {"stdin": subprocess.DEVNULL}
+        if progress is not None and os.name == "nt":
+            import locale
+            input_args["fallback_encoding"] = locale.getencoding()
         total = 0
         captured = []
         captures_after = []
@@ -354,9 +390,10 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                 argv = [a.replace("{config_file}", str(config_file).replace("\\", "/")) for a in argv]
             if header is not None and output_start is not None:
                 output_start(header)
-            with host_work_scope() if host_work_scope is not None else nullcontext():
-                iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, dependencies),
-                                  **input_args, timeout=timeout, checkpoint=live)
+            with (host_work_scope() if host_work_scope is not None else nullcontext(),
+                  progress if progress is not None else nullcontext()):
+                iterator = stream([str(tool), *argv], cwd=root, env=_environment(tool, search_dependencies),
+                                  **input_args, timeout=timeout, checkpoint=poll_stream)
                 try:
                     while True:
                         try:
@@ -365,7 +402,7 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                             code = completed.value
                             break
                         line_size = len(line.encode("utf-8"))
-                        total += line_size
+                        total += line_size + 1
                         if total > 16 * 1024**2:
                             raise RuntimeError("host tool output limit exceeded")
                         if capture_next:
@@ -374,12 +411,20 @@ def execute(plugin, fingerprint, executable, arguments, directory, options, *, a
                         if capture_after is not None and capture_after in line:
                             marker_count += 1
                             capture_next = True
-                        if options.get("capture_output"):
+                        if defer:
+                            deferred_output(line)
+                            if progress is not None:
+                                progress.line(line, show_diagnostics=False)
+                        elif options.get("capture_output"):
                             if total > 16384:
                                 raise RuntimeError("captured host tool output limit exceeded")
                             captured.append(line)
+                        elif progress is not None:
+                            progress.line(line)
                         else:
                             output(line)
+                    if progress is not None:
+                        progress.finish(code)
                 finally:
                     iterator.close()
         live()

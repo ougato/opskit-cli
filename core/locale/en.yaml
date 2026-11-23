@@ -42,6 +42,8 @@ platform:
   install_disk_unknown: "The installation target's free disk space is unknown; installation may fail."
 
 plugin:
+  opening: "Opening plugin"
+  loading_inventory: "Read installed plugins"
   manage: "Plugin Management"
   install: "Install Plugin"
   update: "Update Plugin"
@@ -54,8 +56,8 @@ plugin:
   col_branch: "Branch"
   col_fingerprint: "Fingerprint"
   select: "Select plugin"
-  cloning: "Cloning..."
-  cloning_branch: "Cloning branch {branch}..."
+  cloning: "Clone"
+  cloning_branch: "Clone"
   install_prompt: "Git repo URL"
   install_hint: "e.g. https://git.example.com/org/opskit-plugin-xxx.git (append -b <branch>, --as <local-dir>)"
   install_exists: "Directory exists: {name}"
@@ -104,12 +106,24 @@ update:
   success: "Updated to v{version}"
   failed: "Update failed: {error}"
   rollback: "Rolled back to v{version}"
+  install_packaged_only: "Manual updates require a packaged OpsKit executable"
+  install_target: "Current version v{current}. Install v{version}"
+  install_cancelled: "Update cancelled"
+  install_candidate_changed: "The update candidate changed. Run opskit update install again."
+  install_no_eligible_update: "No eligible update is available"
+  install_rolled_back_version: "The available version was rolled back. Wait for a newer release."
+  install_scheduled: "Update to v{version} scheduled for exit. Restart OpsKit to verify it."
+  install_applied: "Replaced the executable with v{version}. Restart OpsKit to verify it."
 
 service:
   installing: "Install service plugin"
   unavailable: "Service {service} unavailable, install and trust the provider plugin first"
 
+progress:
+  failed: "Failed"
+
 prompt:
+  waiting: "Working"
   confirm_yes: "[y/N]"
   input: "Input"
   press_any: "Press any key to continue..."
@@ -176,6 +190,12 @@ software:
   fetching_versions: "Fetching version list..."
   no_versions: "Failed to get version list"
   recipe_unknown: "Unknown software recipe: {name}"
+  install_location: "Installation location"
+  install_location_invalid: "Enter a valid absolute directory path"
+  install_location_unsupported: "This software does not support choosing an installation location"
+  install_location_in_use: "Versions are installed at {path}. Uninstall them before changing the installation location"
+  install_location_not_empty: "Choose an empty directory or a directory that does not exist yet"
+  install_location_requires_name: "Specify a software name when choosing an installation location"
   select_version: "Select version"
   recommended: "Recommended"
   current: "Current"
@@ -417,6 +437,7 @@ xui:
     install_script_exit: "The 3x-ui installer exited with code {code}"
     install_script_timeout: "The 3x-ui installer timed out after {seconds} seconds"
     link_format_conflict: "Choose either --raw or --mihomo"
+    journal_failed: "Unable to read X-UI service logs"
     invalid_link: "The saved VLESS REALITY link is invalid"
     download_script_fail: "Failed to download X-UI install script, check network: {url}"
   output:
@@ -530,7 +551,9 @@ tailscale:
     login_title: "Tailscale login"
     login_done: "Logged in"
     down_done: "Tailscale disconnected"
+    down_failed: "Tailscale disconnect failed"
     restart_done: "tailscaled restarted"
+    restart_failed: "tailscaled failed to restart or is inactive"
   diagnose:
     title: "Tailscale diagnostics"
     installed: "Installed"
@@ -622,6 +645,7 @@ wireguard:
     install_wg: "Installing WireGuard..."
     install_xray: "Installing Xray..."
     install_nginx: "Installing Nginx..."
+    prepare_nginx: "Preparing Nginx..."
     config_nginx: "Configuring Nginx WS+TLS reverse proxy..."
     issue_cert: "Issuing TLS certificate (acme.sh)..."
     gen_keys: "Generating key pairs..."
@@ -754,6 +778,10 @@ wireguard:
     xray_zip_missing: "xray binary not found in zip"
 
 monitor:
+  first_sample: "Read the first monitoring sample"
+  live_sample_failed: "Could not collect monitoring data"
+  sample_disks: "Sample disks"
+  disk_sample_failed: "Could not read disk partition data"
   overview: "Overview Dashboard"
   cpu: "CPU Detail"
   memory: "Memory"
@@ -779,7 +807,29 @@ monitor:
   name: "Name"
   status: "Status"
 
+self_uninstall:
+  title: "Uninstall"
+  program: "Program only"
+  full: "Complete uninstall"
+  keep_data: "Keep plugins, configuration and installed software"
+  keep_software: "Keep installed software"
+  yes_required: "Confirm uninstall with --yes"
+  external: "Uninstall OpsKit with the original installation method"
+  system: "Run the system installation of OpsKit with administrator privileges"
+  override: "Clear directory overrides before running a complete uninstall"
+  unsafe: "Uninstall stopped because a path is linked or has an unexpected type"
+  changed: "The uninstall scope changed. Run the command again"
+  update_pending: "Finish or recover the pending OpsKit update first"
+  scheduled: "Uninstall scheduled after exit. Failure log: {path}"
+  removed: "Uninstall complete"
+
 cli:
+  update_install_help: "Check, download, verify, and apply an OpsKit update"
+  update_install_check_timeout: "Update check timeout in seconds"
+  update_install_download_timeout: "Update download and verification timeout in seconds"
+  self_uninstall_help: "Uninstall OpsKit itself"
+  self_uninstall_purge: "Remove OpsKit plugins and local data"
+  self_uninstall_preview: "Preview the uninstall scope"
   desc: "OpsKit — Cross-platform DevOps Toolkit"
   interaction_required: "This operation requires interactive input; supply its business parameters."
   yes_help: "Non-interactive mode: skip all confirmation prompts (like apt -y)"
@@ -807,6 +857,7 @@ cli:
   sw_name_diagnose: "Software name (wg_server/wg_client)"
   sw_query: "Search query (interactive input if omitted)"
   sw_token: "WireGuard client token (skip interactive input)"
+  sw_install_location: "Set the development tool installation location"
   sw_version: "Specify install version (skip version picker)"
   sw_all_versions: "Uninstall all installed versions of this software"
   plugin: "Plugin tools"
@@ -870,6 +921,7 @@ network:
   public_ip_failed: "Failed to get public IP"
 
 plugin_native:
+  maintenance_scan: "Inspect maintenance records"
   back: "Back"
   run_help: "Run a plugin's own CLI: plugin run NAME -- ARGS"
   maintenance: Plugin maintenance
@@ -879,6 +931,8 @@ plugin_native:
     saved: Space threshold saved.
     failed: Space configuration refused; check configuration and available capacity.
     details: 'Minimum free: {minimum} MiB; no filesystem quota.'
+    reading: Reading disk policy
+    saving: Saving disk policy
     invalid: Minimum free space must be an integer from 256 to 1048576 MiB.
     low_space: 'Insufficient space at {path}: need {required} MiB, available {available} MiB. This is a check, not a hard quota.'
     help: Inspect or configure framework disk headroom; no filesystem hard quota.
@@ -919,9 +973,31 @@ plugin_native:
   task:
     cancelled: "Cancelling and stopping processes. Existing host files or transmitted bytes are not rolled back."
   upload:
-    starting: "Preparing and uploading file to {host}..."
-    completed: "File upload completed ({bytes} bytes)."
+    title: "Upload"
+    header: "Upload"
+    failed: "Upload failed"
+    diagnostic: "{file} · {phase}: {reason}"
+    phase_snapshot: "Local snapshot"
+    phase_lookup: "Remote lookup"
+    phase_put: "Upload"
+    phase_readback: "Object verification"
+    reason_conflict: "The remote object size or checksum differs from the local file"
+    reason_http: "HTTP {status}"
+    reason_timeout: "Request timed out"
+    reason_tls: "TLS connection failed"
+    reason_network: "Network connection interrupted"
+    reason_destination: "Destination denied by network policy. Check whether DNS returned a proxy virtual address"
+    reason_content: "Content or checksum validation failed"
   bootstrap:
+    update_wait: "Wait for plugin to be idle"
+    update_check: "Check installed plugin"
+    update_fetch: "Fetch remote version"
+    update_copy: "Copy candidate files"
+    update_copy_failed: "Copy failed"
+    update_download: "Download Git response"
+    update_download_failed: "Download failed"
+    update_verify: "Verify candidate version"
+    update_publish: "Replace plugin files"
     tools: "Checking the installation environment…"
     repair: "Preparing the isolated Python environment…"
     runtime: "Preparing the plugin runtime…"
@@ -1080,6 +1156,8 @@ plugin_native:
     repository_invalid: "invalid repository or branch"
     remove_cancelled: "plugin removal cancelled"
     fingerprint_mismatch: "fingerprint does not match current plugin content"
+    fingerprint_wait: "Reading trust record and computing the plugin fingerprint"
+    trust_save_wait: "Checking the fingerprint and saving plugin trust"
     checksum_mismatch: "plugin checksum mismatch"
     changed: "plugin changed during authorization"
     authorize_service_help: "Approve the caller's exact declared service contract"

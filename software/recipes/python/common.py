@@ -12,6 +12,7 @@ from software.base import InstallError
 from core.i18n import t
 from .constants import PYTHON_VERSIONS_FALLBACK, SNAPSHOT_SUBDIR, SNAPSHOT_PYTHON_FILE
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 
 # ─── 各发行版包管理器可直接安装的 Python minor 版本 ────────────────────────────
 _APT_VERSIONS: dict[str, list[str]] = {
@@ -122,7 +123,7 @@ def uv_bin_path() -> Path:
 
 def uv_python_dir() -> Path:
     from .constants import UV_PYTHON_SUBDIR
-    return Path.home() / UV_PYTHON_SUBDIR
+    return managed_root("python", Path.home() / UV_PYTHON_SUBDIR, load_snapshot())
 
 
 def shim_dir() -> Path:
@@ -130,11 +131,32 @@ def shim_dir() -> Path:
     return Path.home() / UV_SHIM_SUBDIR
 
 
+def _is_uv_minor_alias(entry: Path, version: str) -> bool:
+    if version.count(".") != 1 or not is_stable_pyver(version):
+        return False
+    try:
+        link = entry.readlink()
+    except OSError:
+        return False
+    target = Path(str(entry.parent / link).removeprefix("\\\\?\\"))
+    _, _, platform = entry.name.partition(f"cpython-{version}-")
+    target_version, _, target_platform = target.name.removeprefix("cpython-").partition("-")
+    if (target.parent != entry.parent or not target.name.startswith(f"cpython-{version}.")
+            or target_platform != platform or target_version.count(".") != 2
+            or not is_stable_pyver(target_version)):
+        return False
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        return True
+    return stat.S_ISDIR(info.st_mode) and not getattr(info, "st_reparse_tag", 0)
+
+
 def uv_installation_directories(base: Path, *, only_installed_versions: bool = False) -> tuple[Path, ...]:
     """Preflight the installation root and named entries without following links.
 
-    Read-only inventory may ignore aliases that cannot be reported as versions;
-    operations that use or remove installations retain the full preflight.
+    uv's minor aliases can point to matching patch directories in this root.
+    Mutating operations validate those aliases without selecting or deleting them.
     """
     base = Path(base).absolute()
     for node in (base, *base.parents):
@@ -155,6 +177,8 @@ def uv_installation_directories(base: Path, *, only_installed_versions: bool = F
             continue
         info = entry.lstat()
         if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+            if _is_uv_minor_alias(entry, version):
+                continue
             raise InstallError("Python installation entry must not be a link or non-directory")
         entries.append(entry)
     return tuple(entries)

@@ -9,6 +9,38 @@ from software.install_config import load_options
 runner = CliRunner()
 
 
+def test_journal_menu_and_cli_redact_lines_and_report_failure(monkeypatch):
+    import main
+    from core import platform, process
+    from xui import server
+
+    def journal(command, *, timeout):
+        assert command[0] == "journalctl" and timeout == 30
+        yield "token=private-value [literal]"
+        return 2
+
+    monkeypatch.setattr(process, "stream", journal)
+    monkeypatch.setattr(platform, "get_platform", lambda: SimpleNamespace(os_type="linux"))
+    result = runner.invoke(main.app, ["--output", "json", "xui", "logs"])
+    assert result.exit_code == 1
+    line, error = map(json.loads, result.stdout.splitlines())
+    assert line["data"]["line"] == "token=[redacted] [literal]"
+    assert error["error"]["message"] == server.t("xui.error.journal_failed")
+
+    choices = iter(["3", None])
+    rendered, warnings = [], []
+    monkeypatch.setattr(server, "load_state", lambda: {"installed": True})
+    monkeypatch.setattr(server, "select", lambda **_: next(choices))
+    monkeypatch.setattr(server, "clear_screen", lambda: None)
+    monkeypatch.setattr(server, "print_action_title", lambda *_: None)
+    monkeypatch.setattr(server, "pause", lambda: None)
+    monkeypatch.setattr(server, "print_warning", warnings.append)
+    monkeypatch.setattr(server.console, "print", lambda line: rendered.append(line.plain))
+    server.manage_nodes()
+    assert rendered == ["token=[redacted] [literal]"]
+    assert warnings == [error["error"]["message"]]
+
+
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path / "data"))

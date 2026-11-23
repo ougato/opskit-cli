@@ -67,7 +67,10 @@ def test_automatic_update_prepares_published_bytes_before_reporting_success(inst
             raise ValueError("runtime preparation failed")
 
     monkeypatch.setattr("core.plugin_runtime_manager.prepare_update", prepare)
-    ok, status = commands._update_locked(load_manifest(root), automatic=True)
+    phases = []
+    ok, status = commands._update_locked(load_manifest(root), automatic=True,
+                                         progress=lambda phase: phases.append(phase))
+    assert phases == ["update_check", "update_fetch", "update_verify", "update_publish", "runtime"]
     assert ok is prepare_ok and len(observed) == 1
     if prepare_ok:
         assert status == "updated" and trusted_record("demo")["installation_receipt"] == observed[0]
@@ -120,7 +123,8 @@ def test_explicit_revocation_is_not_restored_by_an_update(installed, monkeypatch
 
 
 @pytest.mark.parametrize("role", ["caller", "provider"])
-def test_service_contract_upgrade_preserves_base_trust_but_revokes_old_edge(installed, monkeypatch, role):
+@pytest.mark.parametrize("new_version", [5, 6])
+def test_update_inherits_service_grant_only_for_unchanged_contract(installed, monkeypatch, role, new_version):
     from core import native_acquisition
     from core.plugin_trust import grant_service, is_service_authorized
 
@@ -151,7 +155,7 @@ def test_service_contract_upgrade_preserves_base_trust_but_revokes_old_edge(inst
 
     def upgraded_contract(source, destination, **kwargs):
         candidate = populate(source, destination, **kwargs)
-        version_contract(destination, 6)
+        version_contract(destination, new_version)
         return Acquisition(candidate.source, candidate.commit, compute_fingerprint(destination),
                            content_receipt(destination))
 
@@ -159,22 +163,26 @@ def test_service_contract_upgrade_preserves_base_trust_but_revokes_old_edge(inst
     assert commands._update_locked(load_manifest(root)) == (True, "updated")
     assert commands.trust_status(load_manifest(root)) == commands.TRUST_OK
     new_fingerprints = {**old_fingerprints, "demo": compute_fingerprint(root)}
-    assert "storage" not in trusted_record(caller).get("service_grants", {})
-    assert not is_service_authorized(caller, new_fingerprints[caller], "storage", provider,
-                                     new_fingerprints[provider], 6, "open_menu")
+    assert ("storage" in trusted_record(caller).get("service_grants", {})) == (new_version == 5)
+    assert is_service_authorized(caller, new_fingerprints[caller], "storage", provider,
+                                 new_fingerprints[provider], new_version, "open_menu") == (new_version == 5)
+    assert not is_service_authorized(caller, old_fingerprints[caller], "storage", provider,
+                                     old_fingerprints[provider], 5, "open_menu")
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_update_inherits_only_permanent_directory_reads(installed, tmp_path, monkeypatch, fail):
+def test_update_inherits_permanent_directory_grants(installed, tmp_path, monkeypatch, fail):
     root, _ = installed
     old = compute_fingerprint(root)
     authority = CapabilityAuthority()
     read = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "project"))
     write = CapabilityRequest("demo", old, "directory.read_write", str(tmp_path / "other"))
+    manage = CapabilityRequest("demo", old, "directory.manage", str(tmp_path / "managed"))
+    tool = CapabilityRequest("demo", old, "tool.execute", str(tmp_path / "tool.exe"))
     once = CapabilityRequest("demo", old, "directory.read", str(tmp_path / "once"))
     live = lambda name, fingerprint: trusted_record(name)["fingerprint"] == fingerprint
     for request, choice in ((read, GrantChoice.ALWAYS), (write, GrantChoice.ALWAYS),
-                            (once, GrantChoice.ONCE)):
+                            (manage, GrantChoice.ALWAYS), (tool, GrantChoice.ALWAYS), (once, GrantChoice.ONCE)):
         authority.require(request, check_identity=live, prompt=lambda _, choice=choice: choice)
     if fail:
         def fail_grant(*args, **kwargs):
@@ -187,11 +195,16 @@ def test_update_inherits_only_permanent_directory_reads(installed, tmp_path, mon
     fresh.check(child, check_identity=live)
     if fail:
         assert current == old
-        assert set(fresh.list_grants()) == {read, write}
+        assert set(fresh.list_grants()) == {read, write, manage, tool}
     else:
         assert current != old
-        assert write in fresh.list_grants()
-        for request in (write, once):
+        assert set(fresh.list_grants()) == {tool, *(
+            CapabilityRequest("demo", current, request.operation, request.resource) for request in (read, write, manage)
+        )}
+        for operation in ("directory.read", "directory.write", "directory.manage"):
+            fresh.check(CapabilityRequest("demo", current, operation, str(tmp_path / "managed" / "child")),
+                        check_identity=live)
+        for request in (tool, once):
             with pytest.raises(CapabilityDenied):
                 fresh.check(CapabilityRequest("demo", current, request.operation, request.resource),
                             check_identity=live)

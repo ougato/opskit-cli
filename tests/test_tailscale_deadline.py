@@ -14,6 +14,36 @@ from tailscale import cli, server
 runner = CliRunner()
 
 
+@pytest.mark.parametrize(("action", "menu_key", "failure"), [
+    ("down", "3", "down_failed"),
+    ("restart", "4", "restart_failed"),
+])
+def test_management_failure_is_reported_in_menu_and_cli(monkeypatch, action, menu_key, failure):
+    monkeypatch.setattr(server, "_ensure_supported", lambda: None)
+    monkeypatch.setattr(server, "command_exists", lambda _: True)
+
+    def fail_command(command, check=True):
+        assert check
+        raise subprocess.CalledProcessError(1, command, output="private details")
+
+    monkeypatch.setattr(server, "_run_root", fail_command)
+    result = runner.invoke(main.app, ["--output", "json", "tailscale", action])
+    expected = server.t(f"tailscale.output.{failure}")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["message"] == expected
+
+    choices = iter([menu_key, None])
+    warnings = []
+    monkeypatch.setattr(server, "select", lambda **_: next(choices))
+    monkeypatch.setattr(server, "clear_screen", lambda: None)
+    monkeypatch.setattr(server, "print_action_title", lambda *_, **__: None)
+    monkeypatch.setattr(server, "pause", lambda: None)
+    monkeypatch.setattr(server, "print_warning", warnings.append)
+    monkeypatch.setattr(server, "print_success", lambda _: pytest.fail("reported success"))
+    server.manage_client()
+    assert warnings == [expected]
+
+
 @pytest.fixture
 def clock(monkeypatch):
     current = [100.0]

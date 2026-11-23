@@ -7,7 +7,8 @@ from rich.markup import escape
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.sdk import waiting
+from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 from core.feedback import capture as _report, report_failure
@@ -349,8 +350,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         return
 
     if getattr(cls, "has_install_version_selection", True):
-        from core.progress import spinner
-        with spinner(t("software.fetching_versions")):
+        with waiting(t("software.fetching_versions")):
             try:
                 versions = instance.versions()
             except Exception:
@@ -394,7 +394,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
     clear_screen()
     print_header([*breadcrumb, t("software.install")])
-    base_console.print()
     try:
         r = execute_install(instance, version)
     except KeyboardInterrupt:
@@ -408,7 +407,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> None:
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
-    from core.progress import spinner
 
     _name = recipe_display_name(cls)
 
@@ -424,7 +422,7 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         existing = instance.detect()
         installed_set = {existing} if existing else set()
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -460,13 +458,27 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         except UserCancel:
             return
 
-    if not _install_disk_check(instance):
-        return
+    from software.base import InstallError
+    from software.install_location import DEVELOPMENT_TOOLS, select_location
 
-    clear_screen()
-    print_header([*breadcrumb, t("software.install")])
-    base_console.print()
-    r = execute_install(instance, version)
+    location = None
+    try:
+        if cls.key in DEVELOPMENT_TOOLS:
+            default_location = str(instance.disk_check_path())
+            location = text_input(breadcrumb=breadcrumb, prompt=t("software.install_location"),
+                                  default=default_location, hint=" ", initial=default_location)
+        with select_location(instance, location):
+            if not _install_disk_check(instance):
+                return
+            clear_screen()
+            print_header([*breadcrumb, t("software.install")])
+            r = execute_install(instance, version)
+    except UserCancel:
+        return
+    except (OSError, ValueError, InstallError) as exc:
+        print_error(str(exc))
+        pause()
+        return
     if r.ok:
         print_success(t("install.success", name=_name, version=version, elapsed=r.elapsed))
     else:
@@ -527,7 +539,6 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
 
         clear_screen()
         print_header([*breadcrumb, t("software.uninstall")])
-        base_console.print()
         with suppress_pause():
             r = execute_uninstall(instance, version_to_remove)
         if r.ok:
@@ -554,7 +565,6 @@ def _do_uninstall(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     if not getattr(cls, "has_wizard", False):
         print_header([*breadcrumb, t("software.uninstall")])
-        base_console.print()
     try:
         with suppress_pause():
             r = execute_uninstall(instance)
@@ -636,7 +646,6 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     """执行升级流程"""
-    from core.progress import spinner
     from software.resolver import resolve_deps
 
     _name = recipe_display_name(cls)
@@ -662,7 +671,7 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -718,9 +727,6 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
     already = new_version in upg_installed_set
-    if not already:
-        # 未安装 → 走安装升级流程
-        base_console.print()
     r = execute_upgrade(instance, new_version, already_installed=already)
     if r.ok:
         if r.switched:
@@ -851,8 +857,7 @@ def show_install() -> None:
             return
 
     # 版本选择
-    from core.progress import spinner
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -901,7 +906,6 @@ def show_install() -> None:
     clear_screen()
     _iname = recipe_display_name(cls)
     print_header(["OpsKit", t("menu.software"), t("software.install")])
-    base_console.print()
     import time as _time
     from core.privilege import ensure_root_for_action, PrivilegeError
     _t0 = _time.monotonic()
@@ -1054,7 +1058,6 @@ def show_uninstall() -> None:
 
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.uninstall")])
-    base_console.print()
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "uninstall")
@@ -1079,7 +1082,6 @@ def show_upgrade() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
     from software.base import InstallError
-    from core.progress import spinner
     from core.installed_cache import get_detected
 
     info = get_platform()
@@ -1117,7 +1119,7 @@ def show_upgrade() -> None:
     cls, instance, current_ver = installed[int(key) - 1]
     _upgname = recipe_display_name(cls)
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -1160,7 +1162,6 @@ def show_upgrade() -> None:
 
     clear_screen()
     print_header(["OpsKit", t("menu.software"), t("software.upgrade")])
-    base_console.print()
     from core.privilege import ensure_root_for_action, PrivilegeError
     try:
         ensure_root_for_action(instance, "upgrade")

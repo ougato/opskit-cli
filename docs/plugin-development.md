@@ -8,7 +8,7 @@
 
 1. **创建独立仓库**：复制[示例清单](examples/example-plugin/plugin.yaml)和[示例入口](examples/example-plugin/example_plugin/__init__.py)，将名称、版本、Python 包名和中英文显示名称改为自己的内容。外部插件只导入 `core.sdk` 的公开接口。
 2. **声明入口与平台**：在 `plugin.yaml` 设置 SDK 版本、入口包和支持平台；按实际需要声明权限。插件可声明分组，框架负责在“插件工具”中发现、分组和显示入口。清单字段及校验以[插件规范](plugin-spec.md)为准。
-3. **组织业务**：实现 `register()` 返回带 `entry` 的 `ModuleInfo`；需要命令行时实现 `cli(argv)`。菜单与命令行调用同一业务函数，CLI 所需参数显式提供，错误返回非零状态。示例中的 `_run()` 同时被菜单和 `cli()` 调用。
+3. **组织业务**：实现 `register()` 返回带 `entry` 的 `ModuleInfo`；为每个可执行菜单操作实现对应的 `cli(argv)` 入口。菜单与命令行调用同一业务函数，CLI 所需参数显式提供，错误返回非零状态。示例中的 `_run()` 同时被菜单和 `cli()` 调用。
 4. **实现交互和文案**：用 `register_locale()` 注册插件命名空间的中英文文案；菜单调用 SDK 的选择、输入和确认接口，使用主题图标、面包屑和信息行。按本页[交互接口](#交互接口)处理返回、取消、分页和等待，不自行绘制授权界面。
 5. **接入资源**：插件配置和记录放在自身 `plugin_data_dir()`；宿主目录、文件、工具、网络或产物通过相应 SDK 请求。先确定所需访问范围，再处理授权拒绝、取消、撤权和执行失败；业务确认与宿主授权分别处理。跨插件复用须声明服务契约并由操作者授权。
 6. **安装与运行**：提交到自己的 Git 仓库后，从“插件工具 → 插件管理”安装、审核并信任；Windows x64 安装链路会自动准备基础运行环境。命令行安装保留独立授信步骤。插件的菜单入口在“插件工具”下，命令行通过 `opskit plugin run <插件名> -- <插件参数>` 调用。详见[采集、审核与更新](plugin-spec.md#采集审核与更新)。
@@ -32,6 +32,8 @@
 例如，选择 Creator 可执行文件时，可用现有 SDK 查找和检查文件，再由插件维护具体选择流程与配置；执行构建可请求宿主工具执行，但 Creator 参数、成功判定和平台产物规则仍属于 Cocos 业务。框架不会因为展示相似的菜单而授予宿主权限。
 
 ## 开发约定
+
+每项菜单业务操作都提供可独立运行的命令，包括查看、编辑配置、检查及执行任务。菜单和命令调用同一业务入口，命令显式接收菜单中需要选择或输入的值。交付前实际运行对应 OpsKit 命令并检查结果，已有菜单缺少命令时一并补齐。纯导航项的验收由其下的业务命令覆盖。
 
 - 插件是独立仓库，代码仅依赖公开的 `core.sdk`，不导入其他 `core.*` 内部模块。SDK 版本、服务业务版本和 RPC 传输版本彼此独立。
 - `plugin.yaml` 的 `api_version` 必须是整数 `4`，不能是字符串、浮点数或布尔值。旧版插件不进入管理列表、不能执行或提供服务；升级后重新安装、审核、授信并准备匹配当前 SDK 的运行时。旧目录和数据不会自动删除。
@@ -63,7 +65,19 @@
 
 以 Cocos 为例，游戏级输出目录和保留数量覆盖插件级默认值，重置游戏设置后重新继承默认值。客户端版本与渠道由选中分支的 `env/environment.json` 提供，构建版本可通过菜单或命令行指定。插件 README 应明确每一项的实际生效来源。
 
-上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256，将该摘要传给 `upload_file`。上传时宿主会重新校验实际文件摘要。插件应使用所选目录的相对路径生成对象键。首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
+上传目录时，使用 `list_host_files(directory)` 取得已授权目录中的相对路径，再用 `artifact_info(directory, relative)` 获取单个文件的 SHA-256。多个文件可用 `artifact_batch_info(directory, relatives)` 按 `HOST_ARTIFACT_BATCH_LIMIT` 分批读取元数据，结果按输入顺序返回。将摘要随相对路径和签名地址传给 `upload_files`，单文件也可使用 `upload_file`。宿主会重新核对摘要并统一显示进度，插件无需逐文件打印。插件应使用所选目录的相对路径生成对象键。七牛配置可使用 `kodo-stat` 描述符校验同一对象的大小和服务端 QETag，宿主仍先核对本地 SHA-256。校验不请求产物正文。
+
+```python
+from core.sdk import upload_files
+
+receipts = upload_files(directory, [[relative, put_url, sha256, headers, get_url]],
+                        breadcrumb=["OpsKit", "My Plugin", "Upload"])
+```
+首次归档前，列表可用 `list_host_files(directory, missing_ok=True)` 将尚未创建的目录显示为空。
+
+在同一已授权目录读取多个小文件时，可使用 `read_host_files(directory, relatives)`。每批最多 64 个文件，每个最多 1 MiB，合计最多 8 MiB。例如 `manifest, config = read_host_files(project, ["package.json", "env/environment.json"])`。兼容旧框架的插件可在 SDK 未提供此接口时逐个读取。
+
+SDK 提供 `HOST_FILE_LIST_SUBDIRECTORIES` 时，可用 `list_host_files(project, subdirectories=["assets", "settings"], missing_ok=True)` 枚举指定子树。结果包含子目录前缀，同一个项目目录授权覆盖整批枚举。
 
 ## 清单与入口
 
@@ -131,7 +145,33 @@ waiting(message='') -> context manager
 
 为每个业务菜单、选择、输入和确认传入当前面包屑，保留实际入口、已选对象和当前功能；独立步骤可以继续追加步骤名称。例如游戏构建中输入 Git 路径使用“OpsKit → Cocos 工具 → 游戏名 → 项目构建”，字段名称交给 `text_input` 的 `prompt`。复用工具选择等流程时显式传递入口上下文，没有选中对象时不要虚构对象。宿主授权标题仍由框架管理。
 
-`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。清空后回车使用 `default`，默认为空字符串。
+多选菜单每页最多显示 9 项，按 `n` 或 `p` 翻页时保留已勾选的项目。将 `subtitle` 传为空字符串可隐藏标题下的提示行。Windows 控制台中，方向键和空格每次按下只生效一次，松开后可以再次按下。
+
+`text_input` 的 `initial` 将单行文本填入可编辑输入缓冲区，光标位于末尾。左右方向键移动光标，Backspace 删除左侧字符，Delete 删除光标处字符。清空后回车使用 `default`，默认为空字符串。可清空的配置只传 `initial`。
+
+`atomic_write_host_file(directory, relative, lock_name, expected_sha256, content)` 在目录读写授权下原子替换不超过 1 MiB 的普通文件。`relative` 为单个文件名，`lock_name` 为协作写入者共用的点号前缀锁目录。`expected_sha256=None` 表示要求目标不存在；返回 `{"written": false}` 时重新读取并合并后重试。
+
+Windows 上可用 `host_artifacts("publish_tree", {"source": source, "destination": destination, "files": files})` 发布已校验的文件树。源路径和目标路径使用绝对路径，目标父目录须已存在。`files` 的键为目标相对路径，值包含源相对路径 `source` 和 `sha256`。宿主在目标卷边复制边核对 SHA-256 和写入长度，发布前检查暂存文件的清单、身份、大小和修改时间，再原子发布整个目录。需要独立回读验证内容的调用方应另行校验。目标已存在时，只有全部文件和摘要一致才返回成功。
+
+支持 `HOST_ARTIFACT_REMOVE_FILE` 的 Windows 宿主提供 `host_artifacts("remove_verified_file", {"directory": directory, "file": filename, "sha256": digest})`。该接口要求目录读写授权，只删除摘要匹配且不超过 1 MiB 的普通文件。`file` 必须是单个文件名。
+
+SDK 提供 `HOST_ARTIFACT_PUBLISH_NESTED` 时，目标可位于源根目录下。参与复制的源文件必须在目标目录之外，源根目录和目标目录也必须不同。
+
+发布树中的生成文件可将 `source` 换成 Base64 `content`，并提供相同的 SHA-256 字段。所有内联文件合计最多 4 MiB 加 1 KiB。宿主将生成文件与源文件一起验摘要并原子发布。
+
+`HOST_ARTIFACT_PUBLISH_PARENTS` 可用时，传入已存在的绝对路径 `create_parents_from`，宿主可在同一次发布调用里创建目标父目录。目标必须位于该目录下，每层创建仍检查目录写入授权。
+
+`HOST_ARTIFACT_COMMIT_HASHES` 可用时，给产物 `commit` 传入 `include_file_hashes: true`，可在目录读取授权下取得校验时计算的完整 `file_hashes`。超过 128 个文件或路径超出限制时省略该字段，调用方可继续按批读取摘要。发布时仍会校验复制内容。
+
+`host_artifacts("zip_entry", {"directory": directory, "file": file, "member": member})` 在目录读取授权下返回指定 ZIP 成员的 Base64 内容。成员必须唯一，最大 1 MiB；该操作不解压到宿主磁盘。
+
+`host_artifacts("zip_inventory", {"directory": directory, "file": file, "sha256": digest, "prefix": prefix})` 在目录读取授权下返回指定前缀下的 ZIP 成员及其 SHA-256。前缀以斜杠结尾，例如 `assets/`。宿主核对归档摘要并限制读取范围，直接从 ZIP 读取成员内容。
+
+`host_artifacts("sign_update_manifest", {"directory": directory, "file": file, "manifest": manifest, "public_key": public_key})` 在目录读取授权下为 v1 更新清单签名。传入 Base64 清单和包内公钥的 Base64 SPKI DER 编码。宿主确认 P-256 私钥与公钥对应，并使用固定签名域和 SHA-256 生成 Base64 DER 签名。提供已有 `signature` 时，宿主验签后返回原签名。私钥保留在宿主。
+
+`host_artifacts("file_header", {"directory": directory, "file": file})` 在目录读取授权下返回文件前 12 字节的十六进制编码和同一读取流的完整 SHA-256，用于将格式检查与归档摘要绑定。
+
+`host_artifacts("read_verified_file", {"directory": directory, "file": file, "sha256": digest, "limit": limit})` 在目录读取授权下读取已知 SHA-256 的文件，并返回 Base64 内容。调用者指定上限，最多 8 MiB。摘要不符或超出上限时读取失败。
 
 选择菜单、确认框和文本输入均可通过 `info_lines` 传入信息行列表，框架统一绘制 `├─`，逐行显示在选项或输入位置之前；数字菜单自动分页时每页保留这些信息。信息内容由调用方本地化，建议每个元素为一行；已有多行文本也会拆为独立行。`select`、`select_input` 和 `text_input` 的信息按纯文本显示，适合含方括号的路径；`confirm` 保留 Rich markup 语义，动态内容应转义。已有 `description` 参数也使用同一行样式，新调用优先使用 `info_lines`。
 
@@ -162,6 +202,35 @@ def inspect_build_directory(project, build_directory):
 当 `build_directory` 是 `project` 下的普通子目录时，首次授权项目目录后，第二次读取会复用该授权。两个路径都由调用方提供，目录必须存在。
 
 `host_execute` 默认按具体命令授权；显式项目读写及执行授权也覆盖在其目录树中启动的工具。`output_header` 可传入面包屑列表，让交互终端在授权结束、工具输出开始前清屏并显示标题，非交互模式不会清屏。确需反复调用同一工具时，可在 options 中设置 `authorization_scope: "tool"`，请求按插件指纹、工具路径和摘要授权，允许该插件在任意工作目录使用任意参数运行该工具；宿主会明确显示这一范围。工具范围不支持 `output_parent`、`config_base64` 或 `tool_dependencies`。插件指纹变化需重新授权；按工具授权时工具内容变化也需重新授权。项目读写及执行授权不绑定单个工具，旧的命令授权不会自动扩大。
+
+菜单过渡时优先进入下一页。已知目标页时先显示标题，再执行该页的任务。必须先完成读取、授权或探测才能确定下一页时，在当前页面下用 `with waiting(label):` 显示彩色点阵和正在执行的动作。无法测量完成量的阶段也使用此调用。
+
+框架的插件管理页直接显示操作列表。进入具体操作后，先显示目标标题，再等待后台插件预加载退出和读取操作所需的清单。
+维护菜单在扫描记录、执行恢复或清理时沿用相同的等待提示。CLI 的对应操作见 [命令行契约](cli-contract.md)。
+
+加载菜单选项时在当前页使用 `waiting`，加载完成由菜单组件绘制标题和选项。
+
+菜单输入行下方出现加载提示时，框架会留一个临时空行，并在提示结束时一起清除。
+
+菜单选择和文本输入后的等待提示与输入行间隔一行。调用 `waiting` 时传入具体、已本地化的动作描述。
+
+同一菜单的多步加载使用外层 `waiting` 覆盖整段准备，内层等待仅更新当前步骤。跨插件服务调用保持等待提示，实际交互或传输显示接管时再暂停。
+
+验收时在实际终端走完整路径，检查菜单只有一个标题，输入与转圈、标题与第一条进度、已完成进度与后续转圈之间各有一个空行。用正常完成、取消和授权分别验证清理。对于跨插件加载，实际执行对应 CLI 并记录总耗时。遇到长等待时分别计时本地读取、服务准备和远端请求，避免把显示修复当作性能改善。
+
+独立进度页使用 `print_header(breadcrumb)`，框架会在标题后自动留一个空行。等待转圈和百分比进度都直接接在这一个空行后，调用方无需再插入空行。同一页中，百分比进度结束后切换为等待转圈时，由框架留一个临时空行。
+
+跨插件传输属于调用方当前任务时，由调用方绘制一次进度页标题，传输使用空面包屑继续在同一页展示。校验、上传和上传后的核对按阶段接续显示。
+
+无总量的执行阶段使用 `with activity_step(label, failed_label):`。运行中显示往返动画和已用时间，正常退出后保留完成行，异常退出后保留失败行。菜单加载和页面过渡使用 `waiting`。 CLI 使用 `print_header(breadcrumb, terminal_only=True)` 绘制终端进度标题，重定向或结构化输出保持无标题。
+
+进度条的中文阶段名称使用四个汉字。阶段名称列固定为八个终端显示列，英文超宽时以 `...` 结尾。运行、完成和失败使用相同列宽，详细原因可另行输出。
+
+任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。失败时保留最后显示的百分比，并附上失败状态。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
+
+分批调用 `upload_files` 时，可以用一个以文件总数为单位的 `progress_step` 包住所有批次。给每批传入 `progress_offset`，值为之前各批已完成的文件数。宿主收到校验结果后直接更新累计数。
+
+若工具日志需要等业务结果确认后再显示，可检查 SDK 是否支持 `finish_host_tool_output` 并启用 `defer_output`。工具退出码、产物校验和归档等所需步骤均通过后，调用 `finish_host_tool_output(True)`。任一步骤失败则调用 `finish_host_tool_output(False)`，宿主回放当前尚未处理的日志。
 
 扩展交互时优先为现有菜单类型增加可序列化信息行，不为每个业务定义一套绘制函数；如需新的交互类型，须同时设计宿主实现、SDK 签名、沙盒转发、取消和非交互语义，并补充中英文及终端测试。授权窗口与业务确认保持独立，插件不得传入或控制框架授权结果。
 
@@ -200,6 +269,7 @@ def edit_path(breadcrumb, current):
 | 文案 | `t(key, **kwargs)`, `current_lang()`, `register_locale(catalog)` | 注册 `{语言: 嵌套字典}`，使用插件自己的命名空间；不覆盖平台文案。 |
 | 主题 | `get_color(token)`, `get_icon(token)`, `print_success(msg, elapsed=None)`, `print_error(msg)`, `print_warning(msg)`, `print_info(msg, *, show_icon=True)` | 复用平台主题和状态输出。 |
 | 菜单 | `select`, `select_input`, `multi_select`, `paged_select`, `confirm`, `text_input`, `pause`, `clear_screen`, `print_header`, `waiting`, `UserCancel`, `console` | 签名、取消及非交互语义见上节。 |
+| 进度 | `waiting(message)`, `activity_step(message, failed_label)`, `progress_step(message, failed_label, *, total)` | 分别用于菜单过渡、无总量的执行阶段、按实际完成量计数的执行阶段。 |
 | 跨插件服务 | `get_service(name)`, `open_service_menu(name, breadcrumb, context=None)` | 前者返回远程代理，实际调用时核验；后者调用已授权服务的 `open_menu`。缺少提供方、契约或授权时调用失败，不自动安装。 |
 | 状态和路径 | `plugin_data_dir(namespace)`, `data_dir()`, `cache_dir()`, `log_dir()`, `plugins_dir()` | 使用自身 `plugin_data_dir` 保存持久业务状态；名称必须与清单中的插件身份完全一致。其他路径是本次隔离工作区内路径或只读插件快照，不代表宿主路径或持久授权。 |
 | 状态格式 | `load_yaml(path)`, `save_yaml(path, data)`, `get_logger(name='opskit')` | 在自身可访问的隔离路径内读写；注意不要记录敏感信息。 |
@@ -220,9 +290,9 @@ def edit_path(breadcrumb, current):
 ```yaml
 uses:
   - service: storage
-    provider: storage_plugin
-    api_version: 1
-    methods: [read, open_menu]
+    provider: storage_hub
+    api_version: 6
+    methods: [open_menu]
 ```
 
 操作者先分别审核调用方和提供方及其指纹，再使用 `opskit plugin authorize-service` 授权精确的调用边。插件更新、指纹变化或撤权后不能沿用旧授权；每次调用都重新验证。`get_service` 不表示提供方已经可用，访问方法或 `service_api_version` 时才会进行实际 RPC 和校验。
@@ -236,23 +306,27 @@ if request_plugin_install("storage_hub"):
     get_service("storage").open_menu(breadcrumb, {
         "action": "navigate",
         "destination": "configuration",
-        "configure_upload_root": True,
     })
 ```
 
 这是一次交互式服务调用。菜单结束后控制权回到调用方，保存与否按提供方契约读取。需要使用选择结果时直接调用服务代理。提供方沿用宿主绑定的调用方身份及隔离状态，调用方传递业务选项即可。宿主继续处理安装、授信和资源授权。
 
-当业务操作允许在缺少配置时打开设置，提供方可以提供显式选项，例如 `select_profile` 的 `configure_if_missing`。它复用同一个设置菜单，返回后重新读取配置。没有可用配置或用户取消时结束当前业务操作。非交互调用使用显式配置和业务参数。
+调用方发现配置缺失时，可显式请求打开设置。返回后重新读取配置。没有可用配置或用户取消时结束当前操作。非交互调用使用显式配置和业务参数。
 
 ## 发布前检查
 
 1. 校验清单、菜单四字规则、主题图标宽度，以及中英文的键和占位符。
 2. 测试返回、Esc、Ctrl+C、空输入、分页超过九项、非交互与 `--yes`，覆盖失败、撤权及数据保留。
 3. 审核依赖和插件来源，准备匹配当前 SDK 摘要的隔离运行时；内容变化需重新审核授信。只生成 `CHECKSUMS.yaml` 不等于签名或授权。
-4. 分别测试源码、实际 Windows 原生沙盒和发布包；宿主工具、网络服务、目标平台及另一台机器都需要各自的真实验收，不能以模拟测试代替。
+4. 为可执行菜单维护操作与命令的对应关系，逐项运行 `opskit plugin run <插件> -- …`，记录成功、错误或取消的结果。分别测试源码、实际 Windows 原生沙盒和发布包。宿主工具、网络服务、目标平台及另一台机器都需要各自的真实验收，不能以模拟测试代替。
 
 在框架源码检出中运行 `python -m pytest -q tests/test_plugin_developer_example.py tests/test_plugin_sdk4.py tests/test_plugin_framework_menu.py`，可检查示例的中英文菜单、命令行和框架交互契约。这不是第三方插件的完整自动审核：插件维护者还需针对自己的动态菜单、实际图标、授权目标和业务命令执行上述检查，并在实际终端验证图标占位。
 
 确认界面应使用简短的操作标题，将对象、路径和必要的操作后果放入 `info_lines`；删除、覆盖、同步或授权等操作必须保留决定所需的范围与风险信息。确认项和取消行为由框架统一呈现，不要将长问题或动态对象拼入面包屑标题。
 
 文本输入由宿主统一渲染。默认值和输入提示直接显示在输入行，无需添加括号。可编辑的建议值使用 `initial`，空行回退值使用 `default`，敏感默认值由宿主遮挡。
+
+
+### 输入界面的 ESC 返回
+
+`text_input` 在 ESC 时抛出 `UserCancel`。单步输入由直接打开它的菜单捕获，再重绘菜单。菜单中的 ESC 与「返回」都只离开本层。多步输入用 `input_steps(*steps)`，每个回调接收该字段上一次确认的值，首次进入接收 `None`。后续字段按 ESC 回到前一字段，首字段按 ESC 将 `UserCancel` 交还直接调用方。普通字段用 `initial` 提供可编辑的上一次值，敏感字段不预填明文。Ctrl+C 沿用框架的全局退出行为。完整表单提交前的草稿由调用方管理，已经逐项保存的配置在返回时保留。

@@ -26,6 +26,9 @@ def stored(desired):
     row["settings"] = json.dumps(settings)
     reality = json.loads(row["streamSettings"])
     reality["realitySettings"]["privateKey"] = "original-private"
+    reality["realitySettings"]["target"] = reality["realitySettings"].pop("dest")
+    reality["realitySettings"]["target"] = "old.example:443"
+    reality["realitySettings"]["serverNames"] = ["old.example"]
     row["streamSettings"] = json.dumps(reality)
     return row
 
@@ -79,6 +82,8 @@ def test_repeated_install_preserves_identity_and_other_clients(monkeypatch, desi
     assert client["totalGB"] == client["expiryTime"] == 0
     assert client["id"] == ("original-id" if existing else "new-id")
     if existing:
+        assert inbounds.connection_values(second)["dest"] == "example.invalid:443"
+        assert inbounds.connection_values(second)["sni"] == "example.invalid"
         assert second["up"] == 123 and second["down"] == 456
         assert second["settings"]["clients"][1] == json.loads(stored(desired)["settings"])["clients"][1]
         assert inbounds.connection_values(second)["private_key"] == "original-private"

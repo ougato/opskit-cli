@@ -6,11 +6,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from software.base import InstallError, InstallStep, Recipe
 from software._shared.mutation import versioned_mutation
 from software.registry import register
+from software.install_location import record_location
 from core.i18n import t
 from .common import (
     find_uv_python,
@@ -36,10 +37,8 @@ class PythonRecipe(Recipe):
     has_version_picker: ClassVar[bool] = True
     has_switch: ClassVar[bool] = True
 
-    def disk_check_paths(self) -> tuple[Path | None, ...]:
-        # uv may be unavailable, in which case a package manager or source
-        # build selects a different target. The route is not known here.
-        return (None,)
+    def disk_check_path(self) -> Path:
+        return uv_python_dir()
 
     def detect(self) -> str | None:
         return get_driver().detect_active()
@@ -97,35 +96,31 @@ class PythonRecipe(Recipe):
         descs = [t("software.step.install")]
         with MultiStepProgress(descs) as sp:
             sp.step(descs[0])
-            self._do_install(version, on_progress=sp.set_step_pct)
+            self._do_install(version)
             sp.complete()
 
-    def _do_install(self, version: str, on_progress: Callable[[int], None] | None = None) -> None:
+    def _do_install(self, version: str) -> None:
         from core.platform import get_platform
-
-        def _progress(pct: int) -> None:
-            if on_progress:
-                on_progress(pct)
 
         info = get_platform()
         driver = get_driver()
         if info.os_type not in self.platforms:
             raise InstallError(t("software.python_error.platform_not_supported", platform=info.os_type))
 
-        _progress(5)
         try:
             uv_bin = driver.ensure_uv()
         except InstallError:
             uv_bin = None
 
-        _progress(15)
         snap = self._load_or_create_snapshot(driver)
 
-        _progress(25)
         major_minor = ".".join(version.split(".")[:2])
-        new_bin = self._install_with_uv(version, uv_bin, _progress) if uv_bin else None
+        new_bin = self._install_with_uv(version, uv_bin) if uv_bin else None
 
-        _progress(75)
+        from .constants import UV_PYTHON_SUBDIR
+        if not new_bin and self.disk_check_path() != Path.home() / UV_PYTHON_SUBDIR:
+            raise InstallError(t("software.python_error.install_failed", version=version))
+
         if not new_bin:
             new_bin = self._install_with_package_manager(version, major_minor)
 
@@ -135,9 +130,7 @@ class PythonRecipe(Recipe):
         if not new_bin:
             raise InstallError(t("software.python_error.install_failed", version=version))
 
-        _progress(90)
         self._activate_install(version, new_bin, snap, driver)
-        _progress(100)
 
     def _load_or_create_snapshot(self, driver) -> dict:
         snap = load_snapshot()
@@ -153,17 +146,15 @@ class PythonRecipe(Recipe):
         self,
         version: str,
         uv_bin: str,
-        on_progress: Callable[[int], None],
     ) -> str | None:
         from core.process import capture
-        from .constants import UV_PYTHON_SUBDIR, UV_PYTHON_TIMEOUT
+        from .constants import UV_PYTHON_TIMEOUT
 
         env = os.environ.copy()
-        env["UV_PYTHON_INSTALL_DIR"] = str(Path.home() / UV_PYTHON_SUBDIR)
-        on_progress(25)
+        env["UV_PYTHON_INSTALL_DIR"] = str(self.disk_check_path())
         try:
             result = capture(
-                [uv_bin, "python", "install", version], env=env,
+                [uv_bin, "python", "install", "--no-bin", "--no-registry", version], env=env,
                 timeout=UV_PYTHON_TIMEOUT, max_bytes=1024 * 1024,
                 stdin=subprocess.DEVNULL,
             )
@@ -177,7 +168,6 @@ class PythonRecipe(Recipe):
             # Download output may contain proxy credentials or private URLs.
             # Keep the exit code without echoing raw child output to logs/UI.
             raise InstallError(t("software.python_error.uv_failed", code=result.returncode, detail=""))
-        on_progress(75)
         return find_uv_python(version)
 
     def _install_with_package_manager(self, version: str, major_minor: str) -> str | None:
@@ -207,7 +197,7 @@ class PythonRecipe(Recipe):
         # Refuse an incorrect interpreter before modifying links, shims or PATH.
         if not self._python_bin_matches(new_bin, version):
             raise InstallError(t("software.python_error.verify_failed"))
-        next_snap = dict(snap)
+        next_snap = dict(record_location(self.key, snap))
         installed = list(next_snap.get("installed_versions", []))
         if version not in installed:
             installed.append(version)

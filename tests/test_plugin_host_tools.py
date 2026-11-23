@@ -5,10 +5,11 @@ import sys
 import time
 import base64
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
-from core import plugin_host_tools as tools, process
+from core import native_task_control, plugin_host_tools as tools, process
 from core.native_sandbox import GrantChoice
 from core.plugin_capabilities import CapabilityAuthority
 
@@ -45,6 +46,41 @@ def test_raw_exit_code_no_business_success_policy(tmp_path, monkeypatch, context
     assert record["phase"] == "pending"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_log_burst_keeps_timed_authorization_and_final_revalidation(tmp_path, monkeypatch, context):
+    from core.plugin_capabilities import CapabilityDenied
+
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+    now = 10.0
+    checks = []
+    authority = context["authority"]
+    clock = SimpleNamespace(monotonic=lambda: now)
+    monkeypatch.setattr(tools, "time", clock)
+    monkeypatch.setattr(native_task_control, "time", clock)
+    context.update(deadline=20.0, checkpoint=lambda: checks.append(now))
+
+    def stream(_, *, checkpoint, **kwargs):
+        nonlocal now
+        checkpoint()
+        before = len(checks)
+        for _ in range(64):
+            checkpoint()
+            yield "output"
+        assert len(checks) == before
+
+        now += 0.1
+        checkpoint()
+        assert len(checks) == before + 1
+        authority.revoke(next(iter(authority.once_scopes.values())))
+        return 0
+
+    monkeypatch.setattr(process, "stream", stream)
+    with pytest.raises(CapabilityDenied):
+        tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {}, **context)
+    assert checks[-2:] == [now, now]
+
+
 @pytest.mark.parametrize("args,options", [("shell command", {}), (["bad\narg"], {}), ([], {"shell": True}), ([1], {}),
                                          ([], {"timeout_seconds": 0}), ([], {"timeout_seconds": 3601}),
                                          ([], {"stdin_base64": "invalid!"}),
@@ -57,6 +93,88 @@ def test_invalid_arguments_never_prompt(tmp_path, args, options):
         tools.execute("demo", "a" * 64, "missing", args, str(tmp_path), options,
                       authority=None, check_identity=None, deadline=time.monotonic()+2,
                       checkpoint=lambda: None, output=lambda _: None)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+@pytest.mark.parametrize("stage_only", [False, True])
+def test_output_progress_preserves_diagnostics_and_raw_failure(tmp_path, monkeypatch, context, stage_only):
+    from rich.console import Console
+
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+    def stream(*args, **kwargs):
+        yield "routine startup"
+        yield "Timing failed: begin script"
+        yield "begin script phase 17%"
+        yield "Error: [BABEL] Note: generated file exceeds limit"
+        yield "    at babel()"
+        yield "Error: repeated [BABEL] Note: generated file exceeds limit   "
+        yield "    at forwarded()"
+        yield "Error: script build failed"
+        yield "    at compile()"
+        return 34
+
+    monkeypatch.setattr(process, "stream", stream)
+    lines = []
+    context["output"] = lines.append
+    result = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {"progress": {
+        "stages": [["Launch"], ["Scripts", "begin script"]],
+        **({} if stage_only else {"progress_marker": "phase ", "progress_label": "Engine"}),
+        "failed_label": "Failed",
+        "diagnostics": ["Error:"],
+        "quiet_prefixes": ["Timing failed: "],
+        "compact_diagnostics": ["[BABEL] Note: "],
+        "success_codes": [0, 36],
+    }}, progress_console=Console(force_terminal=False), **context)
+    assert result["returncode"] == 34
+    assert lines[0].startswith("Launch") and "100%" in lines[0]
+    assert lines[1:4] == ["[BABEL] Note: generated file exceeds limit", "Error: script build failed", "    at compile()"]
+    assert lines[4].startswith("Scripts") and "Failed" in lines[4]
+    assert lines[0].index("█") == lines[4].index("░")
+    if stage_only:
+        assert len(lines) == 5
+    else:
+        assert lines[5].startswith("Engine") and "17%" in lines[5]
+        assert lines[5].index("█") == lines[0].index("█")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+@pytest.mark.parametrize("process_code,success", [(36, True), (36, False), (34, False)])
+def test_deferred_tool_output_replays_raw_lines_only_on_failure(
+        tmp_path, monkeypatch, context, capsys, process_code, success):
+    from rich.console import Console
+    from core import prompt
+    from core.plugin_sandbox import _DeferredToolOutput
+
+    raw_lines = ["startup", "begin script", "Timing failed: sample", "",
+                 "Error: [BABEL] Note: sample", "    at compile()", "    at compile()"]
+    tool = tmp_path / "tool.exe"
+    tool.write_bytes(b"test")
+
+    def stream(*args, **kwargs):
+        yield from raw_lines
+        return process_code
+
+    monkeypatch.setattr(process, "stream", stream)
+    console = Console(force_terminal=False)
+    monkeypatch.setattr(prompt, "console", console)
+    output = []
+    context["output"] = output.append
+    journal = _DeferredToolOutput()
+    result = tools.execute("demo", "a" * 64, str(tool), [], str(tmp_path), {
+        "defer_output": True, "progress": {
+            "stages": [["Launch"], ["Scripts", "begin script"]],
+            "failed_label": "Failed", "diagnostics": ["error"], "success_codes": [36],
+            "quiet_prefixes": ["Timing failed: "], "compact_diagnostics": ["[BABEL] Note: "],
+        },
+    }, progress_console=console, deferred_output=journal.append, **context)
+    assert result["returncode"] == process_code
+    assert len(output) == 2
+    assert not capsys.readouterr().out
+    journal.finish(success)
+    assert capsys.readouterr().out.splitlines() == ([] if success else raw_lines)
+    journal.finish(False)
+    assert not capsys.readouterr().out
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
@@ -452,3 +570,53 @@ def test_project_grant_reuses_permission_and_starts_output_after_authorization(t
     monkeypatch.setattr(authority, "require", denied)
     with pytest.raises(PermissionError, match="execution grant required"):
         tools.execute("demo", "a" * 64, str(tool), [], str(root), {}, **context)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows host discovery")
+def test_find_adb_in_sdk_environment_and_default_location(tmp_path, monkeypatch, context):
+    explicit = tmp_path / "sdk" / "platform-tools" / "adb.exe"
+    default = tmp_path / "local" / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+    for candidate in (explicit, default):
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(b"fixture")
+    monkeypatch.setenv("ANDROID_HOME", str(explicit.parent.parent))
+    monkeypatch.setenv("ANDROID_SDK_ROOT", "")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(explicit)
+    explicit.unlink()
+    assert tools.find_executable("demo", "a" * 64, "adb.exe", "", **context) == str(default)
+
+@pytest.mark.skipif(os.name != "nt", reason="native host tool backend")
+def test_java_jar_dependency_binds_only_launched_jar_without_path_injection(tmp_path, monkeypatch, context):
+    java = tmp_path / "java.exe"
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    jar = lib / "signer.jar"
+    java.write_bytes(b"java")
+    jar.write_bytes(b"jar")
+    require = context["authority"].require
+    scopes = []
+
+    def record(request, **kwargs):
+        scopes.append(json.loads(request.resource))
+        return require(request, **kwargs)
+
+    def stream(*args, **kwargs):
+        assert str(lib) not in kwargs["env"]["PATH"].split(os.pathsep)
+        yield "verified"
+        return 0
+
+    monkeypatch.setattr(context["authority"], "require", record)
+    monkeypatch.setattr(process, "stream", stream)
+    options = {"tool_dependencies": [str(jar)], "capture_output": True}
+    with pytest.raises(ValueError, match="invalid host tool dependency"):
+        tools.execute("demo", "a" * 64, str(java), ["-jar", str(lib / "other.jar")],
+                      str(tmp_path), options, **context)
+    result = tools.execute("demo", "a" * 64, str(java), ["-jar", str(jar)],
+                           str(tmp_path), options, **context)
+    assert result["captured_output"] == "verified"
+    dependency, = scopes[0]["tool_dependencies"]
+    assert dependency["executable"] == str(jar)
+    assert len(dependency["sha256"]) == 64
+    assert "search_directory" not in dependency

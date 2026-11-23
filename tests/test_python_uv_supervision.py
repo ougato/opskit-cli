@@ -18,15 +18,13 @@ def test_uv_install_uses_private_directory_budget_and_closed_stdin(tmp_path, mon
         return subprocess.CompletedProcess(command, 0, "installed", "")
     monkeypatch.setattr(process, "capture", capture)
     monkeypatch.setattr(recipe, "find_uv_python", lambda version: "managed-python")
-    progress = []
-    assert recipe.PythonRecipe()._install_with_uv("3.12.13", "private-uv", progress.append) == "managed-python"
+    assert recipe.PythonRecipe()._install_with_uv("3.12.13", "private-uv") == "managed-python"
     command, options = observed[0]
-    assert command == ["private-uv", "python", "install", "3.12.13"]
+    assert command == ["private-uv", "python", "install", "--no-bin", "--no-registry", "3.12.13"]
     assert options["stdin"] == subprocess.DEVNULL
     assert options["max_bytes"] == 1024 * 1024
     assert options["timeout"] == 1800
     assert options["env"]["UV_PYTHON_INSTALL_DIR"].startswith(str(tmp_path))
-    assert progress == [25, 75]
 
 
 @pytest.mark.parametrize("failure", ["timeout", "output", "cancel", "spawn", "exit"])
@@ -46,10 +44,10 @@ def test_uv_failure_never_looks_up_or_activates_interpreter(monkeypatch, failure
     monkeypatch.setattr(recipe, "find_uv_python", lambda version: pytest.fail("failed installer queried interpreter"))
     installer = recipe.PythonRecipe()
     if failure == "spawn":
-        assert installer._install_with_uv("3.12.13", "uv", lambda pct: None) is None
+        assert installer._install_with_uv("3.12.13", "uv") is None
     else:
         with pytest.raises(KeyboardInterrupt if failure == "cancel" else InstallError) as caught:
-            installer._install_with_uv("3.12.13", "uv", lambda pct: None)
+            installer._install_with_uv("3.12.13", "uv")
         assert private_output not in str(caught.value)
     assert private_output not in caplog.text
 
@@ -87,7 +85,7 @@ def test_real_uv_supervision_reclaims_child_tree(tmp_path, monkeypatch, failure)
     monkeypatch.setattr(recipe.Path, "home", lambda: tmp_path)
     try:
         with pytest.raises(InstallError):
-            recipe.PythonRecipe()._install_with_uv("3.12.13", "uv", lambda pct: None)
+            recipe.PythonRecipe()._install_with_uv("3.12.13", "uv")
         assert marker.exists(), "test never reached the child-process failure stage"
         assert len(parents) == 1 and parents[0].poll() is not None
         child_pid = int(marker.read_text())

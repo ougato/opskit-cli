@@ -35,7 +35,7 @@ def register(app, context_settings):
     @guarded
     def down():
         supported()
-        server._run_root([server.TAILSCALE_COMMAND, "down"], check=True)
+        server.disconnect()
         emit({"disconnected": True})
 
     @group.command("restart")
@@ -43,8 +43,6 @@ def register(app, context_settings):
     def restart():
         supported()
         server.restart_service()
-        if not server.is_service_active():
-            fail("Tailscale service restart failed")
         emit({"service_active": True})
 
     @group.command("login")

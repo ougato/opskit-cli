@@ -329,17 +329,14 @@ def test_python_install_delegates_to_do_install(monkeypatch) -> None:
 
     seen: dict[str, object] = {}
 
-    def fake_do_install(self, version: str, on_progress=None) -> None:
+    def fake_do_install(self, version: str) -> None:
         seen["version"] = version
-        seen["has_progress"] = callable(on_progress)
-        if on_progress:
-            on_progress(100)
 
     monkeypatch.setattr(PythonRecipe, "_do_install", fake_do_install)
 
     PythonRecipe().install("3.12.13")
 
-    assert seen == {"version": "3.12.13", "has_progress": True}
+    assert seen == {"version": "3.12.13"}
 
 
 def test_python_package_manager_skips_build_only_versions(monkeypatch) -> None:
@@ -620,6 +617,48 @@ def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
     assert calls[0]["choices"][-1]["key"] == "n"
     assert calls[1]["choices"][-1]["key"] == "p"
     assert selected == ["fake9"]
+
+
+def test_redis_windows_download_tracks_bytes_and_resets_for_next_mirror(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    import httpx
+    from software.recipes.redis import common, constants
+    from software._shared import architecture
+
+    @contextmanager
+    def stream(method, url, **kwargs):
+        total = 4_000_000 if url == "first" else 2_000_000
+        yield httpx.Response(200, headers={"Content-Length": str(total)}, content=b"x" * 2_000_000)
+
+    monkeypatch.setattr(architecture, "require_windows_x64", lambda name: None)
+    monkeypatch.setattr(constants, "REDIS_DL_WINDOWS_URLS", ["first", "second"])
+    monkeypatch.setattr(common, "_pick_fastest_url", lambda urls: urls[0])
+    monkeypatch.setattr(httpx, "stream", stream)
+
+    progress = []
+    path = common.download_redis_windows("8.10.3", tmp_path / "redis", on_progress=progress.append)
+    assert path.stat().st_size == 2_000_000
+    assert progress[0] is None and progress.count(None) == 2
+    retry = progress.index(None, 1)
+    assert progress[retry - 1] == 50
+    assert progress[-1] == 99
+
+
+def test_redis_windows_versions_require_matching_install_archive(monkeypatch):
+    import httpx
+    from software._shared import version_resolver
+    from software.recipes.redis import common
+
+    releases = [
+        {"tag_name": "8.8.4", "assets": [{"name": "Redis-8.8.4-Windows-x64-cygwin.zip"}]},
+        {"tag_name": "8.8.3", "assets": [{"name": "Redis-8.8.3-Windows-x64-msys2.zip"}]},
+        {"tag_name": "8.10.2", "assets": [{"name": "Redis-8.10.2-Windows-x64-msys2.zip"}]},
+    ]
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(version_resolver, "resolve_versions", lambda key, fetch, fallback: fetch())
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: httpx.Response(200, json=releases, request=httpx.Request("GET", url)))
+
+    assert common.version_list() == ["8.10.2", "8.8.3"]
 
 
 def test_rustdesk_xui_tailscale_labels_and_icons() -> None:

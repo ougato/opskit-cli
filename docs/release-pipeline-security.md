@@ -1,13 +1,20 @@
 # 发布流水线
 
-推送 `v*` 标签到 GitHub 后自动执行测试、四平台构建、冻结 CLI 验收及发布
-标签固定事件提交，不强制移动已有标签，修复后递增版本
-不需要发布签名密钥、变量或专用依赖环境
+## 分支与封版
+
+框架长期维护 `develop`、`release`、`master`，本地和远程均使用这三个分支。
+
+1. 在 `develop` 开发。准备发布时，以 GitHub 最新正式标签为准将版本加一，运行 `python scripts/release_bump.py v<N>`，提交版本文件及本次发版改动，再将 `develop` 推送到 GitHub 和 origin。
+2. 将 `develop` 合并到 `release`，推送到 GitHub 和 origin。GitHub 在 `release` 上执行全量测试、四平台构建、冻结 CLI 验收和资产预检。
+3. 预检成功后，在 `release` 的同一提交上创建 `v<N>` 标签并推送到 GitHub。正式工作流核对分支提交、标签版本和对应的成功预检，发布二进制和 SHA256 文件。
+4. 等正式工作流成功，核对 GitHub Release 和默认分支的 `bootstrap.json`。同步默认分支的版本提交，再把 `release` 合并到 `master` 并推送到 GitHub 和 origin，最后切回 `develop`。
+
+预检失败时在 `develop` 修复，再合入 `release` 重新预检。已发布的标签保持固定。
 
 ## 流程
 
 1. 创建独立 Python 3.12 测试环境，按哈希锁安装依赖并运行全套测试
-2. 根据标签同步 APP_VERSION 与 bootstrap.json，分别构建 Linux x64、Linux arm64、Windows x64 和 macOS arm64
+2. 校验已提交的 APP_VERSION 与 bootstrap.json，分别构建 Linux x64、Linux arm64、Windows x64 和 macOS arm64
 3. 每个平台在源码目录外验证冻结 CLI，上传二进制、SHA256 文件及 manifest.json
 4. 发布任务严格核对四平台目录及文件，拒绝额外文件、链接和不匹配的版本、平台、架构、大小或摘要
 5. 创建或恢复草稿，上传二进制与 SHA256 共八个文件，核对 GitHub 返回的摘要后公开

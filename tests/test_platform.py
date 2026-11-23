@@ -97,6 +97,19 @@ def test_recipe_disk_check_uses_declared_target_or_returns_unknown(tmp_path, mon
     assert Recipe.disk_check_path(object()) is None
 
 
+def test_python_install_checks_disk_before_creating_target(tmp_path, monkeypatch):
+    from pathlib import Path
+    from software.disk import check_recipe_disk_space
+    from software.recipes.python.recipe import PythonRecipe
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    recipe = PythonRecipe()
+    target = tmp_path / ".opskit" / "python"
+    assert recipe.disk_check_paths() == (target,)
+    assert check_recipe_disk_space(recipe, 1) is True
+    assert not target.exists()
+
+
 @pytest.mark.parametrize("descendant", [False, True])
 def test_disk_space_for_dangling_link_is_unknown(tmp_path, symlink_capable, monkeypatch, descendant):
     from core import platform as host

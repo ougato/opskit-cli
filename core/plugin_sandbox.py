@@ -24,6 +24,7 @@ WIRE_LIMIT = 32 * 1024**2
 MAX_FILES = 4096
 CONTROL_TIMEOUT = 30
 CONFIG_READ_TIMEOUT = 30
+TREE_PUBLICATION_REQUEST_LIMIT = 8 * 1024**2
 
 
 class SandboxError(RuntimeError):
@@ -424,6 +425,29 @@ def _rename_state(source: Path, target: Path) -> None:
             time.sleep(0.1)
 
 
+class _DeferredToolOutput:
+    def __init__(self):
+        self.lines = []
+        self.bytes = 0
+
+    def append(self, line):
+        self.bytes += len(line.encode("utf-8")) + 1
+        if self.bytes > 32 * 1024**2:
+            raise RuntimeError("deferred host tool output limit exceeded")
+        self.lines.append(line)
+
+    def finish(self, success):
+        try:
+            if not success and self.lines:
+                from core.prompt import console
+
+                for line in self.lines:
+                    console.print(line, markup=False, highlight=False, soft_wrap=True)
+        finally:
+            self.lines.clear()
+            self.bytes = 0
+
+
 def _broker(manifest, request: dict):
     """Identity comes from this supervisor, never from the plugin's payload."""
     if (not isinstance(request, dict) or set(request) - {"rpc_version", "type", "method", "args", "kwargs"}
@@ -439,23 +463,51 @@ def _broker(manifest, request: dict):
         plugin_json.require_version(request)
     except ValueError:
         raise SandboxError("unsupported broker protocol version") from None
-    if len(plugin_json.dumps(request)) > 65536:
+    tree_publication = (method == "host.artifacts" and not kwargs and len(args) == 2
+                        and args[0] == "publish_tree" and isinstance(args[1], dict))
+    limit = TREE_PUBLICATION_REQUEST_LIMIT if tree_publication or method == "host.upload_files" else 65536
+    if len(plugin_json.dumps(request)) > limit:
         raise SandboxError("broker request too large")
     fingerprint = check_authorization(manifest)
     _remaining()
-    if method in {"ui.wait_start", "ui.wait_stop"}:
+    if method in {"ui.wait_start", "ui.wait_stop", "ui.progress_start", "ui.progress_update", "ui.progress_stop"}:
         display = getattr(_invocations, "wait_display", None)
-        if display is None or kwargs or len(args) != (1 if method == "ui.wait_start" else 0):
+        floor = getattr(_invocations, "wait_floor", 0)
+        if display is None:
             raise SandboxError("invalid waiting scope")
-        if method == "ui.wait_start":
+        if method == "ui.wait_start" and len(args) == 1 and not kwargs:
+            from core.prompt import finish_screen_transition
+            finish_screen_transition()
             display.start(args[0])
+        elif (method == "ui.progress_start" and len(args) == 1
+              and set(kwargs) == {"total", "failed_label"}
+              and (kwargs["total"] is None or type(kwargs["total"]) is int)
+              and isinstance(kwargs["failed_label"], str)):
+            from core.prompt import finish_screen_transition
+            finish_screen_transition()
+            display.start(args[0], **kwargs)
+        elif (method == "ui.progress_update" and len(args) == 1 and not kwargs
+              and display.depth > floor and display.counting):
+            display.update(args[0])
+        elif method in {"ui.wait_stop", "ui.progress_stop"} and not args:
+            if floor and display.depth <= floor:
+                raise SandboxError("no active waiting scope for this plugin")
+            if method == "ui.wait_stop" and not kwargs and not display.progressing:
+                display.stop()
+            elif (method == "ui.progress_stop" and display.progressing and set(kwargs) <= {"failed"}
+                  and type(kwargs.get("failed", False)) is bool):
+                display.stop(**kwargs)
+            else:
+                raise SandboxError("invalid waiting scope")
         else:
-            display.stop()
+            raise SandboxError("invalid waiting scope")
         return None
     # check_authorization already checks this identity together with every
     # active caller, service edge and network grant in the invocation.
-    if method == "host.upload_file":
-        if "network" not in manifest.permissions or kwargs or len(args) not in (5, 6):
+    if method in {"host.upload_file", "host.upload_files"}:
+        arity = (2, 3, 4) if method == "host.upload_files" else (5, 6)
+        allowed = {"progress_offset"} if method == "host.upload_files" else set()
+        if "network" not in manifest.permissions or set(kwargs) - allowed or len(args) not in arity:
             raise SandboxError("network capability not granted")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -469,10 +521,36 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        from core.plugin_upload import upload_file
-        return upload_file(manifest.name, fingerprint, *args, authority=authority,
-                           check_identity=identity, private_targets=private,
-                           deadline=_invocations.deadline, checkpoint=checkpoint)
+        from contextlib import nullcontext
+        from core.plugin_upload import UploadFailure, upload_file, upload_files
+        from core.prompt import console
+        transfer = upload_files if method == "host.upload_files" else upload_file
+        display = getattr(_invocations, "wait_display", None)
+        if display is not None:
+            console = display.console
+        options = {}
+        if "progress_offset" in kwargs:
+            offset = kwargs["progress_offset"]
+            if (type(offset) is not int or offset < 0 or display is None or not display.counting
+                    or display.depth <= getattr(_invocations, "wait_floor", 0)):
+                raise SandboxError("invalid upload progress scope")
+            display.update(offset)
+            options["on_verified"] = lambda count: display.update(offset + count)
+        with display.suspend() if display is not None and not options else nullcontext():
+            try:
+                return transfer(manifest.name, fingerprint, *args, authority=authority,
+                                check_identity=identity, private_targets=private,
+                                deadline=lambda: _invocations.deadline, checkpoint=checkpoint,
+                                console=None if options else console,
+                                input_wait=_input_wait_budget, **options)
+            except UploadFailure as error:
+                from core.i18n import t
+                reason = t(f"plugin_native.upload.reason_{error.reason}", status=error.status)
+                relative = "".join(char if char.isprintable() else "?" for char in error.relative)
+                console.print(t("plugin_native.upload.diagnostic", file=relative,
+                                phase=t(f"plugin_native.upload.phase_{error.phase}"), reason=reason),
+                              markup=False, highlight=False)
+                raise
     if method == "host.https":
         if "network" not in manifest.permissions or kwargs or len(args) != 4:
             raise SandboxError("network capability not granted")
@@ -490,9 +568,17 @@ def _broker(manifest, request: dict):
             _check_live_authorizations()
         return https_request(*args[:3], body, private_targets=private,
                              deadline=_invocations.deadline, checkpoint=checkpoint)
+    if method == "host.finish_tool_output":
+        if kwargs or len(args) != 1 or type(args[0]) is not bool:
+            raise SandboxError("invalid deferred output result")
+        lines = getattr(_invocations, "tool_output", None)
+        if lines is None:
+            raise SandboxError("deferred output scope unavailable")
+        lines.finish(args[0])
+        return None
     if method in {"host.execute", "host.artifacts", "host.path_info", "host.find_executable", "host.file_version", "host.list_files"}:
         expected = 4 if method == "host.execute" else (1 if method in {"host.file_version", "host.list_files"} else 2)
-        allowed = {"missing_ok"} if method == "host.list_files" else set()
+        allowed = {"missing_ok", "subdirectories"} if method == "host.list_files" else set()
         if set(kwargs) - allowed or (len(args) != expected and not (method == "host.path_info" and len(args) in (3, 4))):
             raise SandboxError("invalid host capability arguments")
         authority = getattr(_invocations, "capability_authority", None)
@@ -506,7 +592,7 @@ def _broker(manifest, request: dict):
         from core.prompt import console
         context = dict(authority=authority, check_identity=identity, deadline=lambda: _invocations.deadline,
                        checkpoint=checkpoint,
-                       output=lambda line: console.print(line, markup=False, highlight=False))
+                       output=lambda line: console.print(line, markup=False, highlight=False, soft_wrap=True))
         if method == "host.execute":
             from core.plugin_host_tools import execute
             def output_start(header):
@@ -519,8 +605,17 @@ def _broker(manifest, request: dict):
                 with display.suspend() if display is not None else nullcontext():
                     clear_screen()
                     print_header(header)
-            return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
-                           output_start=output_start, **context)
+            display = getattr(_invocations, "wait_display", None)
+            from contextlib import nullcontext
+            progress_requested = isinstance(args[-1], dict) and "progress" in args[-1]
+            lines = getattr(_invocations, "tool_output", None)
+            with display.suspend() if display is not None and progress_requested else nullcontext():
+                result = execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
+                               output_start=output_start, progress_console=console,
+                               deferred_output=lines.append if lines is not None else None, **context)
+                if display is not None and progress_requested and console.is_terminal:
+                    display.after_progress = True
+                return result
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)
@@ -550,10 +645,10 @@ def _broker(manifest, request: dict):
         from core.plugin_host_archive import directories
         return directories(manifest.name, fingerprint, *args, authority=authority,
                            check_identity=identity, checkpoint=checkpoint)
-    if method == "host.artifact_info":
+    if method in {"host.artifact_info", "host.artifact_batch_info"}:
         if kwargs or len(args) != 2:
             raise SandboxError("invalid artifact arguments")
-        from core.plugin_artifact import artifact_info
+        from core.plugin_artifact import artifact_info, artifact_batch_info
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
@@ -562,11 +657,12 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        return artifact_info(manifest.name, fingerprint, *args, authority=authority,
-                             check_identity=identity, deadline=lambda: _invocations.deadline,
-                             checkpoint=checkpoint)
-    if method in {"host.compare_write", "host.create_file"}:
-        if kwargs or len(args) != (4 if method == "host.compare_write" else 3):
+        inspect_artifacts = artifact_info if method == "host.artifact_info" else artifact_batch_info
+        return inspect_artifacts(manifest.name, fingerprint, *args, authority=authority,
+                                 check_identity=identity, deadline=lambda: _invocations.deadline,
+                                 checkpoint=checkpoint)
+    if method in {"host.compare_write", "host.create_file", "host.atomic_write"}:
+        if kwargs or len(args) != {"host.compare_write": 4, "host.create_file": 3, "host.atomic_write": 5}[method]:
             raise SandboxError("invalid host file arguments")
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
@@ -576,24 +672,31 @@ def _broker(manifest, request: dict):
         def checkpoint():
             _remaining()
             _check_live_authorizations()
-        from core.plugin_host_write import compare_write, create_file
+        from core.plugin_host_write import atomic_write, compare_write, create_file
         from core.prompt import guard_input
         with guard_input(checkpoint):
-            operation = compare_write if method == "host.compare_write" else create_file
+            operation = {"host.compare_write": compare_write, "host.create_file": create_file,
+                         "host.atomic_write": atomic_write}[method]
             return operation(manifest.name, fingerprint, *args, authority=authority,
                              check_identity=identity, checkpoint=checkpoint)
-    if method in {"host.read_file", "host.file_status"}:
+    if method in {"host.read_file", "host.read_files", "host.file_status"}:
         allowed = {"missing_ok"} if method == "host.read_file" else set()
         if set(kwargs) - allowed or len(args) != 2:
             raise SandboxError("invalid host file arguments")
-        from core.plugin_host_files import read_file, file_status
+        from core.plugin_host_files import read_file, read_files, file_status
         authority = getattr(_invocations, "capability_authority", None)
         if authority is None:
             raise SandboxError("host capability scope unavailable")
         def identity(name, expected):
             return name == manifest.name and check_authorization(manifest) == expected
         from core.prompt import guard_input
-        with guard_input(lambda: (_remaining(), _check_live_authorizations())):
+        def checkpoint():
+            _remaining()
+            _check_live_authorizations()
+        if method == "host.read_files":
+            return read_files(manifest.name, fingerprint, *args, authority=authority,
+                              check_identity=identity, checkpoint=checkpoint)
+        with guard_input(checkpoint):
             operation = read_file if method == "host.read_file" else file_status
             return operation(manifest.name, fingerprint, *args,
                              authority=authority, check_identity=identity, **kwargs)
@@ -613,6 +716,8 @@ def _broker(manifest, request: dict):
         from contextlib import nullcontext
         with (display.suspend() if display is not None else nullcontext()), prompt.guard_input(checkpoint):
             checkpoint()
+            if display is not None and method != "pause":
+                display.after_progress = False
             value = getattr(prompt, method)(*args, **kwargs)
             checkpoint()
             return value
@@ -627,6 +732,10 @@ def _broker(manifest, request: dict):
             _check_live_authorizations(extra=((manifest.name, fingerprint),))
 
         with guard_input(checkpoint):
+            display = getattr(_invocations, "wait_display", None)
+            if display is not None:
+                return request_install(manifest, fingerprint, args[0], checkpoint=checkpoint,
+                                       suspend_wait=display.suspend)
             return request_install(manifest, fingerprint, args[0], checkpoint=checkpoint)
     if method == "service.call":
         if (kwargs or len(args) != 4 or not isinstance(args[0], str)
@@ -899,24 +1008,39 @@ def invoke(manifest, action: str, *, args=None, service="", method="", kwargs=No
             previous_authority = getattr(_invocations, "capability_authority", None)
             previous_preload = getattr(_invocations, "preload", None)
             previous_wait = getattr(_invocations, "wait_display", None)
+            previous_wait_floor = getattr(_invocations, "wait_floor", 0)
+            previous_tool_output = getattr(_invocations, "tool_output", None)
+            tool_output = _DeferredToolOutput()
             _invocations.preload = _preload
             from core.plugin_capabilities import CapabilityAuthority
             from core.installation_progress import WaitingDisplay
             from core.prompt import console
             authority = CapabilityAuthority()
-            display = WaitingDisplay(output_console=console)
+            if previous_wait is not None:
+                display = previous_wait
+            else:
+                if action == "cli":
+                    from rich.console import Console
+                    console = Console(stderr=True)
+                display = WaitingDisplay(output_console=console)
+            wait_floor = display.depth
+            _invocations.wait_floor = wait_floor
             authority.suspend_wait = display.suspend
             _invocations.capability_authority = authority
             _invocations.wait_display = display
+            _invocations.tool_output = tool_output
             try:
                 return _invoke(manifest, action, args=args, service=service, method=method, kwargs=kwargs, caller=caller)
             finally:
                 try:
-                    display.close()
+                    display.restore(wait_floor)
+                    tool_output.finish(False)
                 finally:
                     authority.close()
                     _invocations.capability_authority = previous_authority
                     _invocations.wait_display = previous_wait
+                    _invocations.wait_floor = previous_wait_floor
+                    _invocations.tool_output = previous_tool_output
                     _invocations.preload = previous_preload
                     _invocations.stack = stack
                     _invocations.authorizations = authorizations
@@ -1028,19 +1152,24 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
         def checkpoint():
             _remaining()
             _check_live_authorizations()
+        exit_requested = False
+
         def dispatch(message):
-            from core.prompt import UserCancel
+            nonlocal exit_requested
+            from core.prompt import UserCancel, UserExit
             from core.prompt import input_wait_scope
             from core.plugin_capabilities import CapabilityDenied
             from core.i18n import t
+            if exit_requested:
+                return {"exit": True}
             try:
-                from contextlib import nullcontext
-                display = getattr(_invocations, "wait_display", None)
-                suspend = display.suspend() if display is not None and message.get("method") in {"service.call", "service.describe", "service.install_provider"} else nullcontext()
-                with suspend, input_wait_scope(_input_wait_budget):
+                with input_wait_scope(_input_wait_budget):
                     return {"value": _broker(manifest, message)}
             except UserCancel:
                 return {"cancel": True}
+            except UserExit:
+                exit_requested = True
+                return {"exit": True}
             except CapabilityDenied as error:
                 # CapabilityDenied contains only host-owned localized messages.
                 return {"error": str(error)}
@@ -1097,4 +1226,7 @@ def _invoke_prepared(manifest, action, *, runtime, runtime_record, fingerprint, 
     check_authorization(manifest)
     _save_state(result["state"], state_root, plugin=manifest.name, caller=state_caller,
                 budget_base=data_dir().absolute() / "plugin-data")
+    if exit_requested:
+        from core.prompt import UserExit
+        raise UserExit
     return result.get("value")

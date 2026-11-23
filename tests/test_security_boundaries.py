@@ -138,6 +138,36 @@ def test_large_download_rejects_partial_stream(tmp_path, monkeypatch):
     assert not (tmp_path / "partial").exists()
 
 
+def test_mirror_download_progress_restarts_at_each_source(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from core import mirror
+
+    sources = ["https://a", "https://b"]
+    monkeypatch.setattr(mirror, "_probe_concurrent", lambda *a, **k: list(zip(sources, (0, 1))))
+
+    class Response:
+        status_code = 200
+        headers = {"content-length": "4000"}
+
+        def iter_bytes(self):
+            yield b"x" * 2000
+            if self.url == sources[1]:
+                yield b"y" * 2000
+
+    @contextmanager
+    def stream(method, url, **kwargs):
+        assert kwargs["headers"]["Accept-Encoding"] == "identity"
+        response = Response()
+        response.url = url
+        yield response
+
+    monkeypatch.setattr(mirror.httpx, "stream", stream)
+    recorded = []
+    path = mirror.download_file(sources, tmp_path / "archive", on_progress=recorded.append)
+    assert path.read_bytes() == b"x" * 2000 + b"y" * 2000
+    assert recorded == [None, 50, None, 50, 99]
+
+
 def test_timeout_includes_grandchild_startup(tmp_path, monkeypatch):
     from core import process
     import psutil

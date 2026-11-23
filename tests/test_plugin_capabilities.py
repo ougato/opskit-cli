@@ -15,6 +15,26 @@ def live(*args):
     return True
 
 
+def test_check_many_revalidates_identity_once_and_checks_every_scope(tmp_path):
+    authority = CapabilityAuthority(path=tmp_path / "grants.yaml")
+    scopes = tuple(request(resource=resource) for resource in ("source", "destination"))
+    for scope in scopes:
+        authority.require(scope, check_identity=live, prompt=lambda _: GrantChoice.ALWAYS)
+    checks = []
+
+    def identity(plugin, fingerprint):
+        checks.append((plugin, fingerprint))
+        return True
+
+    authority.check_many(scopes, check_identity=identity)
+    assert checks == [(scopes[0].plugin, scopes[0].fingerprint)]
+    authority.revoke(scopes[1])
+    with pytest.raises(CapabilityDenied) as denied:
+        authority.check_many(scopes, check_identity=identity)
+    assert denied.value.code == "missing_or_revoked"
+    assert len(checks) == 2
+
+
 @pytest.mark.parametrize("language", ["zh", "en"])
 def test_tool_scope_consent_shows_path_and_broad_permission(monkeypatch, language):
     from core import i18n

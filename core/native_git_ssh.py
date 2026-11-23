@@ -128,7 +128,11 @@ def download(source, profile, allow_private, destination, branch):
             return result
         finally:
             if channel is not None:
-                channel.close()
+                try:
+                    channel.close()
+                except EOFError:
+                    # The remote may close its transport after sending the exit status.
+                    pass
             if transport is not None:
                 transport.close()
             if agent is not None:

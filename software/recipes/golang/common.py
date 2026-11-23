@@ -5,6 +5,7 @@ import platform
 from pathlib import Path
 
 from software._shared.snapshot import SnapshotStore
+from software.install_location import managed_root
 from .constants import SNAPSHOT_SUBDIR, SNAPSHOT_GOLANG_FILE
 
 from software.base import InstallError
@@ -31,7 +32,7 @@ def _go_arch() -> str:
 def go_versions_dir() -> Path:
     """所有 Go 版本的根目录：~/.opskit/go/"""
     from .constants import GOLANG_PRIVATE_SUBDIR
-    return Path.home() / GOLANG_PRIVATE_SUBDIR
+    return managed_root("golang", Path.home() / GOLANG_PRIVATE_SUBDIR, load_snapshot())
 
 
 def go_version_dir(version: str) -> Path:
@@ -146,11 +147,10 @@ def version_list() -> list[str]:
 def download_golang_tarball(
     version: str,
     dest: Path,
-    progress_callback=None,
+    on_progress=None,
 ) -> Path:
     """
-    赛马下载 Go tarball（tar.gz / zip），复用 core.mirror.download() 的
-    HEAD 探针 + 多源并发赛马机制。
+    下载 Go tarball（tar.gz / zip），先探测镜像，再按顺序逐源下载。
 
     URL 列表来自 constants.py，按优先级排列（国内镜像 → ghproxy → 官方），
     最后一个 URL 作为 fallback 兜底。
@@ -183,7 +183,7 @@ def download_golang_tarball(
             urls=urls,
             dest=dest,
             cache_path=cache_path,
-            progress_callback=progress_callback,
+            on_progress=on_progress,
         )
     except Exception as e:
         from core.i18n import t

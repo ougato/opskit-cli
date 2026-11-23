@@ -85,9 +85,11 @@ def test_postgresql_checks_platform_specific_download_directory(platform, monkey
     assert recipe.PostgreSQLRecipe().disk_check_paths() == (install, download)
 
 
-def test_python_fallback_target_is_unknown():
+def test_python_primary_target_is_the_uv_install_directory(monkeypatch, tmp_path):
+    from software.recipes.python import recipe
     from software.recipes.python.recipe import PythonRecipe
-    assert PythonRecipe().disk_check_paths() == (None,)
+    monkeypatch.setattr(recipe, "uv_python_dir", lambda: tmp_path)
+    assert PythonRecipe().disk_check_paths() == (tmp_path,)
 
 
 @pytest.mark.parametrize("systemd_available", [True, False])

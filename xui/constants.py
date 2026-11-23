@@ -27,8 +27,7 @@ XUI_STATE_FILE = XUI_CONFIG_DIR / "opskit-state.json"
 XUI_PENDING_INBOUNDS_FILE = XUI_CONFIG_DIR / "opskit-inbounds.json"
 XUI_TRAFFIC_HISTORY_FILE = XUI_CONFIG_DIR / "opskit-traffic.db"
 XUI_INSTALL_DIR = Path("/usr/local/x-ui")
-# Configuration, panel database and traffic history survive program uninstall.
-XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR]
+XUI_ARTIFACT_DIRS = [XUI_INSTALL_DIR, XUI_CONFIG_DIR, Path("/etc/systemd/system/x-ui.service.d")]
 XUI_ARTIFACT_FILES = [
     Path("/etc/systemd/system/x-ui.service"),
     Path("/usr/bin/x-ui"),
@@ -119,14 +118,6 @@ SS_TCP_LISTEN_ARGS = "-tln"
 JOURNALCTL_COMMAND = "journalctl"
 JOURNAL_NO_PAGER_ARG = "--no-pager"
 
-XUI_XRAY_CANDIDATES = [
-    "xray",
-    "/usr/local/bin/xray",
-    "/usr/local/x-ui/bin/xray",
-    "/usr/local/x-ui/bin/xray-linux-amd64",
-    "/usr/local/x-ui/Xray-linux-amd64",
-]
-
 DEFAULT_PANEL_HOST = "127.0.0.1"
 DEFAULT_PANEL_BASE_PATH = ""
 DEFAULT_PANEL_PORT = 54321
@@ -149,6 +140,7 @@ HTTP_STATUS_REDIRECT_MAX = 399
 HTTP_TIMEOUT_SECONDS = 10
 PUBLIC_HOST_DETECT_TIMEOUT = 3
 SERVICE_RESTART_TIMEOUT = 20
+SYSTEMD_RELOAD_TIMEOUT = 90
 PANEL_API_RETRY_COUNT = 10
 PANEL_API_RETRY_DELAY_SECONDS = 1
 INSTALL_SCRIPT_TIMEOUT = 600

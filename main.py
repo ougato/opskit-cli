@@ -187,6 +187,16 @@ def _app_callback(
 
 
 
+@app.command("uninstall", help=_ct("self_uninstall_help"))
+def uninstall_self(
+    purge: bool = typer.Option(False, "--purge", help=_ct("self_uninstall_purge")),
+    dry_run: bool = typer.Option(False, "--dry-run", help=_ct("self_uninstall_preview")),
+) -> None:
+    from core.cli import guarded
+    from core.self_uninstall import run
+    guarded(run)(purge=purge, dry_run=dry_run)
+
+
 def _restart_arguments(arguments: list[str]) -> list[str]:
     """Remove duplicate root flags while preserving subcommand arguments."""
     result = []
@@ -321,11 +331,16 @@ register_plugin_commands(plugin_app, _ct)
 @plugin_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": [], "token_normalize_func": None}, help=_ct("plugin_native_run_help"))
 def plugin_run(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     from plugin.cli import run_plugin
+    from core.i18n import t
     from core.plugin import PluginInventoryError
     from core.plugin_sandbox import SandboxError
     from core.native_sandbox import NativeSandboxError
+    from core.resource_lock import ResourceBusyError
     try:
         code = run_plugin(name, list(ctx.args))
+    except ResourceBusyError:
+        _direct_fail(t("plugin_native.lifecycle.plugin_busy"), _EXIT_RUNTIME)
+        return
     except (SandboxError, PluginInventoryError, NativeSandboxError) as exc:
         _direct_fail(str(exc), _EXIT_RUNTIME)
         return
@@ -363,7 +378,7 @@ from software.direct_cli import register as _register_software_cli, _EXIT_RUNTIM
 ) = _register_software_cli(sw_app, _ct, sys.modules[__name__])
 
 
-register_builtin_commands(app, sw_app, mon_app, net_app, _CONTEXT_SETTINGS)
+register_builtin_commands(app, sw_app, mon_app, net_app, _CONTEXT_SETTINGS, _ct)
 
 
 if __name__ == "__main__":

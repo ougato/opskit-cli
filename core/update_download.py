@@ -17,20 +17,20 @@ def _remaining(deadline):
         raise TimeoutError("update download deadline exceeded")
 
 
-def _worker(connection, root_cache, deadline, update_cfg):
+def _worker(connection, root_cache, deadline, update_cfg, expected_version=None):
     from core.resource_lock import ResourceLock
     from network.worker import send
     resource = ResourceLock(lambda: Path(root_cache).parent / "locks" / "update.lock",
                             label="update staging area")
     try:
         with resource.hold():
-            _pipeline(connection, root_cache, deadline, update_cfg)
+            _pipeline(connection, root_cache, deadline, update_cfg, expected_version)
     except Exception:
         send(connection, {"ok": False, "error": "update download lock or worker failed"})
         connection.close()
 
 
-def _pipeline(connection, root_cache, deadline, update_cfg):
+def _pipeline(connection, root_cache, deadline, update_cfg, expected_version=None):
     from core import updater
     from core.config import load_config
     from core.constants import FILE_UPDATE_CACHE
@@ -50,6 +50,9 @@ def _pipeline(connection, root_cache, deadline, update_cfg):
             raise ValueError("invalid update configuration")
         target = updater.query_update_target(cfg)
         _remaining(deadline)
+        if expected_version is not None and (target is None or target[0] != expected_version):
+            send(connection, {"ok": True, "data": {"available": False, "reason": "target_changed"}})
+            return
         if target is None:
             send(connection, {"ok": True, "data": {"available": False, "reason": "no_eligible_update"}})
             return
@@ -143,7 +146,7 @@ def _downloaded(build, identity):
             "checksum_verified": True, "state": "downloaded", "applied": False}
 
 
-def download(*, timeout=300, update_cfg=None, cancel_event=None):
+def download(*, timeout=300, update_cfg=None, cancel_event=None, expected_version=None):
     from core import updater
     from network.worker import run
     if not math.isfinite(timeout) or timeout <= 0:
@@ -151,7 +154,10 @@ def download(*, timeout=300, update_cfg=None, cancel_event=None):
     if not updater._is_frozen():
         raise ValueError("binary updates require a packaged executable")
     deadline = time.monotonic() + timeout
-    result = run(_worker, (str(updater._get_cache_path()), deadline, update_cfg),
+    args = (str(updater._get_cache_path()), deadline, update_cfg)
+    if expected_version is not None:
+        args += (expected_version,)
+    result = run(_worker, args,
                  timeout=timeout, label="update download", cancel_event=cancel_event)
     if not result.get("ok"):
         raise RuntimeError(result.get("error", "update download failed"))
