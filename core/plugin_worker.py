@@ -119,6 +119,11 @@ def _adapt_sdk(name: str):
             broker("ui.progress_stop")
     sdk.progress_step = progress_step
 
+    def activity_step(message, failed_label):
+        return progress_step(message, failed_label, total=None)
+
+    sdk.activity_step = activity_step
+
     def owned_data(namespace: str) -> Path:
         if namespace != name:
             raise PermissionError("plugin namespace belongs to another identity")

@@ -220,6 +220,8 @@ def inspect_build_directory(project, build_directory):
 
 独立进度页使用 `print_header(breadcrumb)`，框架会在标题后自动留一个空行。等待转圈和百分比进度都直接接在这一个空行后，调用方无需再插入空行。同一页中，百分比进度结束后切换为等待转圈时，由框架留一个临时空行。
 
+无总量的执行阶段使用 `with activity_step(label, failed_label):`。运行中显示往返动画和已用时间，正常退出后保留完成行，异常退出后保留失败行。菜单加载和页面过渡使用 `waiting`。
+
 任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。失败时保留最后显示的百分比，并附上失败状态。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
 
 分批调用 `upload_files` 时，可以用一个以文件总数为单位的 `progress_step` 包住所有批次。给每批传入 `progress_offset`，值为之前各批已完成的文件数。宿主收到校验结果后直接更新累计数。
@@ -263,7 +265,7 @@ def edit_path(breadcrumb, current):
 | 文案 | `t(key, **kwargs)`, `current_lang()`, `register_locale(catalog)` | 注册 `{语言: 嵌套字典}`，使用插件自己的命名空间；不覆盖平台文案。 |
 | 主题 | `get_color(token)`, `get_icon(token)`, `print_success(msg, elapsed=None)`, `print_error(msg)`, `print_warning(msg)`, `print_info(msg, *, show_icon=True)` | 复用平台主题和状态输出。 |
 | 菜单 | `select`, `select_input`, `multi_select`, `paged_select`, `confirm`, `text_input`, `pause`, `clear_screen`, `print_header`, `waiting`, `UserCancel`, `console` | 签名、取消及非交互语义见上节。 |
-| 进度 | `waiting(message)`, `progress_step(message, failed_label, *, total)` | 分别显示彩色点阵和按真实完成量计算的百分比。 |
+| 进度 | `waiting(message)`, `activity_step(message, failed_label)`, `progress_step(message, failed_label, *, total)` | 分别用于菜单过渡、无总量的执行阶段、按实际完成量计数的执行阶段。 |
 | 跨插件服务 | `get_service(name)`, `open_service_menu(name, breadcrumb, context=None)` | 前者返回远程代理，实际调用时核验；后者调用已授权服务的 `open_menu`。缺少提供方、契约或授权时调用失败，不自动安装。 |
 | 状态和路径 | `plugin_data_dir(namespace)`, `data_dir()`, `cache_dir()`, `log_dir()`, `plugins_dir()` | 使用自身 `plugin_data_dir` 保存持久业务状态；名称必须与清单中的插件身份完全一致。其他路径是本次隔离工作区内路径或只读插件快照，不代表宿主路径或持久授权。 |
 | 状态格式 | `load_yaml(path)`, `save_yaml(path, data)`, `get_logger(name='opskit')` | 在自身可访问的隔离路径内读写；注意不要记录敏感信息。 |

@@ -481,7 +481,8 @@ def _broker(manifest, request: dict):
             display.start(args[0])
         elif (method == "ui.progress_start" and len(args) == 1
               and set(kwargs) == {"total", "failed_label"}
-              and type(kwargs["total"]) is int and isinstance(kwargs["failed_label"], str)):
+              and (kwargs["total"] is None or type(kwargs["total"]) is int)
+              and isinstance(kwargs["failed_label"], str)):
             from core.prompt import finish_screen_transition
             finish_screen_transition()
             display.start(args[0], **kwargs)
@@ -491,9 +492,9 @@ def _broker(manifest, request: dict):
         elif method in {"ui.wait_stop", "ui.progress_stop"} and not args:
             if floor and display.depth <= floor:
                 raise SandboxError("no active waiting scope for this plugin")
-            if method == "ui.wait_stop" and not kwargs and not display.counting:
+            if method == "ui.wait_stop" and not kwargs and not display.progressing:
                 display.stop()
-            elif (method == "ui.progress_stop" and display.counting and set(kwargs) <= {"failed"}
+            elif (method == "ui.progress_stop" and display.progressing and set(kwargs) <= {"failed"}
                   and type(kwargs.get("failed", False)) is bool):
                 display.stop(**kwargs)
             else:

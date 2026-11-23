@@ -54,8 +54,19 @@ def waiting(message: str = ""):
         display.close()
 
 
-@contextmanager
 def progress_step(message: str, failed_label: str, *, total: int):
+    if type(total) is not int or total <= 0:
+        raise ValueError("invalid progress total")
+    return _progress_scope(message, failed_label, total=total)
+
+
+def activity_step(message: str, failed_label: str):
+    """Animate work of unknown duration and keep its result on the progress page."""
+    return _progress_scope(message, failed_label, total=None)
+
+
+@contextmanager
+def _progress_scope(message, failed_label, *, total):
     """Show counted progress and yield an updater for a positive total."""
     from core.installation_progress import WaitingDisplay
     display = WaitingDisplay()
@@ -173,6 +184,7 @@ __all__ = [
     "artifact_info",
     "artifact_batch_info",
     "progress_step",
+    "activity_step",
     "host_execute", "finish_host_tool_output", "host_artifacts", "host_path_info", "host_find_executable", "host_file_version", "host_asar_directories",
     "https_request",
     "upload_file",

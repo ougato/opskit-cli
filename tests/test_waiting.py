@@ -319,3 +319,22 @@ def test_broker_keeps_counted_progress_separate_from_waiting(monkeypatch):
     call("ui.progress_stop")
     assert "100%" in output.getvalue()
     assert display.depth == 0
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_activity_progress_keeps_result_without_estimated_percentage(failed):
+    from io import StringIO
+    from rich.console import Console
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, force_interactive=True,
+                      legacy_windows=False, width=100, _environ={"TERM": "xterm"})
+    display = installation_progress.WaitingDisplay(console)
+    display.start("Check cache", failed_label="Failed")
+    assert display.progressing and not display.counting
+    assert "Check cache" in output.getvalue()
+    assert "%" not in output.getvalue()
+    with pytest.raises(ValueError, match="invalid progress count"):
+        display.update(1)
+    display.stop(failed=failed)
+    assert ("Failed" in output.getvalue()) == failed
+    assert ("100%" in output.getvalue()) != failed

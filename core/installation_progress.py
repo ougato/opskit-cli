@@ -85,7 +85,7 @@ class WaitingDisplay:
                 or not failed_label.isprintable()):
             raise ValueError("invalid progress failure label")
         if (failed_label is not None or total is not None) and (
-                failed_label is None or type(total) is not int or total <= 0):
+                failed_label is None or (total is not None and (type(total) is not int or total <= 0))):
             raise ValueError("invalid progress total")
         self.messages.append(_WaitingStep(message, failed_label, time.monotonic(), total))
         self._refresh()
@@ -110,7 +110,7 @@ class WaitingDisplay:
             from rich.markup import escape
             from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line
             width = max(_global_step_width(), _display_width(message) + 2)
-            percentage = min(99, step.completed * 100 // step.total) if failed else 100
+            percentage = (min(99, step.completed * 100 // step.total) if step.total is not None else None) if failed else 100
             row = _render_line(escape(message), percentage, time.monotonic() - started,
                                _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
             self.console.print(Text.from_markup(row), soft_wrap=True)
@@ -132,13 +132,15 @@ class WaitingDisplay:
         if failed_label is not None:
             from rich.live import Live
             from rich.markup import escape
-            from core.progress import _display_width, _global_step_width, _render_line
+            from core.progress import _display_width, _global_step_width, _render_line, _render_pulse
             from core.theme import get_color
             width = max(_global_step_width(), _display_width(label) + 2)
             color = get_color("progress.bar_active")
 
             def render():
                 elapsed = time.monotonic() - started
+                if step.total is None:
+                    return Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed, color, width))
                 percentage = min(99, step.completed * 100 // step.total)
                 return Text.from_markup(_render_line(escape(label), percentage, elapsed, color, width))
 
@@ -164,6 +166,10 @@ class WaitingDisplay:
         finally:
             self.suspended -= 1
             self._refresh()
+
+    @property
+    def progressing(self):
+        return bool(self.messages and self.messages[-1].failed_label is not None)
 
     @property
     def counting(self):
