@@ -50,6 +50,41 @@ def test_invalid_source_never_prompts(tmp_path, relative):
                            deadline=time.monotonic() + 5, checkpoint=lambda: None)
 
 
+def test_upload_connection_tries_next_checked_address(monkeypatch):
+    from core import plugin_egress
+
+    addresses = [("93.184.216.34", 443), ("93.184.216.35", 443)]
+    attempts, closed = [], []
+
+    class Socket:
+        def settimeout(self, value):
+            pass
+
+        def connect(self, address):
+            self.address = address
+            attempts.append(address)
+            if address == addresses[0]:
+                raise ConnectionResetError("connection reset")
+
+        def close(self):
+            closed.append(self.address)
+
+    class Context:
+        def wrap_socket(self, raw, server_hostname):
+            assert server_hostname == "example.com"
+            return raw
+
+    monkeypatch.setattr(plugin_egress, "allowed_addresses", lambda *args: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", address) for address in addresses
+    ])
+    monkeypatch.setattr(upload.socket, "socket", lambda *args: Socket())
+    monkeypatch.setattr(upload.ssl, "create_default_context", Context)
+
+    assert upload._connect_upload("example.com", []).address == addresses[1]
+    assert attempts == addresses
+    assert closed == addresses[:1]
+
+
 def test_put_streams_without_redirects_and_preserves_presigned_query(tmp_path, monkeypatch):
     from core import plugin_egress
     content = b"x" * (upload.CHUNK + 17)

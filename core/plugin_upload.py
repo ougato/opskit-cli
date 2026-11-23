@@ -72,17 +72,38 @@ def _snapshot(root, source, identity, snapshot, expected):
     return size, base64.b64encode(md5.digest()).decode("ascii")
 
 
+def _connect_upload(hostname, private_targets):
+    from core.plugin_egress import allowed_addresses
+
+    addresses = allowed_addresses(hostname, 443, private_targets)
+    context = ssl.create_default_context()
+    deadline = time.monotonic() + 10
+    error = None
+    for index, address in enumerate(addresses):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        raw = socket.socket(address[0], address[1], address[2])
+        try:
+            raw.settimeout(remaining / (len(addresses) - index))
+            raw.connect(address[4])
+            secured = context.wrap_socket(raw, server_hostname=hostname)
+        except OSError as exc:
+            raw.close()
+            error = exc
+        else:
+            secured.settimeout(10)
+            return secured
+    if error is not None:
+        raise error
+    raise TimeoutError("upload connection timed out")
+
+
 def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda count: None):
     target = _validate(url, "PUT", headers, b"")
-    from core.plugin_egress import allowed_addresses
-    address = allowed_addresses(target.hostname, 443, private_targets)[0]
     connection = http.client.HTTPSConnection(target.hostname, 443, timeout=10)
-    raw = socket.socket(address[0], address[1], address[2])
     try:
-        raw.settimeout(10)
-        raw.connect(address[4])
-        connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=target.hostname)
-        raw = None
+        connection.sock = _connect_upload(target.hostname, private_targets)
         path = (target.path or "/") + ("?" + target.query if target.query else "")
         connection.putrequest("PUT", path, skip_accept_encoding=True)
         for name, value in headers.items():
@@ -109,8 +130,6 @@ def _put(url, headers, snapshot, size, md5, private_targets, sent_bytes=lambda c
         return response.status
     finally:
         connection.close()
-        if raw is not None:
-            raw.close()
 
 
 def _qetag(snapshot, size):
@@ -134,15 +153,9 @@ def _verify(url, size, expected, private_targets, *, phase="lookup"):
         headers.update(url["headers"])
         url = url["url"]
     target = _validate(url, "GET", {k: v for k, v in headers.items() if k != "Accept-Encoding"}, b"")
-    from core.plugin_egress import allowed_addresses
-    address = allowed_addresses(target.hostname, 443, private_targets)[0]
     connection = http.client.HTTPSConnection(target.hostname, 443, timeout=10)
-    raw = socket.socket(address[0], address[1], address[2])
     try:
-        raw.settimeout(10)
-        raw.connect(address[4])
-        connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=target.hostname)
-        raw = None
+        connection.sock = _connect_upload(target.hostname, private_targets)
         path = (target.path or "/") + ("?" + target.query if target.query else "")
         connection.request("GET", path, headers=headers)
         response = connection.getresponse()
@@ -174,8 +187,6 @@ def _verify(url, size, expected, private_targets, *, phase="lookup"):
         return True
     finally:
         connection.close()
-        if raw is not None:
-            raw.close()
 
 
 def _transient(error):
