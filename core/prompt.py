@@ -486,8 +486,12 @@ def clear_screen() -> None:
             os.system('clear')
 
 
-def print_header(breadcrumb: list[str]) -> None:
+def print_header(breadcrumb: list[str], *, terminal_only: bool = False) -> None:
     """在清屏后渲染 Powerline 分段色块面包屑标题（复用 select 菜单的通用标题样式）"""
+    if terminal_only:
+        from core.cli import non_interactive
+        if non_interactive.get() or not console.is_terminal:
+            return
     _menu_visible.set(False)
     _render_header(breadcrumb)
     console.print()

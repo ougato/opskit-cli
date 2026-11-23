@@ -220,7 +220,7 @@ def inspect_build_directory(project, build_directory):
 
 独立进度页使用 `print_header(breadcrumb)`，框架会在标题后自动留一个空行。等待转圈和百分比进度都直接接在这一个空行后，调用方无需再插入空行。同一页中，百分比进度结束后切换为等待转圈时，由框架留一个临时空行。
 
-无总量的执行阶段使用 `with activity_step(label, failed_label):`。运行中显示往返动画和已用时间，正常退出后保留完成行，异常退出后保留失败行。菜单加载和页面过渡使用 `waiting`。
+无总量的执行阶段使用 `with activity_step(label, failed_label):`。运行中显示往返动画和已用时间，正常退出后保留完成行，异常退出后保留失败行。菜单加载和页面过渡使用 `waiting`。 CLI 使用 `print_header(breadcrumb, terminal_only=True)` 绘制终端进度标题，重定向或结构化输出保持无标题。
 
 任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。失败时保留最后显示的百分比，并附上失败状态。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
 
