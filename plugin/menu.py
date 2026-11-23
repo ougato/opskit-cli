@@ -40,6 +40,19 @@ def _group_display(members) -> tuple[str, str]:
 
 
 def _run_entry(pair, preload=None):
+    from core.installation_progress import WaitingDisplay
+    from core.prompt import screen_transition
+
+    display = WaitingDisplay()
+    display.start(t("plugin.opening"))
+    try:
+        with screen_transition(display.close):
+            return _activate_entry(pair, preload)
+    finally:
+        display.close()
+
+
+def _activate_entry(pair, preload):
     manifest, info = pair
     if preload is None:
         return info.entry()
@@ -63,8 +76,6 @@ def _entry() -> None:
     """插件工具主循环：每次进入实时重新扫描插件目录（热插拔），同 group 插件聚合为一个入口"""
     crumb = [*_BREADCRUMB, t("menu.plugin")]
     while True:
-        clear_screen()
-        print_header(crumb)
         with waiting(t("plugin.loading_inventory")):
             pairs = commands.loaded_plugins()
         ungrouped, groups = _grouped(pairs)
@@ -140,8 +151,6 @@ def _group_menu(group_id: str, group_label: str) -> None:
     """分组子菜单：列出该 group 下全部插件（每轮循环重新扫描，热插拔）"""
     while True:
         crumb = [*_BREADCRUMB, t("menu.plugin"), group_label]
-        clear_screen()
-        print_header(crumb)
         with waiting(t("plugin.loading_inventory")):
             pairs = commands.loaded_plugins()
         members = [(m, info) for m, info in pairs if m.group == group_id]
@@ -167,7 +176,7 @@ def _group_menu(group_id: str, group_label: str) -> None:
         try:
             idx = int(key) - 1
             if 0 <= idx < len(members):
-                members[idx][1].entry()
+                _run_entry(members[idx])
         except (KeyboardInterrupt, UserCancel):
             pass
 

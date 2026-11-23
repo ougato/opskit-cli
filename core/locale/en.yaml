@@ -42,6 +42,7 @@ platform:
   install_disk_unknown: "The installation target's free disk space is unknown; installation may fail."
 
 plugin:
+  opening: "Opening plugin"
   loading_inventory: "Read installed plugins"
   manage: "Plugin Management"
   install: "Install Plugin"

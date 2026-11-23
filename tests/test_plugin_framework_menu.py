@@ -9,6 +9,34 @@ from core import i18n, theme
 from plugin import menu
 
 
+def test_opening_spinner_stops_before_plugin_renders(monkeypatch):
+    from core import installation_progress, prompt
+    from core.cli import non_interactive
+    from types import SimpleNamespace
+
+    events = []
+
+    class Display:
+        def start(self, label):
+            events.append("waiting")
+
+        def close(self):
+            if events[-1] == "waiting":
+                events.append("closed")
+
+    def entry():
+        prompt.clear_screen()
+        events.append("menu")
+
+    monkeypatch.setattr(installation_progress, "WaitingDisplay", Display)
+    token = non_interactive.set(True)
+    try:
+        menu._run_entry((None, SimpleNamespace(entry=entry)))
+    finally:
+        non_interactive.reset(token)
+    assert events == ["waiting", "closed", "menu"]
+
+
 def test_update_all_never_opens_trust_confirmation(monkeypatch):
     from core.plugin import PluginManifest
 

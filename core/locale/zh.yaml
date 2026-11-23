@@ -42,6 +42,7 @@ platform:
   install_disk_unknown: "无法确定安装目标的磁盘剩余空间，安装可能失败。"
 
 plugin:
+  opening: "正在打开插件"
   loading_inventory: "读取已安装插件"
   manage: "插件管理"
   install: "安装插件"

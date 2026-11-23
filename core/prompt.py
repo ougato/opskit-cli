@@ -20,6 +20,16 @@ console = Console()
 
 _input_guard = ContextVar("prompt_input_guard", default=None)
 _input_wait_scope = ContextVar("prompt_input_wait_scope", default=None)
+_screen_transition = ContextVar("prompt_screen_transition", default=None)
+
+
+@contextmanager
+def screen_transition(on_render):
+    token = _screen_transition.set(on_render)
+    try:
+        yield
+    finally:
+        _screen_transition.reset(token)
 
 
 @contextmanager
@@ -452,7 +462,11 @@ def _render_info_lines(lines: list[str] | None, *, markup: bool = True) -> None:
 # ─── 公开 API ─────────────────────────────────────────────────────────────────
 
 def clear_screen() -> None:
-    """清除终端屏幕（跨平台）"""
+    """Clear the current screen before drawing another one."""
+    on_render = _screen_transition.get()
+    if on_render is not None:
+        _screen_transition.set(None)
+        on_render()
     from core.cli import non_interactive
     if not non_interactive.get():
         if os.name == 'nt':
