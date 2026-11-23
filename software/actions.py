@@ -139,16 +139,15 @@ def ensure_installed(key: str) -> bool:
     """插件 SDK 入口：检测软件是否已装，未装则用平台统一安装流程安装推荐版本。
 
     安全边界：只允许安装注册表内的配方（白名单），当前平台不支持直接失败，
-    插件无法借此执行任意安装逻辑。展示复用平台安装 UI（spinner 取版本 →
+    插件无法借此执行任意安装逻辑。展示复用平台安装 UI（查询版本 →
     recipe 自带 MultiStepProgress 进度 → 统一成功 / 失败反馈），与软件菜单
     安装流程一致。已装时静默返回 True，不重复安装。
     """
     from core.feedback import report_failure
     from core.i18n import t
     from core.platform import get_platform
-    from core.progress import spinner
+    from core.sdk import activity_step
     from core.recipe_utils import recipe_display_name
-    from core.theme import console as base_console
     from core.theme import print_error
     from core.theme import print_success
     from software import registry
@@ -165,15 +164,16 @@ def ensure_installed(key: str) -> bool:
         instance.activate()
         return True
     name = recipe_display_name(cls)
-    base_console.print()
-    with spinner(t("software.fetching_versions")):
-        try:
+    try:
+        with activity_step(t("software.fetching_versions"), t("progress.failed")):
             versions = instance.versions()
-        except Exception as e:  # noqa: BLE001
-            report_failure(e, fail_key="install.failed", name=name, software=key, action="versions")
-            return False
-    if not versions:
+            if not versions:
+                raise LookupError(t("software.no_versions"))
+    except LookupError:
         print_error(t("software.no_versions"))
+        return False
+    except Exception as e:  # noqa: BLE001
+        report_failure(e, fail_key="install.failed", name=name, software=key, action="versions")
         return False
     r = execute_install(instance, versions[0])
     if r.ok:

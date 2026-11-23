@@ -7,6 +7,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from core.i18n import t
+from core.sdk import waiting
 from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel, console as base_console
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
@@ -349,8 +350,7 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
         return
 
     if getattr(cls, "has_install_version_selection", True):
-        from core.progress import spinner
-        with spinner(t("software.fetching_versions")):
+        with waiting(t("software.fetching_versions")):
             try:
                 versions = instance.versions()
             except Exception:
@@ -407,7 +407,6 @@ def _do_install(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> None:
     """版本选择器安装流程：subtitle 显示已安装版本，直接列出版本，选中即装，无二次确认"""
-    from core.progress import spinner
 
     _name = recipe_display_name(cls)
 
@@ -423,7 +422,7 @@ def _do_install_version_picker(breadcrumb: list[str], cls: type, instance) -> No
         existing = instance.detect()
         installed_set = {existing} if existing else set()
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -647,7 +646,6 @@ def _do_switch(breadcrumb: list[str], cls: type, instance) -> None:
 
 def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     """执行升级流程"""
-    from core.progress import spinner
     from software.resolver import resolve_deps
 
     _name = recipe_display_name(cls)
@@ -673,7 +671,7 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
         pause()
         return
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -859,8 +857,7 @@ def show_install() -> None:
             return
 
     # 版本选择
-    from core.progress import spinner
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:
@@ -1085,7 +1082,6 @@ def show_upgrade() -> None:
     from software.registry import all_recipes
     from core.platform import get_platform
     from software.base import InstallError
-    from core.progress import spinner
     from core.installed_cache import get_detected
 
     info = get_platform()
@@ -1123,7 +1119,7 @@ def show_upgrade() -> None:
     cls, instance, current_ver = installed[int(key) - 1]
     _upgname = recipe_display_name(cls)
 
-    with spinner(t("software.fetching_versions")):
+    with waiting(t("software.fetching_versions")):
         try:
             versions = instance.versions()
         except Exception:

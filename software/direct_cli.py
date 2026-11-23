@@ -6,6 +6,7 @@ callbacks, allows tests to replace them, and never imports the entry module.
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from typing import Any, Protocol
 
 import typer
@@ -86,18 +87,27 @@ def register(sw_app: typer.Typer, translate, host: SoftwareHost):
     def sw_versions(
         name: str = typer.Argument(..., help=_ct("sw_name")),
     ) -> None:
-        from core.cli import output_mode, emit
+        from core.cli import output_mode, emit, non_interactive
+        from core.prompt import print_header
+        from core.sdk import activity_step
         if output_mode.get() != "json":
             host._boot()
         cls, instance = host._get_recipe_for_direct(name)
         if getattr(cls, "has_submenu", False):
             host._direct_fail(host.t("cli.error.submenu_recipe", name=name), _EXIT_USAGE)
+        scope = nullcontext()
+        if output_mode.get() == "text" and not non_interactive.get() and host.console.is_terminal:
+            print_header(["OpsKit", host.t("menu.software"), host._recipe_name(cls)])
+            scope = activity_step(host.t("software.fetching_versions"), host.t("progress.failed"))
         try:
-            versions = instance.versions()
+            with scope:
+                versions = instance.versions()
+                if not versions:
+                    raise LookupError
+        except LookupError:
+            host._direct_fail(host.t("software.no_versions"), _EXIT_RUNTIME)
         except Exception as e:
             host._direct_fail(host.t("error.unknown", error=str(e)), _EXIT_RUNTIME)
-        if not versions:
-            host._direct_fail(host.t("software.no_versions"), _EXIT_RUNTIME)
         if not getattr(cls, "has_install_version_selection", True):
             if output_mode.get() == "json":
                 emit({"name": cls.key, "version_selection": False, "versions": [], "source": "system_or_managed"})
