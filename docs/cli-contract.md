@@ -31,7 +31,7 @@ ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析�
 - `network public-ip --timeout 10`：整个候选 API 查询共用预算，响应最多 1 KiB，仅接受非压缩 IP 文本；超时或无有效结果非零退出。请求在独立进程中执行，父进程可取消和回收；必要回收耗时另计。
 
 端口扫描在菜单和交互终端中按已完成的探测数显示进度，开放和关闭的端口都计入。JSON 输出只包含扫描结果或错误。
-下载测速和公网 IP 查询在菜单和交互终端中使用活动进度条，执行期间显示动画和耗时，结束后保留结果行。JSON 输出保持纯数据。
+Ping、DNS 正反向解析、下载测速和公网 IP 查询在菜单和交互终端中使用活动进度条，执行期间显示动画和耗时，结束后保留结果行。JSON 输出保持纯数据。
 
 命令示例：`opskit --output json monitor memory --once`；`opskit --output json network dns localhost --family ipv4`。查询结果不会启动主菜单或后台更新。
 

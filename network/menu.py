@@ -135,20 +135,19 @@ def show_ping(host: str | None = None, pause_after: bool = True) -> None:
         return
 
     clear_screen()
-    from core.progress import spinner
+    print_header(["OpsKit", t("menu.network"), t("network.ping")])
     kill_ref: list = []
-    result_ref: list = []
-
-    with _ctrlc_guard(kill_ref=kill_ref) as interrupted:
-        with spinner(f"ping {host}...", raw=True):
-            result_ref.append(ping(host, count=4, kill_ref=kill_ref))
-
-    if interrupted[0]:
+    try:
+        with _ctrlc_guard(kill_ref=kill_ref) as interrupted, activity_step(t("network.ping"), t("progress.failed")):
+            result = ping(host, count=4, kill_ref=kill_ref)
+            if interrupted[0]:
+                raise UserCancel
+            if not result.reachable:
+                raise LookupError
+    except UserCancel:
         return
-
-    result = result_ref[0] if result_ref else None
-    if result is None:
-        return
+    except LookupError:
+        pass
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     muted = get_color("muted")
@@ -203,88 +202,47 @@ def show_dns(host: str | None = None, pause_after: bool = True) -> None:
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")
 
-    # 非交互模式：host 已传入，自动判断正查 / 反查
+    breadcrumb = ["OpsKit", t("menu.network"), t("network.dns")]
     if host:
-        import re as _re
-        _is_ip = bool(_re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host))
-        clear_screen()
-        from core.progress import spinner
-        if _is_ip:
-            with spinner(f"PTR: {host}"):
-                hostname = dns_reverse(host)
-            if hostname:
-                console.print(f"\n[{success}]{host}[/{success}] → [{title_color}]{hostname}[/{title_color}]")
-            else:
-                print_error(t("network.dns_not_found"))
-        else:
-            with spinner(f"{t('network.dns')}: {host}"):
-                result = dns_lookup(host)
-            if result.addresses:
-                console.print(f"\n[{title_color}]{host}[/{title_color}]")
-                for addr in result.addresses:
-                    console.print(f"  [{success}]{addr}[/{success}]")
-            else:
-                print_error(t("network.dns_not_found"))
-        if pause_after:
-            pause()
-        return
-
-    # 交互模式：选择正查 / 反查
-    choices = [
-        {"key": "1", "label": t("network.dns_forward")},
-        {"key": "2", "label": t("network.dns_reverse")},
-    ]
-    try:
-        key = select(
-            breadcrumb=["OpsKit", t("menu.network"), t("network.dns")],
-            subtitle="",
-            choices=choices,
-            theme_key=_THEME_KEY,
-            back_label=f"{get_icon('back')} {t('menu.back')}",
-        )
-    except UserCancel:
-        return
-    if not key:
-        return
-
-    if key == "1":
+        from ipaddress import ip_address
         try:
-            host = text_input(
-                breadcrumb=["OpsKit", t("menu.network"), t("network.dns")],
-                prompt=t("network.enter_host"),
-            )
+            ip_address(host)
+        except ValueError:
+            reverse = False
+        else:
+            reverse = True
+    else:
+        choices = [
+            {"key": "1", "label": t("network.dns_forward")},
+            {"key": "2", "label": t("network.dns_reverse")},
+        ]
+        try:
+            key = select(breadcrumb=breadcrumb, subtitle="", choices=choices, theme_key=_THEME_KEY,
+                         back_label=f"{get_icon('back')} {t('menu.back')}")
+            if not key:
+                return
+            reverse = key == "2"
+            host = text_input(breadcrumb=breadcrumb,
+                              prompt=t("network.enter_ip" if reverse else "network.enter_host"))
         except UserCancel:
             return
         if not host:
             return
-        clear_screen()
-        from core.progress import spinner
-        with spinner(f"{t('network.dns')}: {host}"):
-            result = dns_lookup(host)
-        if result.addresses:
-            console.print(f"\n[{title_color}]{host}[/{title_color}]")
-            for addr in result.addresses:
-                console.print(f"  [{success}]{addr}[/{success}]")
-        else:
-            print_error(t("network.dns_not_found"))
+
+    clear_screen()
+    print_header(breadcrumb)
+    action = t("network.dns_reverse" if reverse else "network.dns_forward")
+    try:
+        with activity_step(action, t("progress.failed")):
+            addresses = [dns_reverse(host)] if reverse else dns_lookup(host).addresses
+            if not addresses or not addresses[0]:
+                raise LookupError
+    except (LookupError, ValueError):
+        print_error(t("network.dns_not_found"))
     else:
-        try:
-            ip = text_input(
-                breadcrumb=["OpsKit", t("menu.network"), t("network.dns")],
-                prompt=t("network.enter_ip"),
-            )
-        except UserCancel:
-            return
-        if not ip:
-            return
-        clear_screen()
-        from core.progress import spinner
-        with spinner(f"PTR: {ip}"):
-            hostname = dns_reverse(ip)
-        if hostname:
-            console.print(f"\n[{success}]{ip}[/{success}] → [{title_color}]{hostname}[/{title_color}]")
-        else:
-            print_error(t("network.dns_not_found"))
+        console.print(f"\n[{title_color}]{host}[/{title_color}]")
+        for address in addresses:
+            console.print(f"  [{success}]{address}[/{success}]")
     if pause_after:
         pause()
 

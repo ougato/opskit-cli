@@ -55,10 +55,11 @@ def register(app):
     def ping(host: str = typer.Argument(None), count: int = typer.Option(4, "--count", min=1, max=10000), timeout: float = typer.Option(30, "--timeout", min=0.1, max=3600)):
         if missing_host(host, "show_ping"):
             return
-        result = commands.ping(host, count=count, timeout=timeout, strict=True)
-        if not result.reachable:
-            emit(result, error={"code": 1, "message": "ping target is unreachable"})
-            raise typer.Exit(1)
+        with _activity("network.ping", "network.ping"):
+            result = commands.ping(host, count=count, timeout=timeout, strict=True)
+            if not result.reachable:
+                emit(result, error={"code": 1, "message": "ping target is unreachable"})
+                raise typer.Exit(1)
         emit(result)
 
     @app.command("traceroute")
@@ -110,14 +111,16 @@ def register(app):
         if reverse:
             if family != "any":
                 fail("--family applies only to forward DNS; reverse DNS requires any", 2)
-            result = commands.dns_reverse(host, timeout=timeout)
-            if not result:
-                fail("PTR record not found")
+            with _activity("network.dns", "network.dns_reverse"):
+                result = commands.dns_reverse(host, timeout=timeout)
+                if not result:
+                    fail("PTR record not found")
             emit({"address": host, "hostname": result})
         else:
-            result = commands.dns_lookup(host, {"any": socket.AF_UNSPEC, "ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}[family], timeout=timeout)
-            if not result.addresses:
-                fail("DNS lookup failed")
+            with _activity("network.dns", "network.dns_forward"):
+                result = commands.dns_lookup(host, {"any": socket.AF_UNSPEC, "ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}[family], timeout=timeout)
+                if not result.addresses:
+                    fail("DNS lookup failed")
             emit(result)
 
     @app.command("port-scan")
