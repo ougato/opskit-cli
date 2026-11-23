@@ -111,6 +111,9 @@ service:
   installing: "Install service plugin"
   unavailable: "Service {service} unavailable, install and trust the provider plugin first"
 
+progress:
+  failed: "Failed"
+
 prompt:
   waiting: "Working"
   confirm_yes: "[y/N]"

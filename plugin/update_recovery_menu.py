@@ -4,7 +4,7 @@ from rich.markup import escape
 from core.i18n import t
 from core import plugin_update_recovery as recovery
 from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
-from core.sdk import waiting
+from core.sdk import activity_step, waiting
 from core.theme import print_error, print_info, print_success, get_icon
 
 
@@ -34,7 +34,7 @@ def entry():
         if confirm(breadcrumb, t("confirm_ui.rollback"), info_lines=[*details, t("confirm_ui.rollback_detail")]):
             clear_screen()
             print_header(breadcrumb)
-            with waiting(t("confirm_ui.rollback")):
+            with activity_step(t("confirm_ui.rollback"), t("progress.failed")):
                 recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.update_recovery.completed"))
             pause()

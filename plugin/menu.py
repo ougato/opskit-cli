@@ -5,7 +5,7 @@ from rich.markup import escape
 
 from core.i18n import current_lang, t
 from core.prompt import select, text_input, confirm, pause, clear_screen, print_header, UserCancel, console
-from core.sdk import waiting
+from core.sdk import activity_step, waiting
 from core.theme import get_color, get_icon, print_success, print_error, print_info, print_warning
 
 from plugin import commands
@@ -598,7 +598,7 @@ def _remove() -> None:
         clear_screen()
         print_header([*_BREADCRUMB, t("menu.plugin"), t("plugin.manage"), t("plugin.remove"),
                       _display_name(manifest)])
-        with waiting(t("confirm_ui.uninstall")):
+        with activity_step(t("confirm_ui.uninstall"), t("progress.failed")):
             commands.remove(manifest)
     except ResourceBusyError:
         print_error(t("plugin_native.lifecycle.plugin_busy"))

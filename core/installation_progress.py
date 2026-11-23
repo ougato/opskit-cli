@@ -103,7 +103,8 @@ class WaitingDisplay:
         step = self.messages.pop()
         message, failed_label, started = step.label, step.failed_label, step.started
         failed = failed or (step.total is not None and step.completed != step.total)
-        if failed_label is not None:
+        from core.cli import output_mode
+        if failed_label is not None and output_mode.get() != "json":
             if self.status is not None:
                 self.status.stop()
                 self.status = None

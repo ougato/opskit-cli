@@ -2,7 +2,7 @@
 from core.i18n import t
 from core.plugin_capabilities import CapabilityAuthority, CapabilityDenied, _key, capability_info_lines
 from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
-from core.sdk import waiting
+from core.sdk import activity_step, waiting
 from core.theme import print_info, print_error, print_success, get_icon
 from rich.markup import escape
 
@@ -35,7 +35,7 @@ def entry():
                        info_lines=details):
                 clear_screen()
                 print_header(breadcrumb)
-                with waiting(t("confirm_ui.revoke")):
+                with activity_step(t("confirm_ui.revoke"), t("progress.failed")):
                     authority.revoke(request)
                 print_success(t("plugin_native.revoked"))
                 pause()

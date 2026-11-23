@@ -2,7 +2,7 @@
 from core import windows_profile_recovery as recovery
 from core.i18n import t
 from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
-from core.sdk import waiting
+from core.sdk import activity_step, waiting
 from core.theme import print_info, print_error, print_success, get_icon
 
 
@@ -34,7 +34,7 @@ def entry():
                   transaction=item["transaction"], digest=item["record_sha256"])]):
             clear_screen()
             print_header(breadcrumb)
-            with waiting(t("confirm_ui.profile")):
+            with activity_step(t("confirm_ui.profile"), t("progress.failed")):
                 recovery.recover(item["transaction"], item["record_sha256"])
             print_success(t("plugin_native.profile_recovery." + result_key))
             pause()

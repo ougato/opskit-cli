@@ -2,7 +2,7 @@
 from core import native_catalog_cleanup as cleanup
 from core.i18n import t
 from core.prompt import select, confirm, pause, UserCancel, clear_screen, print_header
-from core.sdk import waiting
+from core.sdk import activity_step, waiting
 from core.theme import print_info, print_error, print_success, get_icon
 
 
@@ -40,7 +40,7 @@ def entry():
                   digest=item["record_sha256"])]):
             clear_screen()
             print_header(breadcrumb)
-            with waiting(t("confirm_ui.cache")):
+            with activity_step(t("confirm_ui.cache"), t("progress.failed")):
                 cleanup.collect(kind, item["object"], item["record_sha256"])
             print_success(t(prefix + "completed"))
             pause()

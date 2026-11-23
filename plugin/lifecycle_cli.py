@@ -11,6 +11,7 @@ from core.cli import emit, fail, guarded, output_mode
 from core.i18n import t
 from core.plugin_integrity import CHECK_MISMATCH, verify_checksums
 from core.plugin_trust import compute_fingerprint, invalidate
+from core.sdk import activity_step
 from plugin import commands
 
 
@@ -100,7 +101,9 @@ def register(app, translate=None):
                        record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_update_recovery import recover
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.rollback"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.update_recovery_failed"), 1)
 
@@ -123,7 +126,9 @@ def register(app, translate=None):
         from core.windows_profile_recovery import recover
         from core.native_sandbox import NativeSandboxError
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.profile"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except NativeSandboxError as error:
             fail(str(error), 1)
         except (OSError, ValueError, RuntimeError):
@@ -144,7 +149,9 @@ def register(app, translate=None):
                                  record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.plugin_workspace_recovery import recover
         try:
-            emit(recover(transaction, record_sha256))
+            with activity_step(t("confirm_ui.workspace"), t("progress.failed")):
+                result = recover(transaction, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.workspace_recovery_failed"), 1)
 
@@ -165,7 +172,9 @@ def register(app, translate=None):
                            record_sha256: str = typer.Option(..., "--record-sha256", help=translate("lifecycle.record_digest_help"))):
         from core.native_catalog_cleanup import collect
         try:
-            emit(collect(catalog, object_id, record_sha256))
+            with activity_step(t("confirm_ui.cache"), t("progress.failed")):
+                result = collect(catalog, object_id, record_sha256)
+            emit(result)
         except (OSError, ValueError, RuntimeError):
             fail(t("plugin_native.lifecycle.cache_cleanup_failed"), 1)
 
@@ -329,7 +338,8 @@ def register(app, translate=None):
         from core.prompt import confirm
         if not confirm(breadcrumb=["OpsKit", t("menu.plugin")], prompt=t("confirm_ui.uninstall"), info_lines=[escape(name), t("confirm_ui.plugin_delete")]):
             fail(t("plugin_native.lifecycle.remove_cancelled"))
-        commands.remove(manifest)
+        with activity_step(t("confirm_ui.uninstall"), t("progress.failed")):
+            commands.remove(manifest)
         emit({"name": name, "removed": True, "state_preserved": True})
 
     @app.command("enable", help=translate("lifecycle.enable_help"))
