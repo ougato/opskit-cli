@@ -609,9 +609,12 @@ def _broker(manifest, request: dict):
             progress_requested = isinstance(args[-1], dict) and "progress" in args[-1]
             lines = getattr(_invocations, "tool_output", None)
             with display.suspend() if display is not None and progress_requested else nullcontext():
-                return execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
+                result = execute(manifest.name, fingerprint, *args, host_work_scope=_input_wait_budget,
                                output_start=output_start, progress_console=console,
                                deferred_output=lines.append if lines is not None else None, **context)
+                if display is not None and progress_requested and console.is_terminal:
+                    display.after_progress = True
+                return result
         if method == "host.path_info":
             from core.plugin_host_tools import path_info
             return path_info(manifest.name, fingerprint, *args, **context)
