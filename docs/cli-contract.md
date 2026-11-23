@@ -34,6 +34,8 @@ ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析�
 Ping、DNS 正反向解析、下载测速和公网 IP 查询在菜单和交互终端中使用活动进度条，执行期间显示动画和耗时，结束后保留结果行。JSON 输出保持纯数据。
 路由追踪也使用活动进度条，同时实时输出各跳的结果。到达目标时显示完成，未到达或中途出错时保留失败行。JSON 模式继续逐条输出节点和最终结果。
 
+监控实时页面在首轮采样时显示临时等待提示，数据就绪后切换到实时画面。磁盘菜单和交互终端的单次磁盘查询保留采样结果行。连续 CLI 采样和 JSON 输出直接返回数据。
+
 命令示例：`opskit --output json monitor memory --once`；`opskit --output json network dns localhost --family ipv4`。查询结果不会启动主菜单或后台更新。
 
 网络采样结果（monitor network及dashboard.net）使用rate_schema_version: 2，外层CLI envelope仍为schema_version: 1。bytes_sent/bytes_recv是原始累计bytes，speed_send/speed_recv为窗口内bytes/s；sampled_at为本次计数读取后的UTC时间，各接口共用一次monotonic观察时间。window_seconds表示相邻成功观察的实际间隔，不是请求interval。interval仍是采样完成后的等待时间。

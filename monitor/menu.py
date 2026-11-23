@@ -13,8 +13,9 @@ from rich.table import Table
 from rich.text import Text
 
 from core.i18n import t
-from core.prompt import select, pause, clear_screen, UserCancel, _kbhit, console as base_console
-from core.theme import get_color, get_icon, get_panel_config
+from core.prompt import select, pause, clear_screen, print_header, UserCancel, _kbhit, console as base_console
+from core.sdk import activity_step, waiting
+from core.theme import get_color, get_icon, get_panel_config, print_error
 
 console = Console()
 
@@ -68,7 +69,11 @@ def _live_loop_scoped(render_fn) -> None:
                 _old_term = None
 
     try:
-        with Live(_grouped(), refresh_per_second=1, screen=True) as live:
+        with waiting(t("monitor.first_sample")):
+            initial = _grouped()
+        if _stop[0]:
+            return
+        with Live(initial, refresh_per_second=1, screen=True) as live:
             if _old_term is not None:
                 try:
                     tty.setcbreak(_fd)
@@ -364,9 +369,16 @@ def show_disk_detail(pause_after: bool = True) -> None:
     success = get_color("success")
     warning = get_color("warning")
     error_c = get_color("error")
-    title = f"{t('menu.monitor')} — {t('monitor.disk')}"
-
-    disks = get_disks()
+    clear_screen()
+    print_header(["OpsKit", t("menu.monitor"), t("monitor.disk")])
+    try:
+        with activity_step(t("monitor.sample_disks"), t("progress.failed")):
+            disks = get_disks()
+    except (OSError, RuntimeError):
+        print_error(t("monitor.disk_sample_failed"))
+        if pause_after:
+            pause()
+        return
     tbl = Table(
         box=rich_box.SIMPLE,
         show_header=True,
@@ -393,8 +405,7 @@ def show_disk_detail(pause_after: bool = True) -> None:
             f"[{c}]{fmt_percent_bar(d.percent, 20)}[/{c}]",
         )
 
-    clear_screen()
-    base_console.print(_titled(tbl, title))
+    base_console.print(tbl)
     if pause_after:
         pause()
 

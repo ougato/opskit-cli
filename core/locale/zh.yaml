@@ -768,6 +768,9 @@ wireguard:
     xray_zip_missing: "zip 中未找到 xray 二进制文件"
 
 monitor:
+  first_sample: "读取首轮监控数据"
+  sample_disks: "采集磁盘数据"
+  disk_sample_failed: "无法读取磁盘分区数据"
   overview: "概览仪表盘"
   cpu: "CPU 详情"
   memory: "内存"

@@ -769,6 +769,9 @@ wireguard:
     xray_zip_missing: "xray binary not found in zip"
 
 monitor:
+  first_sample: "Read the first monitoring sample"
+  sample_disks: "Sample disks"
+  disk_sample_failed: "Could not read disk partition data"
   overview: "Overview Dashboard"
   cpu: "CPU Detail"
   memory: "Memory"
