@@ -622,6 +622,23 @@ def test_software_pick_and_act_paginates_over_nine(monkeypatch) -> None:
     assert selected == ["fake9"]
 
 
+def test_redis_windows_versions_require_matching_install_archive(monkeypatch):
+    import httpx
+    from software._shared import version_resolver
+    from software.recipes.redis import common
+
+    releases = [
+        {"tag_name": "8.8.4", "assets": [{"name": "Redis-8.8.4-Windows-x64-cygwin.zip"}]},
+        {"tag_name": "8.8.3", "assets": [{"name": "Redis-8.8.3-Windows-x64-msys2.zip"}]},
+        {"tag_name": "8.10.2", "assets": [{"name": "Redis-8.10.2-Windows-x64-msys2.zip"}]},
+    ]
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr(version_resolver, "resolve_versions", lambda key, fetch, fallback: fetch())
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: httpx.Response(200, json=releases, request=httpx.Request("GET", url)))
+
+    assert common.version_list() == ["8.10.2", "8.8.3"]
+
+
 def test_rustdesk_xui_tailscale_labels_and_icons() -> None:
     from core.i18n import init as i18n_init, t
     from core.theme import get_icon, init as theme_init

@@ -332,9 +332,28 @@ def download_redis_macos(version: str, dest: Path) -> Path:
 # ─── 版本列表 ─────────────────────────────────────────────────────────────────
 
 def version_list() -> list[str]:
+    import re
+    import sys
     from core.constants import TIMEOUT_VERSION_FETCH
     from software._shared.version_resolver import resolve_versions
-    from .constants import REDIS_VERSIONS_API_URL, REDIS_VERSIONS_FALLBACK
+    from .constants import (REDIS_VERSIONS_API_URL, REDIS_VERSIONS_FALLBACK,
+                            REDIS_WINDOWS_RELEASES_API, REDIS_WINDOWS_VERSIONS_FALLBACK)
+
+    def _fetch_windows() -> list[str]:
+        import httpx
+        resp = httpx.get(REDIS_WINDOWS_RELEASES_API, params={"per_page": 100}, timeout=TIMEOUT_VERSION_FETCH)
+        resp.raise_for_status()
+        versions = set()
+        for item in resp.json():
+            tag = item.get("tag_name", "")
+            if item.get("draft") or item.get("prerelease") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", tag):
+                continue
+            if any(asset.get("name") == f"Redis-{tag}-Windows-x64-msys2.zip" for asset in item.get("assets", [])):
+                versions.add(tag)
+        return sorted(versions, key=lambda version: tuple(map(int, version.split("."))), reverse=True)
+
+    if sys.platform == "win32":
+        return resolve_versions("redis-windows", _fetch_windows, REDIS_WINDOWS_VERSIONS_FALLBACK)
 
     def _fetch() -> list[str]:
         import httpx
