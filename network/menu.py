@@ -5,7 +5,7 @@ import ctypes
 import signal
 import sys
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from typing import Iterator
 
 from rich import box as rich_box
@@ -166,6 +166,7 @@ def show_ping(host: str | None = None, pause_after: bool = True) -> None:
 
 def show_traceroute(host: str | None = None, pause_after: bool = True) -> None:
     from network.commands import traceroute
+    from core.theme import console as progress_console
 
     if not host:
         try:
@@ -180,18 +181,26 @@ def show_traceroute(host: str | None = None, pause_after: bool = True) -> None:
         return
 
     clear_screen()
-    title_color = get_color(f"modules.{_THEME_KEY}.title")
-    muted = get_color("muted")
-    console.print(f"\n[{title_color}]{t('network.traceroute')}: {host}[/{title_color}]\n")
-
+    print_header(["OpsKit", t("menu.network"), t("network.traceroute")])
     kill_ref: list = []
-
-    with _ctrlc_guard(kill_ref=kill_ref) as interrupted:
-        for line in traceroute(host, kill_ref=kill_ref):
-            console.print(f"[{muted}]{line}[/{muted}]")
-
-    if interrupted[0]:
-        return
+    with _ctrlc_guard(kill_ref=kill_ref) as interrupted, closing(traceroute(host, kill_ref=kill_ref)) as lines:
+        try:
+            with activity_step(t("network.traceroute"), t("progress.failed")):
+                while not interrupted[0]:
+                    try:
+                        line = next(lines)
+                    except StopIteration as done:
+                        if done.value and done.value["reached"]:
+                            break
+                        raise LookupError from None
+                    progress_console.print(line, markup=False, highlight=False)
+                if interrupted[0]:
+                    raise UserCancel
+        except UserCancel:
+            return
+        except LookupError:
+            if interrupted[0]:
+                return
     if pause_after:
         pause()
 

@@ -32,6 +32,7 @@ ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析�
 
 端口扫描在菜单和交互终端中按已完成的探测数显示进度，开放和关闭的端口都计入。JSON 输出只包含扫描结果或错误。
 Ping、DNS 正反向解析、下载测速和公网 IP 查询在菜单和交互终端中使用活动进度条，执行期间显示动画和耗时，结束后保留结果行。JSON 输出保持纯数据。
+路由追踪也使用活动进度条，同时实时输出各跳的结果。到达目标时显示完成，未到达或中途出错时保留失败行。JSON 模式继续逐条输出节点和最终结果。
 
 命令示例：`opskit --output json monitor memory --once`；`opskit --output json network dns localhost --family ipv4`。查询结果不会启动主菜单或后台更新。
 

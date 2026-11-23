@@ -69,17 +69,25 @@ def register(app):
             return
         iterator = commands.traceroute(host, max_hops=max_hops, timeout=timeout, strict=True)
         try:
-            while True:
-                try:
-                    hop = next(iterator)
-                except StopIteration as done:
-                    result = {"event": "complete", **done.value}
-                    if not result["reached"]:
-                        emit(result, error={"code": 1, "message": "traceroute target was not reached"})
-                        raise typer.Exit(1)
-                    emit(result)
-                    break
-                emit({"host": host, "hop": hop})
+            from core.theme import console as progress_console
+            terminal = output_mode.get() == "text" and console.is_terminal
+            with _activity("network.traceroute", "network.traceroute"):
+                while True:
+                    try:
+                        hop = next(iterator)
+                    except StopIteration as done:
+                        result = {"event": "complete", **done.value}
+                        if not result["reached"]:
+                            raise LookupError from None
+                        break
+                    if terminal:
+                        progress_console.print(hop, markup=False, highlight=False)
+                    else:
+                        emit({"host": host, "hop": hop})
+            emit(result)
+        except LookupError:
+            emit(result, error={"code": 1, "message": "traceroute target was not reached"})
+            raise typer.Exit(1)
         except typer.Exit:
             raise
         except KeyboardInterrupt:
