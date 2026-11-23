@@ -141,6 +141,7 @@ RustDesk 另验证 TCP 21115/21116/21117 和 UDP 21116 的本机监听与 hbbs/h
 `software list/search/installed/versions` 支持 JSON；list/search 支持 `--category` 与 `--platform linux|windows|darwin`。跨平台查询不运行外平台检测，安装状态为 null。`software capabilities NAME` 区分真实脚本化安装、交互向导和分类，未完成的向导不标为已支持。
 
 菜单读取可选版本时显示临时等待提示。交互终端直接查询版本，以及插件自动安装依赖时查询推荐版本，使用活动进度条并保留结果行。JSON 版本查询直接返回数据。
+交互终端直接执行软件安装、卸载、升级或切换时，在阶段进度前显示一次软件及操作标题，并与第一行进度间隔一行。
 
 `software install wg_client --token-file FILE`，FILE 为 `-` 时从 stdin 读取；与 `--token` 互斥，拒绝空值和超过 64 KiB 的输入。 文件输入通过同一个描述符验证单硬链接普通文件、大小及身份，读取前后复核路径、文件大小及时间元数据；拒绝符号链接/重解析点及已观察到的替换或内容变更。POSIX打开使用nonblocking/no-follow，防止替换成FIFO后等待写入者；UTF-8编码错误返回固定提示，不包含内容。stdin保留字节上限。读取前后还会在同一描述符上核验私密权限：Linux要求当前有效用户所有且group/other权限位全部为0；macOS还拒绝所有存在的扩展ACL（包括限制性ACL），不尝试近似解释其顺序；Windows仅接受当前用户、SYSTEM或Administrators所有，DACL授权仅限这些主体和经核实owner的OWNER RIGHTS，不支持的ACE及权限查询失败明确拒绝。不自动chmod或修改ACL。该边界不防御管理员/同账户恶意写入者，不提供原子内容快照；父目录保护、网络文件系统及完整敏感导出事务仍待验收，可使用显式stdin避免文件权限兼容问题。
 
