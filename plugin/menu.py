@@ -302,7 +302,7 @@ def confirm_trust(manifest, source: str = "", branch: str | None = None) -> bool
         return False
     clear_screen()
     print_header([*crumb, t("confirm_ui.trust")])
-    with waiting(t("plugin_native.lifecycle.trust_save_wait")):
+    with activity_step(t("plugin_native.lifecycle.trust_save_wait"), t("progress.failed")):
         commands.grant_trust(manifest, source, branch, expected_fingerprint=fingerprint)
     return True
 
