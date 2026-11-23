@@ -729,8 +729,6 @@ def _do_upgrade(breadcrumb: list[str], cls: type, instance) -> None:
     clear_screen()
     print_header([*breadcrumb, t("software.upgrade")])
     already = new_version in upg_installed_set
-    if not already:
-        # 未安装 → 走安装升级流程
     r = execute_upgrade(instance, new_version, already_installed=already)
     if r.ok:
         if r.switched:
