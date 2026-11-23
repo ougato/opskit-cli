@@ -30,6 +30,8 @@ ping 的 timeout 包含主机解析和实际命令执行；数字 IP 不解析�
 - `network speed-test --url URL --duration 15`：预算包含进程启动、DNS、连接、跳转和读取。用原始响应字节计数，避免自动解压；最多 5 次跳转、1 GiB，达到字节上限返回 limit_reached。测量窗口结束时使用最后确认的累计字节（进度最多每 0.1 秒更新），elapsed_seconds 包含启动/请求与回收，速率据此计算。无数据/请求失败非零退出，不把空结果当成功。取消回收进程；菜单事件取消保留最后确认的速率。
 - `network public-ip --timeout 10`：整个候选 API 查询共用预算，响应最多 1 KiB，仅接受非压缩 IP 文本；超时或无有效结果非零退出。请求在独立进程中执行，父进程可取消和回收；必要回收耗时另计。
 
+端口扫描在菜单和交互终端中按已完成的探测数显示进度，开放和关闭的端口都计入。JSON 输出只包含扫描结果或错误。
+
 命令示例：`opskit --output json monitor memory --once`；`opskit --output json network dns localhost --family ipv4`。查询结果不会启动主菜单或后台更新。
 
 网络采样结果（monitor network及dashboard.net）使用rate_schema_version: 2，外层CLI envelope仍为schema_version: 1。bytes_sent/bytes_recv是原始累计bytes，speed_send/speed_recv为窗口内bytes/s；sampled_at为本次计数读取后的UTC时间，各接口共用一次monotonic观察时间。window_seconds表示相邻成功观察的实际间隔，不是请求interval。interval仍是采样完成后的等待时间。

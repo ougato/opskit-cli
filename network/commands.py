@@ -240,10 +240,11 @@ def scan_port(host: str, port: int, protocol: str = "tcp", timeout: float = 1.0)
 
 
 def scan_ports(host: str, ports: list[int], timeout: float = 0.5, concurrency: int = 50,
-               *, total_timeout: float = 30) -> list[PortResult]:
+               *, total_timeout: float = 30, on_progress=None) -> list[PortResult]:
     """批量 TCP 扫描：单连接期限和包含 DNS 的总期限分别限制。"""
     from network.scanner import scan
-    return scan(host, ports, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout)
+    return scan(host, ports, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout,
+                on_progress=on_progress)
 
 
 # ─── 网络测速 ─────────────────────────────────────────────────────────────────

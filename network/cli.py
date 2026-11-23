@@ -4,7 +4,10 @@ import socket
 import subprocess
 
 import typer
-from core.cli import emit, fail, require_interaction, guarded
+from core.cli import emit, fail, require_interaction, guarded, output_mode
+from core.i18n import t
+from core.prompt import console, print_header
+from core.sdk import progress_step
 from network import commands
 
 
@@ -115,7 +118,14 @@ def register(app):
         selected = parse_ports(ports) if ports else commands.COMMON_TCP_PORTS
         if missing_host(host, "show_port_scan"):
             return
-        emit(commands.scan_ports(host, selected, timeout=timeout, concurrency=concurrency, total_timeout=total_timeout))
+        options = dict(timeout=timeout, concurrency=concurrency, total_timeout=total_timeout)
+        if output_mode.get() == "text" and console.is_terminal:
+            print_header(["OpsKit", t("menu.network"), t("network.port_scan")])
+            with progress_step(t("network.scanning"), t("progress.failed"), total=len(selected)) as update:
+                result = commands.scan_ports(host, selected, **options, on_progress=update)
+        else:
+            result = commands.scan_ports(host, selected, **options)
+        emit(result)
 
     @app.command("speed-test")
     @guarded

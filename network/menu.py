@@ -13,7 +13,8 @@ from rich.console import Console
 from rich.table import Table
 
 from core.i18n import t
-from core.prompt import select, text_input, pause, UserCancel, clear_screen
+from core.prompt import select, text_input, pause, UserCancel, clear_screen, print_header
+from core.sdk import progress_step
 from core.theme import get_color, get_icon, print_error
 from network.commands import COMMON_TCP_PORTS
 
@@ -304,11 +305,9 @@ def show_port_scan(host: str | None = None, pause_after: bool = True) -> None:
         return
 
     clear_screen()
-    console.print(f"\n{t('network.scanning_ports')}: {', '.join(map(str, COMMON_TCP_PORTS))}\n")
-
-    from core.progress import spinner
-    with spinner(t("network.scanning")):
-        results = scan_ports(host, COMMON_TCP_PORTS, timeout=0.5)
+    print_header(["OpsKit", t("menu.network"), t("network.port_scan")])
+    with progress_step(t("network.scanning"), t("progress.failed"), total=len(COMMON_TCP_PORTS)) as update:
+        results = scan_ports(host, COMMON_TCP_PORTS, timeout=0.5, on_progress=update)
 
     title_color = get_color(f"modules.{_THEME_KEY}.title")
     success = get_color("success")

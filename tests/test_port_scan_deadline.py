@@ -64,8 +64,10 @@ def test_total_timeout_closes_all_inflight_sockets(controlled_scan):
 
 
 def test_per_connection_expiry_preserves_finite_concurrency(controlled_scan):
+    completed = []
     results = commands.scan_ports("127.0.0.1", [5, 4, 3, 2, 1], timeout=0.1,
-                                 concurrency=2, total_timeout=2)
+                                 concurrency=2, total_timeout=2, on_progress=completed.append)
+    assert completed == [1, 2, 3, 4, 5]
     assert [item.port for item in results] == [1, 2, 3, 4, 5]
     assert all(not item.open for item in results)
     assert controlled_scan["peak"] == 2
