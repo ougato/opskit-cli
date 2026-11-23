@@ -8,7 +8,7 @@ from rich.table import Table
 
 from core.i18n import t
 from core.sdk import waiting
-from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel, console as base_console
+from core.prompt import select, paged_select, confirm, pause, suppress_pause, clear_screen, print_header, text_input, UserCancel
 from core.theme import get_color, get_icon, print_success, print_error, print_warning, print_info
 from core.recipe_utils import recipe_display_name
 from core.feedback import capture as _report, report_failure

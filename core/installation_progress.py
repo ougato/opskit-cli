@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 
 from rich.console import Group
-from rich.console import Group
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
