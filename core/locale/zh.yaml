@@ -798,7 +798,26 @@ monitor:
   name: "名称"
   status: "状态"
 
+self_uninstall:
+  title: "卸载"
+  program: "程序卸载"
+  full: "完全卸载"
+  keep_data: "保留插件、配置和已安装软件"
+  keep_software: "保留已安装软件"
+  yes_required: "请用 --yes 确认卸载"
+  external: "请使用原安装方式卸载 OpsKit"
+  system: "请以管理员权限运行系统级 OpsKit"
+  override: "请移除目录覆盖配置后再执行完全卸载"
+  unsafe: "文件路径存在链接或文件类型异常，已停止卸载"
+  changed: "卸载范围已变化，请重试"
+  update_pending: "请先完成或恢复本次 OpsKit 更新"
+  scheduled: "退出后卸载。失败日志：{path}"
+  removed: "卸载完成"
+
 cli:
+  self_uninstall_help: "卸载 OpsKit 自身"
+  self_uninstall_purge: "清理 OpsKit 插件和本地数据"
+  self_uninstall_preview: "预览卸载范围"
   desc: "OpsKit — 跨平台运维工具箱"
   interaction_required: "此操作需要交互输入，请提供所需参数。"
   yes_help: "非交互模式：跳过所有确认弹窗（类似 apt -y）"

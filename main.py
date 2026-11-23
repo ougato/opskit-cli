@@ -187,6 +187,16 @@ def _app_callback(
 
 
 
+@app.command("uninstall", help=_ct("self_uninstall_help"))
+def uninstall_self(
+    purge: bool = typer.Option(False, "--purge", help=_ct("self_uninstall_purge")),
+    dry_run: bool = typer.Option(False, "--dry-run", help=_ct("self_uninstall_preview")),
+) -> None:
+    from core.cli import guarded
+    from core.self_uninstall import run
+    guarded(run)(purge=purge, dry_run=dry_run)
+
+
 def _restart_arguments(arguments: list[str]) -> list[str]:
     """Remove duplicate root flags while preserving subcommand arguments."""
     result = []

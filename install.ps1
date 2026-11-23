@@ -62,7 +62,19 @@ function Add-ToUserPath {
         return
     }
     $newPath = if ($currentPath) { "$currentPath;$Dir" } else { $Dir }
-    [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    $markerPath = Join-Path $Dir ".opskit-user-path"
+    $createdMarker = $false
+    if (-not (Test-Path -LiteralPath $markerPath)) {
+        $marker = [IO.File]::Open($markerPath, 'CreateNew', 'Write', 'None')
+        try { $marker.Write([byte[]](49, 13, 10), 0, 3) } finally { $marker.Dispose() }
+        $createdMarker = $true
+    }
+    try {
+        [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    } catch {
+        if ($createdMarker) { [IO.File]::Delete($markerPath) }
+        throw
+    }
     # refresh PATH for the current process
     $env:PATH = "$env:PATH;$Dir"
     Write-Ok "Added to user PATH"

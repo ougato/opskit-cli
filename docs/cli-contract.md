@@ -126,6 +126,10 @@ opskit plugin disk-policy --minimum-free-mib 4096
 
 从对应的检查结果中取有效条目的 `transaction` 或 `object`、`record_sha256`，填入上表中对应的恢复或清理命令。缓存类型为 `runtime`、`fetch`、`prepare`，检查和清理使用同一类型。`--limit` 范围为 1–256，默认 256，超过查询上限会报错。磁盘最低剩余空间范围为 256–1048576 MiB，适用于框架写入前的检查。
 
+## 卸载 OpsKit
+
+`opskit uninstall` 是官方独立程序的卸载入口。通过此命令可以交互选择「程序卸载」和「完全卸载」。脚本使用全局 `--yes` 确认，`--purge` 额外删除标准位置的 OpsKit 插件和数据，`--dry-run` 只预览。已管理的软件文件及自定义目录保留。Windows 仅删除有安装记录的用户 PATH 项。JSON 的 `status` 为 `preview`、`removed` 或 `scheduled`。Windows 后台清理失败时，在 `failure_log` 指定的位置写入原因。
+
 ## 软件查询与偏好
 
 指定名称的 `software install/uninstall/upgrade/switch` 已统一结构化结果，进度送往 stderr；这些入口不执行菜单启动初始化或隐式应用平台更新。编排位于 software/lifecycle_cli.py，执行仍复用菜单的 software.actions。版本型 install/upgrade 要求 --version；switch 只能选择本地已安装版本，upgrade 目标已安装时复用 switch。版本标识拒绝路径分隔符、控制字符等不安全输入。uninstall 要求 --version 或 --all（多版本软件），两者互斥；单版本软件拒绝这两个选项。无交互卸载要求全局 --yes。参数或能力不支持在依赖安装之前拒绝；安装后无法 detect 不再报成功。software manage 保持交互专属，脚本调用模块的具体管理命令。

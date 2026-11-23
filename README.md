@@ -57,6 +57,21 @@ opskit.exe
 | Linux / macOS（非 root） | `~/.local/bin/opskit` |
 | Windows | `%LOCALAPPDATA%\opskit\opskit.exe` |
 
+### 卸载 OpsKit
+
+卸载入口位于命令行。
+
+```sh
+opskit uninstall                  # 选择「📦 程序卸载」或「🗑️ 完全卸载」
+opskit --yes uninstall            # 仅卸载程序
+opskit --yes uninstall --purge    # 同时清理插件和本地数据
+opskit uninstall --purge --dry-run
+```
+
+两种方式均保留已安装的软件及其文件。程序卸载保留 OpsKit 的配置、插件和授权。完全卸载同时清除标准位置的插件、配置、授权、缓存和日志。实际清理范围以预览为准。
+
+Windows 在当前进程退出后删除程序。安装器登记的用户 PATH 项会一起移除。Linux 和 macOS 清除安装器写入的精确 shell 配置行。系统级安装需以管理员权限运行对应的程序。源码或包管理器安装请使用原安装方式卸载。
+
 ---
 
 ### 方式二：直接运行（开发模式）

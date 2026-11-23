@@ -799,7 +799,26 @@ monitor:
   name: "Name"
   status: "Status"
 
+self_uninstall:
+  title: "Uninstall"
+  program: "Program only"
+  full: "Complete uninstall"
+  keep_data: "Keep plugins, configuration and installed software"
+  keep_software: "Keep installed software"
+  yes_required: "Confirm uninstall with --yes"
+  external: "Uninstall OpsKit with the original installation method"
+  system: "Run the system installation of OpsKit with administrator privileges"
+  override: "Clear directory overrides before running a complete uninstall"
+  unsafe: "Uninstall stopped because a path is linked or has an unexpected type"
+  changed: "The uninstall scope changed. Run the command again"
+  update_pending: "Finish or recover the pending OpsKit update first"
+  scheduled: "Uninstall scheduled after exit. Failure log: {path}"
+  removed: "Uninstall complete"
+
 cli:
+  self_uninstall_help: "Uninstall OpsKit itself"
+  self_uninstall_purge: "Remove OpsKit plugins and local data"
+  self_uninstall_preview: "Preview the uninstall scope"
   desc: "OpsKit — Cross-platform DevOps Toolkit"
   interaction_required: "This operation requires interactive input; supply its business parameters."
   yes_help: "Non-interactive mode: skip all confirmation prompts (like apt -y)"
