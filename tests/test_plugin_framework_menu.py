@@ -57,6 +57,9 @@ def test_update_inventory_keeps_the_gap_from_copy_progress(monkeypatch):
         def __call__(self, phase):
             self.phases.append(phase)
 
+        def finish(self, *, failed):
+            assert not failed
+
     manifest = SimpleNamespace(name="storage_hub", version="1.0.0")
 
     def manifests():

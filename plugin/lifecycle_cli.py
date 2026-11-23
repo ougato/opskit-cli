@@ -284,6 +284,7 @@ def register(app, translate=None):
             manifest, error = commands.install(url, branch or None, alias or None,
                                                fetch_profile=fetch_profile, allow_private=allow_private,
                                                automatic=True, progress=progress)
+            progress.finish(failed=manifest is None)
         if manifest is None:
             # Git output may include URLs and credentials; only expose stable categories.
             fail(acquisition_error(error, "acquisition_failed"))
@@ -294,6 +295,7 @@ def register(app, translate=None):
         with InstallationProgress() as progress:
             ok, status = commands.update(manifest, fetch_profile=fetch_profile, allow_private=allow_private,
                                          automatic=True, progress=progress)
+            progress.finish(failed=not ok)
         result = {"name": manifest.name, "status": status if ok else "failed"}
         if not ok:
             result["error"] = (t("plugin.update_not_git", name=manifest.name) if status == "not_git"

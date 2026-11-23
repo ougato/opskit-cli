@@ -234,7 +234,7 @@ def test_waiting_separator_after_completed_progress(monkeypatch):
         progress("update_wait")
         with progress.copy_files(1) as update:
             update(1)
-        assert progress.status.separate
+        assert progress.display.after_progress
         assert "100%" in output.getvalue()
 
     display = installation_progress.WaitingDisplay(console)

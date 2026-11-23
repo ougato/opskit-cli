@@ -367,7 +367,9 @@ def _install_with_progress(url, branch=None, alias=None):
     with InstallationProgress() as progress:
         if "fetch_interaction" in options:
             options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
-        return commands.install(url, branch, alias, automatic=True, progress=progress, **options)
+        result = commands.install(url, branch, alias, automatic=True, progress=progress, **options)
+        progress.finish(failed=result[0] is None)
+        return result
 
 
 def _fetch_options(source, *, user_entered=False):
@@ -548,6 +550,7 @@ def _update_one(manifest, crumb) -> None:
             if "fetch_interaction" in options:
                 options["fetch_interaction"] = progress.interaction(options["fetch_interaction"])
             ok, msg = commands.update(manifest, automatic=True, progress=progress, **options)
+            progress.finish(failed=not ok)
             if ok:
                 progress("loading_inventory")
                 refreshed = next((item for item in commands.manifests() if item.name == manifest.name), None)

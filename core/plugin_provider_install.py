@@ -123,6 +123,7 @@ def request_install(caller, fingerprint, provider, *, checkpoint, suspend_wait=n
             try:
                 candidate, error = commands.install(source, branch, automatic=True,
                                                     progress=progress, review_candidate=review_install, **options)
+                progress.finish(failed=candidate is None)
             except UserCancel:
                 return False
         if candidate is None:

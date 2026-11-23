@@ -191,43 +191,37 @@ class WaitingDisplay:
 
 class InstallationProgress:
     def __init__(self):
-        self.status = None
+        self.display = WaitingDisplay()
+        self.phase = None
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        if self.status is not None:
-            self.status.stop()
+    def __exit__(self, exc_type, *_):
+        self.finish(failed=exc_type is not None)
+
+    def finish(self, *, failed=False):
+        if self.phase is not None:
+            self.display.stop(failed=failed)
+            self.phase = None
 
     def __call__(self, phase, name=""):
         if phase not in {"fetch", "tools", "repair", "runtime",
                          "update_wait", "update_check", "update_fetch", "update_verify", "update_publish", "loading_inventory"}:
             return
+        from core.cli import non_interactive
+        if not self.display.console.is_terminal or non_interactive.get() or self.phase == phase:
+            return
+        self.finish()
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
         if phase == "loading_inventory":
-            key = "plugin.loading_inventory"
-        message = Text(t(key, branch=name), no_wrap=True, overflow="ellipsis")
-        # Redirected output stays clean; final success/error remains available.
-        from core.cli import non_interactive
-        if not console.is_terminal or non_interactive.get():
-            return
-        if self.status is None:
-            from core.prompt import menu_visible
-            self.status = _InstallationStatus(message, separate=menu_visible())
-            self.status.start()
+            self.display.start(t("plugin.loading_inventory"))
         else:
-            self.status.update(message)
+            self.display.start(t(key, branch=name), failed_label=t("progress.failed"))
+        self.phase = phase
 
-    @contextmanager
     def suspend(self):
-        if self.status is not None:
-            self.status.stop()
-        try:
-            yield
-        finally:
-            if self.status is not None:
-                self.status.start()
+        return self.display.suspend()
 
     def interaction(self, callback):
         def ask(*args, **kwargs):
@@ -244,15 +238,15 @@ class InstallationProgress:
     @contextmanager
     def _counted(self, label, failure, total):
         from core.cli import non_interactive
-        from core.sdk import progress_step
-        if not console.is_terminal or non_interactive.get():
+        if not self.display.console.is_terminal or non_interactive.get():
             yield None
             return
-        with self.suspend():
-            try:
-                with progress_step(t("plugin_native.bootstrap." + label),
-                                   t("plugin_native.bootstrap." + failure), total=total) as update:
-                    yield update
-            finally:
-                if self.status is not None:
-                    self.status.separate = True
+        self.display.start(t("plugin_native.bootstrap." + label),
+                           failed_label=t("plugin_native.bootstrap." + failure), total=total)
+        try:
+            yield self.display.update
+        except BaseException:
+            self.display.stop(failed=True)
+            raise
+        else:
+            self.display.stop()

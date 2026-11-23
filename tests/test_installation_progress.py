@@ -4,49 +4,29 @@ import pytest
 from core import installation_progress as ui
 
 
-def test_one_status_is_updated_suspended_and_closed_on_cancel(monkeypatch):
-    events = []
-    class Status:
-        def __init__(self, *args, **kwargs):
-            events.append('create')
-        def start(self):
-            events.append('start')
-        def stop(self):
-            events.append('stop')
-        def update(self, message):
-            events.append('update')
-    monkeypatch.setattr(ui, '_InstallationStatus', Status)
-    monkeypatch.setattr(ui, 'console', SimpleNamespace(is_terminal=True, print=lambda: events.append('blank')))
-    with pytest.raises(KeyboardInterrupt):
-        with ui.InstallationProgress() as progress:
-            progress('tools')
-            progress('repair')
-            def cancelled():
-                events.append('prompt')
-                raise KeyboardInterrupt
-            progress.interaction(cancelled)()
-    assert events == ['create', 'start', 'update', 'stop', 'prompt', 'start', 'stop']
-
-
-def test_install_warning_and_error_have_one_blank_line(monkeypatch):
+def test_install_progress_uses_activity_rows_and_preserves_cancellation(monkeypatch):
     from io import StringIO
     from rich.console import Console
-    from core import theme
+    from core.i18n import t
 
     output = StringIO()
     console = Console(file=output, force_terminal=True, force_interactive=True,
-                      legacy_windows=False, color_system=None, width=100,
-                      _environ={'TERM': 'xterm'})
+                      legacy_windows=False, width=100, _environ={'TERM': 'xterm'})
     monkeypatch.setattr(ui, 'console', console)
-    monkeypatch.setattr(theme, 'console', console)
-    theme.print_warning('warning-marker')
-    with ui.InstallationProgress() as progress:
-        progress('fetch')
-        active = output.getvalue()
-        assert 'warning-marker\n\x1b[?25l\n' in active
-    theme.print_error('error-marker')
-    # Rich removes both transient lines before the error writes its own gap.
-    assert '\x1b[?25h\r\x1b[1A\x1b[2K\x1b[1A\x1b[2K\n' in output.getvalue()
+    with pytest.raises(KeyboardInterrupt):
+        with ui.InstallationProgress() as progress:
+            progress('tools')
+            assert '%' not in output.getvalue()
+            progress('repair')
+            assert '100%' in output.getvalue()
+
+            def cancelled():
+                assert progress.display.status is None
+                raise KeyboardInterrupt
+
+            progress.interaction(cancelled)()
+    assert t('progress.failed') in output.getvalue()
+    assert output.getvalue().count('100%') == 1
 
 
 def test_spinner_colors_change_per_frame_without_coloring_the_message():
@@ -63,6 +43,7 @@ def test_spinner_colors_change_per_frame_without_coloring_the_message():
 
 
 def test_resuming_after_prompt_starts_a_fresh_transient_display(monkeypatch):
+    from core.i18n import t
     from io import StringIO
     from rich.console import Console
 
@@ -77,7 +58,7 @@ def test_resuming_after_prompt_starts_a_fresh_transient_display(monkeypatch):
             console.print('prompt-marker')
         active = output.getvalue().split('prompt-marker\n', 1)[1]
         # Resuming must not move up and erase the prompt's previous lines.
-        assert active.startswith('\x1b[?25l\n')
+        assert active.startswith('\x1b[?25l') and t('plugin.cloning') in active
 
 
 def test_redirected_output_does_not_emit_animation_or_stage_lines(monkeypatch):
