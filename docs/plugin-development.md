@@ -224,6 +224,8 @@ def inspect_build_directory(project, build_directory):
 
 无总量的执行阶段使用 `with activity_step(label, failed_label):`。运行中显示往返动画和已用时间，正常退出后保留完成行，异常退出后保留失败行。菜单加载和页面过渡使用 `waiting`。 CLI 使用 `print_header(breadcrumb, terminal_only=True)` 绘制终端进度标题，重定向或结构化输出保持无标题。
 
+进度条的中文阶段名称使用四个汉字。阶段名称列固定为八个终端显示列，英文超宽时以 `...` 结尾。运行、完成和失败使用相同列宽，详细原因可另行输出。
+
 任务有真实总量时，使用 `with progress_step(label, failed_label, total=len(files)) as update:`。完成一项后上报累计完成量，例如文件成功校验并写入后调用 `update(done)`。仅在全部完成并正常退出时显示 100%。失败时保留最后显示的百分比，并附上失败状态。空任务直接返回结果。宿主工具已有百分比或传输进度时，复用框架的宿主进度渲染。菜单和 CLI 共用业务入口，验收时运行对应的 OpsKit 命令。
 
 分批调用 `upload_files` 时，可以用一个以文件总数为单位的 `progress_step` 包住所有批次。给每批传入 `progress_offset`，值为之前各批已完成的文件数。宿主收到校验结果后直接更新累计数。

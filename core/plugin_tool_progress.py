@@ -7,7 +7,7 @@ from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
 
-from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line, _render_pulse
+from core.progress import _GREEN, _RED, STEP_LABEL_WIDTH, _render_line, _render_pulse
 from core.theme import get_color
 
 class ToolProgress:
@@ -56,8 +56,7 @@ class ToolProgress:
         self.diagnostic = False
         self.live = None
         self.finished = False
-        self.width = max(_global_step_width(), max(_display_width(label) + 2
-                         for label in [self.progress_label or "", *(name for name, _ in self.stages)]))
+        self.width = STEP_LABEL_WIDTH
         self.active_color = get_color("progress.bar_active")
 
     def __enter__(self):
@@ -79,7 +78,7 @@ class ToolProgress:
     def render(self):
         label = self.stages[self.index][0]
         elapsed = monotonic() - self.stage_started
-        stage = Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed,
+        stage = Text.from_markup(_render_pulse(label, int(elapsed * 10), elapsed,
                                              self.active_color, self.width))
         if self.percent is None:
             return stage
@@ -87,7 +86,7 @@ class ToolProgress:
         return Group(stage, total)
 
     def _row(self, label, percent, elapsed, color, *, status=""):
-        return Text.from_markup(_render_line(escape(label), percent, elapsed, color, self.width,
+        return Text.from_markup(_render_line(label, percent, elapsed, color, self.width,
                                             status=escape(status)))
 
     def _emit(self, row):

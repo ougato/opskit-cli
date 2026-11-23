@@ -109,10 +109,10 @@ class WaitingDisplay:
                 self.status.stop()
                 self.status = None
             from rich.markup import escape
-            from core.progress import _GREEN, _RED, _display_width, _global_step_width, _render_line
-            width = max(_global_step_width(), _display_width(message) + 2)
+            from core.progress import _GREEN, _RED, STEP_LABEL_WIDTH, _render_line
+            width = STEP_LABEL_WIDTH
             percentage = (min(99, step.completed * 100 // step.total) if step.total is not None else None) if failed else 100
-            row = _render_line(escape(message), percentage, time.monotonic() - started,
+            row = _render_line(message, percentage, time.monotonic() - started,
                                _RED if failed else _GREEN, width, status=escape(failed_label) if failed else "")
             self.console.print(Text.from_markup(row), soft_wrap=True)
             self.after_progress = True
@@ -132,18 +132,17 @@ class WaitingDisplay:
             self.status = None
         if failed_label is not None:
             from rich.live import Live
-            from rich.markup import escape
-            from core.progress import _display_width, _global_step_width, _render_line, _render_pulse
+            from core.progress import STEP_LABEL_WIDTH, _render_line, _render_pulse
             from core.theme import get_color
-            width = max(_global_step_width(), _display_width(label) + 2)
+            width = STEP_LABEL_WIDTH
             color = get_color("progress.bar_active")
 
             def render():
                 elapsed = time.monotonic() - started
                 if step.total is None:
-                    return Text.from_markup(_render_pulse(escape(label), int(elapsed * 10), elapsed, color, width))
+                    return Text.from_markup(_render_pulse(label, int(elapsed * 10), elapsed, color, width))
                 percentage = min(99, step.completed * 100 // step.total)
-                return Text.from_markup(_render_line(escape(label), percentage, elapsed, color, width))
+                return Text.from_markup(_render_line(label, percentage, elapsed, color, width))
 
             self.status = Live(console=self.console, transient=True, refresh_per_second=10,
                                redirect_stdout=False, redirect_stderr=False, get_renderable=render)

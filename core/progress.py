@@ -7,7 +7,9 @@ import time
 from contextlib import contextmanager
 from typing import Iterator
 
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
+from rich.markup import escape
 from rich.live import Live
 from rich.progress import (
     Progress,
@@ -25,44 +27,18 @@ console = Console()
 
 _GREEN = "#a6e3a1"
 _RED   = "#f38ba8"
-_MIN_DESC_WIDTH = 16
+STEP_LABEL_WIDTH = 8
 _BAR_WIDTH  = 20
 _FILLED     = "█"
 _EMPTY      = "░"
 _PULSE_LEN  = 4
 
 
-def _display_width(s: str) -> int:
-    """计算字符串在终端的实际显示宽度（CJK 宽字符占 2 列）"""
-    import unicodedata
-    w = 0
-    for ch in s:
-        eaw = unicodedata.east_asian_width(ch)
-        w += 2 if eaw in ("W", "F") else 1
-    return w
-
-
-_STEP_KEY_PREFIX = "software.step."
-
-
-def _global_step_width() -> int:
-    """所有 ``software.step.*`` 文案的最大显示宽度 + 2。
-
-    同一逻辑操作可能拆成多个独立 ``MultiStepProgress`` 块（如升级 = 卸载步骤
-    块 + 安装步骤块），各自按局部文案算宽度会导致百分比列错位。改用全局步骤
-    文案的统一宽度作为下限，保证跨块对齐。
-    """
-    from core.i18n import keys, t
-    widths = [_display_width(t(k)) for k in keys(_STEP_KEY_PREFIX)]
-    base = (max(widths) + 2) if widths else _MIN_DESC_WIDTH
-    return max(base, _MIN_DESC_WIDTH)
-
-
 def _pad_desc(desc: str, width: int) -> str:
-    """将描述文本填充到指定列宽（考虑中文宽字符）"""
-    dw = _display_width(desc)
-    pad = max(0, width - dw)
-    return desc + " " * pad
+    """Fit a stage label to the fixed terminal cell budget."""
+    if cell_len(desc) > width:
+        desc = set_cell_size(desc, width - 3).rstrip() + "..."
+    return escape(set_cell_size(desc, width))
 
 
 def _render_line(desc: str, pct: int | None, elapsed: float, color: str, width: int, *, status: str = "") -> str:
@@ -142,21 +118,15 @@ class _LiveTicker:
 class MultiStepProgress:
     """
     多行步骤进度管理器。每步独占一行：
-    - 进行中：主题色 █░ 进度条 50%，动态 elapsed（x.xxs）
-    - 完成：整行变绿色 █ 100%
-    - 失败：整行变红色 █░ 50%
-
-    三态统一用 _render_line 渲染，字符完全一致。
+    运行时显示已测百分比或往返动画。完成和失败时保留结果行。
 
     用法：
-        with MultiStepProgress(["检测操作系统", "安装 WireGuard"]) as sp:
-            sp.step("检测操作系统")
+        with MultiStepProgress() as sp:
+            sp.step("检查系统")
             do_check()
-            sp.step("安装 WireGuard")
+            sp.step("安装隧道")
             do_install()
         # 异常由 __exit__ 自动捕获并将当前行标红
-
-    也支持不传 descriptions（向后兼容），此时动态跟踪已见最大宽度。
     """
 
     def __init__(self, descriptions: list[str] | None = None) -> None:
@@ -169,11 +139,7 @@ class MultiStepProgress:
         self._interrupted: bool = False
         self._old_sigint = None
         self._win_handler_ref = None
-        floor = _global_step_width()
-        if descriptions:
-            self._desc_width = max(max(_display_width(d) for d in descriptions) + 2, floor)
-        else:
-            self._desc_width = floor
+        self._desc_width = STEP_LABEL_WIDTH
 
     def __enter__(self) -> "MultiStepProgress":
         self._start_time = time.monotonic()
@@ -244,9 +210,6 @@ class MultiStepProgress:
 
     def _start_live(self, desc: str) -> None:
         """启动当前步骤的 Live + 后台 ticker"""
-        dw = _display_width(desc) + 2
-        if dw > self._desc_width:
-            self._desc_width = dw
         initial = Text.from_markup(
             _render_pulse(desc, 0, 0.0, self._in_progress_color, self._desc_width)
         )

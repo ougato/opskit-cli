@@ -8,7 +8,7 @@ from rich.live import Live
 from rich.text import Text
 
 from core.i18n import t
-from core.progress import _GREEN, _RED, _global_step_width, _render_line
+from core.progress import _GREEN, _RED, STEP_LABEL_WIDTH, _render_line
 from core.theme import get_color
 
 
@@ -21,7 +21,7 @@ def upload_progress(console, total, files, breadcrumb=None):
     started = monotonic()
     samples = deque([(started, 0)])
     state = (0, 0, 0)
-    width = _global_step_width()
+    width = STEP_LABEL_WIDTH
     label = t("plugin_native.upload.title")
 
     def update(sent, verified, completed):

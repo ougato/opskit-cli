@@ -56,8 +56,8 @@ plugin:
   col_branch: "Branch"
   col_fingerprint: "Fingerprint"
   select: "Select plugin"
-  cloning: "Cloning..."
-  cloning_branch: "Cloning branch {branch}..."
+  cloning: "Clone"
+  cloning_branch: "Clone"
   install_prompt: "Git repo URL"
   install_hint: "e.g. https://git.example.com/org/opskit-plugin-xxx.git (append -b <branch>, --as <local-dir>)"
   install_exists: "Directory exists: {name}"
@@ -943,7 +943,7 @@ plugin_native:
   task:
     cancelled: "Cancelling and stopping processes. Existing host files or transmitted bytes are not rolled back."
   upload:
-    title: "Uploading files"
+    title: "Upload"
     header: "Upload"
     failed: "Upload failed"
     diagnostic: "{file} · {phase}: {reason}"

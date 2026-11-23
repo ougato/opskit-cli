@@ -4,6 +4,21 @@ import pytest
 from core import installation_progress as ui
 
 
+def test_stage_labels_share_fixed_width_without_markup_or_clipping_errors():
+    from rich.cells import cell_len
+    from rich.text import Text
+    from core.progress import STEP_LABEL_WIDTH, _render_line, _render_pulse
+
+    for label, expected in (("准备运行", "准备运行"), ("Runtime preparation", "Runti..."),
+                            ("[green]", "[green]")):
+        rows = (_render_line(label, 100, 0.5, "green", STEP_LABEL_WIDTH),
+                _render_pulse(label, 0, 0.5, "green", STEP_LABEL_WIDTH))
+        for row in rows:
+            column = Text.from_markup(row).plain.split("█", 1)[0]
+            assert cell_len(column) == STEP_LABEL_WIDTH + 1
+            assert column.strip() == expected
+
+
 @pytest.mark.parametrize("percentage", [None, 37])
 def test_recipe_failure_keeps_only_measured_percentage(monkeypatch, percentage):
     from io import StringIO
@@ -65,7 +80,6 @@ def test_spinner_colors_change_per_frame_without_coloring_the_message():
 
 
 def test_resuming_after_prompt_starts_a_fresh_transient_display(monkeypatch):
-    from core.i18n import t
     from io import StringIO
     from rich.console import Console
 
@@ -74,13 +88,14 @@ def test_resuming_after_prompt_starts_a_fresh_transient_display(monkeypatch):
                       legacy_windows=False, color_system=None, width=100,
                       _environ={'TERM': 'xterm'})
     monkeypatch.setattr(ui, 'console', console)
+    monkeypatch.setattr(ui, 't', lambda key, **kwargs: 'Clone')
     with ui.InstallationProgress() as progress:
         progress('fetch')
         with progress.suspend():
             console.print('prompt-marker')
         active = output.getvalue().split('prompt-marker\n', 1)[1]
         # Resuming must not move up and erase the prompt's previous lines.
-        assert active.startswith('\x1b[?25l') and t('plugin.cloning') in active
+        assert active.startswith('\x1b[?25l') and 'Clone' in active
 
 
 def test_redirected_output_does_not_emit_animation_or_stage_lines(monkeypatch):
