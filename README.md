@@ -540,7 +540,7 @@ make clean  # 清理
 
 **构建依赖：**
 
-正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`；普通开发的 `auto` 回退不代表发布验收通过。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。向 GitHub 推送新的 `v*` 标签即可触发自动打包，无需配置发布签名密钥，安装与更新保留 SHA256 校验，流程见 [发布验收](docs/release-pipeline-security.md)。
+正式发布使用 CPython 3.12 和全新哈希锁定环境，选择 `--backend nuitka`。运行 `python -I scripts/install_release_build.py build/release-environment` 后，Linux/macOS 使用 `build/release-environment/bin/python` 执行构建。在 `develop` 提交新版本号，合入并推送 `release`。GitHub 预检通过后，在同一提交打标签并推送到 GitHub。完整步骤见 [发布流水线](docs/release-pipeline-security.md)。
 
 Windows x64 还需 MSVC 14.3 或更新版本，以及预先核验的 Dependency Walker。编译器和辅助工具缺失时构建会失败，不自动下载。辅助工具使用独立的新缓存目录：
 

@@ -1,5 +1,11 @@
 # 项目规则
 
+## 框架分支与发布
+
+- 框架本地和远程只保留 `develop`、`release`、`master`。日常开发在 `develop`。
+- 发版时在 `develop` 将正式版本号加一并提交推送，再合入并推送 `release`。GitHub 预检通过后，在同一 `release` 提交打版本标签并推送到 GitHub。
+- 正式发布成功后，将 `release` 合入 `master`，同步 GitHub 和 origin，切回 `develop`。详见 [发布流水线](docs/release-pipeline-security.md)。
+
 ## 未上线功能变更
 
 项目尚未上线。变更配置、数据结构、接口或流程时，各调用方、测试和文档同步采用最新设计，删除废弃入口、字段、分支和示例。未上线的旧方案不加兼容层、双写或迁移逻辑。已经发布的对外契约以及仍有效的用户数据和安全边界，按各自的发布约定处理。

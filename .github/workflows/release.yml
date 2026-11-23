@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     branches:
-      - 'release-check/v*'
+      - release
     tags:
       - 'v*'
 
@@ -42,6 +42,11 @@ jobs:
     needs: [notify-start]
     name: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build: ${{ steps.version.outputs.build }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -69,8 +74,35 @@ jobs:
         run: |
           python -I -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: --no-deps -r requirements-ci.txt
 
-      - name: sync version from tag
-        run: python scripts/release_bump.py "${GITHUB_REF_NAME##*/}"
+      - name: verify committed release version
+        id: version
+        run: |
+          set -euo pipefail
+          build="$(python -c 'from scripts.release_bump import read_app_version; print(read_app_version())')"
+          python scripts/release_bump.py "v$build" --check
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$build" ]]; then
+            echo "::error::The tag does not match the committed release version"
+            exit 1
+          fi
+          printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
+
+      - name: require successful release branch preflight
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release" --jq '.object.sha')"
+          if [[ "$release_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::The tag must point to the current release branch commit"
+            exit 1
+          fi
+          count="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs" \
+            -f branch=release -f event=push -f status=success -f head_sha="$GITHUB_SHA" --jq '.total_count')"
+          if [[ "$count" -lt 1 ]]; then
+            echo "::error::Run release branch preflight successfully before pushing the tag"
+            exit 1
+          fi
 
       - name: run tests
         shell: bash
@@ -91,6 +123,8 @@ jobs:
 
   build:
     needs: test
+    env:
+      BUILD_VERSION: ${{ needs.test.outputs.build }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -115,14 +149,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      # tag → APP_VERSION / bootstrap，确保编译进二进制的自报版本与 tag 一致（防版本漂移导致更新自锁）
-      - name: sync version from tag
-        shell: python
-        run: |
-            import os, subprocess, sys
-            version = os.environ["GITHUB_REF_NAME"].rsplit("/", 1)[-1]
-            sys.exit(subprocess.call([sys.executable, "scripts/release_bump.py", version]))
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: ${{ !matrix.manylinux }}
@@ -183,7 +209,7 @@ jobs:
           name = "${{ matrix.artifact }}" + (".exe" if os.name == "nt" else "")
           output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "opskit-frozen-acceptance"
           subprocess.check_call([sys.executable, "-I", "scripts/verify_frozen_cli.py",
-                                 str(pathlib.Path("dist") / name), "--build", os.environ["GITHUB_REF_NAME"].rsplit("/", 1)[-1][1:],
+                                 str(pathlib.Path("dist") / name), "--build", os.environ["BUILD_VERSION"],
                                  "--output", str(output)])
 
       - name: upload artifact
@@ -206,7 +232,9 @@ jobs:
 
   release-check:
     if: github.ref_type == 'branch'
-    needs: [build]
+    needs: [test, build]
+    env:
+      BUILD_VERSION: ${{ needs.test.outputs.build }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -224,9 +252,7 @@ jobs:
           python-version: '3.12'
 
       - name: validate complete artifact matrix
-        run: |
-          version="${GITHUB_REF_NAME##*/}"
-          python -I scripts/release_assets.py --build "${version#v}" --root artifacts
+        run: python -I scripts/release_assets.py --build "$BUILD_VERSION" --root artifacts
 
       - name: checkout current bootstrap data
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -238,7 +264,7 @@ jobs:
       - name: verify bootstrap update without publishing
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME##*/}"
+          version="v$BUILD_VERSION"
           python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers --preflight
           python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers
           python -I scripts/release_bump.py "$version" --root bootstrap-target --sync-installers --check
