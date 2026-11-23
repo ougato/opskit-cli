@@ -84,7 +84,7 @@ class VersionedTarballRecipe(Recipe):
         """指定版本的 bin 目录。"""
 
     @abstractmethod
-    def _download(self, version: str, dest: Path):
+    def _download(self, version: str, dest: Path, *, on_progress=None):
         """下载 tarball 到 dest（各 recipe 的 download_*_tarball）。"""
 
     @abstractmethod
@@ -193,7 +193,7 @@ class VersionedTarballRecipe(Recipe):
             with tempfile.TemporaryDirectory(prefix=self._tmpdir_prefix, ignore_cleanup_errors=True) as tmpdir:
                 tarball = Path(tmpdir) / f"{self._tarball_stem.format(version=version)}{self._tarball_ext()}"
 
-                dl_result = self._download(version, tarball)
+                dl_result = self._download(version, tarball, on_progress=sp.set_step_pct)
 
                 # _download 可能返回 Path（tarball）或 list[Path]（APT deb 包列表）
                 install_arg = dl_result if dl_result is not None else tarball

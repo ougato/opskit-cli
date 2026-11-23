@@ -171,7 +171,7 @@ def detect_mysql_version(active_bin_name: str = "mysql") -> str | None:
 def download_mysql_tarball(
     version: str,
     dest: Path,
-    progress_callback=None,
+    on_progress=None,
 ) -> Path:
     """
     下载 MySQL tarball，使用 mirror.download_file()（Sequential-with-Probe 策略）。
@@ -238,7 +238,7 @@ def download_mysql_tarball(
             urls=urls,
             dest=dest,
             cache_path=cache_path,
-            progress_callback=progress_callback,
+            on_progress=on_progress,
         )
     except Exception as e:
         raise InstallError(t("software.mysql_error.download_failed", version=version, error=e)) from e

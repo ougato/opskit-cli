@@ -385,7 +385,7 @@ def _populate_pgsql_deb_linux(version: str, dest_dir: Path) -> Path:
     return bin_dest
 
 
-def download_pgsql_tarball(version: str, dest: Path) -> Path:
+def download_pgsql_tarball(version: str, dest: Path, *, on_progress=None) -> Path:
     """
     跨平台下载 PostgreSQL 预编译包：
 
@@ -436,6 +436,7 @@ def download_pgsql_tarball(version: str, dest: Path) -> Path:
             urls=urls,
             dest=dest,
             cache_path=pgsql_download_cache_path(version, dest.name),
+            on_progress=on_progress,
         )
     except Exception as e:
         from core.i18n import t as _t4

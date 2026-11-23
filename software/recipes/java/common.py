@@ -209,7 +209,7 @@ def get_download_info(version: str) -> tuple[str, str, str]:
 def download_java_tarball(
     version: str,
     dest: Path,
-    progress_callback=None,
+    on_progress=None,
 ) -> Path:
     """
     赛马下载 JDK tarball（tar.gz / zip）。
@@ -244,7 +244,7 @@ def download_java_tarball(
             urls=cn_urls + [ghproxy_url, raw_url],
             dest=dest,
             cache_path=cache_path,
-            progress_callback=progress_callback,
+            on_progress=on_progress,
         )
     except Exception as e:
         from core.i18n import t

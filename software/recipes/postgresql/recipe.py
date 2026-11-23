@@ -171,7 +171,7 @@ class PostgreSQLRecipe(Recipe):
                     ignore_cleanup_errors=True,
                 ) as tmpdir:
                     tarball = Path(tmpdir) / f"postgresql-{version}{ext}"
-                    download_pgsql_tarball(version, tarball)
+                    download_pgsql_tarball(version, tarball, on_progress=sp.set_step_pct)
                     sp.step(t("software.step.install"))
                     bin_dir = str(driver.install_tarball(version, tarball))
 
