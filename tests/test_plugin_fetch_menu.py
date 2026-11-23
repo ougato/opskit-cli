@@ -20,8 +20,14 @@ def test_local_does_not_prompt(tmp_path):
 @pytest.mark.parametrize("source", ["https://example.com/team/repo", "git@example.com:team/repo"])
 def test_user_entered_install_allows_only_this_acquisition(monkeypatch, source):
     calls = []
-    monkeypatch.setattr(menu.commands, "install", lambda *args, **kwargs: calls.append((args, kwargs)))
-    menu._install_with_progress(source)
+    result = (object(), None)
+
+    def install(*args, **kwargs):
+        calls.append((args, kwargs))
+        return result
+
+    monkeypatch.setattr(menu.commands, "install", install)
+    assert menu._install_with_progress(source) is result
     assert calls[0][0][0] == source
     assert calls[0][1]["allow_private"] is True
     assert menu._fetch_options(source) == {"fetch_interaction": menu._fetch_interaction}
