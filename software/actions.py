@@ -74,11 +74,19 @@ def execute_switch(instance, version: str) -> ActionResult:
     start = time.monotonic()
     try:
         ensure_root_for_action(instance, "switch")
-        instance.switch(version)
-        _invalidate_installed(instance)
+        _switch_version(instance, version)
         return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start)
     except Exception as e:  # noqa: BLE001
         return ActionResult(ok=False, version=version, elapsed=time.monotonic() - start, error=e)
+
+
+def _switch_version(instance, version: str) -> None:
+    from core.i18n import t
+    from core.sdk import activity_step
+
+    with activity_step(t("software.switch"), t("progress.failed")):
+        instance.switch(version)
+        _invalidate_installed(instance)
 
 
 def execute_upgrade(instance, version: str, already_installed: bool) -> ActionResult:
@@ -92,8 +100,7 @@ def execute_upgrade(instance, version: str, already_installed: bool) -> ActionRe
     try:
         ensure_root_for_action(instance, "upgrade")
         if already_installed and hasattr(instance, "switch"):
-            instance.switch(version)
-            _invalidate_installed(instance)
+            _switch_version(instance, version)
             return ActionResult(ok=True, version=version, elapsed=time.monotonic() - start, switched=True)
         instance.upgrade(version)
         _invalidate_installed(instance)
