@@ -218,6 +218,8 @@ class InstallationProgress:
         key = ("plugin.cloning_branch" if name else "plugin.cloning") if phase == "fetch" else "plugin_native.bootstrap." + phase
         if phase == "loading_inventory":
             self.display.start(t("plugin.loading_inventory"))
+        elif phase in {"update_wait", "update_check"}:
+            self.display.start(t(key))
         else:
             self.display.start(t(key, branch=name), failed_label=t("progress.failed"))
         self.phase = phase

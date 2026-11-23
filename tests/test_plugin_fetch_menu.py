@@ -81,16 +81,17 @@ def test_update_restores_progress_page_after_connection_prompt(monkeypatch, lang
     monkeypatch.setattr(menu.commands, "update", update)
     menu._update_one(manifest, ["OpsKit", "Demo update page"])
 
-    dialog, page = output.getvalue().rsplit("\x1b[2J", 1)
+    preparation, dialog, page = output.getvalue().rsplit("\x1b[2J", 2)
     assert i18n.t("confirm_ui.private_connection") in dialog
     assert source in dialog
     assert source not in page
     assert page.count("Demo update page") == 1
-    title, completed, resumed = (page.index(label) for label in (
-        "Demo update page", i18n.t("plugin_native.bootstrap.update_check")[:5],
-        i18n.t("plugin_native.bootstrap.update_fetch")[:5],
-    ))
-    assert title < completed < resumed
+    for phase in ("update_wait", "update_check"):
+        label = i18n.t(f"plugin_native.bootstrap.{phase}")
+        assert label in preparation
+        assert label not in dialog and label not in page
+    assert "100%" not in preparation
+    assert page.index("Demo update page") < page.index(i18n.t("plugin_native.bootstrap.update_fetch")[:5])
     assert (i18n.t("progress.failed") in page) is (key == "n")
 
 
