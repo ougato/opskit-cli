@@ -693,7 +693,9 @@ def download_file(
                 measurable = expected_size > 0 and resp.headers.get("content-encoding", "identity").lower() == "identity"
                 last_pct = None
                 with tmp.open("wb") as f:
-                    for chunk in resp.iter_bytes(DOWNLOAD_CHUNK_SIZE):
+                    # Observe each received chunk so a trickle can trigger the
+                    # low-speed check before it fills a fixed-size buffer.
+                    for chunk in resp.iter_bytes():
                         f.write(chunk)
                         received += len(chunk)
                         window_bytes += len(chunk)
