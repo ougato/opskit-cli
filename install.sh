@@ -4,7 +4,8 @@
 set -euo pipefail
 
 BIN_NAME="opskit"
-DOWNLOAD_BASE="https://github.com/ougato/opskit-cli/releases/latest/download"
+RELEASE_BASE="https://github.com/ougato/opskit-cli/releases"
+BOOTSTRAP_URL="https://raw.githubusercontent.com/ougato/opskit-cli/master/bootstrap.json"
 
 # -- output helpers ------------------------------------------------------------
 _title() { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -45,9 +46,9 @@ detect_platform() {
 download_file() {
     local url="$1" dest="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$dest" "$url"
+        curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 -o "$dest" "$url"
     else
-        wget -qO "$dest" "$url"
+        wget --timeout=120 --tries=1 -qO "$dest" "$url"
     fi
 }
 
@@ -75,6 +76,46 @@ verify_sha256() {
         return 1
     fi
     _ok "SHA256 verified"
+}
+
+download_verified_file() {
+    local url="$1" file="$2"
+    download_file "$url" "$file" || {
+        _err "Download failed: $url"
+        return 1
+    }
+    _ok "Downloaded   ${file##*/}"
+    download_file "$url.sha256" "$file.sha256" || {
+        _err "SHA256 file download failed; installation will be refused"
+        return 1
+    }
+    local expected
+    expected="$(awk 'NR == 1 {print $1; exit}' "$file.sha256")"
+    verify_sha256 "$file" "$expected"
+}
+
+get_release_tag() {
+    # bootstrap.json is emitted by release_bump.py with two-space indentation.
+    LC_ALL=C awk '
+        /^  "(schema_version|channel|latest_build|min_build|display|kill_switch)":/ {
+            key = $1
+            gsub(/[":]/, "", key)
+            if (key in fields) invalid = 1
+            sub(/^[^:]*:[[:space:]]*/, "")
+            sub(/,?[[:space:]]*$/, "")
+            fields[key] = $0
+        }
+        END {
+            build = fields["latest_build"]
+            minimum = fields["min_build"]
+            tag = "v" build
+            if (invalid || fields["schema_version"] != "2" || fields["channel"] != "\"stable\"" ||
+                build !~ /^[1-9][0-9]*$/ || length(build) > 9 ||
+                minimum !~ /^(0|[1-9][0-9]*)$/ || minimum + 0 > build + 0 ||
+                fields["display"] != "\"" tag "\"" || fields["kill_switch"] != "false") exit 1
+            print tag
+        }
+    ' "$1"
 }
 
 # -- resolve install dir -------------------------------------------------------
@@ -114,9 +155,45 @@ ensure_in_path() {
     fi
 }
 
+install_release() (
+    local platform="$1" install_dir="$2"
+    local stage tag archive launcher file
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf -- "$tmp_dir"' EXIT
+    stage="$(cd "$tmp_dir" && pwd -P)"
+
+    if [[ "$platform" == linux-* ]]; then
+        download_file "$BOOTSTRAP_URL" "$stage/bootstrap.json" || {
+            _err "OpsKit release metadata download failed"
+            exit 1
+        }
+        tag="$(get_release_tag "$stage/bootstrap.json")" || {
+            _err "Invalid OpsKit release metadata or installation paused"
+            exit 1
+        }
+        launcher="${BIN_NAME}-${platform}-launcher"
+        archive="${BIN_NAME}-${platform}.tar.xz"
+        download_verified_file "$RELEASE_BASE/download/$tag/$launcher" "$stage/$launcher" || exit 1
+        download_verified_file "$RELEASE_BASE/download/$tag/$archive" "$stage/$archive" || exit 1
+
+        mkdir -p "$install_dir"
+        chmod +x "$stage/$launcher"
+        "$stage/$launcher" --opskit-internal-install "$stage/$archive" "$install_dir/$BIN_NAME" "$tag" || {
+            _err "OpsKit installation failed"
+            exit 1
+        }
+    else
+        file="${BIN_NAME}-${platform}"
+        download_verified_file "$RELEASE_BASE/latest/download/$file" "$stage/$file" || exit 1
+        mkdir -p "$install_dir"
+        chmod +x "$stage/$file"
+        mv "$stage/$file" "$install_dir/$BIN_NAME"
+    fi
+)
+
 # -- main ----------------------------------------------------------------------
 main() {
-    local platform filename download_url sha256_url tmp_dir
+    local platform
     local install_dir target_display
 
     platform="$(detect_platform)"
@@ -132,33 +209,7 @@ main() {
     _field "Target"   "$target_display"
     echo ""
 
-    filename="${BIN_NAME}-${platform}"
-    download_url="${DOWNLOAD_BASE}/${filename}"
-    sha256_url="${download_url}.sha256"
-
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
-
-    local tmp_bin="${tmp_dir}/${filename}"
-    local tmp_sha="${tmp_dir}/${filename}.sha256"
-
-    download_file "$download_url" "$tmp_bin" || {
-        _err "Download failed: $download_url"
-        exit 1
-    }
-    _ok "Downloaded   $filename"
-
-    local expected_sha=""
-    if download_file "$sha256_url" "$tmp_sha" 2>/dev/null; then
-        expected_sha="$(awk '{print $1}' "$tmp_sha")"
-    fi
-
-    verify_sha256 "$tmp_bin" "$expected_sha" || exit 1
-    expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
-
-    mkdir -p "$install_dir"
-    chmod +x "$tmp_bin"
-    mv "$tmp_bin" "${install_dir}/${BIN_NAME}"
+    install_release "$platform" "$install_dir"
     _ok "Installed"
 
     ensure_in_path "$install_dir"
@@ -173,8 +224,8 @@ main() {
     # terminal exists; otherwise just leave the run hint above.
     if [ -t 0 ]; then
         exec "${install_dir}/${BIN_NAME}"
-    elif [ -r /dev/tty ]; then
-        exec "${install_dir}/${BIN_NAME}" < /dev/tty
+    elif { exec 3</dev/tty; } 2>/dev/null; then
+        exec "${install_dir}/${BIN_NAME}" <&3 3<&-
     fi
 }
 
