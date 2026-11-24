@@ -92,7 +92,9 @@ def test_find_executable_dispatch_uses_host_identity(caller, monkeypatch):
         sandbox._broker(caller, request)
 
 
+# Include the real inspector startup and publication of all 800 files.
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows tree publication")
+@pytest.mark.timeout(90)
 def test_large_tree_inventory_reaches_only_the_tree_publisher(caller, monkeypatch, tmp_path):
     from core.native_sandbox import GrantChoice
     from core.plugin_capabilities import CapabilityAuthority

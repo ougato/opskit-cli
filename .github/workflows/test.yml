@@ -117,7 +117,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m pytest -q --timeout=20 --durations=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml 2>&1 | tee cache/ci-tests.log
+          python -m pytest -v --tb=short --timeout=20 --durations=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml 2>&1 | tee cache/ci-tests.log
       - name: Save test report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
