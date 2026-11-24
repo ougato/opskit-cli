@@ -70,7 +70,7 @@ def apply_signal_workaround(python: Path, target: Path) -> None:
     }, indent=2) + "\n", encoding="utf-8")
 
 
-def install(target: Path) -> Path:
+def install(target: Path, *, directory: bool = False) -> Path:
     if sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12):
         raise RuntimeError("release builds require CPython 3.12")
     # Reusing a cache could retain executable packages outside the lock.
@@ -96,6 +96,8 @@ def install(target: Path) -> Path:
     subprocess.run([*common, "-r", str(ROOT / "requirements-release-bootstrap.txt")], env=environment, check=True)
     subprocess.run([*common, "--no-binary=nuitka", "--no-build-isolation",
                     "-r", str(ROOT / "requirements-release-build.txt")], env=environment, check=True)
+    if directory:
+        subprocess.run([*common, "-r", str(ROOT / "requirements-directory-build.txt")], env=environment, check=True)
     subprocess.run([str(python), "-I", "-m", "pip", "check"], env=environment, check=True)
     apply_signal_workaround(python, target)
     return python
@@ -104,5 +106,6 @@ def install(target: Path) -> Path:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", type=Path, help="new environment directory; existing paths are refused")
+    parser.add_argument("--directory", action="store_true", help="include the directory freeze toolchain")
     args = parser.parse_args()
-    print(install(args.target.absolute()))
+    print(install(args.target.absolute(), directory=args.directory))

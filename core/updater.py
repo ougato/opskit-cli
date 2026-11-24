@@ -467,6 +467,10 @@ def _verify_health_job(data, transaction, target):
 
 def confirm_health() -> bool:
     """新版本平稳运行 HEALTH_CONFIRM_DELAY 秒后调用：确认当前 build 健康。"""
+    from core.directory_install import managed_install
+
+    if managed_install() is not None:
+        return True
     try:
         if not _get_health_path().exists():
             return True
@@ -556,8 +560,11 @@ def confirm_health_after(delay, *, retry_timeout=360):
     """Wait for the health interval, then retry only transient lock contention."""
     import math
     from core.resource_lock import ResourceBusyError
+    from core.directory_install import managed_install
     if any(not math.isfinite(value) or value < 0 for value in (delay, retry_timeout)):
         raise ValueError("health confirmation timing must be finite and nonnegative")
+    if managed_install() is not None:
+        return True
     time.sleep(delay)
     if not _get_health_path().exists():
         return True
@@ -820,6 +827,14 @@ def check_and_apply_pending(*, post_update: bool = False) -> bool:
     5. 常规 pending 检测与应用
     """
     global _pending_version
+    from core.directory_install import managed_install
+    install = managed_install()
+    if install is not None:
+        if post_update or not install.can_write() or install.state().staged is None:
+            return False
+        from core.directory_updates import activate
+        activate(install)
+        return True
     defer, restored = _reconcile_indexed_job_on_boot()
     if restored:
         _pending_version = APP_VERSION
@@ -1372,6 +1387,16 @@ def check_update_background(cfg: dict) -> None:
             if not update_cfg.get("enabled", True):
                 return
 
+            from core.directory_install import managed_install
+            install = managed_install()
+            if install is not None:
+                if install.can_write() and _update_allowed():
+                    from core.directory_updates import stage
+                    result = stage(install, timeout=300, update_cfg=update_cfg)
+                    if result.get("available"):
+                        _pending_version = result["candidate_version"]
+                return
+
             # 高频启动场景：每次启动都检测更新，仅受限流退避（backoff_until）约束
             if not _update_allowed():
                 # 检查是否有已下载但未应用的版本
@@ -1490,6 +1515,13 @@ def apply_pending_update() -> None:
     """退出时应用已下载的更新（与 check_and_apply_pending 共享 _do_apply 逻辑）"""
     # 源码 / 开发模式：禁用自更新替换，避免覆盖 main.py 源文件
     if not _is_frozen():
+        return
+    from core.directory_install import managed_install
+    install = managed_install()
+    if install is not None:
+        if install.can_write() and install.state().staged is not None:
+            from core.directory_updates import activate
+            activate(install)
         return
     pending = _get_pending_path()
     if not pending.exists():
@@ -2112,9 +2144,14 @@ def _rollback_locked() -> bool:
 
 def has_pending_update() -> bool:
     """是否有待应用的更新"""
-    return _pending_version is not None
+    return pending_version() is not None
 
 
 def pending_version() -> int | None:
     """返回待应用版本号，无则 None"""
+    from core.directory_install import managed_install
+    install = managed_install()
+    if install is not None:
+        staged = install.state().staged
+        return staged.version if staged is not None else None
     return _pending_version

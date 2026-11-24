@@ -114,6 +114,11 @@ update:
   install_rolled_back_version: "The available version was rolled back. Wait for a newer release."
   install_scheduled: "Update to v{version} scheduled for exit. Restart OpsKit to verify it."
   install_applied: "Replaced the executable with v{version}. Restart OpsKit to verify it."
+  directory_bad_timeout: "The update timeout must be positive"
+  directory_permissions: "The current user cannot write to the OpsKit installation directory"
+  directory_download_failed: "The directory update could not be downloaded or verified. Check update status before retrying."
+  directory_candidate_failed: "v{version} failed startup verification. The current version is still active."
+  directory_applied: "v{version} is ready for the next OpsKit launch"
 
 service:
   installing: "Install service plugin"
@@ -813,6 +818,7 @@ self_uninstall:
   full: "Complete uninstall"
   keep_data: "Keep plugins, configuration and installed software"
   keep_software: "Keep installed software"
+  retained_runtime: "Keep the program files for running sessions at {path}"
   yes_required: "Confirm uninstall with --yes"
   external: "Uninstall OpsKit with the original installation method"
   system: "Run the system installation of OpsKit with administrator privileges"

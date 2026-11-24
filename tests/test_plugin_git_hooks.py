@@ -1,4 +1,5 @@
 """Platform lifecycle Git must not run hooks outside the plugin sandbox."""
+import os
 import shlex
 import subprocess
 
@@ -50,9 +51,11 @@ def test_lifecycle_does_not_execute_git_hooks(tmp_path, monkeypatch, prepared_fe
                 subprocess.run(['git', '-C', str(origin), 'config',
                                 'core.hooksPath', str(hooks)], check=True, capture_output=True, timeout=15)
             else:
-                monkeypatch.setenv('GIT_CONFIG_COUNT', '1')
-                monkeypatch.setenv('GIT_CONFIG_KEY_0', 'core.hooksPath')
-                monkeypatch.setenv('GIT_CONFIG_VALUE_0', str(hooks))
+                # Replacing an inherited empty value cannot be undone via os.environ on Windows.
+                slot = int(os.environ.get('GIT_CONFIG_COUNT') or '0')
+                monkeypatch.setenv(f'GIT_CONFIG_KEY_{slot}', 'core.hooksPath')
+                monkeypatch.setenv(f'GIT_CONFIG_VALUE_{slot}', str(hooks))
+                monkeypatch.setenv('GIT_CONFIG_COUNT', str(slot + 1))
         (origin / 'demo.py').write_text('# updated\n')
         git('commit', '-qam', 'next')
     if operation == 'install':

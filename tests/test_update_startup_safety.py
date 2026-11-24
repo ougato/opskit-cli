@@ -3,6 +3,7 @@ import hashlib
 import os
 import sys
 import types
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -200,7 +201,8 @@ def test_restart_does_not_duplicate_program_name_or_internal_flag(monkeypatch, t
     calls = []
     monkeypatch.setattr(os, "execv", lambda path, argv: calls.append((path, argv)))
     main._boot(post_update=True)
-    assert calls == [(sys.executable, [sys.executable, "--post-update", "--lang", "en", *tail])]
+    executable = str(Path(sys.executable).resolve())
+    assert calls == [(executable, [executable, "--post-update", "--lang", "en", *tail])]
 
 
 @pytest.mark.parametrize("command", [
@@ -243,7 +245,8 @@ def test_restart_preserves_subcommand_and_propagates_recovery_flag(monkeypatch, 
     first = runner.invoke(main.app, command)
     assert first.exit_code == 71, (first.output, first.exception)
     assert not business
-    assert restarts == [(sys.executable, [sys.executable, "--post-update", *command])]
+    executable = str(Path(sys.executable).resolve())
+    assert restarts == [(executable, [executable, "--post-update", *command])]
 
     monkeypatch.setattr(sys, "argv", restarts[0][1])
     second = runner.invoke(main.app, restarts[0][1][1:])

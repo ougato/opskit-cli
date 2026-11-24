@@ -6,7 +6,7 @@
 
 1. 在 `develop` 开发。准备发布时，以 GitHub 最新正式标签为准将版本加一，运行 `python scripts/release_bump.py v<N>`，提交版本文件及本次发版改动，再将 `develop` 推送到 GitHub 和 origin。
 2. 将 `develop` 合并到 `release`，推送到 GitHub 和 origin。GitHub 在 `release` 上执行全量测试、四平台构建、冻结 CLI 验收和资产预检。
-3. 预检成功后，在 `release` 的同一提交上创建 `v<N>` 标签并推送到 GitHub。正式工作流核对分支提交、标签版本和对应的成功预检，发布二进制和 SHA256 文件。
+3. 同一提交的 develop 平台回归与 release 预检均成功后，在 `release` 的同一提交上创建 `v<N>` 标签并推送到 GitHub。正式工作流核对分支提交、标签版本和两项成功检查，下载并重新验证该次预检的产物，再发布二进制和 SHA256 文件。标签工作流不再重新编译。
 4. 等正式工作流成功，核对 GitHub Release 和默认分支的 `bootstrap.json`。同步默认分支的版本提交，再把 `release` 合并到 `master` 并推送到 GitHub 和 origin，最后切回 `develop`。
 
 预检失败时在 `develop` 修复，再合入 `release` 重新预检。已发布的标签保持固定。
@@ -15,24 +15,25 @@
 
 1. 创建独立 Python 3.12 测试环境，按哈希锁安装依赖并运行全套测试
 2. 校验已提交的 APP_VERSION 与 bootstrap.json，分别构建 Linux x64、Linux arm64、Windows x64 和 macOS arm64
-3. 每个平台在源码目录外验证冻结 CLI，上传二进制、SHA256 文件及 manifest.json
+3. 每个平台在源码目录外验证冻结 CLI。Windows x64、Linux x64 和 Linux ARM64 同时构建目录发行包，并从实际归档安装后执行同一组 CLI 参数
 4. 发布任务严格核对四平台目录及文件，拒绝额外文件、链接和不匹配的版本、平台、架构、大小或摘要
-5. 创建或恢复草稿，上传二进制与 SHA256 共八个文件，核对 GitHub 返回的摘要后公开
+5. 创建或恢复草稿，上传单文件、目录发行资产及各自的 SHA256 文件，核对 GitHub 返回的摘要后公开
 6. 从事件提交执行发布脚本，将版本和当前安装脚本写入独立检出的默认分支，版本单调递增且保留分支最新父提交
 
 manifest.json 仅用于流水线核对，不作为同名发布资产上传
 完整的已公开版本重跑只读，冲突或不完整的公开版本拒绝覆盖
 失败保留草稿和诊断日志，测试产物包含 release-tests.log 与 XML
 冻结 CLI 验收无论成功或失败，都单独保存 frozen-check-平台产物名 诊断包，包含各命令的 stdout、stderr 和退出码
+目录 CLI 验收记录保存在 `directory-check-*`，Linux 独立调试符号保存在 `debug-symbols-*`，按 `.build-id` 索引
 诊断包不进入正式发布矩阵，未通过冻结验收的二进制不上传为发布产物
 `inspect-native-profiles` 仅检查 Windows AppContainer 恢复记录：Windows 空环境应成功返回，Linux/macOS 应返回退出码 1 及明确的 Windows 平台错误
 冻结验收对此命令固定使用英文并检查完整 JSON 错误结构和平台错误文案，其他错误仍阻断发布
 
 ## 构建约束
 
-外部 Actions 固定提交，manylinux 镜像固定摘要及 amd64 平台
+外部 Actions 固定提交，manylinux 镜像固定摘要及 amd64 平台。Linux x64 目录版在同一镜像中使用固定版本和 SHA256 的共享 CPython 3.12，供 PyInstaller 打包。单文件版使用镜像内的静态 CPython 构建
 只有发布任务具有 contents:write，其余任务只读且检出不保留凭据
-原生构建通过 scripts/install_release_build.py 创建全新环境，按 requirements-installer.txt 和 requirements-build.txt 安装锁定依赖
+原生构建通过 `scripts/install_release_build.py` 创建全新环境，按发布构建清单安装哈希锁定依赖。`--directory` 另外安装 `requirements-directory-build.txt` 锁定的 PyInstaller 工具链
 原生构建安装依赖时禁用 pip 缓存，setup-python 同样不启用 pip 缓存保存，避免不存在的缓存目录使构建收尾失败
 Windows 辅助工具由 scripts/install_windows_build_tools.py 准备，Nuitka 不自动下载缺失工具
 构建任务预算 60 分钟，矩阵独立保留失败结果
@@ -41,6 +42,10 @@ Windows 辅助工具由 scripts/install_windows_build_tools.py 准备，Nuitka �
 ## 安装与更新
 
 安装脚本和自动更新均要求 SHA256，缺失或不匹配时拒绝写入程序
+`python build.py directory` 生成 Windows 或 Linux 完整目录包与独立启动器。指定 `--base <完整目录包> --base-build <版本号>` 时，构建验证增量恢复的目录摘要，并在增量更小时加入发布资产
+GitHub Actions 从最新的较早正式版本取得完整包，核对 GitHub API 提供的资产摘要与大小。首次提供目录发行包时发布完整包，后续通过 `opskit update install` 使用增量或完整包
+Windows 和 Linux 的安装脚本校验同一正式版本的启动器和目录包，再发布稳定命令入口。已有单文件安装可重新运行安装脚本，以原命令路径切换到目录安装。macOS 仍使用单文件包
+目录更新在独立目录验证文件和启动检查后发布版本指针。已运行的进程继续使用其版本目录，已发布的运行目录保留在入口旁的隐藏目录中，卸载时会报告该路径供用户处理
 更新保留 HTTPS、来源、版本、文件边界、私有暂存、原子提交及回滚检查
 详见 [发布与更新校验](release-security.md) 和 [CLI 契约](cli-contract.md)
 
@@ -49,4 +54,4 @@ Windows 辅助工具由 scripts/install_windows_build_tools.py 准备，Nuitka �
 Windows / Python 3.12 的发布、下载、应用、回滚、候选缓存及身份边界测试：309 passed，5 skipped
 Ruff、静态债务增量检查、仓库发布边界、版本一致性及安装脚本语法检查通过
 本机全套回归在原生插件运行时文件清单测试超过 30 秒预算，未记为通过
-正式出包以新标签触发的 GitHub 发布测试、四平台构建及冻结 CLI 检查结果为准
+正式出包以标签对应提交的 GitHub 平台回归、四平台构建、冻结 CLI 检查及资产校验结果为准

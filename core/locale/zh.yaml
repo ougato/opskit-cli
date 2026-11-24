@@ -114,6 +114,11 @@ update:
   install_rolled_back_version: "当前发布的版本曾被回滚，请等待更高版本"
   install_scheduled: "已安排更新到 v{version}，退出后替换，请重新启动 OpsKit 确认"
   install_applied: "已替换为 v{version}，请重新启动 OpsKit 确认"
+  directory_bad_timeout: "更新超时必须大于零"
+  directory_permissions: "当前用户无法写入 OpsKit 安装目录"
+  directory_download_failed: "无法下载或校验目录更新，请查看更新状态后重试"
+  directory_candidate_failed: "v{version} 未通过启动检查，已保留当前版本"
+  directory_applied: "已启用 v{version}，下次启动时生效"
 
 service:
   installing: "安装服务插件"
@@ -812,6 +817,7 @@ self_uninstall:
   full: "完全卸载"
   keep_data: "保留插件、配置和已安装软件"
   keep_software: "保留已安装软件"
+  retained_runtime: "保留运行中会话使用的程序文件：{path}"
   yes_required: "请用 --yes 确认卸载"
   external: "请使用原安装方式卸载 OpsKit"
   system: "请以管理员权限运行系统级 OpsKit"

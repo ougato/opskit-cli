@@ -14,7 +14,7 @@ def test_only_release_job_can_write_repository():
     for name, job in workflow["jobs"].items():
         effective = job.get("permissions", workflow["permissions"])
         expected = {"contents": "write" if name == "release" else "read"}
-        if name == "test":
+        if name in {"test", "release"}:
             expected["actions"] = "read"
         assert effective == expected
 
@@ -36,14 +36,22 @@ def test_candidate_branch_builds_and_validates_without_publishing():
 
 def test_tag_requires_matching_version_and_successful_release_commit():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    job = workflow["jobs"]["test"]
-    version = next(step for step in job["steps"] if step.get("id") == "version")
-    assert 'release_bump.py "v$build" --check' in version["run"]
-    assert '"$GITHUB_REF_NAME" != "v$build"' in version["run"]
-    gate = next(step for step in job["steps"] if step.get("if") == "github.ref_type == 'tag'")
-    assert 'git/ref/heads/release' in gate["run"]
+    jobs = workflow["jobs"]
+    assert jobs["test"]["if"] == "github.ref_type == 'branch'"
+    assert jobs["build"]["needs"] == "test"
+    job = jobs["release"]
+    assert job["needs"] == ["notify-start"]
+    gate = next(step for step in job["steps"] if step.get("id") == "candidate")
+    assert 'release_bump.py "$GITHUB_REF_NAME" --check' in gate["run"]
+    assert "git/ref/heads/release" in gate["run"]
     assert '"$release_sha" != "$GITHUB_SHA"' in gate["run"]
-    assert '-f status=success -f head_sha="$GITHUB_SHA"' in gate["run"]
+    assert '-f event=push -f status=success -f head_sha="$GITHUB_SHA"' in gate["run"]
+    assert "successful_run test.yml develop" in gate["run"]
+    assert "successful_run release.yml release" in gate["run"]
+    download = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/download-artifact@"))
+    assert job["steps"].index(gate) < job["steps"].index(download)
+    assert download["with"]["run-id"] == "${{ steps.candidate.outputs.run_id }}"
+    assert download["with"]["github-token"] == "${{ github.token }}"
 
 
 def test_bootstrap_commit_uses_default_branch_after_release_upload():

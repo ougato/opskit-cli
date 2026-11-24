@@ -128,9 +128,20 @@ def _check_worker(connection):
             result["reason"] = "no_eligible_update"
         else:
             version, _, _ = target
+            from core.directory_install import managed_install
+            install = managed_install()
             from core.update_target_state import validate_upgrade
             try:
-                validate_upgrade(updater._self_path(), version)
+                if install is None:
+                    validate_upgrade(updater._self_path(), version)
+                else:
+                    state = install.state()
+                    if state.rejected is not None and version <= state.rejected:
+                        raise ValueError("rolled back update version refused")
+                    if version <= state.active.version:
+                        send(connection, {"ok": True, "data": {**result, "available": False,
+                                                               "reason": "no_eligible_update"}})
+                        return
             except ValueError as exc:
                 if str(exc) != "rolled back update version refused":
                     raise
@@ -158,7 +169,11 @@ def _result(message):
 
 def status(*, timeout=10):
     from core import updater
+    from core.directory_updates import status as directory_status
     from network.worker import run
+    result = directory_status()
+    if result is not None:
+        return result
     return _result(run(_status_worker, (str(updater._get_cache_path()), str(updater._get_cache_path().parent / "opskit.pending"),
                        updater._is_frozen(), updater.APP_VERSION), timeout=timeout, label="update status"))
 
@@ -189,9 +204,12 @@ def reconcile_on_boot(*, timeout=30):
 
 def _run_reconciliation(timeout, *, on_boot):
     from core import updater
+    from core.directory_install import managed_install
     from network.worker import run
     if not updater._is_frozen():
         raise ValueError("binary updates require a packaged executable")
+    if managed_install() is not None:
+        return {"state": "no_job"}
     return _result(run(_reconcile_worker, (on_boot,), timeout=timeout, label="update reconciliation"))
 
 
@@ -213,21 +231,27 @@ def register(app, context_settings, translate):
     @guarded
     def apply_update():
         from core import updater
+        from core.directory_install import managed_install
+        from core import directory_updates
         from core.prompt import confirm
         if not updater._is_frozen():
             fail("binary updates require a packaged executable", 2)
         if not confirm(breadcrumb=["OpsKit", "update"], prompt=t("confirm_ui.apply_update")):
             fail("update application cancelled")
-        emit(updater.apply_verified_pending())
+        install = managed_install()
+        emit(directory_updates.activate(install) if install else updater.apply_verified_pending())
 
     @group.command("download")
     @guarded
     def download_update(timeout: float = typer.Option(300, "--timeout", min=.1, max=3600)):
         from core import updater
         from core.update_download import download
+        from core.directory_install import managed_install
+        from core import directory_updates
         if not updater._is_frozen():
             fail("binary updates require a packaged executable", 2)
-        emit(download(timeout=timeout))
+        install = managed_install()
+        emit(directory_updates.stage(install, timeout=timeout) if install else download(timeout=timeout))
 
     @group.command("install", help=translate("update_install_help"))
     @guarded
@@ -240,6 +264,8 @@ def register(app, context_settings, translate):
         from core import updater
         from core.prompt import confirm
         from core.update_download import download
+        from core.directory_install import managed_install
+        from core import directory_updates
 
         if not updater._is_frozen():
             fail(t("update.install_packaged_only"), 2)
@@ -254,12 +280,22 @@ def register(app, context_settings, translate):
         if not confirm(breadcrumb=["OpsKit"], prompt=t("confirm_ui.apply_update"),
                        info_lines=[t("update.install_target", current=candidate["current_version"], version=version)]):
             fail(t("update.install_cancelled"))
-        downloaded = download(timeout=timeout, expected_version=version)
+        install = managed_install()
+        if install is None:
+            downloaded = download(timeout=timeout, expected_version=version)
+        else:
+            downloaded = directory_updates.stage(install, timeout=timeout, expected_version=version)
         if not downloaded["available"]:
             fail(t("update.install_candidate_changed"))
-        result = updater.apply_verified_pending(expected_candidate_id=downloaded["candidate_id"])
+        if install is None:
+            result = updater.apply_verified_pending(expected_candidate_id=downloaded["candidate_id"])
+        else:
+            result = directory_updates.activate(install, expected_candidate_id=downloaded["candidate_id"])
+            result.update(transport=downloaded["transport"], download_bytes=downloaded["download_bytes"])
         if output_mode.get() == "json":
             emit({"available": True, "checksum_verified": True, **result})
+        elif install is not None:
+            typer.echo(t("update.directory_applied", version=result["version"]))
         else:
             typer.echo(t("update.install_" + result["state"], version=result["version"]))
 

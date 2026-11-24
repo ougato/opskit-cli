@@ -64,7 +64,9 @@ def _blocked_os_worker(connection):
     import time
     marker = Path(os.environ["OPSKIT_TEST_DISK_MARKER"])
     def blocked(*args, **kwargs):
-        marker.write_text(json.dumps({"pid": os.getpid(), "created": psutil.Process().create_time()}))
+        pending = marker.with_suffix(".tmp")
+        pending.write_text(json.dumps({"pid": os.getpid(), "created": psutil.Process().create_time()}))
+        pending.replace(marker)
         time.sleep(60)
         raise AssertionError("blocked call returned")
     if os.environ["OPSKIT_TEST_DISK_STAGE"] == "enumerate":

@@ -1,5 +1,6 @@
 """Explicit guest SDK code inventory, shared by preparation and execution."""
 import hashlib
+from importlib.util import find_spec
 import io
 import os
 from pathlib import Path
@@ -20,6 +21,11 @@ RUNTIME_FILES = (
 )
 NATIVE_FETCH_FILES = ("__init__.py", "native_fetch_worker.py", "plugin_git_archive.py")
 BUNDLED_FILES = tuple(dict.fromkeys((*RUNTIME_FILES, *NATIVE_FETCH_FILES)))
+FETCH_TYPING_SOURCE = "core/typing_extensions.py"
+
+
+def is_fetch_dependency(name):
+    return name == FETCH_TYPING_SOURCE or name.startswith("core/dulwich/")
 
 
 def _read_file(source, core, limit):
@@ -54,9 +60,10 @@ def _bundle_snapshot(core):
             names = {member.filename for member in members}
             fixed = {"core/" + name for name in BUNDLED_FILES}
             extra = names - fixed
-            valid_extra = (1 <= len(extra) <= 128 and all(
+            dulwich_sources = extra - {FETCH_TYPING_SOURCE}
+            valid_extra = (1 <= len(dulwich_sources) <= 128 and all(
                 name.startswith("core/dulwich/") and name.endswith(".py")
-                and ".." not in Path(name).parts for name in extra))
+                and ".." not in Path(name).parts for name in dulwich_sources))
             if (len(members) != len(names) or not fixed <= names or extra and not valid_extra
                     or not any(name == "core/dulwich/__init__.py" for name in extra)
                     or any(member.file_size > MAX_SOURCE_BYTES for member in members)
@@ -73,7 +80,7 @@ def _snapshot(core, names):
         files = _bundle_snapshot(core)
         result = {"core/" + name: files["core/" + name] for name in names}
         if "native_fetch_worker.py" in names:
-            result.update({name: body for name, body in files.items() if name.startswith("core/dulwich/")})
+            result.update({name: body for name, body in files.items() if is_fetch_dependency(name)})
         return result
     result, size = {}, 0
     for name in names:
@@ -102,6 +109,15 @@ def _snapshot(core, names):
             result["core/" + name] = content
         if "core/dulwich/__init__.py" not in result:
             raise ValueError("Dulwich pure Python sources are unavailable")
+        # Dulwich uses typing_extensions.Self with the Python 3.10 worker,
+        # even if the host that packages the worker is newer.
+        typing_spec = find_spec("typing_extensions")
+        if typing_spec is not None and typing_spec.origin:
+            source = Path(typing_spec.origin)
+            content = _read_file(source, source.parent, MAX_SOURCE_BYTES)
+            if size + len(content) > MAX_CONTEXT_SOURCE_BYTES:
+                raise ValueError("runtime source inventory exceeds limits")
+            result[FETCH_TYPING_SOURCE] = content
     return result
 
 

@@ -1,5 +1,9 @@
 # Python依赖安全基线
 
+## TLS 根证书与 Git SSH 依赖（2026-11-24）
+
+运行时将 certifi 的最低版本设为 `2026.11.20`，并锁定该版本。此版本移除了 `emSign ECC Root CA - G3`。锁定 Paramiko `5.1.0`，对应依赖范围为 `>=5.1,<6`。Paramiko 5 移除了 SHA-1 密钥交换和 RSA/SHA-1 签名，OpsKit 的 RSA 主机密钥使用 RSA/SHA-2 协商。两项变更同步更新运行时、CI 和发布构建的哈希锁，继续支持 Python 3.10。见[certifi 安全公告](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2)与[Paramiko 更新记录](https://www.paramiko.org/changelog.html)。
+
 ## 原生 TLS 公告核对（2026-10-16）
 
 后续Linux专属解释器已落地 `/var/tmp/opskit-python-linux-20261016-r1`：发行资产SHA256 `5d546fc004fc2435fa142eb8f42ed8de5eb4725963dc22f7e6671014a80eb560` 与发行元数据、已核摘要的SHA256SUMS一致；原生目录安全解包后实测Python3.12.15/TLS3.5.9。不改变系统Python；r3全新wheel安装已启动。此结果不改变旧3.5.7宿主证据，也不代表最终冻结产物已使用该解释器。
