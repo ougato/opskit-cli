@@ -1,4 +1,5 @@
 """Uninstall the active standalone OpsKit installation."""
+from contextlib import nullcontext
 import errno
 import os
 from pathlib import Path
@@ -9,7 +10,9 @@ import tempfile
 from dataclasses import dataclass
 
 from core import paths, updater, update_target_state
+from core.directory_install import managed_install
 from core.i18n import t
+from core.resource_lock import ResourceLock
 
 
 _PATH_MARKER = ".opskit-user-path"
@@ -29,6 +32,7 @@ class Plan:
     data: tuple[Path, ...]
     profiles: tuple[Path, ...]
     path_marker: Path | None
+    retained_runtime: Path | None = None
 
 
 def _ordinary(path):
@@ -68,7 +72,8 @@ def _profile_replacement(profile, bin_dir):
 def plan(mode):
     if not paths._is_frozen():
         raise ValueError(t("self_uninstall.external"))
-    target = paths.installed_executable()
+    managed = managed_install()
+    target = managed.entry if managed else paths.installed_executable()
     if sys.platform == "win32":
         allowed = (_windows_install_dir() / "opskit.exe",)
     else:
@@ -107,7 +112,8 @@ def plan(mode):
             if _ordinary(profile) and _profile_replacement(profile, target.parent) is not None:
                 profiles.append(profile)
     identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
-    return Plan(target, identity, mode, tuple(data), tuple(profiles), marker)
+    retained_runtime = managed.root if managed else None
+    return Plan(target, identity, mode, tuple(data), tuple(profiles), marker, retained_runtime)
 
 
 def _remove(path):
@@ -151,30 +157,37 @@ def _remove_empty(path):
 
 def execute(request):
     target = request.executable
-    with updater._update_target_resource.hold():
-        if request != plan(request.mode):
-            raise ValueError(t("self_uninstall.changed"))
-        state = update_target_state.read(target)
-        if state and state["phase"] == "prepared":
-            raise ValueError(t("self_uninstall.update_pending"))
-        for path in request.data:
-            _remove(path)
-        for profile in request.profiles:
-            _edit_profile(profile, target.parent)
-        state_path = update_target_state.path(target)
-        if sys.platform == "win32":
-            from core.file_digest import file_digest
-            from core.self_uninstall_windows import schedule
-            return schedule(request, file_digest(target), state_path)
-        target.unlink()
-        state_path.unlink(missing_ok=True)
-    # Once the executable is gone, the updater no longer has a target.
-    if not target.exists():
-        lock = updater._update_target_lock_path(target)
-        lock.unlink(missing_ok=True)
-        _remove_empty(lock.parent)
-    if request.mode == "full":
-        _remove_empty(paths.data_dir())
+    managed = managed_install()
+    managed_lock = managed.lock.hold() if managed else nullcontext()
+    target_lock_path = updater._update_target_lock_path(target)
+    target_lock = (ResourceLock(lambda: target_lock_path, label="update executable")
+                   if managed else updater._update_target_resource)
+    with managed_lock:
+        with target_lock.hold():
+            if request != plan(request.mode):
+                raise ValueError(t("self_uninstall.changed"))
+            state = update_target_state.read(target)
+            if state and state["phase"] == "prepared":
+                raise ValueError(t("self_uninstall.update_pending"))
+            if managed:
+                managed.state()
+            for path in request.data:
+                _remove(path)
+            for profile in request.profiles:
+                _edit_profile(profile, target.parent)
+            state_path = update_target_state.path(target)
+            if sys.platform == "win32":
+                from core.file_digest import file_digest
+                from core.self_uninstall_windows import schedule
+                return schedule(request, file_digest(target), state_path, managed=managed)
+            target.unlink()
+            state_path.unlink(missing_ok=True)
+        # Once the executable is gone, the updater no longer has a target.
+        if not target.exists():
+            target_lock_path.unlink(missing_ok=True)
+            _remove_empty(target_lock_path.parent)
+        if request.mode == "full":
+            _remove_empty(paths.data_dir())
     return None
 
 
@@ -208,14 +221,20 @@ def run(*, purge, dry_run):
         "mode": mode, "executable": str(request.executable),
         "data": list(map(str, request.data)), "path_changes": path_changes,
     }
+    detail.append(description)
+    notice = None
+    if request.retained_runtime:
+        notice = t("self_uninstall.retained_runtime", path=request.retained_runtime)
+        result["retained_runtime"] = str(request.retained_runtime)
+        detail.append(notice)
     if dry_run:
         if output_mode.get() == "json":
             emit({**result, "status": "preview"})
         else:
-            for line in [*detail, description]:
+            for line in detail:
                 print_info(line)
         return
-    if not is_auto_yes() and not confirm(title, t("self_uninstall." + mode), info_lines=[*detail, description]):
+    if not is_auto_yes() and not confirm(title, t("self_uninstall." + mode), info_lines=detail):
         return
     failure = execute(request)
     if output_mode.get() == "json":
@@ -225,3 +244,5 @@ def run(*, purge, dry_run):
         print_info(t("self_uninstall.scheduled", path=failure))
     else:
         print_info(t("self_uninstall.removed"))
+    if notice and output_mode.get() != "json":
+        print_info(notice)

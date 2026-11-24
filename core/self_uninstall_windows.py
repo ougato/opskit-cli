@@ -19,25 +19,39 @@ function Assert-Ordinary([string]$path) {
         else { $item = $item.Parent }
     }
 }
-try {
-    Assert-Ordinary $job.lock
-    $lock = [IO.File]::Open($job.lock, 'Open', 'ReadWrite', 'ReadWrite')
+function Lock-Exclusive([string]$path) {
+    Assert-Ordinary $path
+    $lock = [IO.File]::Open($path, 'Open', 'ReadWrite', 'ReadWrite')
     try {
         for ($attempt = 0; ; $attempt++) {
-            try { $lock.Lock(0, 1); break }
+            try { $lock.Lock(0, 1); return $lock }
             catch [IO.IOException] {
                 if ($attempt -ge 39) { throw }
                 Start-Sleep -Milliseconds 250
             }
         }
-        Assert-Ordinary $job.target
-        $hash = [Security.Cryptography.SHA256]::Create()
-        try {
-            $stream = [IO.File]::OpenRead($job.target)
-            try { $digest = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '') }
-            finally { $stream.Dispose() }
-        } finally { $hash.Dispose() }
-        if ($digest -ne $job.digest) {
+    } catch { $lock.Dispose(); throw }
+}
+function Get-Sha256([string]$path) {
+    Assert-Ordinary $path
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($path)
+        try { return [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '') }
+        finally { $stream.Dispose() }
+    } finally { $hash.Dispose() }
+}
+$managedLock = $null
+try {
+    if ($job.managed) {
+        $managedLock = Lock-Exclusive $job.managed.lock
+        if ((Get-Sha256 $job.managed.state) -ne $job.managed.digest) {
+            throw 'OpsKit directory installation changed'
+        }
+    }
+    $lock = Lock-Exclusive $job.lock
+    try {
+        if ((Get-Sha256 $job.target) -ne $job.digest) {
             throw 'OpsKit executable changed'
         }
         if ($job.marker) {
@@ -82,11 +96,13 @@ try {
 } catch {
     [IO.File]::WriteAllText($job.failure, $_.Exception.Message)
     exit 1
+} finally {
+    if ($managedLock) { $managedLock.Dispose() }
 }
 """
 
 
-def schedule(plan, digest, state):
+def schedule(plan, digest, state, *, managed=None):
     buffer = ctypes.create_unicode_buffer(32768)
     size = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
     if not 0 < size < len(buffer):
@@ -99,6 +115,16 @@ def schedule(plan, digest, state):
         "marker": str(plan.path_marker) if plan.path_marker else None, "failure": str(failure),
         "full": plan.mode == "full",
     }
+    if managed:
+        from core.directory_install import reset_dll_directory
+        from core.file_digest import file_digest
+
+        job["managed"] = {
+            "lock": str(managed.lock.path_provider()),
+            "state": str(managed.state_path),
+            "digest": file_digest(managed.state_path),
+        }
+        reset_dll_directory()
     payload = base64.b64encode(json.dumps(job).encode()).decode("ascii")
     command = base64.b64encode(_WORKER.replace("__JOB__", payload).encode("utf-16-le")).decode("ascii")
     subprocess.Popen(

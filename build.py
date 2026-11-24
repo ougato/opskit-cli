@@ -5,6 +5,7 @@ OpsKit 构建脚本 — 子命令模式
     python build.py test                          # 跑单元测试
     python build.py build                         # 编译（auto: Nuitka → PyInstaller）
     python build.py build --backend pyinstaller   # 指定后端
+    python build.py directory                    # 构建 Windows / Linux 目录发行包
     python build.py build --upx                   # 启用 UPX 压缩
     python build.py clean                         # 清理 _build/ + dist/
     python build.py all                           # test → build → manifest
@@ -23,9 +24,11 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import zipfile
@@ -231,13 +234,14 @@ def build_nuitka(output_name: str, upx: bool, packages: list[str] | None = None,
     return output if output.exists() else None
 
 
-def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
-    """使用 PyInstaller 打包单文件可执行程序"""
+def build_pyinstaller(output_name: str, upx: bool, *, directory: Path | None = None) -> Path | None:
+    """使用 PyInstaller 打包单文件或字节码目录版。"""
     if not _find_tool("pyinstaller"):
         print("[build] PyInstaller not found. Install: pip install pyinstaller")
         return None
 
-    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    dist_dir = directory if directory is not None else DIST_DIR
+    dist_dir.mkdir(parents=True, exist_ok=True)
     # PyInstaller cleans workpath/name; keep the spec outside that subtree.
     spec_out = BUILD_DIR / "spec"
     spec_out.mkdir(parents=True, exist_ok=True)
@@ -249,9 +253,9 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--onefile",
+        "--onedir" if directory is not None else "--onefile",
         f"--name={output_name.replace('.exe', '')}",
-        f"--distpath={DIST_DIR}",
+        f"--distpath={dist_dir}",
         f"--workpath={BUILD_DIR}",
         f"--specpath={spec_out}",
         f"--add-data={ROOT / 'core' / 'themes'}{sep}core/themes",
@@ -313,7 +317,9 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
     else:
         cmd.append("--noupx")
 
-    if sys.platform != "win32":
+    if directory is not None:
+        cmd += ["--debug=noarchive", "--optimize=0"]
+    elif sys.platform != "win32":
         cmd.append("--strip")
 
     cmd.append("main.py")
@@ -321,6 +327,10 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
     if rc != 0:
         print(f"[build] PyInstaller failed (exit {rc})")
         return None
+
+    if directory is not None:
+        application = dist_dir / Path(output_name).stem
+        return application if (application / output_name).is_file() else None
 
     candidates = [
         DIST_DIR / output_name,
@@ -331,6 +341,106 @@ def build_pyinstaller(output_name: str, upx: bool) -> Path | None:
         if p.exists():
             return p
     return None
+
+
+def _build_directory_launcher(output: Path) -> Path:
+    name = output.name.removesuffix(".exe")
+    command = [
+        sys.executable, "-m", "PyInstaller", "--onefile", "--noupx",
+        f"--name={name}", f"--distpath={output.parent}", f"--workpath={BUILD_DIR}",
+        f"--specpath={BUILD_DIR / 'spec'}", f"--paths={ROOT}",
+        str(ROOT / "scripts" / "directory_launcher.py"),
+    ]
+    if _run(command, cwd=ROOT, stdin=subprocess.DEVNULL) != 0 or not output.is_file():
+        raise RuntimeError("PyInstaller directory launcher build failed")
+    return output
+
+
+def _save_debug_symbols(application: Path, launcher: str, stem: str, work: Path) -> None:
+    from scripts.linux_debug_symbols import split_debug_symbols
+
+    symbols = work / "symbols"
+    split_debug_symbols(application, symbols, launcher)
+    bundle = work / f"{stem}.debug.tar.xz"
+    with tarfile.open(bundle, "w:xz") as archive:
+        def normalize(member: tarfile.TarInfo) -> tarfile.TarInfo:
+            member.uid = member.gid = member.mtime = 0
+            member.uname = member.gname = ""
+            return member
+
+        for path in sorted(symbols.iterdir()):
+            archive.add(path, arcname=path.name, filter=normalize)
+    bundle.replace(BUILD_DIR / bundle.name)
+
+
+def cmd_directory(args: argparse.Namespace) -> int:
+    """构建目录应用、独立启动器和目录发行包。"""
+    from core.directory_archive import read_manifest, unpack_package
+    from scripts.directory_package import create_package
+
+    platform_name, arch = _platform_info()
+    if (platform_name, arch) not in {("linux", "x64"), ("linux", "arm64"), ("windows", "x64")}:
+        raise ValueError("directory distribution is supported on Windows x64 and Linux x64 / ARM64")
+    version = int(_get_version())
+    if (args.base is None) != (args.base_build is None):
+        raise ValueError("--base and --base-build must be provided together")
+    if args.base is not None and not (0 < args.base_build < version and args.base.is_file()):
+        raise ValueError("delta base must be an existing package of an earlier build")
+    if args.base is not None:
+        manifest = read_manifest(args.base)
+        if manifest.version != args.base_build or manifest.base_version is not None:
+            raise ValueError("delta base package does not identify the requested full build")
+
+    write_registry()
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    extension = ".exe" if platform_name == "windows" else ""
+    application_name = "opskit" + extension
+    stem = f"opskit-{platform_name}-{arch}"
+    with tempfile.TemporaryDirectory(prefix="directory-release-", dir=BUILD_DIR) as temporary:
+        work = Path(temporary)
+        application = build_pyinstaller(application_name, False, directory=work / "app")
+        if application is None:
+            return 1
+        if platform_name == "linux":
+            _save_debug_symbols(application, application_name, stem, work)
+        launcher = _build_directory_launcher(work / (stem + "-launcher" + extension))
+        full = work / f"{stem}.tar.xz"
+        create_package(application, full, version)
+        packages = [launcher, full]
+        if args.base is not None:
+            delta = work / f"{stem}-from-v{args.base_build}.tar.xz"
+            create_package(application, delta, version, base=args.base)
+            if delta.stat().st_size < full.stat().st_size:
+                base_tree, delta_tree = work / "base", work / "delta"
+                base_tree.mkdir()
+                delta_tree.mkdir()
+                unpack_package(args.base, base_tree, args.base_build)
+                reconstructed = unpack_package(delta, delta_tree, version, base=base_tree)
+                if reconstructed.tree_sha256 != read_manifest(full).tree_sha256:
+                    raise ValueError("delta does not reconstruct the full directory package")
+                packages.append(delta)
+
+        current = {
+            "version": str(version), "platform": platform_name, "arch": arch,
+            "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        existing = json.loads(MANIFEST_FILE.read_text(encoding="utf-8")) if MANIFEST_FILE.is_file() else {}
+        if all(existing.get(key) == current[key] for key in ("version", "platform", "arch")):
+            current.update(existing)
+        current["directory"] = {}
+        for package in packages:
+            current["directory"][package.name] = {
+                "sha256": write_checksum(package), "size": package.stat().st_size,
+            }
+            package.with_name(package.name + ".sha256").replace(DIST_DIR / (package.name + ".sha256"))
+            package.replace(DIST_DIR / package.name)
+        for name in set(existing.get("directory", {})) - current["directory"].keys():
+            if re.fullmatch(re.escape(stem) + r"-from-v[1-9][0-9]*\.tar\.xz", name):
+                (DIST_DIR / name).unlink(missing_ok=True)
+                (DIST_DIR / (name + ".sha256")).unlink(missing_ok=True)
+        MANIFEST_FILE.write_text(json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return 0
 
 
 def write_checksum(bin_path: Path) -> str:
@@ -464,7 +574,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"[info] 可用后端: {', '.join(backends) if backends else '无（请安装 pyinstaller）'}")
     if MANIFEST_FILE.exists():
         m = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-        print(f"[info] 上次构建: v{m['version']} / {m['binary']} / {m['built_at']}")
+        print(f"[info] 上次构建: v{m['version']} / {m.get('binary', 'directory')} / {m['built_at']}")
     return 0
 
 
@@ -492,6 +602,9 @@ def main() -> None:
     sub.add_parser("test", help="运行单元测试")
     sub.add_parser("clean", help="清理 _build/ + dist/")
     sub.add_parser("info", help="打印版本 / 平台 / 可用后端")
+    directory = sub.add_parser("directory", help="打包 Windows / Linux 目录版")
+    directory.add_argument("--base", type=Path, help="用于生成增量包的上一个完整目录包")
+    directory.add_argument("--base-build", type=int, help="增量包对应的起始版本")
 
     for name, help_text in [("build", "编译打包"), ("all", "test → build（完整流程）")]:
         p = sub.add_parser(name, help=help_text)
@@ -514,6 +627,7 @@ def main() -> None:
         "build": cmd_build,
         "all": cmd_all,
         "info": cmd_info,
+        "directory": cmd_directory,
     }
     sys.exit(handlers[args.command](args))
 

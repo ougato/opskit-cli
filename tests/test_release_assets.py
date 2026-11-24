@@ -27,10 +27,25 @@ def artifacts(tmp_path):
         path.write_bytes(name.encode())
         digest = file_digest(path)
         (directory / (binary + ".sha256")).write_text(f"{digest}  {binary}\n", encoding="utf-8")
-        (directory / "manifest.json").write_text(json.dumps({
+        manifest = {
             "version": "7", "platform": platform, "arch": arch, "binary": binary,
-            "sha256": digest, "size": path.stat().st_size}), encoding="utf-8")
+            "sha256": digest, "size": path.stat().st_size,
+        }
+        if name in ra.DIRECTORY_MATRIX:
+            extension = ".exe" if platform == "windows" else ""
+            manifest["directory"] = {
+                asset: write_artifact(directory / asset) for asset in
+                (f"{name}-launcher{extension}", f"{name}.tar.xz")
+            }
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
+
+
+def write_artifact(path):
+    path.write_bytes(path.name.encode())
+    digest = file_digest(path)
+    path.with_name(path.name + ".sha256").write_text(f"{digest}  {path.name}\n", encoding="utf-8")
+    return {"sha256": digest, "size": path.stat().st_size}
 
 
 class FakeGH:
@@ -87,7 +102,7 @@ class FakeGH:
             body = list(self.remote.values())
         elif method == "PATCH" and endpoint == "releases/17":
             data = json.loads(kwargs["input"])
-            assert len(self.remote) == 8
+            assert len(self.remote) >= 4 * 2 + len(ra.DIRECTORY_MATRIX) * 4
             self.release.update(data)
             body = dict(self.release)
         else:
@@ -132,7 +147,7 @@ def test_failed_upload_retains_draft_and_retry_only_fills_missing(artifacts):
     assert fake.release["draft"] is False
     assert all(fake.remote[name] == entry for name, entry in retained.items())
     uploads = [args[4] for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]
-    assert len(uploads) == 4
+    assert len(uploads) == len(expected) - len(retained)
 
 
 def test_completed_upload_with_lost_ack_is_recovered_without_replacement(artifacts):
@@ -145,7 +160,7 @@ def test_completed_upload_with_lost_ack_is_recovered_without_replacement(artifac
     assert fake.release["draft"] is True
     fake.calls.clear()
     ra.publish(fake.api(), "v7", COMMIT, expected)
-    assert len([args for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]) == 7
+    assert len([args for args, _ in fake.calls if args[:3] == ["gh", "release", "upload"]]) == len(expected) - 1
     assert fake.release["draft"] is False
 
 
@@ -243,8 +258,71 @@ def test_unbounded_metadata_refused_before_json_read(artifacts):
     root = artifacts
     manifest = root / "opskit-linux-x64/manifest.json"
     manifest.write_bytes(b" " * (1024 * 1024 + 1))
-    with pytest.raises(ValueError, match="exceeds 1 MiB"):
+    with pytest.raises(ValueError, match="size out of bounds"):
         ra.assets(root, 7)
+
+
+@pytest.mark.parametrize("base, valid", [(6, True), (7, False), (8, False)])
+def test_optional_delta_must_reference_an_earlier_build(artifacts, base, valid):
+    name = "opskit-linux-x64"
+    directory = artifacts / name
+    path = directory / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    delta = f"{name}-from-v{base}.tar.xz"
+    manifest["directory"][delta] = write_artifact(directory / delta)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    if valid:
+        assert {delta, delta + ".sha256"} <= ra.assets(artifacts, 7).keys()
+        (directory / delta).write_bytes(b"injected bad digest")
+        with pytest.raises(ValueError, match="metadata mismatch|checksum mismatch"):
+            ra.assets(artifacts, 7)
+    else:
+        with pytest.raises(ValueError, match="delta name or base version mismatch"):
+            ra.assets(artifacts, 7)
+
+
+def test_previous_build_ignores_current_newer_unpublished_and_non_build_tags():
+    fake = FakeGH()
+    fake.other_releases = [
+        {"tag_name": tag, "draft": draft, "prerelease": prerelease}
+        for tag, draft, prerelease in (("v1", False, False), ("v2", False, False),
+                                       ("v6", False, True), ("v5", True, False),
+                                       ("v7", False, False), ("v12", False, False), ("latest", False, False))
+    ]
+    assert ra.previous_build(fake.api(), 7) == 2
+    assert ra.previous_build(fake.api(), 1) is None
+
+
+@pytest.mark.parametrize("bad_digest", [False, True])
+def test_base_download_uses_exact_published_asset_and_authenticated_digest(tmp_path, bad_digest):
+    import hashlib
+
+    payload = b"authorized by the release API"
+    filename = "opskit-linux-x64.tar.xz"
+    output = tmp_path / "verified.tar.xz"
+    digest = "sha256:" + ("0" * 64 if bad_digest else hashlib.sha256(payload).hexdigest())
+    listing = [{"name": f"{name}.tar.xz", "size": len(payload), "state": "uploaded", "digest": digest}
+               for name in ra.DIRECTORY_MATRIX]
+
+    class BaseAPI:
+        def request(self, method, endpoint):
+            assert method == "GET"
+            if endpoint == "releases/tags/v4":
+                return {"tag_name": "v4", "id": 28, "draft": False, "prerelease": False}
+            assert endpoint == "releases/28/assets?per_page=100"
+            return listing
+
+        def download(self, tag, selected, destination):
+            assert (tag, selected) == ("v4", filename)
+            destination.write_bytes(payload)
+
+    if bad_digest:
+        with pytest.raises(ValueError, match="checksum mismatch"):
+            ra.fetch_base(BaseAPI(), 4, "opskit-linux-x64", output)
+        assert not output.exists()
+    else:
+        assert ra.fetch_base(BaseAPI(), 4, "opskit-linux-x64", output)
+        assert output.read_bytes() == payload
 
 
 def test_validator_matrix_matches_actual_workflow():

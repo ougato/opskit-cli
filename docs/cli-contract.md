@@ -128,7 +128,7 @@ opskit plugin disk-policy --minimum-free-mib 4096
 
 ## 卸载 OpsKit
 
-`opskit uninstall` 是官方独立程序的卸载入口。通过此命令可以交互选择「程序卸载」和「完全卸载」。脚本使用全局 `--yes` 确认，`--purge` 额外删除标准位置的 OpsKit 插件和数据，`--dry-run` 只预览。已管理的软件文件及自定义目录保留。Windows 仅删除有安装记录的用户 PATH 项。JSON 的 `status` 为 `preview`、`removed` 或 `scheduled`。Windows 后台清理失败时，在 `failure_log` 指定的位置写入原因。
+`opskit uninstall` 是官方独立程序的卸载入口。通过此命令可以交互选择「程序卸载」和「完全卸载」。脚本使用全局 `--yes` 确认，`--purge` 额外删除标准位置的 OpsKit 插件和数据，`--dry-run` 只预览。已管理的软件文件及自定义目录保留。Windows 仅删除有安装记录的用户 PATH 项。目录版卸载删除命令入口和安装时添加的 PATH 项，保留相邻的 `.versions` 目录供运行中的会话继续使用，JSON 通过 `retained_runtime` 返回该目录的绝对路径。JSON 的 `status` 为 `preview`、`removed` 或 `scheduled`。Windows 后台清理失败时，在 `failure_log` 指定的位置写入原因。
 
 ## 软件查询与偏好
 
@@ -160,7 +160,11 @@ Windows Redis 下载在响应提供可用文件长度时按已写入字节计算
 
 `update status [--timeout SECONDS]`（默认10秒）只读查询当前版本、二进制更新模式、待更新文件存在性及缓存版本，不boot、不创建配置/缓存；`pending_verification: not_checked`明确没有验证产物，存在文件不表示可安全应用。
 
-`opskit update install` 手动检查、确认、下载并应用正式更新。脚本使用 `opskit --yes --output json update install`。仅支持打包程序，沿用现有更新源、灰度、摘要和回滚策略。检查与下载各有独立超时，分别为 `--check-timeout`（默认30秒）和 `--timeout`（默认300秒），均不包含应用阶段。确认的版本与下载结果绑定，应用时再次核对候选身份。无可用更新正常退出，状态为 `no_update`。成功提交替换后返回 `applied`，Windows 返回 `scheduled`；两者返回时均未确认启动健康。可用 `update status` 查看进度。
+`opskit update install` 手动检查、确认、下载并应用正式更新。脚本使用 `opskit --non-interactive --yes --output json update install`。仅支持打包程序，沿用发布渠道、灰度和 SHA256 校验。`--check-timeout`（默认 30 秒）和 `--timeout`（默认 300 秒）分别限制查询和候选包准备，应用阶段另有启动检查时限。确认的版本与下载结果绑定，应用时再次核对候选身份。无可用更新正常退出，状态为 `no_update`。单文件安装保留原有替换流程，Windows 可返回 `scheduled`，并在后续启动确认健康。
+
+Windows 与 Linux 的目录安装使用同一命令。版本匹配且本地基础文件完整时优先下载增量包，否则下载完整目录包。结果 `state: applied` 表示候选程序已通过启动检查并启用，下次启动进入新版本。JSON 同时返回 `installation: directory`、`transport`（`incremental`、`full` 或 `cached`）和 `download_bytes`（本次采用的资产大小，复用已准备版本为 0）。`opskit --output json update status` 可查询当前运行版本、已选版本、待应用版本、上一版本和最近被拒绝的版本。启动失败时，启动器尝试恢复上一版本，失败版本不会被自动重复安装。
+
+后台准备好的目录版更新会在菜单退出时应用。若菜单在退出前中断，下次打开菜单时继续应用。命令行的 `update download` 可只准备候选版本，`update apply` 校验并启用已准备版本。
 
 `update check [--timeout SECONDS]`（默认30秒）复用现有更新源/灰度策略，在受监督进程内查询，配置上限64 KiB、元数据上限256 KiB，拒绝压缩响应。检查不写更新缓存、不创建机器标识、不发送遥测；完整放量不需要新建身份，部分灰度缺已有身份时明确失败。网络/无效响应失败不作为“无更新”；无符合策略的版本返回available=false/reason=no_eligible_update，候选版本返回checksum_verified=false（此命令尚未下载/验证产物）。期限范围均0.1..3600秒，取消回收worker。显式download及索引任务reconcile已接入；完整应用/恢复事务仍未完成。
 

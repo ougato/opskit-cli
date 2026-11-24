@@ -12,10 +12,20 @@ import click
 
 def _restart_after_update(arguments):
     import os
+    from core.directory_install import managed_install
     from core.paths import installed_executable
 
-    executable = str(installed_executable())
+    install = managed_install()
+    executable = str(install.entry if install is not None else installed_executable())
     argv = [executable, "--post-update", *arguments]
+    if install is not None:
+        if os.name == "nt":
+            import subprocess
+            from core.directory_install import reset_dll_directory
+
+            reset_dll_directory()
+            raise SystemExit(subprocess.call(argv, env=install.env()))
+        os.execve(executable, argv, install.env())
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         # A replacement at the same path needs a fresh PyInstaller extraction.
         env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")

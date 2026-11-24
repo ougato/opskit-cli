@@ -11,7 +11,8 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $BIN_NAME      = "opskit"
-$DOWNLOAD_BASE = "https://github.com/ougato/opskit-cli/releases/latest/download"
+$DOWNLOAD_BASE = "https://github.com/ougato/opskit-cli/releases/download"
+$BOOTSTRAP_URL = "https://raw.githubusercontent.com/ougato/opskit-cli/master/bootstrap.json"
 $INSTALL_DIR   = Join-Path $env:LOCALAPPDATA "opskit"
 
 function Write-Field { param($label, $value) Write-Host ("  {0,-12}{1}" -f $label, $value) }
@@ -43,14 +44,56 @@ function Test-Sha256 {
         Write-Fail "Missing or invalid SHA256 checksum; refusing installation"
         return $false
     }
-    $actual = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash.ToLower()
-    if ($actual -ne $Expected.ToLower()) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $file = [IO.File]::OpenRead($FilePath)
+        try { $actual = [BitConverter]::ToString($sha256.ComputeHash($file)).Replace('-', '').ToLowerInvariant() }
+        finally { $file.Dispose() }
+    } finally {
+        $sha256.Dispose()
+    }
+    if ($actual -ne $Expected.ToLowerInvariant()) {
         Write-Fail "SHA256 mismatch"
         Write-Fail "  expected: $Expected"
         Write-Fail "  actual:   $actual"
         return $false
     }
     return $true
+}
+
+function Get-ReleaseTag {
+    param([string]$TempDir)
+    $manifestPath = Join-Path $TempDir "bootstrap.json"
+    Invoke-WebRequest -Uri $BOOTSTRAP_URL -OutFile $manifestPath -UseBasicParsing -TimeoutSec 10
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $build = $manifest.latest_build
+    $minimum = $manifest.min_build
+    if ($manifest.schema_version -isnot [int] -or $manifest.schema_version -ne 2 -or
+        $manifest.channel -cne 'stable' -or $build -isnot [int] -or $build -lt 1 -or $build -gt 999999999 -or
+        $minimum -isnot [int] -or $minimum -lt 0 -or $minimum -gt $build -or
+        $manifest.display -cne "v$build" -or $manifest.kill_switch -isnot [bool]) {
+        throw "Invalid OpsKit release metadata"
+    }
+    if ($manifest.kill_switch) {
+        throw "OpsKit installation is paused"
+    }
+    return "v$build"
+}
+
+function Get-VerifiedReleaseFile {
+    param([string]$Tag, [string]$FileName, [string]$TempDir)
+    $url = "$DOWNLOAD_BASE/$Tag/$FileName"
+    $filePath = Join-Path $TempDir $FileName
+    $checksumPath = Join-Path $TempDir "$FileName.sha256"
+    Invoke-WebRequest -Uri $url -OutFile $filePath -UseBasicParsing -TimeoutSec 120
+    Write-Ok "Downloaded   $FileName"
+    Invoke-WebRequest -Uri "$url.sha256" -OutFile $checksumPath -UseBasicParsing -TimeoutSec 10
+    $expected = (Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+' | Select-Object -First 1
+    if (-not (Test-Sha256 -FilePath $filePath -Expected $expected)) {
+        throw "Checksum verification failed for $FileName"
+    }
+    Write-Ok "SHA256 verified"
+    return $filePath
 }
 
 # -- add install dir to user PATH ----------------------------------------------
@@ -88,10 +131,6 @@ function Main {
 
     $platform = Get-Platform
 
-    $filename = "${BIN_NAME}-${platform}.exe"
-    $downloadUrl = "$DOWNLOAD_BASE/$filename"
-    $sha256Url = "$downloadUrl.sha256"
-
     Write-Field "Platform" $platform
     Write-Field "Source"   "GitHub Releases"
     Write-Field "Target"   "%LOCALAPPDATA%\opskit\opskit.exe"
@@ -100,38 +139,25 @@ function Main {
     $tmpDir  = Join-Path $env:TEMP "opskit_install_$([System.IO.Path]::GetRandomFileName())"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
-    $tmpBin = Join-Path $tmpDir $filename
-    $tmpSha = Join-Path $tmpDir "$filename.sha256"
-
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $tmpBin -UseBasicParsing -TimeoutSec 120
-        Write-Ok "Downloaded   $filename"
-
-        $expectedSha = ""
-        try {
-            Invoke-WebRequest -Uri $sha256Url -OutFile $tmpSha -UseBasicParsing -TimeoutSec 10
-            $expectedSha = (Get-Content $tmpSha -Raw).Trim().Split()[0]
-        } catch {
-            Write-Fail "SHA256 file download failed; installation will be refused"
-        }
-
-        if (-not (Test-Sha256 -FilePath $tmpBin -Expected $expectedSha)) {
-            exit 1
-        }
-        if (-not [string]::IsNullOrEmpty($expectedSha)) {
-            Write-Ok "SHA256 verified"
-        }
-
-        New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
+        $tag = Get-ReleaseTag -TempDir $tmpDir
+        $launcher = Get-VerifiedReleaseFile -Tag $tag -FileName "${BIN_NAME}-${platform}-launcher.exe" -TempDir $tmpDir
+        $archive = Get-VerifiedReleaseFile -Tag $tag -FileName "${BIN_NAME}-${platform}.tar.xz" -TempDir $tmpDir
+        [IO.Directory]::CreateDirectory($INSTALL_DIR) | Out-Null
         $destBin = Join-Path $INSTALL_DIR "${BIN_NAME}.exe"
 
-        Copy-Item -Path $tmpBin -Destination $destBin -Force
+        & $launcher --opskit-internal-install $archive $destBin $tag
+        if ($LASTEXITCODE -ne 0) {
+            throw "OpsKit installation failed (exit code $LASTEXITCODE)"
+        }
         Write-Ok "Installed"
 
         Add-ToUserPath -Dir $INSTALL_DIR
-
+    } catch {
+        Write-Fail $_.Exception.Message
+        exit 1
     } finally {
-        Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host ""
