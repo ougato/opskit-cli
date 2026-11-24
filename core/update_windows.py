@@ -365,7 +365,9 @@ function Digest($path) {{
     finally {{ $source.Dispose(); $algorithm.Dispose() }}
 }}
 function AtomicRecord($path, $body) {{
-    $tmp = $path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    # The checkpoint already has a long digest filename. Keep its sibling
+    # temporary name independent so .NET Framework can open it near MAX_PATH.
+    $tmp = [IO.Path]::Combine([IO.Path]::GetDirectoryName($path), [Guid]::NewGuid().ToString('N') + '.tmp')
     $bytes = [Text.Encoding]::UTF8.GetBytes($body)
     $output = [IO.File]::Open($tmp, 'CreateNew', 'Write', 'None')
     try {{ $output.Write($bytes, 0, $bytes.Length); $output.Flush($true) }}

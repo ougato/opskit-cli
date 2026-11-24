@@ -18,9 +18,15 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32" or not POWERSHELL.is_fil
 
 
 @pytest.fixture
-def job(tmp_path):
+def job(tmp_path, request):
     folder = tmp_path / "中文 [目录] ' $name"
-    folder.mkdir()
+    if getattr(request, 'param', False):
+        # Keep the checkpoint below MAX_PATH while a suffix on it would exceed it.
+        checkpoint = Path('.opskit-update-locks') / ('0' * 64 + '.state.json')
+        padding = max(0, 240 - len(str(folder / checkpoint)) - 1)
+        if padding:
+            folder = tmp_path / ('p' * padding) / folder.name
+    folder.mkdir(parents=True)
     target = folder / "old ' [program].exe"
     artifact = folder / "artifact ' [signed].exe"
     old, new = b"old-program", b"new-program\0" * 10000
@@ -238,6 +244,7 @@ def test_upgrade_apply_refuses_rollback_without_publishing_fallback(job, monkeyp
     assert not (cache.parent / "update-jobs").exists()
 
 
+@pytest.mark.parametrize('job', [False, True], indirect=True, ids=['default-path', 'deep-path'])
 def test_real_schema2_job_and_helper_can_confirm_matching_update(job, monkeypatch):
     from contextlib import nullcontext
     from types import SimpleNamespace
