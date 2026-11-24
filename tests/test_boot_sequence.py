@@ -329,10 +329,10 @@ class TestWindowsDataDir:
 
         fake_localappdata = r"C:\Users\testuser\AppData\Local"
         monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", fake_localappdata)
 
         with patch("core.paths._is_frozen", return_value=True), \
-             patch("core.paths._get_platformdirs", return_value=None), \
-             patch.dict(os.environ, {"LOCALAPPDATA": fake_localappdata}):
+             patch("core.paths._get_platformdirs", return_value=None):
             result = _cfg.get_data_dir()
 
         assert "testuser" in str(result) or "Local" in str(result), \

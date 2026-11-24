@@ -15,26 +15,21 @@ os.environ.setdefault("VIRTUAL_ENV", str(REPO_ROOT / ".venv"))
 
 
 class TestDataDir:
-    def test_env_override(self, tmp_path):
+    def test_env_override(self, tmp_path, monkeypatch):
         """OPSKIT_DATA_DIR 环境变量应优先"""
         import importlib
         import core.paths as _paths
-        with patch.dict(os.environ, {"OPSKIT_DATA_DIR": str(tmp_path)}):
-            importlib.reload(_paths)
-            result = _paths.data_dir()
+        monkeypatch.setenv("OPSKIT_DATA_DIR", str(tmp_path))
+        importlib.reload(_paths)
+        result = _paths.data_dir()
         assert result == tmp_path
 
-    def test_dev_mode_returns_project_root(self):
+    def test_dev_mode_returns_project_root(self, monkeypatch):
         """开发模式（非 frozen）应返回项目根目录"""
         import core.paths as _paths
-        with patch("core.paths._is_frozen", return_value=False), \
-             patch.dict(os.environ, {}, clear=False):
-            env_bak = os.environ.pop("OPSKIT_DATA_DIR", None)
-            try:
-                result = _paths.data_dir()
-            finally:
-                if env_bak is not None:
-                    os.environ["OPSKIT_DATA_DIR"] = env_bak
+        monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
+        with patch("core.paths._is_frozen", return_value=False):
+            result = _paths.data_dir()
         assert result == REPO_ROOT
 
     def test_linux_root_frozen_uses_var_lib(self):
@@ -68,20 +63,15 @@ class TestDataDir:
         assert "opskit" in str(result)
         assert str(result) != "/var/lib/opskit"
 
-    def test_windows_frozen_uses_localappdata(self):
+    def test_windows_frozen_uses_localappdata(self, monkeypatch):
         """Windows 打包模式应使用 LOCALAPPDATA 下的用户目录"""
         if sys.platform != "win32":
             pytest.skip("仅 Windows 执行")
         import core.paths as _paths
-        fake = r"C:\Users\testuser\AppData\Local"
-        env_bak = os.environ.pop("OPSKIT_DATA_DIR", None)
-        try:
-            with patch("core.paths._is_frozen", return_value=True), \
-                 patch.dict(os.environ, {"LOCALAPPDATA": fake}):
-                result = _paths.data_dir()
-        finally:
-            if env_bak is not None:
-                os.environ["OPSKIT_DATA_DIR"] = env_bak
+        monkeypatch.delenv("OPSKIT_DATA_DIR", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\testuser\AppData\Local")
+        with patch("core.paths._is_frozen", return_value=True):
+            result = _paths.data_dir()
         assert "opskit" in str(result)
         assert "testuser" in str(result) or "Local" in str(result)
         assert "Public" not in str(result)
