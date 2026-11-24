@@ -6,7 +6,7 @@
 
 1. 在 `develop` 开发。准备发布时，以 GitHub 最新正式标签为准将版本加一，运行 `python scripts/release_bump.py v<N>`，提交版本文件及本次发版改动，再将 `develop` 推送到 GitHub 和 origin。
 2. 将 `develop` 合并到 `release`，推送到 GitHub 和 origin。GitHub 在 `release` 上执行全量测试、四平台构建、冻结 CLI 验收和资产预检。
-3. 预检成功后，在 `release` 的同一提交上创建 `v<N>` 标签并推送到 GitHub。正式工作流核对分支提交、标签版本和对应的成功预检，发布二进制和 SHA256 文件。
+3. 同一提交的 develop 平台回归与 release 预检均成功后，在 `release` 的同一提交上创建 `v<N>` 标签并推送到 GitHub。正式工作流核对分支提交、标签版本和两项成功检查，下载并重新验证该次预检的产物，再发布二进制和 SHA256 文件。标签工作流不再重新编译。
 4. 等正式工作流成功，核对 GitHub Release 和默认分支的 `bootstrap.json`。同步默认分支的版本提交，再把 `release` 合并到 `master` 并推送到 GitHub 和 origin，最后切回 `develop`。
 
 预检失败时在 `develop` 修复，再合入 `release` 重新预检。已发布的标签保持固定。
@@ -31,7 +31,7 @@ manifest.json 仅用于流水线核对，不作为同名发布资产上传
 
 ## 构建约束
 
-外部 Actions 固定提交，manylinux 镜像固定摘要及 amd64 平台
+外部 Actions 固定提交，manylinux 镜像固定摘要及 amd64 平台。Linux x64 目录版在同一镜像中使用固定版本和 SHA256 的共享 CPython 3.12，供 PyInstaller 打包。单文件版使用镜像内的静态 CPython 构建
 只有发布任务具有 contents:write，其余任务只读且检出不保留凭据
 原生构建通过 `scripts/install_release_build.py` 创建全新环境，按发布构建清单安装哈希锁定依赖。`--directory` 另外安装 `requirements-directory-build.txt` 锁定的 PyInstaller 工具链
 原生构建安装依赖时禁用 pip 缓存，setup-python 同样不启用 pip 缓存保存，避免不存在的缓存目录使构建收尾失败
@@ -54,4 +54,4 @@ Windows 和 Linux 的安装脚本校验同一正式版本的启动器和目录�
 Windows / Python 3.12 的发布、下载、应用、回滚、候选缓存及身份边界测试：309 passed，5 skipped
 Ruff、静态债务增量检查、仓库发布边界、版本一致性及安装脚本语法检查通过
 本机全套回归在原生插件运行时文件清单测试超过 30 秒预算，未记为通过
-正式出包以新标签触发的 GitHub 发布测试、四平台构建及冻结 CLI 检查结果为准
+正式出包以标签对应提交的 GitHub 平台回归、四平台构建、冻结 CLI 检查及资产校验结果为准

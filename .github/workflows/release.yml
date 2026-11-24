@@ -39,7 +39,7 @@ jobs:
           echo "[hook] build-notify sent"
 
   test:
-    needs: [notify-start]
+    if: github.ref_type == 'branch'
     name: test
     runs-on: ubuntu-latest
     permissions:
@@ -81,10 +81,6 @@ jobs:
           set -euo pipefail
           build="$(python -c 'from scripts.release_bump import read_app_version; print(read_app_version())')"
           python scripts/release_bump.py "v$build" --check
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$build" ]]; then
-            echo "::error::The tag does not match the committed release version"
-            exit 1
-          fi
           printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
 
       - name: identify previous published build
@@ -96,24 +92,6 @@ jobs:
           set -euo pipefail
           previous="$(python -I scripts/release_assets.py --build "$BUILD_VERSION" --previous-build)"
           printf 'build=%s\n' "$previous" >> "$GITHUB_OUTPUT"
-
-      - name: require successful release branch preflight
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          release_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release" --jq '.object.sha')"
-          if [[ "$release_sha" != "$GITHUB_SHA" ]]; then
-            echo "::error::The tag must point to the current release branch commit"
-            exit 1
-          fi
-          count="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs" \
-            -f branch=release -f event=push -f status=success -f head_sha="$GITHUB_SHA" --jq '.total_count')"
-          if [[ "$count" -lt 1 ]]; then
-            echo "::error::Run release branch preflight successfully before pushing the tag"
-            exit 1
-          fi
 
       - name: run tests
         shell: bash
@@ -204,11 +182,25 @@ jobs:
               stream.write(f"NUITKA_CACHE_DIR={cache}\n")
               stream.write(f"NUITKA_CACHE_DIR_DOWNLOADS={cache / 'downloads'}\n")
 
+      - name: provision shared CPython for manylinux directory builds
+        if: ${{ matrix.manylinux }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/opskit-shared-python.tar.gz"
+          root="$RUNNER_TEMP/opskit-shared-python"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' \
+            --output "$archive" \
+            'https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz'
+          printf '%s  %s\n' '6a9e62dad033790aef722dbd370e0ce76ce17b73627ba3ae679f537049350b39' "$archive" | sha256sum --check -
+          mkdir "$root"
+          tar -xzf "$archive" -C "$root" --strip-components=1
+
       - name: build (manylinux container — glibc 2.17 compatible)
         if: ${{ matrix.manylinux }}
         run: |
           docker run --rm --platform linux/amd64 \
             -v "${{ github.workspace }}:/work" \
+            -v "$RUNNER_TEMP/opskit-shared-python:/opt/opskit-shared-python:ro" \
             -w /work \
             -e DIRECTORY_BASE_BUILD \
             quay.io/pypa/manylinux2014_x86_64@sha256:f6a6f153c9cf45470507ebbc27013e5db14ce21331b62fd2c540561f25e5f0a5 \
@@ -217,12 +209,13 @@ jobs:
               cd /opt/_internal && tar xf static-libs-for-embedding-only.tar.xz && cd /work
               ln -s /opt/rh/devtoolset-10/root/usr/bin/gcc /usr/local/bin/gcc
               ln -s /opt/rh/devtoolset-10/root/usr/bin/g++ /usr/local/bin/g++
-              /opt/python/cp312-cp312/bin/python -I scripts/install_release_build.py /tmp/opskit-build --directory
+              /opt/python/cp312-cp312/bin/python -I scripts/install_release_build.py /tmp/opskit-build
               /tmp/opskit-build/bin/python build.py build --backend nuitka --jobs 2
+              /opt/opskit-shared-python/bin/python3.12 -I scripts/install_release_build.py /tmp/opskit-dir-build --directory
               if [ -f cache/release-base.tar.xz ]; then
-                /tmp/opskit-build/bin/python build.py directory --base cache/release-base.tar.xz --base-build \"\$DIRECTORY_BASE_BUILD\"
+                /tmp/opskit-dir-build/bin/python build.py directory --base cache/release-base.tar.xz --base-build \"\$DIRECTORY_BASE_BUILD\"
               else
-                /tmp/opskit-build/bin/python build.py directory
+                /tmp/opskit-dir-build/bin/python build.py directory
               fi
               chown -R \$(stat -c '%u:%g' /work) /work/dist/
               chown \$(stat -c '%u:%g' /work) /work/_build/opskit-linux-x64.debug.tar.xz
@@ -357,7 +350,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [build]
+    needs: [notify-start]
     runs-on: ubuntu-latest
     # Serialize all tags, not only reruns of one tag. Queue order is not trusted;
     # the bootstrap preflight below also rejects an older version.
@@ -366,6 +359,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -373,15 +367,42 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: download all artifacts
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: select checked release artifacts
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -I scripts/release_bump.py "$GITHUB_REF_NAME" --check
+          release_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release" --jq '.object.sha')"
+          if [[ "$release_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::The tag must point to the current release branch commit"
+            exit 1
+          fi
+          successful_run() {
+            gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs" \
+              -f branch="$2" -f event=push -f status=success -f head_sha="$GITHUB_SHA" \
+              --jq '.workflow_runs[0].id // empty'
+          }
+          regression="$(successful_run test.yml develop)"
+          candidate="$(successful_run release.yml release)"
+          if [[ ! "$regression" =~ ^[0-9]+$ || ! "$candidate" =~ ^[0-9]+$ ]]; then
+            echo "::error::The commit requires successful develop regression and release preflight"
+            exit 1
+          fi
+          printf 'run_id=%s\n' "$candidate" >> "$GITHUB_OUTPUT"
+
+      - name: download checked release artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           pattern: opskit-*
           path: artifacts/
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.candidate.outputs.run_id }}
 
       - name: validate complete artifact matrix
         run: python -I scripts/release_assets.py --build "${GITHUB_REF_NAME#v}" --root artifacts
