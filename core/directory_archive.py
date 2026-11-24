@@ -317,11 +317,18 @@ def tree_paths(root: Path, *, installed: bool = False, materialize_links: bool =
             validate_path(name)
             metadata = child.lstat()
             if is_link(metadata):
-                if not materialize_links or not child.is_symlink() or os.path.isabs(os.readlink(child)):
+                if not materialize_links or not child.is_symlink():
                     raise ArchiveError("package tree contains a link")
-                child = absolute_path(child.resolve(strict=True))
-                if not child.is_relative_to(root) or not stat.S_ISREG(child.stat().st_mode):
+                try:
+                    target = Path(os.readlink(child))
+                    if target.anchor:
+                        raise ArchiveError("package tree contains a link")
+                    resolved = absolute_path((child.parent / target).resolve(strict=True))
+                except (OSError, RuntimeError) as error:
+                    raise ArchiveError("package link must point to a regular file inside the tree") from error
+                if not resolved.is_relative_to(root) or not stat.S_ISREG(resolved.stat().st_mode):
                     raise ArchiveError("package link must point to a regular file inside the tree")
+                child = resolved
             elif stat.S_ISDIR(metadata.st_mode):
                 directory_count += 1
                 if directory_count > MAX_FILES:

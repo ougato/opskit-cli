@@ -1,6 +1,7 @@
 import io
 import lzma
 import os
+from pathlib import Path
 import tarfile
 
 import pytest
@@ -138,7 +139,11 @@ def test_internal_relative_library_links_are_materialized(tmp_path):
     assert not (destination / "lib.example").is_symlink()
 
     (tmp_path / "outside").write_bytes(b"private")
-    (source / "bad-link").symlink_to("../outside")
+    (source / "bad-link").symlink_to(Path("..") / "outside")
+    with pytest.raises(ArchiveError, match="inside"):
+        create_package(source, full, 1)
+    (source / "bad-link").unlink()
+    (source / "dangling-link").symlink_to("missing-library")
     with pytest.raises(ArchiveError, match="inside"):
         create_package(source, full, 1)
 
