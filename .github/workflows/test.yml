@@ -118,6 +118,27 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest -v --tb=short --timeout=20 --durations=20 --basetemp=cache/ci-tests --junitxml=cache/ci-results.xml 2>&1 | tee cache/ci-tests.log
+      - name: Summarize failed regression tests
+        if: failure()
+        shell: python
+        run: |
+          import os, pathlib, re
+          log = pathlib.Path("cache/ci-tests.log")
+          if log.is_file():
+              lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+              node = re.compile(r"^(tests[/\\][\w/\\.-]+\.py::[\w:]+)(?:\[[^\r\n]*\])?\s+")
+              failed = list(dict.fromkeys(
+                  match[1] for line in lines if (match := node.match(line)) and
+                  re.match(r"(FAILED|ERROR)\b", line[match.end():])))
+              if not failed:
+                  last = next((match[1] for line in reversed(lines) if (match := node.match(line))), None)
+                  failed = [last] if last else []
+              if failed:
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                      summary.write("### Regression failure\n\n")
+                      for name in failed[:20]:
+                          summary.write(f"- `{name}`\n")
+                          print(f"::error::{name}")
       - name: Save test report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
