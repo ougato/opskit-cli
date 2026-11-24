@@ -10,7 +10,7 @@ from core.native_process import open_worker
 from core.native_runtime import absolute_path, inventory, stage
 from core.native_sandbox import NativeSandboxError, get_backend
 from core.plugin_fetch_candidate import supervised_inventory
-from core.plugin_runtime_inventory import native_fetch_snapshot
+from core.plugin_runtime_inventory import is_fetch_dependency, native_fetch_snapshot
 from core.private_file import temporary_private_file
 
 
@@ -64,7 +64,7 @@ def local_candidate(python, git_runtime, source, *, staging_parent, deadline,
             code = base / "code"
             (code / "core").mkdir(parents=True)
             for name, body in native_fetch_snapshot().items():
-                relative = name[len("core/"):] if name.startswith("core/dulwich/") else name
+                relative = name.removeprefix("core/") if is_fetch_dependency(name) else name
                 target = code / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(body)

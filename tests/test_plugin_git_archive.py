@@ -1,4 +1,5 @@
 """Shared Git archive validation is independent of backend and checkout hooks."""
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -130,6 +131,8 @@ def test_worker_bundled_independently_of_sdk_and_gateway():
     sources = inventory.native_fetch_snapshot()
     assert {"core/" + name for name in inventory.NATIVE_FETCH_FILES} <= set(sources)
     assert "core/dulwich/__init__.py" in sources
+    if sys.version_info < (3, 15):
+        assert "core/typing_extensions.py" in sources
     bundled = inventory.bundle_snapshot()
     sdk = inventory.snapshot()
     for name, source in sources.items():
