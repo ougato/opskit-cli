@@ -104,8 +104,8 @@ def _uninstall_direct(cls, instance, version=None, all_versions=False):
     if _is_multi_version(cls, instance):
         if not version and not all_versions:
             fail(t("cli.error.uninstall_version_required", name=name), 2)
-        installed = instance.installed_versions()
-        if not installed or version and version not in installed:
+        # Explicit --all also retries cleanup after the version files are gone.
+        if version and version not in instance.installed_versions():
             fail(t("software.not_installed_hint", name=name))
         target = None if all_versions else version
     else:

@@ -77,7 +77,9 @@ class LinuxDriver(PlatformDriver):
         except Exception:
             pass
 
-        shell_path.remove_rc_path(GOPATH_MARKER_BEGIN, GOPATH_MARKER_END, PROFILE_D_GO_FILE)
+        shell_path.remove_rc_path(
+            GOPATH_MARKER_BEGIN, GOPATH_MARKER_END, PROFILE_D_GO_FILE, legacy_shims_path=str(sdir)
+        )
 
     def shim_active(self) -> bool:
         from .common import shim_dir

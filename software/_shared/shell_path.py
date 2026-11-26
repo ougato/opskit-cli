@@ -87,6 +87,12 @@ def _owned_profile(text, begin, end):
         return False
 
 
+def _matches_legacy_profile(text: str, shims_path: str) -> bool:
+    return not any(c in shims_path for c in '$`"\\\x00\r\n') and text == (
+        'export PATH="' + shims_path + ':$PATH"\n'
+    )
+
+
 def _publish_profile(path, text, *, private=False, new_file_mode=0o644, mode_override=None):
     if mode_override is not None and (type(mode_override) is not int or not 0 <= mode_override <= 0o777):
         raise ValueError("invalid file publication mode")
@@ -180,9 +186,8 @@ def inject_rc_path(shims_path: str, marker_begin: str, marker_end: str,
     if profile_d_file and _is_root():
         path = Path(profile_d_file)
         previous = _profile_text(path)
-        legacy = 'export PATH="' + shims_path + ':$PATH"\n'
-        safe_legacy = not any(c in shims_path for c in '$`"') and previous == legacy
-        if previous is not None and not _owned_profile(previous, marker_begin, marker_end) and not safe_legacy:
+        if (previous is not None and not _owned_profile(previous, marker_begin, marker_end)
+                and not _matches_legacy_profile(previous, shims_path)):
             raise FileExistsError("refusing to overwrite an unmanaged system profile")
         if previous != block:
             changes.append((path, previous, block))
@@ -191,7 +196,8 @@ def inject_rc_path(shims_path: str, marker_begin: str, marker_end: str,
 
 @system_mutation
 def remove_rc_path(marker_begin: str, marker_end: str,
-                   profile_d_file: str | None = None) -> None:
+                   profile_d_file: str | None = None, *,
+                   legacy_shims_path: str | None = None) -> None:
     """Remove only owned blocks, propagating errors and restoring prior contents."""
     _validate_markers(marker_begin, marker_end)
     changes = []
@@ -206,7 +212,8 @@ def remove_rc_path(marker_begin: str, marker_end: str,
         path = Path(profile_d_file)
         previous = _profile_text(path)
         if previous is not None:
-            if not _owned_profile(previous, marker_begin, marker_end):
+            if (not _owned_profile(previous, marker_begin, marker_end)
+                    and (legacy_shims_path is None or not _matches_legacy_profile(previous, legacy_shims_path))):
                 raise FileExistsError("refusing to delete an unmanaged system profile")
             changes.append((path, previous, None))
     _apply_profiles(changes)

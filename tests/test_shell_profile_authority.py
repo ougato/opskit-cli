@@ -49,6 +49,24 @@ def test_nonroot_removal_does_not_delete_system_profile(profile_context, monkeyp
     assert profile.read_bytes() == previous
 
 
+@pytest.mark.parametrize("legacy_suffix", ["", "export OTHER=1\n"])
+def test_uninstall_requires_exact_legacy_profile(profile_context, legacy_suffix):
+    home, profile = profile_context
+    shims = (home / "shims").as_posix()
+    original = f'export PATH="{shims}:$PATH"\n{legacy_suffix}'.encode()
+    profile.write_bytes(original)
+
+    args = "# begin", "# end", str(profile)
+    if legacy_suffix:
+        with pytest.raises(FileExistsError):
+            shell_path.remove_rc_path(*args, legacy_shims_path=shims)
+        assert profile.read_bytes() == original
+    else:
+        shell_path.remove_rc_path(*args, legacy_shims_path=shims)
+        shell_path.remove_rc_path(*args, legacy_shims_path=shims)
+        assert not profile.exists()
+
+
 def test_rc_read_failure_is_not_reported_as_success(profile_context, monkeypatch):
     home, _ = profile_context
     rc = home / ".bashrc"
