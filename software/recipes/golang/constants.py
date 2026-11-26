@@ -85,17 +85,3 @@ SHIM_GO_CMD_TEMPLATE = (
     "where go >nul 2>&1\r\n"
     "if %ERRORLEVEL% equ 0 ( go %* ) else ( echo Go not found & exit /b 1 )\r\n"
 )
-
-# ─── Linux/macOS sh shim 模板 ─────────────────────────────────────────────────
-SHIM_GO_SH_TEMPLATE = """\
-#!/bin/sh
-# opskit golang shim — 自动感知版本切换
-_snap="$HOME/.opskit/snapshots/golang.json"
-if [ -f "$_snap" ]; then
-    _bin=$(sed -n 's/.*"go_bin_dir"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "$_snap" | head -1)
-    if [ -x "$_bin/go" ]; then
-        exec "$_bin/go" "$@"
-    fi
-fi
-exec {fallback} "$@"
-"""

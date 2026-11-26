@@ -4,6 +4,7 @@ from __future__ import annotations
 from core.archive_reader import open_tar
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,7 +16,6 @@ from .driver import PlatformDriver
 from .constants import (
     GOPATH_MARKER_BEGIN,
     GOPATH_MARKER_END,
-    SHIM_GO_SH_TEMPLATE,
     PROFILE_D_GO_FILE,
 )
 
@@ -58,17 +58,7 @@ class LinuxDriver(PlatformDriver):
 
     def install_shim(self, fallback_bin: str) -> None:
         from .common import shim_dir
-        sdir = shim_dir()
-        sdir.mkdir(parents=True, exist_ok=True)
-        shims_path = str(sdir)
-
-        content = SHIM_GO_SH_TEMPLATE.format(fallback=fallback_bin)
-        for name in ("go", "gofmt"):
-            shim = sdir / name
-            shim.write_text(content, encoding="utf-8")
-            shim.chmod(0o755)
-
-        # 立即注入当前进程 PATH，让 opskit 内部子进程调用 go 立即生效
+        shims_path = str(shim_dir())
         shell_path.prepend_process_path(shims_path)
         shell_path.inject_rc_path(
             shims_path, GOPATH_MARKER_BEGIN, GOPATH_MARKER_END, PROFILE_D_GO_FILE
@@ -96,17 +86,23 @@ class LinuxDriver(PlatformDriver):
     # ─── version link ─────────────────────────────────────────────────────────
 
     def apply_version_link(self, bin_dir: str) -> None:
-        """
-        优先在 /usr/local/bin 创建/更新 go/gofmt symlink（root 时立即全局生效）。
-        非 root 时依赖 shim，同时注入当前进程 PATH 让 opskit 子进程立即可用。
-        """
-        # root 环境：创建/更新 /usr/local/bin 下的 symlink，立即全局生效
-        from .common import go_versions_dir
-        shell_path.link_into_system_bin(bin_dir, ("go", "gofmt"), managed_root=go_versions_dir())
-        # 无论是否 root，都把 shim 目录注入当前 Python 进程的 PATH
-        # 这样 opskit 内部的子进程调用 go 可以立即路由到正确版本
-        from .common import shim_dir as _shim_dir
-        shell_path.prepend_process_path(str(_shim_dir()))
+        """在版本激活时更新系统链接和账户命令。"""
+        from .common import go_versions_dir, shim_dir
+
+        commands = ("go", "gofmt")
+        target = Path(bin_dir)
+        for name in commands:
+            if not (target / name).is_file():
+                raise FileNotFoundError(target / name)
+
+        shell_path.link_into_system_bin(bin_dir, commands, managed_root=go_versions_dir())
+        directory = shim_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in commands:
+            shim = directory / name
+            shim.write_text(f'#!/bin/sh\nexec {shlex.quote(str(target / name))} "$@"\n', encoding="utf-8")
+            shim.chmod(0o755)
+        shell_path.prepend_process_path(str(directory))
 
     def restore_original(self) -> None:
         """卸载时删除 /usr/local/bin 下 opskit 创建的 symlink"""
