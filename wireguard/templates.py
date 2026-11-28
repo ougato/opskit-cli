@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 def xray_client_config(
+    server_ip: str,
     sni: str,
     server_port: int,
     uuid: str,
@@ -44,7 +45,7 @@ def xray_client_config(
                 "settings": {
                     "vnext": [
                         {
-                            "address": sni,
+                            "address": server_ip,
                             "port": server_port,
                             "users": [
                                 {

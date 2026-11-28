@@ -420,6 +420,7 @@ class TestXrayClientConfig:
         from wireguard.templates import xray_client_config
         from wireguard.constants import SNI_WHITELIST
         cfg_str = xray_client_config(
+            server_ip="192.0.2.1",
             sni="example.com", server_port=443, uuid="u-u-u-u",
             local_port=4000, wg_port=3002,
         )
@@ -430,6 +431,7 @@ class TestXrayClientConfig:
     def test_explicit_fake_sni(self):
         from wireguard.templates import xray_client_config
         cfg_str = xray_client_config(
+            server_ip="192.0.2.1",
             sni="example.com", server_port=443, uuid="u-u-u-u",
             local_port=4000, wg_port=3002, fake_sni="www.microsoft.com",
         )
@@ -440,9 +442,12 @@ class TestXrayClientConfig:
     def test_host_uses_sni(self):
         from wireguard.templates import xray_client_config
         cfg_str = xray_client_config(
+            server_ip="192.0.2.1",
             sni="my.domain.com", server_port=443, uuid="u-u-u-u",
             local_port=4000, wg_port=3002,
         )
         cfg = json.loads(cfg_str)
-        ws = cfg["outbounds"][0]["streamSettings"]["wsSettings"]
+        outbound = cfg["outbounds"][0]
+        assert outbound["settings"]["vnext"][0]["address"] == "192.0.2.1"
+        ws = outbound["streamSettings"]["wsSettings"]
         assert ws["host"] == "my.domain.com"

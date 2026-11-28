@@ -161,6 +161,7 @@ class TestWireGuardTemplates:
     def test_xray_client_config_valid_json(self):
         from wireguard.templates import xray_client_config
         cfg = xray_client_config(
+            server_ip="192.0.2.1",
             sni="wg.test.com",
             server_port=443,
             uuid="test-uuid",
@@ -169,7 +170,7 @@ class TestWireGuardTemplates:
         )
         data = json.loads(cfg)
         assert data["inbounds"][0]["port"] == 4000
-        assert data["outbounds"][0]["settings"]["vnext"][0]["address"] == "wg.test.com"
+        assert data["outbounds"][0]["settings"]["vnext"][0]["address"] == "192.0.2.1"
         assert data["outbounds"][0]["streamSettings"]["network"] == "ws"
 
     def test_wg_server_config_contains_key(self):

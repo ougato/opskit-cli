@@ -343,10 +343,9 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
 
     # ── 服务端连通性预检 ──────────────────────────────────────────
     import socket as _socket
-    _check_host = sni if sni else server_ip
     _port_ok = False
     try:
-        with _socket.create_connection((_check_host, server_port), timeout=5):
+        with _socket.create_connection((server_ip, server_port), timeout=5):
             _port_ok = True
     except Exception:
         pass
@@ -355,7 +354,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
     if _port_ok:
         _pre_con.print(f"[#a6e3a1]{t('wireguard.check_port_ok').format(port=server_port)}[/#a6e3a1]")
     else:
-        print_warning(t("wireguard.check_port_fail").format(ip=_check_host, port=server_port))
+        print_warning(t("wireguard.check_port_fail").format(ip=server_ip, port=server_port))
 
     # ── 安装步骤 ─────────────────────────────────────────────────────
     step_keys = [
@@ -400,6 +399,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
             sp.step(t("wireguard.step.write_xray_config"))
             xray_cfg_path = f"/usr/local/etc/xray/{xray_instance}.json"
             xray_cfg = xray_client_config(
+                server_ip=server_ip,
                 sni=sni,
                 server_port=server_port,
                 uuid=uuid,
@@ -1084,7 +1084,7 @@ def update_client_token(breadcrumb: list[str], *, tunnel_id: str | None = None, 
         with MultiStepProgress(step_descs) as sp:
             sp.step(step_descs[0])
             xray_cfg = xray_client_config(
-                sni=sni, server_port=server_port, uuid=uuid,
+                server_ip=server_ip, sni=sni, server_port=server_port, uuid=uuid,
                 local_port=local_port, wg_port=WG_UDP_PORT,
             )
             write_file(xray_cfg_path, xray_cfg)
