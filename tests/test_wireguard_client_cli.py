@@ -55,9 +55,10 @@ def invoke(*args):
     return CliRunner().invoke(main.app, ["--output", "json", *args])
 
 
-def test_update_cli_uses_stable_id_and_no_secret_output(environment, tmp_path):
+@pytest.mark.parametrize("exported", [False, True])
+def test_update_cli_uses_stable_id_and_no_secret_output(environment, tmp_path, exported):
     source = tmp_path / "token"
-    source.write_text("new-secret")
+    source.write_text(json.dumps({"token": "new-secret"}) if exported else "new-secret")
     from core.secrets import restrict_permissions
     restrict_permissions(source)
     result = invoke("wireguard", "client", "tunnel", "update-token", "wg-hk", "--token-file", str(source))
@@ -109,8 +110,10 @@ def test_list_excludes_token_and_uuid(environment):
 def test_invalid_explicit_install_token_raises_instead_of_success(monkeypatch):
     from wireguard import client, token
     monkeypatch.setattr(token, "decode_token", lambda _: (_ for _ in ()).throw(ValueError("secret-value")))
-    with pytest.raises(ValueError, match="invalid WireGuard token"):
+    from core.i18n import t
+    with pytest.raises(ValueError) as error:
         client.install_client(token="synthetic-bad-token")
+    assert str(error.value) == t("wireguard.error.token_invalid")
 
 
 def test_missing_id_is_usage_error(environment, tmp_path):

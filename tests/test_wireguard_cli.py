@@ -59,6 +59,22 @@ def test_peer_add_never_prompts_or_prints_token(state, monkeypatch):
     assert "new-synthetic-secret" not in result.stdout
 
 
+def test_legacy_server_label_requires_explicit_short_label(state, monkeypatch):
+    from wireguard import server
+
+    state["tunnel_label"] = "wan-tencent-jp"
+    generated = []
+    monkeypatch.setattr(server, "_generate_client_token", lambda **kw: generated.append(kw["label"]))
+    args = ("wireguard", "server", "peer", "add", "--name", "second")
+    assert invoke(*args).exit_code == 2
+    assert invoke(*args, "--label", "abcdefghijklm").exit_code == 2
+    assert len(state["clients"]) == 1
+    result = invoke(*args, "--label", "abcdefghijkl")
+    assert result.exit_code == 0, result.output
+    assert generated == ["abcdefghijkl"]
+    assert state["tunnel_label"] == "wan-tencent-jp"
+
+
 def test_peer_apply_failure_does_not_report_success(state, monkeypatch):
     from wireguard import server
     monkeypatch.setattr(server, "run_as_root", lambda *args, **kw: SimpleNamespace(returncode=1, stdout="", stderr="secret-detail"))

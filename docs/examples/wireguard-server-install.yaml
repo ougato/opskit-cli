@@ -2,6 +2,7 @@ schema_version: 1
 domain: wg.example.invalid
 public_ip: 192.0.2.1
 subnet_octet: 10
+# 1-12 ASCII characters; start with a letter, digit or underscore.
 label: server
 acme_email: admin@example.invalid
 credentials_output_file: wireguard-token.json

@@ -765,6 +765,10 @@ wireguard:
   tunnel_label_dup: "标签 {label} 已安装，请勿重复安装同一隧道"
   error:
     token_decode_fail: "令牌解码失败: {error}"
+    tunnel_label_format: "隧道标签须以英文字母、数字或下划线开头，其余字符也可使用连字符"
+    tunnel_label_length: "隧道标签 {label} 有 {length} 个字符，最多允许 {limit} 个，请在公网端指定短标签并重新生成令牌"
+    token_invalid: "WireGuard 令牌无效"
+    token_export_invalid: "导出文件缺少有效令牌"
     token_invalid_json: "令牌内容不是有效的 JSON 对象"
     token_missing_fields: "令牌缺少必要字段: {fields}"
     token_invalid_field: "令牌字段不合法: {field}"
@@ -829,6 +833,15 @@ self_uninstall:
   removed: "卸载完成"
 
 cli:
+  wg_add_peer: "创建客户端并生成连接令牌"
+  wg_peer_name: "客户端名称"
+  wg_peer_label: "本次令牌的隧道标签，最多 12 个字符，默认使用服务端标签"
+  wg_export_token: "导出客户端令牌"
+  wg_output_file: "新建私有 JSON 文件保存令牌"
+  wg_validate_token: "检查令牌格式和隧道标签"
+  wg_add_tunnel: "从令牌安装客户端隧道"
+  wg_update_token: "用新令牌更新现有隧道"
+  wg_token_file: "私有令牌文件，支持原始令牌或导出的 JSON，使用 - 从标准输入读取"
   update_install_help: "手动检查、下载、校验并应用 OpsKit 更新"
   update_install_check_timeout: "检查更新的超时秒数"
   update_install_download_timeout: "下载并校验更新的超时秒数"

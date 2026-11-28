@@ -44,7 +44,7 @@ def register_builtin_commands(app: typer.Typer, sw_app: typer.Typer,
     from xui.cli import register as register_xui
     register_xui(app, settings)
     from wireguard.cli import register as register_wireguard
-    register_wireguard(app, settings)
+    register_wireguard(app, settings, translate)
     from network.cli import register as register_network
     register_network(net_app)
     from core.update_cli import register as register_update

@@ -766,6 +766,10 @@ wireguard:
   tunnel_label_dup: "Label {label} already installed, do not install the same tunnel twice"
   error:
     token_decode_fail: "Token decode failed: {error}"
+    tunnel_label_format: "Tunnel labels must start with an ASCII letter, digit or underscore and may also contain hyphens"
+    tunnel_label_length: "Tunnel label {label} has {length} characters, the limit is {limit}. Specify a shorter label on the public server and generate a new token"
+    token_invalid: "Invalid WireGuard token"
+    token_export_invalid: "The export file is missing a valid token"
     token_invalid_json: "Token content is not a valid JSON object"
     token_missing_fields: "Token missing required fields: {fields}"
     token_invalid_field: "Invalid token field: {field}"
@@ -830,6 +834,15 @@ self_uninstall:
   removed: "Uninstall complete"
 
 cli:
+  wg_add_peer: "Create a peer and generate its connection token"
+  wg_peer_name: "Peer name"
+  wg_peer_label: "Tunnel label for this token, at most 12 characters, defaults to the server label"
+  wg_export_token: "Export a peer token"
+  wg_output_file: "New private JSON file for the token"
+  wg_validate_token: "Validate the token format and tunnel label"
+  wg_add_tunnel: "Install a client tunnel from a token"
+  wg_update_token: "Update an existing tunnel from a new token"
+  wg_token_file: "Private token file containing a raw token or exported JSON, or - for standard input"
   update_install_help: "Check, download, verify, and apply an OpsKit update"
   update_install_check_timeout: "Update check timeout in seconds"
   update_install_download_timeout: "Update download and verification timeout in seconds"

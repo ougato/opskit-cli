@@ -13,6 +13,7 @@ from core.i18n import t
 TOKEN_PREFIX = "opskit://"
 TOKEN_VERSION = 2
 MAX_TOKEN_BYTES = 64 * 1024
+MAX_TUNNEL_LABEL_LENGTH = 15 - len("wg-")
 
 TOKEN_V1_DEFAULTS = {
     "vpn_subnet": "10.10.10.0/24",
@@ -108,11 +109,21 @@ def _validate_token_fields(data: dict) -> None:
         _validate_dns("dns", data["dns"])
 
 
+def validate_tunnel_label(label: str) -> str:
+    if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", label):
+        raise ValueError(t("wireguard.error.tunnel_label_format"))
+    if len(label) > MAX_TUNNEL_LABEL_LENGTH:
+        raise ValueError(t("wireguard.error.tunnel_label_length", label=label[:32],
+                           length=len(label), limit=MAX_TUNNEL_LABEL_LENGTH))
+    return label
+
+
 def encode_token(data: dict) -> str:
     """将连接参数字典编码为令牌字符串
 
     流程：dict → JSON bytes → gzip → base64 → 加前缀
     """
+    validate_tunnel_label(data.get("label", TOKEN_V1_DEFAULTS["label"]))
     payload = dict(data)
     payload["v"] = TOKEN_VERSION
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -167,9 +178,9 @@ def decode_token(token: str) -> dict:
 
 def decode_client_token(token: str) -> dict:
     """Validate client interface constraints before dependencies or system writes."""
-    from wireguard.utils import normalize_tunnel_label
-    data = decode_token(token)
-    label = normalize_tunnel_label(data.get("label"), default="default")
-    if len(f"wg-{label}") > 15:
-        raise ValueError("tunnel label exceeds Linux interface name limit")
-    return {**data, "label": label}
+    try:
+        data = decode_token(token)
+    except ValueError:
+        raise ValueError(t("wireguard.error.token_invalid")) from None
+    validate_tunnel_label(data.get("label", TOKEN_V1_DEFAULTS["label"]))
+    return data

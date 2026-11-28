@@ -1,4 +1,6 @@
 """Official WireGuard server CLI; immutable public keys identify peers."""
+import json
+
 import typer
 from rich.markup import escape
 from core.cli import emit, fail, guarded
@@ -6,7 +8,22 @@ from core.i18n import t
 from wireguard import server
 
 
-def register(app, context_settings):
+def _read_token_input(token_file: str) -> str:
+    from core.cli_secrets import read_secret_file
+
+    value = read_secret_file(token_file)
+    if not value.startswith("{"):
+        return value
+    try:
+        payload = json.loads(value)
+    except (ValueError, RecursionError):
+        raise ValueError(t("wireguard.error.token_export_invalid")) from None
+    if not isinstance(payload.get("token"), str) or not payload["token"].strip():
+        raise ValueError(t("wireguard.error.token_export_invalid"))
+    return payload["token"]
+
+
+def register(app, context_settings, ct):
     group = typer.Typer(context_settings=context_settings)
     srv = typer.Typer(context_settings=context_settings)
     peer = typer.Typer(context_settings=context_settings)
@@ -64,21 +81,26 @@ def register(app, context_settings):
             fail("client operation did not complete")
         emit(result)
 
-    @tunnel.command("add")
+    @tunnel.command("validate-token", help=ct("wg_validate_token"))
     @guarded
-    def add_tunnel(token_file: str = typer.Option(..., "--token-file")):
-        supported()
-        from core.cli_secrets import read_secret_file
-        from wireguard import client
-        client_operation(client.install_client, token=read_secret_file(token_file))
+    def validate_token(token_file: str = typer.Option(..., "--token-file", help=ct("wg_token_file"))):
+        from wireguard.token import decode_client_token
+        data = decode_client_token(_read_token_input(token_file))
+        emit({"valid": True, "label": data["label"]})
 
-    @tunnel.command("update-token")
+    @tunnel.command("add", help=ct("wg_add_tunnel"))
     @guarded
-    def update_token(tunnel_id: str, token_file: str = typer.Option(..., "--token-file")):
+    def add_tunnel(token_file: str = typer.Option(..., "--token-file", help=ct("wg_token_file"))):
         supported()
-        from core.cli_secrets import read_secret_file
         from wireguard import client
-        client_operation(client.update_client_token, breadcrumb=["OpsKit", "wireguard"], tunnel_id=tunnel_id, token=read_secret_file(token_file))
+        client_operation(client.install_client, token=_read_token_input(token_file))
+
+    @tunnel.command("update-token", help=ct("wg_update_token"))
+    @guarded
+    def update_token(tunnel_id: str, token_file: str = typer.Option(..., "--token-file", help=ct("wg_token_file"))):
+        supported()
+        from wireguard import client
+        client_operation(client.update_client_token, breadcrumb=["OpsKit", "wireguard"], tunnel_id=tunnel_id, token=_read_token_input(token_file))
 
     @tunnel.command("remove")
     @guarded
@@ -123,12 +145,15 @@ def register(app, context_settings):
         supported()
         emit([{"id": item.get("pubkey"), "name": item.get("name"), "ip": item.get("ip")} for item in server._get_clients()])
 
-    @peer.command("add")
+    @peer.command("add", help=ct("wg_add_peer"))
     @guarded
-    def add(name: str = typer.Option(..., "--name")):
+    def add(
+        name: str = typer.Option(..., "--name", help=ct("wg_peer_name")),
+        label: str | None = typer.Option(None, "--label", help=ct("wg_peer_label")),
+    ):
         supported()
         valid_name(name)
-        emit(server.add_peer(["OpsKit", "wireguard"], name=name))
+        emit(server.add_peer(["OpsKit", "wireguard"], name=name, label=label))
 
     @peer.command("rename")
     @guarded
@@ -146,9 +171,9 @@ def register(app, context_settings):
             fail("peer removal cancelled")
         emit(server.remove_peer(["OpsKit", "wireguard"], peer_id=peer_id))
 
-    @peer.command("export")
+    @peer.command("export", help=ct("wg_export_token"))
     @guarded
-    def export(peer_id: str, output_file: str = typer.Option(..., "--output-file")):
+    def export(peer_id: str, output_file: str = typer.Option(..., "--output-file", help=ct("wg_output_file"))):
         supported()
         matches = [item for item in server._get_clients() if item.get("pubkey") == peer_id]
         if len(matches) != 1 or not matches[0].get("token"):

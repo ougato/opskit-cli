@@ -266,7 +266,7 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         get_os_id, install_wireguard_pkg, install_xray,
     )
     from wireguard.templates import xray_client_config, wg_client_config
-    from wireguard.token import decode_client_token as decode_token
+    from wireguard.token import decode_client_token
 
     # ── 获取令牌（CLI 传入或交互输入）───────────────────────────────
     if token is not None:
@@ -288,10 +288,10 @@ def _install_client_token(breadcrumb: list[str], token: str | None = None) -> No
         return
 
     try:
-        data = decode_token(raw_token.strip())
+        data = decode_client_token(raw_token.strip())
     except ValueError as e:
         if token is not None:
-            raise ValueError("invalid WireGuard token") from None
+            raise
         print_error(str(e))
         pause()
         return
@@ -1009,7 +1009,7 @@ def update_client_token(breadcrumb: list[str], *, tunnel_id: str | None = None, 
     from wireguard.constants import WG_UDP_PORT, WG_CLIENT_MTU, WG_KEEPALIVE
     from wireguard.utils import enable_and_start, write_file, write_secret_file, detect_default_iface
     from wireguard.templates import xray_client_config, wg_client_config
-    from wireguard.token import decode_token
+    from wireguard.token import decode_client_token
 
     mk  = "wireguard.client_manage"
     sub = [*breadcrumb, t(f"{mk}.update_token")]
@@ -1043,9 +1043,13 @@ def update_client_token(breadcrumb: list[str], *, tunnel_id: str | None = None, 
         raise ValueError("token is empty")
 
     try:
-        data = decode_token(raw_token.strip())
-    except ValueError:
-        raise ValueError("invalid WireGuard token") from None
+        data = decode_client_token(raw_token.strip())
+    except ValueError as exc:
+        if token is not None:
+            raise
+        print_error(str(exc))
+        pause()
+        return
 
     server_ip      = data["server_ip"]
     server_port    = data["server_port"]

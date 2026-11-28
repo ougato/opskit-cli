@@ -90,10 +90,29 @@ class TestTokenV2:
         with pytest.raises(ValueError):
             decode_token(token)
 
-    def test_client_label_limit_is_validated_before_install(self):
+    def test_twelve_character_label_round_trips(self):
         from wireguard.token import encode_token, decode_client_token
-        with pytest.raises(ValueError, match="interface name limit"):
-            decode_client_token(encode_token({**self._FIELDS, "label": "abcdefghijklmn"}))
+
+        fields = {**self._FIELDS, "label": "abcdefghijkl"}
+        assert decode_client_token(encode_token(fields))["label"] == fields["label"]
+
+    @pytest.mark.parametrize("label", ["abcdefghijklm", "wan-tencent-jp"])
+    def test_long_label_rejected_on_both_sides(self, label):
+        import base64
+        import gzip
+        from wireguard.token import TOKEN_PREFIX, encode_token, decode_client_token
+
+        fields = {**self._FIELDS, "label": label}
+        from core.i18n import t
+        message = t("wireguard.error.tunnel_label_length", label=label, length=len(label), limit=12)
+        with pytest.raises(ValueError) as issuance:
+            encode_token(fields)
+        assert str(issuance.value) == message
+        raw = gzip.compress(json.dumps(fields).encode("ascii"))
+        legacy_token = TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii")
+        with pytest.raises(ValueError) as import_error:
+            decode_client_token(legacy_token)
+        assert str(import_error.value) == message
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -131,21 +150,6 @@ class TestWireGuardSecretFiles:
         assert target.read_text(encoding="utf-8") == "PrivateKey = secret\n"
         if os.name != "nt":
             assert (target.stat().st_mode & 0o777) == 0o600
-
-
-class TestTunnelLabel:
-    """隧道 label 规范化应在服务端/客户端复用同一规则"""
-
-    def test_normalize_tunnel_label_replaces_unsafe_chars(self):
-        from wireguard.utils import normalize_tunnel_label
-
-        assert normalize_tunnel_label(" hk cn/01 ", default="default") == "hk-cn-01"
-
-    def test_normalize_tunnel_label_limits_length_and_fallback(self):
-        from wireguard.utils import normalize_tunnel_label
-
-        assert normalize_tunnel_label("a" * 30, default="default") == "a" * 24
-        assert normalize_tunnel_label("///", default="server") == "server"
 
 
 # ─── 配方文案与卸载安全边界 ───────────────────────────────────────────────────

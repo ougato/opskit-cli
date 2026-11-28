@@ -4,6 +4,7 @@ from __future__ import annotations
 from rich.markup import escape
 
 from software.base import InstallError
+from wireguard.token import validate_tunnel_label
 from core.constants import PUBLIC_IP_APIS
 from core.privilege import run_as_root, write_root_file
 from core.theme import console
@@ -186,7 +187,7 @@ def install_server(options: dict | None = None) -> dict | None:
     from wireguard.utils import (
         gen_wg_keypair, gen_wg_psk, gen_xray_keypair, gen_uuid, gen_short_id,
         detect_default_iface, enable_and_start, write_file, write_secret_file,
-        get_os_id, install_wireguard_pkg, install_xray, normalize_tunnel_label,
+        get_os_id, install_wireguard_pkg, install_xray,
     )
     from wireguard.templates import (
         xray_server_config_ws,
@@ -213,7 +214,7 @@ def install_server(options: dict | None = None) -> dict | None:
         sni, public_ip = options["domain"], options["public_ip"]
         cert_email = options["acme_email"]
         _octet3 = options["subnet_octet"]
-        tunnel_label = options["label"]
+        tunnel_label = validate_tunnel_label(options["label"])
         vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
         vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
     else:
@@ -235,8 +236,6 @@ def install_server(options: dict | None = None) -> dict | None:
             print_warning(t("wireguard.domain_required"))
             pause()
         sni = sni.strip()
-        if sni != _saved_domain:
-            _cfg = set_config_value(_cfg, "wireguard.domain", sni)
         cert_email = _get_acme_email()
 
         public_ip = _detect_public_ip()
@@ -280,9 +279,6 @@ def install_server(options: dict | None = None) -> dict | None:
             from core.theme import print_error as _pe
             _pe(t("wireguard.input_vpn_octet3_invalid"))
 
-        if _octet3 != _saved_octet3:
-            _cfg = set_config_value(_cfg, "wireguard.octet3", _octet3)
-
         vpn_subnet = VPN_SUBNET_TPL.format(octet3=_octet3)
         vpn_gateway = VPN_GW_TPL.format(octet3=_octet3)
 
@@ -297,10 +293,10 @@ def install_server(options: dict | None = None) -> dict | None:
             )
         except UserCancel:
             return
-        tunnel_label = normalize_tunnel_label(_label_raw, default=_default_label)
-
-        if tunnel_label != _saved_label:
-            _cfg = set_config_value(_cfg, "wireguard.tunnel_label", tunnel_label)
+        try:
+            tunnel_label = validate_tunnel_label((_label_raw or _default_label).strip())
+        except ValueError as exc:
+            raise InstallError(str(exc)) from exc
 
     iface = detect_default_iface()
     wg_port = WG_UDP_PORT
@@ -1022,7 +1018,8 @@ def manage_peers() -> None:
                 remove_peer(breadcrumb)
 
 
-def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
+def add_peer(breadcrumb: list[str], *, name: str | None = None,
+             label: str | None = None) -> dict | None:
     """添加客户端 peer — 自动生成密钥并输出连接令牌"""
     from core.i18n import t
     from core.prompt import pause, clear_screen, text_input, UserCancel
@@ -1042,6 +1039,24 @@ def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
         print_error(t(f"{mk}.no_state"))
         pause()
         return
+
+    try:
+        token_label = validate_tunnel_label(state.get("tunnel_label", "default") if label is None else label)
+    except ValueError as exc:
+        if name is not None:
+            raise
+        try:
+            replacement = text_input(
+                breadcrumb=sub, prompt=t("wireguard.input_tunnel_label"),
+                info_lines=[str(exc)], theme_key="software",
+            )
+            token_label = validate_tunnel_label(replacement.strip())
+        except UserCancel:
+            return
+        except ValueError as invalid:
+            print_error(str(invalid))
+            pause()
+            return
 
     next_ip_num = _alloc_client_ip(state.get("clients", []))
     if next_ip_num is None:
@@ -1070,7 +1085,6 @@ def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
 
     _vpn_subnet  = state.get("vpn_subnet",  "10.10.10.0/24")
     _vpn_gateway = state.get("vpn_gateway", "10.10.10.1")
-    _tunnel_label = state.get("tunnel_label", "default")
     _octet3 = int(_vpn_gateway.split(".")[2]) if _vpn_gateway else 10
     client_ip = f"10.10.{_octet3}.{next_ip_num}"
     client_priv, client_pub = gen_wg_keypair()
@@ -1117,7 +1131,7 @@ def add_peer(breadcrumb: list[str], *, name: str | None = None) -> dict | None:
         wg_psk=client_psk,
         vpn_subnet=_vpn_subnet,
         vpn_gateway=_vpn_gateway,
-        label=_tunnel_label,
+        label=token_label,
         dns=_vpn_gateway,
     )
 

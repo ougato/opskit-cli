@@ -55,6 +55,7 @@ def wireguard_options(options: dict, directory: Path) -> dict:
     import re
     import ipaddress
     from wireguard.constants import VPN_DEFAULT_OCTET3
+    from wireguard.token import validate_tunnel_label
     result = {"subnet_octet": VPN_DEFAULT_OCTET3, "label": "server", **options}
     if not isinstance(result["domain"], str) or not re.fullmatch(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", result["domain"]):
         raise ValueError("invalid certificate domain")
@@ -62,8 +63,7 @@ def wireguard_options(options: dict, directory: Path) -> dict:
         raise ValueError("public_ip must be IPv4")
     if type(result["subnet_octet"]) is not int or not 1 <= result["subnet_octet"] <= 254:
         raise ValueError("invalid subnet octet")
-    if not isinstance(result["label"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", result["label"]):
-        raise ValueError("invalid tunnel label")
+    validate_tunnel_label(result["label"])
     result.setdefault("acme_email", "admin@" + result["domain"])
     if not isinstance(result["acme_email"], str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+", result["acme_email"]):
         raise ValueError("invalid ACME email")

@@ -5,17 +5,10 @@ from core.archive import extract_zip
 
 import secrets
 import subprocess
-import re
 from pathlib import Path
 
 from core.privilege import run_as_root, write_root_file
 from wireguard.constants import XRAY_DOC_URL as _XRAY_DOC_URL
-
-
-def normalize_tunnel_label(value: str | None, default: str = "default") -> str:
-    """规范化 systemd 实例和文件名中使用的隧道 label。"""
-    raw = (value or "").strip() or default
-    return re.sub(r"[^a-zA-Z0-9_-]", "-", raw)[:24].strip("-") or default
 
 
 def gen_wg_keypair() -> tuple[str, str]:

@@ -202,6 +202,26 @@ XUI报告内部现共用30秒预算：状态读取和监听枚举使用可终止
 
 `wireguard client status/diagnose [--tunnel ID]`、`wireguard client tunnel list/add --token-file FILE/remove ID/update-token ID --token-file FILE` 已接入。ID 为现有 `wg_iface`，不按菜单序号选择；删除使用全局 `--yes`。安装拒绝覆盖现有配置，新隧道名称受 Linux 网卡名称长度限制；失败清理隧道配置和服务，保留共享依赖。更新快照旧配置、状态文件和服务启用/活动状态，健康检查通过才提交；失败尝试恢复，恢复不完整明确报错。普通查询不输出 token/UUID。诊断目前检查服务和配置存在性，完整路由、转发及连通性检查仍待补齐。
 
+### 公网发放与私网导入令牌
+
+隧道标签为 1–12 个 ASCII 字符，以字母、数字或下划线开头，之后也可使用连字符。私网接口名使用 `wg-<标签>`，总长度最多 15 字节。公网安装、生成令牌与私网导入共用校验规则。
+
+```bash
+# 公网端。记录 add 返回的客户端公钥 ID
+opskit --output json wireguard server peer add --name office --label wan-jp
+opskit wireguard server peer export PEER_ID --output-file wireguard-token.json
+
+# 私网端。通过安全渠道传输导出的私有文件
+opskit wireguard client tunnel validate-token --token-file wireguard-token.json
+opskit wireguard client tunnel add --token-file wireguard-token.json
+opskit wireguard client status --tunnel wg-wan-jp
+opskit wireguard client tunnel update-token wg-wan-jp --token-file replacement.json
+```
+
+`--label` 可省略，默认使用公网端保存的标签。已有公网端保存超长标签时，通过 `peer add --label` 指定这一次发放的短标签，服务端原有标签及已配置客户端保持原样。私网端会拒绝超长标签的旧令牌，请重新发放。为同一私网主机安装多个隧道时，每条隧道使用不同标签。
+
+`--token-file` 支持导出的 JSON、仅含原始令牌的私有文件，以及 `-` 表示标准输入。`validate-token` 只校验格式和标签，返回标签，不启动服务或探测连通性。更新令牌按已有接口 ID 操作，保留该接口的名称。
+
 WireGuard两种报告内部共用30秒预算：状态读取和服务查询受进程树监督；客户端配置只验证普通文件和非空，不读取私钥内容。Tailscale报告同样共用30秒预算，macOS复用一次状态查询；普通命令查询采用有界capture。预算耗尽不开始后续检查，晚到健康结果拒绝。RustDesk文件元数据使用一次性worker，服务与监听共用预算。五种software diagnose和专用诊断CLI均已提供 --timeout（默认30秒，0.1..3600）；真实平台、深度检查与特殊文件系统仍待验收。必要的进程创建和回收包含实际耗时，预算不构成硬实时承诺。
 
 程序目标旁共享版本记录现将from/to build与实际SHA256、随机事务ID及prepared/applied阶段绑定。应用在目标锁内拒绝未知摘要、损坏记录、降级和未重启的旧运行进程；授权回滚单独记录反向转换。Windows延迟任务提交前核对绑定的prepared记录，被新任务替代时拒绝。记录写入中断后按实际旧/新摘要解释版本；这不代表完整断电恢复已验收，也不抵御可修改宿主私有文件的同账户攻击者。
